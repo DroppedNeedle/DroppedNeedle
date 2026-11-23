@@ -26,9 +26,9 @@ use super::token::{AppConnectTokenError, AppConnectTokenRequest, AppConnectToken
 use super::{AppConnectError, AppConnectService, TokenStepError};
 use crate::session::login::NO_STORE;
 use crate::users::User;
-use crate::users::services::MAX_ACTIVE_APP_PASSWORDS;
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
+use droppedneedle_kernel::runtime_config::sections::AppConnectCredentialKind;
 
 /// What the confirmation page shows.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
@@ -40,17 +40,28 @@ pub struct AppConnectRequestView {
     /// The device name the app reported, cleaned up; absent when it sent
     /// none.
     pub device_name: Option<String>,
-    /// The name the new app password will carry.
+    /// The kind of credential the user is being asked to approve.
+    pub credential_kind: AppConnectCredentialKind,
+    /// The label the new credential will carry.
     pub password_name: String,
-    /// The user already has a live app password of that name, which
-    /// allowing replaces.
+    /// Allowing replaces an active credential for this user.
     pub replaces_existing: bool,
-    /// The user holds the most app passwords allowed under other names, so
-    /// allowing would be refused until one is revoked.
+    /// The user must revoke another credential of this kind before connecting.
     pub at_limit: bool,
     /// Where "Cancel" sends the browser: the app's address with
     /// `error=access_denied`.
     pub cancel_redirect: String,
+}
+
+/// The request and the kind of credential displayed by the consent page.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct AppConnectAuthorization {
+    /// The checked app request.
+    #[serde(flatten)]
+    pub request: ConnectRequest,
+    /// An older consent page can approve only an app password.
+    #[serde(default)]
+    pub confirmed_credential_kind: AppConnectCredentialKind,
 }
 
 /// Where "Allow" sends the browser.
@@ -69,9 +80,18 @@ fn page_error(error: AppConnectError) -> ApiError {
         AppConnectError::Invalid { reason, redirect } => {
             ApiError::invalid_input(reason).with_details(json!({ "redirect": redirect }))
         }
-        AppConnectError::AtLimit => ApiError::conflict(format!(
-            "App-password limit reached ({MAX_ACTIVE_APP_PASSWORDS}). Revoke one before connecting another app."
-        )),
+        AppConnectError::AtLimit(kind) => {
+            let credential = match kind {
+                AppConnectCredentialKind::AppPassword => "App-password",
+                AppConnectCredentialKind::DeviceSession => "Connected device session",
+            };
+            ApiError::conflict(format!(
+                "{credential} limit reached. Revoke one before connecting another app."
+            ))
+        }
+        AppConnectError::ConsentChanged => {
+            ApiError::conflict("The app's access changed. Review the sign-in request again.")
+        }
         AppConnectError::SettingsUnreadable => {
             ApiError::internal("the app_connect settings section does not read")
         }
@@ -79,8 +99,7 @@ fn page_error(error: AppConnectError) -> ApiError {
     }
 }
 
-/// `body` with the caching rule RFC 6749 section 5.1 asks of the token
-/// endpoint and the allow answer, which both carry a credential.
+/// Keep the account-specific consent view, one-time codes and credentials out of caches.
 fn no_store(status: StatusCode, body: impl Serialize) -> Response {
     let mut response = (status, Json(body)).into_response();
     let headers = response.headers_mut();
@@ -105,41 +124,44 @@ pub async fn app_connect_request_handler(
     State(service): State<AppConnectService>,
     User(caller): User,
     ValidQuery(request): ValidQuery<ConnectRequest>,
-) -> Result<Json<AppConnectRequestView>, ApiError> {
-    service
+) -> Result<Response, ApiError> {
+    let view = service
         .describe(&caller, &request)
         .await
-        .map(Json)
-        .map_err(page_error)
+        .map_err(page_error)?;
+    Ok(no_store(StatusCode::OK, view))
 }
 
 /// Allow an app connect request: issue its one-time code and answer the
 /// address that hands it to the app. Needs a standard session, as creating
-/// an app password by hand does.
+/// a credential by hand does.
 #[utoipa::path(
     post,
     tag = "auth",
     path = "/api/v3/auth/app-connect/authorize",
-    request_body = ConnectRequest,
+    request_body = AppConnectAuthorization,
     responses(
         (status = 200, description = "Where to send the browser; never stored", body = AppConnectRedirect),
         (status = 400, description = "The app or its address is not listed, or the request is malformed"),
         (status = 403, description = "A device session cannot allow this"),
         (status = 404, description = "App connect is off: no app is listed"),
-        (status = 409, description = "The user holds the most app passwords allowed")
+        (status = 409, description = "The account has reached the credential limit or the registered access changed")
     )
 )]
 pub async fn app_connect_authorize_handler(
     State(service): State<AppConnectService>,
     User(caller): User,
-    ValidJson(request): ValidJson<ConnectRequest>,
+    ValidJson(body): ValidJson<AppConnectAuthorization>,
 ) -> Result<Response, ApiError> {
-    let redirect = service.allow(&caller, &request).await.map_err(page_error)?;
+    let redirect = service
+        .allow(&caller, &body.request, body.confirmed_credential_kind)
+        .await
+        .map_err(page_error)?;
     Ok(no_store(StatusCode::OK, redirect))
 }
 
 /// The OAuth 2.0 token endpoint: trade an app connect code and its PKCE
-/// verifier for an app password of the user who allowed it. The code is
+/// verifier for the credential the user approved. The code is
 /// gone after this call, whatever it answers.
 #[utoipa::path(
     post,
@@ -150,7 +172,7 @@ pub async fn app_connect_authorize_handler(
         content_type = "application/x-www-form-urlencoded"
     ),
     responses(
-        (status = 200, description = "The new app password, shown once", body = AppConnectTokenResponse),
+        (status = 200, description = "The new credential, shown once", body = AppConnectTokenResponse),
         (status = 400, description = "The trade is refused, as RFC 6749 section 5.2 names it", body = AppConnectTokenError),
         (status = 429, description = "Too many trades from this address; see `Retry-After`")
     )

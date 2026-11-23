@@ -1,5 +1,5 @@
 <script lang="ts">
-	// App connect: a native app opened this tab to get an app password for
+	// App connect: a native app opened this tab to request access for
 	// the signed-in user. The page shows what is asked (the app's name comes
 	// from the server, never from the address) and hands the result back to
 	// the app only after the user allows it here.
@@ -11,7 +11,10 @@
 		getAppConnectRequestQuery,
 		type AppConnectQuery
 	} from '$lib/features/profile/queries/connect-apps.svelte';
-	import type { ConnectRequest } from '$lib/features/profile/queries/connect-apps.svelte';
+	import type {
+		AppConnectAccess,
+		ConnectRequest
+	} from '$lib/features/profile/queries/connect-apps.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { appAddress, framed, handBack } from '$lib/features/auth/state/appHandBack';
 	import { KeyRound, TriangleAlert } from 'lucide-svelte';
@@ -78,9 +81,12 @@
 
 	// Both buttons leave for the app within the click, which is what lets
 	// the browser hand an app address over.
-	async function allow() {
+	async function allow(credentialKind: AppConnectAccess) {
 		try {
-			const answer = await authorize.mutateAsync(request);
+			const answer = await authorize.mutateAsync({
+				...request,
+				confirmed_credential_kind: credentialKind
+			});
 			const target = appAddress(answer.redirect);
 			if (!target) throw new Error('not an app address');
 			handedBack = target;
@@ -128,51 +134,73 @@
 					{@render problem(describe(cause))}
 				{/snippet}
 				{#snippet children(view)}
-					<h2 class="connect-title">Connect {view.client_name}?</h2>
-					<p class="connect-line">
-						<strong>{view.client_name}</strong> wants to use DroppedNeedle as
-						<strong>{signedInAs}</strong>.
-					</p>
-					<dl class="connect-facts">
-						{#if view.device_name}
-							<dt>Device</dt>
-							<dd>{view.device_name}</dd>
-						{/if}
-						<dt>App-password</dt>
-						<dd>{view.password_name}</dd>
-					</dl>
-					<p class="connect-line connect-line--small">
-						Revoke it any time under Profile, Connect Apps.
-						{#if view.replaces_existing}
-							It replaces your app-password of that name.
-						{/if}
-					</p>
-					<p class="connect-warn" role="note">
-						<TriangleAlert class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-						<span>Only allow this if you just tapped "Sign in" in this app yourself.</span>
-					</p>
-					{#if view.at_limit}
-						<p class="text-sm font-semibold text-error" role="alert">
-							You have the most app-passwords allowed. Revoke one under Profile, Connect Apps first.
+					{@const access =
+						view.credential_kind === undefined ? 'app_password' : view.credential_kind}
+					{@const deviceSession = access === 'device_session'}
+					{#if access !== 'app_password' && !deviceSession}
+						{@render problem({
+							error: 'This sign-in page does not recognize the access this app needs.',
+							backToApp: appAddress(view.cancel_redirect)
+						})}
+					{:else}
+						<h2 class="connect-title">Connect {view.client_name}?</h2>
+						<p class="connect-line">
+							<strong>{view.client_name}</strong> wants to use DroppedNeedle as
+							<strong>{signedInAs}</strong>.
 						</p>
+						<dl class="connect-facts">
+							{#if view.device_name}
+								<dt>Device</dt>
+								<dd>{view.device_name}</dd>
+							{/if}
+							<dt>{deviceSession ? 'Device session' : 'App-password'}</dt>
+							<dd>{view.password_name}</dd>
+						</dl>
+						<p class="connect-line connect-line--small">
+							{#if deviceSession}
+								This app can use the DroppedNeedle API with your account’s permissions.
+								{#if authStore.isAdmin}This includes administrator actions.{/if}
+								Revoke the device session any time under Profile, Sessions.
+								{#if view.replaces_existing}
+									This replaces the session for this app on this device.
+								{/if}
+							{:else}
+								Revoke it any time under Profile, Connect Apps.
+								{#if view.replaces_existing}It replaces your app-password of that name.{/if}
+							{/if}
+						</p>
+						<p class="connect-warn" role="note">
+							<TriangleAlert class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+							<span>Only allow this if you just tapped "Sign in" in this app yourself.</span>
+						</p>
+						{#if view.at_limit}
+							<p class="text-sm font-semibold text-error" role="alert">
+								{#if deviceSession}
+									Device session limit reached. Revoke one under Profile, Sessions first.
+								{:else}
+									You have the most app-passwords allowed. Revoke one under Profile, Connect Apps
+									first.
+								{/if}
+							</p>
+						{/if}
+						<div class="flex w-full gap-2">
+							<Button
+								variant="paper"
+								size="display"
+								class="flex-1"
+								onclick={() => cancel(view.cancel_redirect)}
+								disabled={authorize.isPending}>Cancel</Button
+							>
+							<Button
+								variant="primary"
+								size="display"
+								class="flex-1"
+								onclick={() => allow(access)}
+								loading={authorize.isPending}
+								disabled={authorize.isPending || view.at_limit}>Allow</Button
+							>
+						</div>
 					{/if}
-					<div class="flex w-full gap-2">
-						<Button
-							variant="paper"
-							size="display"
-							class="flex-1"
-							onclick={() => cancel(view.cancel_redirect)}
-							disabled={authorize.isPending}>Cancel</Button
-						>
-						<Button
-							variant="primary"
-							size="display"
-							class="flex-1"
-							onclick={allow}
-							loading={authorize.isPending}
-							disabled={authorize.isPending || view.at_limit}>Allow</Button
-						>
-					</div>
 				{/snippet}
 			</QueryBoundary>
 		{/if}

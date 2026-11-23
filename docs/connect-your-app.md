@@ -43,7 +43,7 @@ Apps that use OpenSubsonic API keys can send the app password as the key instead
 
 ## Signing in from the browser
 
-An app that supports it can sign you in through the browser instead of asking for a typed app password: it opens a DroppedNeedle page, you sign in if you need to and tap Allow, and the app gets an app password of its own, listed under Profile > Connect Apps. This only works for apps an admin has listed under Settings > Connect Apps > Sign-in from apps, with the client ID and return addresses the app's maker gives. See [Signing in apps from the browser](app-connect.md).
+An admin registers the app once under Settings > Connect Apps > Sign-in from apps. In the app, choose browser sign-in, sign in to your DroppedNeedle server as usual, review the access shown and tap Allow. A Subsonic or Jellyfin app gets an app password that you can revoke under Profile > Connect Apps. An app registered for the DroppedNeedle API gets a device session that you can revoke under Profile > Sessions. See [Signing in apps from the browser](app-connect.md).
 
 ## What apps get
 

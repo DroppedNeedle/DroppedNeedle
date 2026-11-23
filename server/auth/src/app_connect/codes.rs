@@ -7,6 +7,7 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
 use super::request::verifier_matches;
 use crate::session::tokens::{TokenError, hash_token, secret_eq};
+use droppedneedle_kernel::runtime_config::sections::AppConnectCredentialKind;
 
 /// How long a code waits for its trade, in seconds.
 pub const CODE_TTL_SECS: i64 = 120;
@@ -29,28 +30,39 @@ pub(crate) struct Grant {
     pub redirect_uri: String,
     /// The PKCE `S256` challenge of the request.
     pub code_challenge: String,
-    /// The app password's name.
+    /// Credential the user approved, fixed for this code's lifetime.
+    pub credential_kind: AppConnectCredentialKind,
+    /// The normalized device identified at consent.
+    pub device_name: Option<String>,
+    /// Display label at consent.
     pub password_name: String,
 }
 
 /// A code traded for exactly the app, address and verifier it was issued
-/// for. Only [`PendingCodes::redeem`] makes one, and minting an app
-/// password through app connect takes one.
+/// for. Only [`PendingCodes::redeem`] makes one, and minting a credential
+/// through app connect takes one.
 #[derive(Debug)]
-pub(crate) struct Redeemed {
-    user_id: String,
-    password_name: String,
-}
+pub(crate) struct Redeemed(Grant);
 
 impl Redeemed {
     /// The user who allowed the code.
     pub(crate) fn user_id(&self) -> &str {
-        &self.user_id
+        &self.0.user_id
     }
 
-    /// The app password's name, checked when the code was issued.
+    /// The administrator-selected credential the user approved.
+    pub(crate) fn credential_kind(&self) -> AppConnectCredentialKind {
+        self.0.credential_kind
+    }
+
+    /// The same device identity used for the consent page.
+    pub(crate) fn device_key(&self) -> String {
+        super::request::device_key(&self.0.client_id, self.0.device_name.as_deref())
+    }
+
+    /// The credential's display name, checked when the code was issued.
     pub(crate) fn password_name(&self) -> &str {
-        &self.password_name
+        &self.0.password_name
     }
 }
 
@@ -144,10 +156,7 @@ impl PendingCodes {
         let fits = secret_eq(&grant.client_id, client_id)
             & secret_eq(&grant.redirect_uri, redirect_uri)
             & verifier_matches(verifier, &grant.code_challenge);
-        fits.then_some(Redeemed {
-            user_id: grant.user_id,
-            password_name: grant.password_name,
-        })
+        fits.then_some(Redeemed(grant))
     }
 }
 
@@ -162,6 +171,8 @@ mod tests {
             redirect_uri: "com.example.app:/connect".to_owned(),
             code_challenge: "c".repeat(43),
             password_name: "App".to_owned(),
+            credential_kind: AppConnectCredentialKind::AppPassword,
+            device_name: None,
         }
     }
 

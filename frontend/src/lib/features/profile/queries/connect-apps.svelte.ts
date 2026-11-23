@@ -20,6 +20,7 @@ type Schemas = components['schemas'];
 export type ConnectAppsSettings = Schemas['ConnectApps'];
 export type AppConnectSettings = Schemas['AppConnect'];
 export type ConnectRequest = Schemas['ConnectRequest'];
+export type AppConnectAccess = NonNullable<Schemas['AppConnectClient']['credential_kind']>;
 export type MyConnectApps = Schemas['MyConnectApps'];
 export type AppPasswordView = Schemas['AppPasswordView'];
 /** One active app-password in the admin roster; never carries a secret. */
@@ -154,7 +155,7 @@ export const getAppConnectRequestQuery = (query: () => AppConnectQuery | null) =
 /** Allow the app: the answer is the address that hands the code back to it. */
 export function createAuthorizeAppConnectMutation() {
 	return createAppMutation(() => ({
-		mutationFn: (request: ConnectRequest) =>
+		mutationFn: (request: Schemas['AppConnectAuthorization']) =>
 			api.v3.POST(v3('/api/v3/auth/app-connect/authorize'), request),
 		effects: () => []
 	}));

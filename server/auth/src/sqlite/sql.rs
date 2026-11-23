@@ -256,14 +256,20 @@ droppedneedle_kernel::sql! {
     /// Revoke every live session of one account.
     pub(super) REVOKE_LIVE_USER_SESSIONS = "UPDATE auth_tokens SET revoked = 1 \
         WHERE user_id = ?1 AND revoked = 0";
-    /// Insert one companion session.
+    /// Insert a companion. A manual session has a NULL App Connect identity.
     pub(super) INSERT_COMPANION_TOKEN = "INSERT INTO auth_tokens (id, user_id, token_hash, \
-        issued_at, expires_at, last_seen_at, revoked, session_kind, label) \
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, 'companion', ?7)";
-    /// Revoke an account's other live companion sessions under one label.
-    pub(super) REVOKE_OTHER_COMPANIONS = "UPDATE auth_tokens SET revoked = 1 \
+        issued_at, expires_at, last_seen_at, revoked, session_kind, label, app_connect_key) \
+        VALUES (?1, ?2, ?3, ?4, ?5, ?4, 0, 'companion', ?6, ?7)";
+    /// Revoke a user's manually issued companion sessions under one label.
+    pub(super) REVOKE_MANUAL_COMPANIONS = "UPDATE auth_tokens SET revoked = 1 \
         WHERE user_id = ?1 AND label = ?2 AND session_kind = 'companion' \
-        AND revoked = 0 AND id != ?3";
+        AND app_connect_key IS NULL AND revoked = 0";
+    /// Revoke a user's previous session for a registered client and device.
+    pub(super) REVOKE_CONNECTED_DEVICE = "UPDATE auth_tokens SET revoked = 1 \
+        WHERE user_id = ?1 AND app_connect_key = ?2 AND revoked = 0";
+    /// Active App Connect devices for the user and whether the requested one exists.
+    pub(super) CONNECTED_DEVICE_COUNTS = "SELECT COUNT(*), COUNT(CASE WHEN app_connect_key = ?2 THEN 1 END) \
+        FROM auth_tokens WHERE user_id = ?1 AND app_connect_key IS NOT NULL AND revoked = 0 AND expires_at > ?3";
     /// The unrevoked session behind one token hash.
     pub(super) SESSION_OWNER = "SELECT id, user_id, session_kind, expires_at FROM auth_tokens \
         WHERE token_hash = ?1 AND revoked = 0";

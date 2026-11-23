@@ -39,6 +39,7 @@ const QUERY = {
 const VIEW: RouteData<'GET /api/v3/auth/app-connect/request'> = {
 	client_id: 'my-player',
 	client_name: 'My Player',
+	credential_kind: 'app_password',
 	device_name: 'Pixel 9',
 	password_name: 'My Player · Pixel 9',
 	replaces_existing: false,
@@ -50,11 +51,11 @@ function openAt(query: Record<string, string>) {
 	state.url = new URL(`http://localhost/connect?${new URLSearchParams(query)}`);
 }
 
-function signIn() {
+function signIn(role: 'user' | 'admin' = 'user') {
 	authStore.setUser({
 		id: 'u1',
 		display_name: 'Jane Doe',
-		role: 'user',
+		role,
 		email: null,
 		avatar_url: null,
 		username: 'jane',
@@ -96,8 +97,65 @@ describe('app connect page', () => {
 		await expect
 			.poll(() => state.handBack.mock.calls[0]?.[0])
 			.toBe('com.example.player:/connect?code=c0de&state=app%20state');
-		expect(api.calls('POST /api/v3/auth/app-connect/authorize')[0]?.body).toEqual(QUERY);
+		expect(api.calls('POST /api/v3/auth/app-connect/authorize')[0]?.body).toEqual({
+			...QUERY,
+			confirmed_credential_kind: 'app_password'
+		});
 		await expect.element(page.getByRole('link', { name: 'Open the app' })).toBeVisible();
+	});
+
+	it('confirms the server-selected device session and explains administrator access', async () => {
+		openAt({
+			...QUERY,
+			confirmed_credential_kind: 'app_password',
+			credential_kind: 'app_password'
+		});
+		signIn('admin');
+		const api = fakeApi({
+			'GET /api/v3/auth/app-connect/request': {
+				...VIEW,
+				credential_kind: 'device_session',
+				replaces_existing: true
+			},
+			'POST /api/v3/auth/app-connect/authorize': { redirect: 'com.example.player:/connect?code=ok' }
+		});
+
+		await renderWithQuery(Connect, {});
+
+		await expect.element(page.getByText('Device session', { exact: true })).toBeVisible();
+		await expect.element(page.getByText(/includes administrator actions/)).toBeVisible();
+		await expect.element(page.getByText(/under Profile, Sessions/)).toBeVisible();
+		await expect.element(page.getByText(/replaces the session for this app/)).toBeVisible();
+		expect(Object.fromEntries(api.calls('GET /api/v3/auth/app-connect/request')[0]!.query)).toEqual(
+			QUERY
+		);
+		await page.getByRole('button', { name: 'Allow' }).click();
+		await expect
+			.poll(() => api.calls('POST /api/v3/auth/app-connect/authorize')[0]?.body)
+			.toEqual({
+				...QUERY,
+				confirmed_credential_kind: 'device_session'
+			});
+	});
+
+	it('refuses to authorize an access type this page cannot explain', async () => {
+		openAt(QUERY);
+		signIn();
+		const api = fakeApi({
+			'GET /api/v3/auth/app-connect/request': {
+				...VIEW,
+				// @ts-expect-error A newer server may introduce a credential type this page does not know.
+				credential_kind: 'unknown_future_access'
+			}
+		});
+
+		await renderWithQuery(Connect, {});
+
+		await expect
+			.element(page.getByRole('alert'))
+			.toHaveTextContent(/does not recognize the access/);
+		await expect.element(page.getByRole('button', { name: 'Allow' })).not.toBeInTheDocument();
+		expect(api.calls('POST /api/v3/auth/app-connect/authorize')).toHaveLength(0);
 	});
 
 	it('cancel hands back access_denied without asking the server', async () => {

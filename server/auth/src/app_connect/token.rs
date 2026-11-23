@@ -6,6 +6,7 @@
 //! goes through `ValidJson` or the native error envelope.
 
 use axum::http::HeaderValue;
+use droppedneedle_kernel::runtime_config::sections::AppConnectCredentialKind;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -62,24 +63,38 @@ pub struct AppConnectTokenError {
     pub error: AppConnectTokenErrorCode,
 }
 
-/// The kind of token handed out. Libraries expect `Bearer`; the token is
-/// an app password, used the way any app password is.
+/// The token type returned by the OAuth token endpoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub enum AppConnectTokenType {
     /// The only kind.
     Bearer,
 }
 
-/// The app password a trade mints.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+/// The credential a trade mints.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct AppConnectTokenResponse {
-    /// The app password, shown this once. Subsonic takes it as `apiKey`,
-    /// or as the password next to `username`.
+    /// The credential, shown once. A device session authenticates native API requests with Bearer.
     pub access_token: String,
+    /// Native device sessions report their kind; compatibility app passwords omit it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_kind: Option<AppConnectCredentialKind>,
+    /// Lifetime in seconds for a native device session.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_in: Option<i64>,
     /// Always `Bearer`.
     pub token_type: AppConnectTokenType,
     /// The login name of the user who allowed it.
     pub username: String,
+}
+
+impl std::fmt::Debug for AppConnectTokenResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppConnectTokenResponse")
+            .field("token_type", &self.token_type)
+            .field("credential_kind", &self.credential_kind)
+            .field("expires_in", &self.expires_in)
+            .finish_non_exhaustive()
+    }
 }
 
 impl AppConnectTokenRequest {

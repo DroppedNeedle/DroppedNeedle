@@ -76,14 +76,18 @@ impl E2e {
     /// refills while a test counts refusals, however slowly the host runs
     /// the requests.
     pub(crate) async fn open_held(tag: &str) -> Self {
+        Self::with_manual_clock(tag).await.0
+    }
+
+    /// A deployment whose clock can advance between user interactions.
+    pub(crate) async fn with_manual_clock(
+        tag: &str,
+    ) -> (Self, Arc<droppedneedle_kernel::test_support::ManualClock>) {
         let now =
             droppedneedle_kernel::clock::Clock::now_ms(&droppedneedle_kernel::clock::SystemClock);
-        Self::open_on(
-            tag,
-            |config| config,
-            Arc::new(droppedneedle_kernel::test_support::ManualClock::at(now)),
-        )
-        .await
+        let clock = Arc::new(droppedneedle_kernel::test_support::ManualClock::at(now));
+        let e2e = Self::open_on(tag, |config| config, clock.clone()).await;
+        (e2e, clock)
     }
 
     /// As [`E2e::open`], with the database tuned by `tune`.
@@ -518,7 +522,7 @@ fn cookie(token: &str) -> String {
 }
 
 /// Raw session token from a Set-Cookie response.
-fn set_cookie_token(headers: &HeaderMap) -> Option<String> {
+pub(crate) fn set_cookie_token(headers: &HeaderMap) -> Option<String> {
     let value = headers.get(axum::http::header::SET_COOKIE)?.to_str().ok()?;
     let first = value.split(';').next()?.trim();
     first

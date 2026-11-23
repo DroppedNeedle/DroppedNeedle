@@ -1,4 +1,4 @@
-//! Checking an app connect request, naming its app password, building the
+//! Checking an app connect request, naming its credential, building the
 //! addresses the browser hands back, and the PKCE check.
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -6,14 +6,16 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use utoipa::{IntoParams, ToSchema};
 
-use droppedneedle_kernel::runtime_config::sections::{AppConnect, AppConnectClient};
+use droppedneedle_kernel::runtime_config::sections::{
+    AppConnect, AppConnectClient, AppConnectCredentialKind,
+};
 
 use crate::session::tokens::secret_eq;
-use crate::users::services::MAX_APP_PASSWORD_NAME_LEN;
+use crate::users::services::{MAX_APP_PASSWORD_NAME_LEN, MAX_DEVICE_LABEL_LEN};
 
 /// Longest `state`, in bytes.
 pub const MAX_STATE_LEN: usize = 512;
-/// Between the app's name and the device's in an app password's name.
+/// Between the app's name and the device's in the credential label.
 pub const NAME_SEPARATOR: &str = " · ";
 /// The only challenge method: SHA-256 (RFC 7636 section 4.2). `plain`
 /// would hand the verifier to anyone who reads the request.
@@ -77,7 +79,7 @@ pub struct Checked {
     pub state: String,
     /// The device name as it will be shown and stored, if one was given.
     pub device_name: Option<String>,
-    /// The app password's name.
+    /// The label shown for the credential.
     pub password_name: String,
 }
 
@@ -94,6 +96,12 @@ impl Checked {
             &[("code", code), ("state", &self.state)],
         )
     }
+}
+
+/// Client ids cannot contain '/', and an absent device has an empty name.
+/// This key is independent of the administrator-editable app display name.
+pub(super) fn device_key(client_id: &str, name: Option<&str>) -> String {
+    format!("{client_id}/{}", name.unwrap_or_default())
 }
 
 /// Check `request` against the listed apps.
@@ -136,13 +144,29 @@ pub fn check(apps: &AppConnect, request: &ConnectRequest) -> Result<Checked, Rej
             "The app sent a malformed code challenge.",
         ));
     }
-    let device_name = request.name.as_deref().and_then(|name| {
-        device_name(
-            name,
-            MAX_APP_PASSWORD_NAME_LEN
-                .saturating_sub(client.name.chars().count() + NAME_SEPARATOR.chars().count()),
-        )
-    });
+    let suffix_len = client.name.chars().count() + NAME_SEPARATOR.chars().count();
+    let device_name = match client.credential_kind {
+        AppConnectCredentialKind::AppPassword => request.name.as_deref().and_then(|name| {
+            device_name(name, MAX_APP_PASSWORD_NAME_LEN.saturating_sub(suffix_len))
+        }),
+        AppConnectCredentialKind::DeviceSession => {
+            let limit = MAX_DEVICE_LABEL_LEN.saturating_sub(suffix_len);
+            let name = request
+                .name
+                .as_deref()
+                .and_then(|name| device_name(name, MAX_DEVICE_LABEL_LEN + 1));
+            if name
+                .as_ref()
+                .is_some_and(|name| name.chars().count() > limit)
+            {
+                return Err(invalid(
+                    "invalid_request",
+                    "The device name is too long. Use a shorter name.",
+                ));
+            }
+            name
+        }
+    };
     let password_name = match &device_name {
         Some(device) => format!("{}{NAME_SEPARATOR}{device}", client.name),
         None => client.name.clone(),
