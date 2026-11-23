@@ -148,6 +148,13 @@
 	--dn-paper-tile: #142016;
 	--dn-paper-tile-content: #f6f3e8;
 	--dn-paper-border: #c9d1c4;
+	/* whiter stock laid on the paper (an index card, a till receipt) */
+	--dn-paper-white: #fffdf5;
+	/* amber as text on paper or that stock: 6.0 on the paper */
+	--dn-paper-warning: #855000;
+	/* the matte counter Discover's week lies on, its top and its foot */
+	--dn-mat-hi: #172018;
+	--dn-mat: #0f1610;
 	--dn-focus: #d9f69a;
 	/* input and toggle edges: 3.6 on the surface, 4.0 on the page */
 	--dn-edge: #627662;
@@ -178,6 +185,11 @@
 	/* paper and input edges: 5.4 on the page, 4.0 on paper, 3.3 on the
 	   raised surface */
 	--dn-paper-border: #7a8c7a;
+	/* a step up from the dark island, with the same light ink (10.9) */
+	--dn-paper-white: #2c3a2f;
+	--dn-paper-warning: #f4bc65;
+	--dn-mat-hi: #172018;
+	--dn-mat: #0f1610;
 	--dn-focus: #d9f69a;
 	--dn-edge: #7a8c7a;
 	--dn-line: #4d604d;
@@ -201,6 +213,11 @@
 	--dn-paper-tile: #0e2e1d;
 	--dn-paper-tile-content: #fffdf5;
 	--dn-paper-border: #aebeaa;
+	--dn-paper-white: #ffffff;
+	--dn-paper-warning: #855000;
+	/* pale stone */
+	--dn-mat-hi: #f1f2e4;
+	--dn-mat: #e6e9d9;
 	--dn-focus: #1e6a38;
 	/* 3.6 on paper, 3.9 on the surface */
 	--dn-edge: #6f8570;
@@ -216,9 +233,11 @@
    are too pale on a light background. */
 @custom-variant light (&:where([data-theme=light], [data-theme=light] *));
 
-/* The turntable's tonearm: light on the black record in every theme. */
+/* The turntable's tonearm: light on the black record in every theme. Sound's
+   own plum, pale on dark glass and black labels in every theme. */
 :root {
 	--dn-arm: #f3f5ef;
+	--dn-sound: #d7b8f0;
 }
 
 /* The placeholder cover's palette, the same in every theme. It mirrors

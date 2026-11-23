@@ -22,6 +22,7 @@
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Knob from '$lib/ui/Knob.svelte';
+	import Panel from '$lib/ui/Panel.svelte';
 	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import { getLyricsQuery } from '$lib/features/player/queries/lyrics.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -228,333 +229,336 @@
 	}
 </script>
 
-<section
-	class="dn-deck"
-	class:is-over={dragOver}
-	style:--cover-tint={tint}
+<Panel
+	as="section"
+	look="metal"
+	highlight={dragOver}
 	aria-label="Now playing turntable - drop a track here to play it"
 	ondragover={handleDragOver}
 	ondragleave={handleDragLeave}
 	ondrop={handleDrop}
 >
-	<span class="dn-deck__screw" data-at="tl" aria-hidden="true"></span>
-	<span class="dn-deck__screw" data-at="tr" aria-hidden="true"></span>
-	<span class="dn-deck__screw" data-at="bl" aria-hidden="true"></span>
-	<span class="dn-deck__screw" data-at="br" aria-hidden="true"></span>
-
-	<div class="dn-deck__grid">
-		<!-- the title plate -->
-		<div class="dn-deck__plate">
-			<Headphones class="dn-deck__plate-icon" aria-hidden="true" />
-			<h1 class="dn-deck__title">The Listening Room</h1>
-			<p class="dn-deck__stats">
-				{#if stats}
-					<span>{stats.tracks.toLocaleString()} tracks</span><span class="dn-deck__dot"
-						>&middot;</span
-					><span>{stats.artists.toLocaleString()} artists</span><span class="dn-deck__dot"
-						>&middot;</span
-					><span>{stats.size}</span>
-				{:else}
-					Your local music, ready to spin
-				{/if}
-			</p>
-			<div class="dn-deck__badge" aria-hidden="true">
-				<BarcodeOrnament class="h-7 text-base-content" />
-				<span>DN / CC 3.2</span>
+	<div class="dn-deck" style:--cover-tint={tint}>
+		<div class="dn-deck__grid">
+			<!-- the title plate -->
+			<div class="dn-deck__plate">
+				<Headphones class="dn-deck__plate-icon" aria-hidden="true" />
+				<h1 class="dn-deck__title">The Listening Room</h1>
+				<p class="dn-deck__stats">
+					{#if stats}
+						<span>{stats.tracks.toLocaleString()} tracks</span><span class="dn-deck__dot"
+							>&middot;</span
+						><span>{stats.artists.toLocaleString()} artists</span><span class="dn-deck__dot"
+							>&middot;</span
+						><span>{stats.size}</span>
+					{:else}
+						Your local music, ready to spin
+					{/if}
+				</p>
+				<div class="dn-deck__badge" aria-hidden="true">
+					<BarcodeOrnament class="h-7 text-base-content" />
+					<span>DN / CC 3.2</span>
+				</div>
+				<p class="dn-deck__model" aria-hidden="true">
+					DroppedNeedle<br />Listening component<br />Model LR-3.2
+				</p>
 			</div>
-			<p class="dn-deck__model" aria-hidden="true">
-				DroppedNeedle<br />Listening component<br />Model LR-3.2
-			</p>
-		</div>
 
-		<!-- the platter and its tonearm -->
-		<div class="dn-deck__stage">
-			<div class="dn-deck__glow" class:is-on={isPlaying} aria-hidden="true"></div>
-			<div class="dn-platter" data-theme="dark">
-				<div bind:this={spinner} class="dn-platter__spin">
-					<div class="dn-platter__strobe" aria-hidden="true"></div>
-					<div class="dn-platter__record">
-						<div class="dn-platter__label">
-							{#if np}
-								<AlbumImage
-									mbid={isValidMbid(np.albumId) ? np.albumId : ''}
-									remoteUrl={np.coverRemoteUrl?.startsWith('http') ? np.coverRemoteUrl : null}
-									customUrl={np.coverUrl}
-									alt={np.albumName ?? 'Album'}
-									size="full"
-									requestSize={250}
-									responsiveSizes="(max-width: 639px) 40vw, 220px"
-									lazy={false}
-									rounded="none"
-									className="h-full w-full object-cover"
-								/>
-							{:else}
-								<svg class="dn-platter__blank" viewBox="0 0 100 100" aria-hidden="true">
-									<defs>
-										<path id={arcId} d="M50 50 m-35 0 a35 35 0 1 1 70 0 a35 35 0 1 1 -70 0" />
-									</defs>
-									<text>
-										<textPath href="#{arcId}">DROPPEDNEEDLE · THE LISTENING ROOM ·</textPath>
-									</text>
-									<circle cx="50" cy="50" r="22" class="dn-platter__blank-ring" />
-								</svg>
-							{/if}
+			<!-- the platter and its tonearm -->
+			<div class="dn-deck__stage">
+				<div class="dn-deck__glow" class:is-on={isPlaying} aria-hidden="true"></div>
+				<div class="dn-platter" data-theme="dark">
+					<div bind:this={spinner} class="dn-platter__spin">
+						<div class="dn-platter__strobe" aria-hidden="true"></div>
+						<div class="dn-platter__record">
+							<div class="dn-platter__label">
+								{#if np}
+									<AlbumImage
+										mbid={isValidMbid(np.albumId) ? np.albumId : ''}
+										remoteUrl={np.coverRemoteUrl?.startsWith('http') ? np.coverRemoteUrl : null}
+										customUrl={np.coverUrl}
+										alt={np.albumName ?? 'Album'}
+										size="full"
+										requestSize={250}
+										responsiveSizes="(max-width: 639px) 40vw, 220px"
+										lazy={false}
+										rounded="none"
+										className="h-full w-full object-cover"
+									/>
+								{:else}
+									<svg class="dn-platter__blank" viewBox="0 0 100 100" aria-hidden="true">
+										<defs>
+											<path id={arcId} d="M50 50 m-35 0 a35 35 0 1 1 70 0 a35 35 0 1 1 -70 0" />
+										</defs>
+										<text>
+											<textPath href="#{arcId}">DROPPEDNEEDLE · THE LISTENING ROOM ·</textPath>
+										</text>
+										<circle cx="50" cy="50" r="22" class="dn-platter__blank-ring" />
+									</svg>
+								{/if}
+							</div>
 						</div>
 					</div>
+					<div class="dn-platter__sheen" aria-hidden="true"></div>
+					<div class="dn-platter__spindle" aria-hidden="true"></div>
 				</div>
-				<div class="dn-platter__sheen" aria-hidden="true"></div>
-				<div class="dn-platter__spindle" aria-hidden="true"></div>
-			</div>
 
-			<svg class="dn-arm" data-state={armState} viewBox="0 0 100 100" aria-hidden="true">
-				<circle class="dn-arm__rest" cx="92" cy="50" r="2" />
-				<rect class="dn-arm__rest" x="91" y="50" width="2" height="6" rx="0.6" />
-				<circle class="dn-arm__base" cx="92" cy="8" r="5.6" />
-				<circle class="dn-arm__base-ring" cx="92" cy="8" r="3.8" />
-				<g class="dn-arm__swing" style:--arm-angle="{armAngle}deg">
-					<rect class="dn-arm__weight" x="89" y="-1.5" width="6" height="6.5" rx="1.4" />
-					<path class="dn-arm__tube" d="M92 8 L92 58 L89 65" />
-					<g transform="translate(88.6 66) rotate(24)">
-						<rect class="dn-arm__shell" x="-2.4" y="-2.6" width="4.8" height="7.4" rx="0.9" />
-						<path class="dn-arm__lift" d="M2.4 -1.6 l2.8 -1.4" />
+				<svg class="dn-arm" data-state={armState} viewBox="0 0 100 100" aria-hidden="true">
+					<circle class="dn-arm__rest" cx="92" cy="50" r="2" />
+					<rect class="dn-arm__rest" x="91" y="50" width="2" height="6" rx="0.6" />
+					<circle class="dn-arm__base" cx="92" cy="8" r="5.6" />
+					<circle class="dn-arm__base-ring" cx="92" cy="8" r="3.8" />
+					<g class="dn-arm__swing" style:--arm-angle="{armAngle}deg">
+						<rect class="dn-arm__weight" x="89" y="-1.5" width="6" height="6.5" rx="1.4" />
+						<path class="dn-arm__tube" d="M92 8 L92 58 L89 65" />
+						<g transform="translate(88.6 66) rotate(24)">
+							<rect class="dn-arm__shell" x="-2.4" y="-2.6" width="4.8" height="7.4" rx="0.9" />
+							<path class="dn-arm__lift" d="M2.4 -1.6 l2.8 -1.4" />
+						</g>
+						<circle class="dn-arm__pivot" cx="92" cy="8" r="2.4" />
 					</g>
-					<circle class="dn-arm__pivot" cx="92" cy="8" r="2.4" />
-				</g>
-			</svg>
+				</svg>
 
-			{#if dragOver}
-				<div class="dn-deck__drop" aria-hidden="true">
-					<span>Drop to play</span>
-				</div>
-			{/if}
-		</div>
-
-		<!-- the controls -->
-		<div class="dn-deck__controls">
-			<div class="dn-deck__knobs">
-				<Knob
-					label="Volume"
-					value={playerStore.volume}
-					onchange={(v) => playerStore.setVolume(v)}
-					keyStep={5}
-					marks={[
-						{ at: 0, text: '0' },
-						{ at: 50, text: '5' },
-						{ at: 100, text: '10' }
-					]}
-					format={(v) => `${Math.round(v)}%`}
-				/>
-				<div class="dn-deck__tone">
-					<Knob
-						size="sm"
-						label="Bass"
-						value={eqStore.gains[BASS_BAND] ?? 0}
-						onchange={(v) => setBand(BASS_BAND, v)}
-						min={-12}
-						max={12}
-						origin={0}
-						resetTo={0}
-						dots={9}
-						format={dB}
-						disabled={isYouTube}
-						disabledReason="EQ unavailable for YouTube"
-					/>
-					<Knob
-						size="sm"
-						label="Treble"
-						value={eqStore.gains[TREBLE_BAND] ?? 0}
-						onchange={(v) => setBand(TREBLE_BAND, v)}
-						min={-12}
-						max={12}
-						origin={0}
-						resetTo={0}
-						dots={9}
-						format={dB}
-						disabled={isYouTube}
-						disabledReason="EQ unavailable for YouTube"
-					/>
-					<div class="tooltip tooltip-top dn-deck__eq" data-tip="Sound">
-						<IconButton
-							size="sm"
-							icon={SlidersHorizontal}
-							label="Toggle sound"
-							active={eqStore.enabled && !isYouTube}
-							aria-expanded={eqPanelOpen}
-							onclick={() => (eqPanelOpen = !eqPanelOpen)}
-						/>
+				{#if dragOver}
+					<div class="dn-deck__drop" aria-hidden="true">
+						<span>Drop to play</span>
 					</div>
-				</div>
+				{/if}
 			</div>
 
-			<div class="dn-deck__tray">
-				{#if np}
-					<div class="dn-deck__display" data-theme="dark">
-						<DeckVisualiser {reducedMotion} />
-						<div class="dn-deck__now">
-							<div class="dn-deck__thumb">
-								<AlbumImage
-									mbid={isValidMbid(np.albumId) ? np.albumId : ''}
-									remoteUrl={np.coverRemoteUrl?.startsWith('http') ? np.coverRemoteUrl : null}
-									customUrl={np.coverUrl}
-									alt=""
-									size="full"
-									requestSize={250}
-									lazy={false}
-									rounded="none"
-									className="h-full w-full object-cover"
+			<!-- the controls -->
+			<div class="dn-deck__controls">
+				<div class="dn-deck__knobs">
+					<Knob
+						label="Volume"
+						value={playerStore.volume}
+						onchange={(v) => playerStore.setVolume(v)}
+						keyStep={5}
+						marks={[
+							{ at: 0, text: '0' },
+							{ at: 50, text: '5' },
+							{ at: 100, text: '10' }
+						]}
+						format={(v) => `${Math.round(v)}%`}
+					/>
+					<div class="dn-deck__tone">
+						<Knob
+							size="sm"
+							label="Bass"
+							value={eqStore.gains[BASS_BAND] ?? 0}
+							onchange={(v) => setBand(BASS_BAND, v)}
+							min={-12}
+							max={12}
+							origin={0}
+							resetTo={0}
+							dots={9}
+							format={dB}
+							disabled={isYouTube}
+							disabledReason="EQ unavailable for YouTube"
+						/>
+						<Knob
+							size="sm"
+							label="Treble"
+							value={eqStore.gains[TREBLE_BAND] ?? 0}
+							onchange={(v) => setBand(TREBLE_BAND, v)}
+							min={-12}
+							max={12}
+							origin={0}
+							resetTo={0}
+							dots={9}
+							format={dB}
+							disabled={isYouTube}
+							disabledReason="EQ unavailable for YouTube"
+						/>
+						<div class="tooltip tooltip-top dn-deck__eq" data-tip="Sound">
+							<IconButton
+								size="sm"
+								icon={SlidersHorizontal}
+								label="Toggle sound"
+								active={eqStore.enabled && !isYouTube}
+								aria-expanded={eqPanelOpen}
+								onclick={() => (eqPanelOpen = !eqPanelOpen)}
+							/>
+						</div>
+					</div>
+				</div>
+
+				<Panel look="tray" padding="none">
+					<div class="dn-deck__tray">
+						{#if np}
+							<div class="dn-deck__display" data-theme="dark">
+								<DeckVisualiser {reducedMotion} />
+								<div class="dn-deck__now">
+									<div class="dn-deck__thumb">
+										<AlbumImage
+											mbid={isValidMbid(np.albumId) ? np.albumId : ''}
+											remoteUrl={np.coverRemoteUrl?.startsWith('http') ? np.coverRemoteUrl : null}
+											customUrl={np.coverUrl}
+											alt=""
+											size="full"
+											requestSize={250}
+											lazy={false}
+											rounded="none"
+											className="h-full w-full object-cover"
+										/>
+									</div>
+									<div class="min-w-0 flex-1">
+										<p class="dn-deck__track">
+											{#if isPlaying}
+												<span class="now-playing-bars now-playing-bars--sm" aria-hidden="true">
+													<span></span><span></span><span></span>
+												</span>
+											{/if}
+											<span class="truncate">{np.trackName ?? np.albumName}</span>
+										</p>
+										<p class="dn-deck__artist">
+											{#if artistLink}<a href={artistLink} class="dn-deck__link">{np.artistName}</a
+												>{:else}{np.artistName}{/if}{#if np.albumName}<span
+													>&nbsp;&middot;
+													{#if albumLink}<a href={albumLink} class="dn-deck__link">{np.albumName}</a
+														>{:else}{np.albumName}{/if}</span
+												>{/if}
+										</p>
+									</div>
+								</div>
+								<PlayerTrackMarks alwaysStars />
+							</div>
+							<div class="dn-deck__seek">
+								<span>{fmt(shownProgress)}</span>
+								<input
+									type="range"
+									min="0"
+									max="1000"
+									value={Math.round(progressRatio * 1000)}
+									oninput={onScrub}
+									onchange={onSeek}
+									onpointercancel={() => (scrubRatio = null)}
+									onblur={() => (scrubRatio = null)}
+									disabled={!playerStore.isSeekable}
+									aria-label="Seek"
+									class="range range-xs range-primary flex-1"
 								/>
+								<span>{fmt(playerStore.duration)}</span>
 							</div>
-							<div class="min-w-0 flex-1">
-								<p class="dn-deck__track">
-									{#if isPlaying}
-										<span class="now-playing-bars now-playing-bars--sm" aria-hidden="true">
-											<span></span><span></span><span></span>
-										</span>
-									{/if}
-									<span class="truncate">{np.trackName ?? np.albumName}</span>
-								</p>
-								<p class="dn-deck__artist">
-									{#if artistLink}<a href={artistLink} class="dn-deck__link">{np.artistName}</a
-										>{:else}{np.artistName}{/if}{#if np.albumName}<span
-											>&nbsp;&middot;
-											{#if albumLink}<a href={albumLink} class="dn-deck__link">{np.albumName}</a
-												>{:else}{np.albumName}{/if}</span
-										>{/if}
-								</p>
-							</div>
-						</div>
-						<PlayerTrackMarks alwaysStars />
-					</div>
-					<div class="dn-deck__seek">
-						<span>{fmt(shownProgress)}</span>
-						<input
-							type="range"
-							min="0"
-							max="1000"
-							value={Math.round(progressRatio * 1000)}
-							oninput={onScrub}
-							onchange={onSeek}
-							onpointercancel={() => (scrubRatio = null)}
-							onblur={() => (scrubRatio = null)}
-							disabled={!playerStore.isSeekable}
-							aria-label="Seek"
-							class="range range-xs range-primary flex-1"
-						/>
-						<span>{fmt(playerStore.duration)}</span>
-					</div>
 
-					<div class="dn-deck__transport">
-						<IconButton
-							size="sm"
-							icon={ChevronsLeft}
-							label="Previous album"
-							disabled={!playerStore.hasPreviousAlbum}
-							onclick={() => playerStore.previousAlbum()}
-						/>
-						<IconButton
-							icon={SkipBack}
-							label="Previous"
-							disabled={!playerStore.hasPrevious}
-							onclick={() => playerStore.previousTrack()}
-						/>
-						<IconButton
-							variant="primary"
-							size="lg"
-							icon={isPlaying ? Pause : Play}
-							label={isPlaying ? 'Pause' : 'Play'}
-							onclick={() => playerStore.togglePlay()}
-						/>
-						<IconButton
-							icon={SkipForward}
-							label="Next"
-							disabled={!playerStore.hasNext}
-							onclick={() => playerStore.nextTrack()}
-						/>
-						<IconButton
-							size="sm"
-							icon={ChevronsRight}
-							label="Next album"
-							disabled={!playerStore.hasNextAlbum}
-							onclick={() => playerStore.nextAlbum()}
-						/>
-					</div>
-
-					<div class="dn-deck__utility">
-						<IconButton
-							size="sm"
-							icon={Shuffle}
-							label="Shuffle"
-							active={playerStore.shuffleEnabled}
-							aria-pressed={playerStore.shuffleEnabled}
-							onclick={() => playerStore.toggleShuffle()}
-						/>
-						<div class="indicator">
-							{#if playerStore.upcomingQueueLength > 0}
-								<span class="badge indicator-item badge-xs badge-primary"
-									>{playerStore.upcomingQueueLength}</span
-								>
-							{/if}
-							<IconButton size="sm" icon={ListMusic} label="Open queue" onclick={onOpenQueue} />
-						</div>
-						{#if supportsLyrics}
-							<div class="tooltip tooltip-top" data-tip="Lyrics">
+							<div class="dn-deck__transport">
 								<IconButton
 									size="sm"
-									icon={Music2}
-									label="Toggle lyrics"
-									active={lyricsPanelOpen}
-									aria-expanded={lyricsPanelOpen}
-									onclick={() => (lyricsPanelOpen = !lyricsPanelOpen)}
+									icon={ChevronsLeft}
+									label="Previous album"
+									disabled={!playerStore.hasPreviousAlbum}
+									onclick={() => playerStore.previousAlbum()}
+								/>
+								<IconButton
+									icon={SkipBack}
+									label="Previous"
+									disabled={!playerStore.hasPrevious}
+									onclick={() => playerStore.previousTrack()}
+								/>
+								<IconButton
+									variant="primary"
+									size="lg"
+									icon={isPlaying ? Pause : Play}
+									label={isPlaying ? 'Pause' : 'Play'}
+									onclick={() => playerStore.togglePlay()}
+								/>
+								<IconButton
+									icon={SkipForward}
+									label="Next"
+									disabled={!playerStore.hasNext}
+									onclick={() => playerStore.nextTrack()}
+								/>
+								<IconButton
+									size="sm"
+									icon={ChevronsRight}
+									label="Next album"
+									disabled={!playerStore.hasNextAlbum}
+									onclick={() => playerStore.nextAlbum()}
 								/>
 							</div>
-						{/if}
-						<div class="ml-auto flex max-w-full flex-wrap items-center gap-1.5">
-							{#if format}
-								<AudioQualityBadge
-									codec={format}
-									bitrate={bitRate}
-									{sampleRate}
-									{audioChannels}
-									compact
+
+							<div class="dn-deck__utility">
+								<IconButton
+									size="sm"
+									icon={Shuffle}
+									label="Shuffle"
+									active={playerStore.shuffleEnabled}
+									aria-pressed={playerStore.shuffleEnabled}
+									onclick={() => playerStore.toggleShuffle()}
 								/>
-							{/if}
-							{#if scrobbleManager.enabled && scrobbleManager.status !== 'idle'}
-								<div class="tooltip tooltip-top" data-tip={scrobbleManager.tooltip}>
-									{#if scrobbleManager.status === 'scrobbled'}
-										<Check class="size-4 text-success" aria-label="Scrobbled" />
-									{:else if scrobbleManager.status === 'error'}
-										<CircleX class="size-4 text-error" aria-label="Scrobble failed" />
-									{:else}
-										<StatusChip tone="info" size="xs">Tracking</StatusChip>
+								<div class="indicator">
+									{#if playerStore.upcomingQueueLength > 0}
+										<span class="badge indicator-item badge-xs badge-primary"
+											>{playerStore.upcomingQueueLength}</span
+										>
+									{/if}
+									<IconButton size="sm" icon={ListMusic} label="Open queue" onclick={onOpenQueue} />
+								</div>
+								{#if supportsLyrics}
+									<div class="tooltip tooltip-top" data-tip="Lyrics">
+										<IconButton
+											size="sm"
+											icon={Music2}
+											label="Toggle lyrics"
+											active={lyricsPanelOpen}
+											aria-expanded={lyricsPanelOpen}
+											onclick={() => (lyricsPanelOpen = !lyricsPanelOpen)}
+										/>
+									</div>
+								{/if}
+								<div class="ml-auto flex max-w-full flex-wrap items-center gap-1.5">
+									{#if format}
+										<AudioQualityBadge
+											codec={format}
+											bitrate={bitRate}
+											{sampleRate}
+											{audioChannels}
+											compact
+										/>
+									{/if}
+									{#if scrobbleManager.enabled && scrobbleManager.status !== 'idle'}
+										<div class="tooltip tooltip-top" data-tip={scrobbleManager.tooltip}>
+											{#if scrobbleManager.status === 'scrobbled'}
+												<Check class="size-4 text-success" aria-label="Scrobbled" />
+											{:else if scrobbleManager.status === 'error'}
+												<CircleX class="size-4 text-error" aria-label="Scrobble failed" />
+											{:else}
+												<StatusChip tone="info" size="xs">Tracking</StatusChip>
+											{/if}
+										</div>
 									{/if}
 								</div>
-							{/if}
-						</div>
-					</div>
+							</div>
 
-					{#if isLocal}
-						<p class="dn-deck__hint">drag a record onto the deck</p>
-					{/if}
-				{:else}
-					<h2 class="dn-deck__cue">Drop the needle</h2>
-					<p class="dn-deck__lede">Drag a record from the crate onto the deck, or just hit play.</p>
-					<div class="dn-deck__buttons">
-						<Button variant="primary" size="display-sm" icon={Play} onclick={onPlayAll}
-							>Play All</Button
-						>
-						<Button variant="outline" size="sm" icon={Shuffle} onclick={onShuffleAll}
-							>Shuffle</Button
-						>
-						<Button variant="ghost" size="sm" icon={Dices} onclick={onSurprise}>Surprise me</Button>
+							{#if isLocal}
+								<p class="dn-deck__hint">drag a record onto the deck</p>
+							{/if}
+						{:else}
+							<h2 class="dn-deck__cue">Drop the needle</h2>
+							<p class="dn-deck__lede">
+								Drag a record from the crate onto the deck, or just hit play.
+							</p>
+							<div class="dn-deck__buttons">
+								<Button variant="primary" size="display-sm" icon={Play} onclick={onPlayAll}
+									>Play All</Button
+								>
+								<Button variant="outline" size="sm" icon={Shuffle} onclick={onShuffleAll}
+									>Shuffle</Button
+								>
+								<Button variant="ghost" size="sm" icon={Dices} onclick={onSurprise}
+									>Surprise me</Button
+								>
+							</div>
+							<p class="dn-deck__hint">
+								<Sparkles class="size-3" aria-hidden="true" /> your library, ready to spin
+							</p>
+						{/if}
 					</div>
-					<p class="dn-deck__hint">
-						<Sparkles class="size-3" aria-hidden="true" /> your library, ready to spin
-					</p>
-				{/if}
+				</Panel>
 			</div>
 		</div>
 	</div>
-</section>
+</Panel>
 
 <EqPanel bind:open={eqPanelOpen} onclose={() => (eqPanelOpen = false)} />
 <LyricsPanel
@@ -571,98 +575,9 @@
 />
 
 <style>
-	/* ---- the panel: brushed metal in the theme's own colours ---- */
+	/* ---- the deck on its panel: a container its parts size to ---- */
 	.dn-deck {
-		--metal: var(--color-base-200);
-		--metal-hi: var(--color-base-300);
-		--bevel-hi: rgb(255 255 255 / 0.07);
-		--bevel-lo: rgb(0 0 0 / 0.55);
-		--brush: rgb(255 255 255 / 0.018);
-		position: relative;
 		container: deck / inline-size;
-		outline: 2px solid transparent;
-		outline-offset: 4px;
-		transition: outline-color 0.2s ease;
-		border-radius: 1.25rem;
-		border: 1px solid var(--dn-line);
-		padding: 1.25rem;
-		background:
-			repeating-linear-gradient(
-				0deg,
-				var(--brush) 0 1px,
-				transparent 1px 3px,
-				rgb(0 0 0 / 0.02) 3px 4px
-			),
-			linear-gradient(
-				172deg,
-				color-mix(in oklab, var(--metal-hi) 100%, rgb(255 255 255 / 0.04)) 0%,
-				var(--metal) 46%,
-				color-mix(in oklab, var(--metal) 80%, var(--color-base-100)) 100%
-			);
-		box-shadow:
-			inset 0 1px 0 var(--bevel-hi),
-			inset 0 -2px 0 var(--bevel-lo),
-			inset 0 0 0 4px color-mix(in oklab, var(--metal) 60%, transparent),
-			0 28px 50px -32px rgb(0 0 0 / 0.9);
-	}
-	:global([data-theme='light']) .dn-deck {
-		--metal: var(--color-base-300);
-		--metal-hi: var(--color-base-200);
-		--bevel-hi: rgb(255 255 255 / 0.9);
-		--bevel-lo: rgb(0 0 0 / 0.08);
-		--brush: rgb(0 0 0 / 0.025);
-		box-shadow:
-			inset 0 1px 0 var(--bevel-hi),
-			inset 0 -2px 0 var(--bevel-lo),
-			0 24px 40px -30px rgb(0 0 0 / 0.35);
-	}
-	@media (min-width: 640px) {
-		.dn-deck {
-			padding: 1.75rem;
-		}
-	}
-	.dn-deck.is-over {
-		outline-color: var(--dn-action);
-	}
-
-	.dn-deck__screw {
-		position: absolute;
-		width: 0.75rem;
-		height: 0.75rem;
-		border-radius: 9999px;
-		background:
-			linear-gradient(
-				var(--slot, 45deg),
-				transparent 42%,
-				rgb(0 0 0 / 0.55) 42% 58%,
-				transparent 58%
-			),
-			radial-gradient(circle at 35% 30%, rgb(255 255 255 / 0.35), transparent 70%),
-			color-mix(in oklab, var(--color-base-content) 30%, var(--metal));
-		box-shadow:
-			inset 0 0 0 1px rgb(0 0 0 / 0.35),
-			0 1px 0 var(--bevel-hi);
-		pointer-events: none;
-	}
-	.dn-deck__screw[data-at='tl'] {
-		top: 0.625rem;
-		left: 0.625rem;
-		--slot: 30deg;
-	}
-	.dn-deck__screw[data-at='tr'] {
-		top: 0.625rem;
-		right: 0.625rem;
-		--slot: 115deg;
-	}
-	.dn-deck__screw[data-at='bl'] {
-		bottom: 0.625rem;
-		left: 0.625rem;
-		--slot: 160deg;
-	}
-	.dn-deck__screw[data-at='br'] {
-		bottom: 0.625rem;
-		right: 0.625rem;
-		--slot: 70deg;
 	}
 
 	/* ---- layout: stacked, then plate | platter | controls when there is room ---- */
@@ -993,7 +908,7 @@
 		transform: rotate(var(--arm-angle));
 	}
 	.dn-arm__base {
-		fill: color-mix(in oklab, var(--color-base-content) 22%, var(--metal));
+		fill: color-mix(in oklab, var(--color-base-content) 22%, var(--panel-metal));
 		stroke: rgb(0 0 0 / 0.45);
 		stroke-width: 0.4;
 	}
@@ -1003,7 +918,7 @@
 		stroke-width: 0.35;
 	}
 	.dn-arm__rest {
-		fill: color-mix(in oklab, var(--color-base-content) 35%, var(--metal));
+		fill: color-mix(in oklab, var(--color-base-content) 35%, var(--panel-metal));
 	}
 	.dn-arm__weight {
 		fill: var(--dn-vinyl-groove);
@@ -1138,25 +1053,12 @@
 		}
 	}
 
-	/* the inset tray for what's on the deck */
+	/* what's on the deck, in the panel's inset tray */
 	.dn-deck__tray {
 		display: flex;
 		flex-direction: column;
 		gap: 0.75rem;
 		padding: 1rem;
-		border-radius: 0.875rem;
-		background: color-mix(in oklab, var(--color-base-100) 70%, transparent);
-		box-shadow:
-			inset 0 2px 6px rgb(0 0 0 / 0.45),
-			inset 0 0 0 1px rgb(0 0 0 / 0.35),
-			0 1px 0 var(--bevel-hi);
-	}
-	:global([data-theme='light']) .dn-deck__tray {
-		background: color-mix(in oklab, var(--color-base-100) 80%, var(--color-base-300));
-		box-shadow:
-			inset 0 2px 5px rgb(0 0 0 / 0.1),
-			inset 0 0 0 1px rgb(0 0 0 / 0.08),
-			0 1px 0 var(--bevel-hi);
 	}
 	@container deck (min-width: 54rem) {
 		.dn-deck__controls {
@@ -1293,30 +1195,21 @@
 	}
 
 	@media (forced-colors: active) {
-		.dn-deck:not(.is-over) {
-			outline: none;
-		}
 		.dn-platter,
 		.dn-platter__record,
 		.dn-platter__label {
 			border: 2px solid CanvasText;
 		}
-		.dn-deck__screw,
 		.dn-deck__glow,
 		.dn-platter__sheen {
 			display: none;
 		}
 	}
 	@media (prefers-contrast: more) {
-		.dn-deck__screw,
 		.dn-deck__glow,
 		.dn-platter__sheen,
 		.dn-platter__strobe {
 			display: none;
-		}
-		.dn-deck {
-			background: var(--color-base-200);
-			border-color: var(--color-base-content);
 		}
 	}
 </style>

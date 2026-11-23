@@ -219,6 +219,7 @@
 	.dn-card-paper {
 		--dn-muted: color-mix(in oklab, var(--dn-paper-content) 74%, var(--dn-paper));
 		--dn-title: var(--dn-paper-content);
+		--dn-warn-ink: var(--dn-paper-warning);
 	}
 	[data-theme='light'] .dn-card-paper {
 		box-shadow: 0 10px 24px -18px color-mix(in oklab, var(--dn-paper-content) 45%, transparent);
@@ -258,6 +259,70 @@
 	.dn-card-torn:focus-visible {
 		outline: 3px solid var(--dn-paper-content);
 		outline-offset: calc(-1 * var(--tear) - 4px);
+	}
+
+	/* an index card: whiter stock than the paper it lies on, a ruled head,
+	   held on by a strip of clear tape; it lifts when its parent says so */
+	.dn-card-index {
+		--dn-muted: color-mix(in oklab, var(--dn-paper-content) 74%, var(--dn-paper-white));
+		--dn-title: var(--dn-paper-content);
+		--dn-warn-ink: var(--dn-paper-warning);
+		position: relative;
+		border: 1px solid var(--dn-paper-border);
+		border-radius: 3px;
+		background-color: var(--dn-paper-white);
+		color: var(--dn-paper-content);
+		box-shadow: 0 10px 16px -12px rgb(0 0 0 / 0.5);
+		rotate: 0.6deg;
+		transition:
+			translate 200ms var(--ease-spring),
+			box-shadow 200ms;
+	}
+	.dn-card-index[data-lifted] {
+		translate: 0 -4px;
+		box-shadow: 0 16px 20px -12px rgb(0 0 0 / 0.5);
+	}
+	.dn-card-index[data-size='sm']::before {
+		content: '';
+		position: absolute;
+		left: 50%;
+		top: -0.5625rem;
+		width: 4.625rem;
+		height: 1.125rem;
+		translate: -50% 0;
+		rotate: -2deg;
+		background: color-mix(in oklab, var(--dn-paper-content) 14%, transparent);
+		clip-path: polygon(0 8%, 4% 0, 97% 6%, 100% 0, 99% 100%, 95% 92%, 3% 100%, 0 90%);
+		pointer-events: none;
+	}
+	.dn-card-index[data-size='lg'] {
+		border-radius: 4px;
+		rotate: -0.4deg;
+		box-shadow: 0 40px 80px -20px rgb(0 0 0 / 0.8);
+	}
+	.dn-card-index__head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.625rem;
+		margin-bottom: 0.5625rem;
+		padding-bottom: 0.4375rem;
+		border-bottom: 1.5px solid var(--dn-paper-content);
+	}
+	.dn-card-index[data-size='lg'] .dn-card-index__head {
+		margin-bottom: 0.75rem;
+		padding-bottom: 0.625rem;
+		border-bottom-width: 2px;
+	}
+	@media (prefers-contrast: more) {
+		.dn-card-index::before {
+			display: none;
+		}
+	}
+	@media (forced-colors: active) {
+		.dn-card-index::before {
+			display: none;
+		}
 	}
 
 	/* the diagonal stripe block on a ticket or a tile, in the text colour */

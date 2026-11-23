@@ -35,6 +35,7 @@
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import BarcodeOrnament from '$lib/ui/BarcodeOrnament.svelte';
 	import StatusChip from '$lib/ui/StatusChip.svelte';
+	import Tape from '$lib/ui/Tape.svelte';
 	import VinylSleeve from '$lib/ui/VinylSleeve.svelte';
 
 	interface Props {
@@ -359,9 +360,9 @@
 					<div in:fly={{ x: 24, duration: 300 }}>
 						<div class="dn-deck__top">
 							<p class="dn-deck__tapes">
-								<span class="dn-deck__tape">{current.recommendation_reason}</span>
+								<Tape>{current.recommendation_reason}</Tape>
 								{#if current.is_wildcard}
-									<span class="dn-deck__tape dn-deck__tape--ink">Wildcard</span>
+									<Tape look="ink">Wildcard</Tape>
 								{/if}
 							</p>
 							<div class="dn-deck__count">
@@ -752,36 +753,7 @@
 		margin-left: -0.75rem;
 	}
 
-	/* a strip of tape stuck on the paper, its ends torn */
-	.dn-deck__tape {
-		display: inline-block;
-		padding: 0.4rem 1.1rem;
-		background-color: color-mix(in oklab, var(--dn-action) 88%, transparent);
-		color: var(--dn-action-content);
-		font-family: var(--font-mono);
-		font-size: 0.75rem;
-		font-weight: 700;
-		letter-spacing: 0.18em;
-		text-transform: uppercase;
-		rotate: -2.5deg;
-		box-shadow: 0 1px 3px rgb(0 0 0 / 0.18);
-		clip-path: polygon(
-			0 6%,
-			3% 0,
-			97% 4%,
-			100% 0,
-			99% 50%,
-			100% 100%,
-			96% 94%,
-			2% 100%,
-			0 92%,
-			1.5% 50%
-		);
-	}
-	.dn-deck__tape--ink {
-		background-color: var(--dn-paper-content);
-		color: var(--dn-paper);
-		rotate: 3deg;
+	.dn-deck__tapes > :global([data-look='ink']) {
 		margin-left: -0.25rem;
 	}
 
@@ -966,11 +938,6 @@
 		.dn-deck__tapes {
 			margin-left: -0.375rem;
 		}
-		.dn-deck__tape {
-			padding: 0.3rem 0.75rem;
-			font-size: 0.6875rem;
-			letter-spacing: 0.12em;
-		}
 		.dn-deck__title {
 			font-size: 1.625rem;
 		}
@@ -980,20 +947,6 @@
 		}
 		.dn-deck__band-title {
 			font-size: 1.25rem;
-		}
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.dn-deck__tape {
-			rotate: none;
-		}
-	}
-
-	@media (prefers-contrast: more) {
-		.dn-deck__tape {
-			clip-path: none;
-			box-shadow: none;
-			border: 1px solid currentColor;
 		}
 	}
 </style>

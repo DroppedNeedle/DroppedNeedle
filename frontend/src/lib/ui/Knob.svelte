@@ -7,7 +7,9 @@
 	click returns it to `resetTo` when one is given. Over the face, the
 	mouse wheel turns it one arrow-key step per notch. `label` is its
 	accessible name and is printed under it with the value, which `format`
-	writes for the readout and for screen readers.
+	writes for the readout and for screen readers. `xs` (58px) sits on a
+	small plate; `lit="sound"` turns the tick and the lit dots plum, for the
+	controls of what was found by sound.
 -->
 <script lang="ts">
 	interface Props {
@@ -28,7 +30,9 @@
 		dots?: number;
 		/** Numbers printed beside the scale, at a value each. */
 		marks?: { at: number; text: string }[];
-		size?: 'sm' | 'lg';
+		size?: 'xs' | 'sm' | 'lg';
+		/** The colour of the tick and the lit dots. */
+		lit?: 'action' | 'sound';
 		format?: (value: number) => string;
 		disabled?: boolean;
 		/** Says why it is disabled, as a tooltip. */
@@ -50,6 +54,7 @@
 		dots = 11,
 		marks = [],
 		size = 'lg',
+		lit = 'action',
 		format = (v: number) => String(v),
 		disabled = false,
 		disabledReason,
@@ -192,18 +197,20 @@
 	}
 
 	const text = $derived(format(clamped));
+	const dotRadius = { xs: 3.4, sm: 2.8, lg: 2.1 };
 </script>
 
 <div
 	class="dn-knob {className}"
 	data-size={size}
+	data-lit={lit}
 	class:is-disabled={disabled}
 	title={disabled ? disabledReason : undefined}
 >
 	<div class="dn-knob__face" {onwheel}>
 		<svg class="dn-knob__scale" viewBox="0 0 120 120" aria-hidden="true">
 			{#each scale as dot (dot.key)}
-				<circle cx={dot.x} cy={dot.y} r={size === 'lg' ? 2.1 : 2.8} class:is-lit={dot.lit} />
+				<circle cx={dot.x} cy={dot.y} r={dotRadius[size]} class:is-lit={dot.lit} />
 			{/each}
 			{#each printed as mark (mark.key)}
 				<text x={mark.x} y={mark.y} text-anchor="middle" dominant-baseline="central"
@@ -257,6 +264,12 @@
 	.dn-knob[data-size='sm'] {
 		--knob-size: 5rem;
 	}
+	.dn-knob[data-size='xs'] {
+		--knob-size: 3.625rem;
+	}
+	.dn-knob[data-lit='sound'] {
+		--knob-lit: var(--color-secondary);
+	}
 
 	.dn-knob__face {
 		position: relative;
@@ -286,6 +299,9 @@
 	}
 	.dn-knob[data-size='sm'] .dn-knob__scale text {
 		font-size: 11px;
+	}
+	.dn-knob[data-size='xs'] .dn-knob__scale text {
+		font-size: 14px;
 	}
 
 	/* the dial: always black, like a record, so the acid tick reads on both decks */
@@ -333,6 +349,10 @@
 		border-radius: 9999px;
 		background: var(--dn-action);
 		box-shadow: 0 0 0.4rem color-mix(in oklab, var(--dn-action) 60%, transparent);
+	}
+	.dn-knob[data-lit='sound'] .dn-knob__tick {
+		background: var(--dn-sound);
+		box-shadow: 0 0 0.4rem color-mix(in oklab, var(--dn-sound) 60%, transparent);
 	}
 	.dn-knob__cap {
 		position: absolute;
