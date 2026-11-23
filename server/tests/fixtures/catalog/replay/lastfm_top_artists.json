@@ -1,0 +1,31 @@
+{
+  "topartists": {
+    "artist": [
+      {
+        "name": "Bryn",
+        "mbid": "00000000-0000-4000-8000-00000000000b",
+        "playcount": "120",
+        "@attr": { "rank": "1" }
+      },
+      {
+        "name": "Dace",
+        "mbid": "00000000-0000-4000-8000-00000000000d",
+        "playcount": "45",
+        "@attr": { "rank": "2" }
+      },
+      {
+        "name": "Hollis",
+        "mbid": "",
+        "playcount": "12",
+        "@attr": { "rank": "3" }
+      }
+    ],
+    "@attr": {
+      "user": "replay",
+      "page": "1",
+      "perPage": "50",
+      "totalPages": "1",
+      "total": "3"
+    }
+  }
+}

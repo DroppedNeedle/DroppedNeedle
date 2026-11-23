@@ -10,6 +10,7 @@ mod discover_page;
 mod discover_pool;
 mod discover_queue;
 mod discover_record;
+mod discover_replay;
 mod discover_taste;
 mod home_page;
 mod kept_facts;

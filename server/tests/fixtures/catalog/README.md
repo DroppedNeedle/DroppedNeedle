@@ -33,3 +33,9 @@ answers in `tests/fixtures/audiodb` and `tests/fixtures/wikidata`.
 Special:EntityData's answer for an unknown id was never recorded: the fake
 answers a path it does not know with a bare 404, which the client reads as
 absence without decoding the body.
+
+`replay/` is made up, for the Discover replay (`tests/catalog/discover_replay.rs`):
+`listens/2026/*.jsonl` is a short timeline in the shape of a ListenBrainz
+export's month files, zipped by the scoring test, and `lastfm_top_artists.json`
+is a Last.fm `user.getTopArtists` answer in the shape the replay reads for a
+Last.fm-only person. No artist, id or count in them is real.

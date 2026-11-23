@@ -17,6 +17,7 @@ pub mod logs;
 pub mod platform;
 pub mod plugin_fakes;
 pub mod probe;
+pub mod replay;
 pub mod sources;
 
 pub use app::{Login, TestApp};
