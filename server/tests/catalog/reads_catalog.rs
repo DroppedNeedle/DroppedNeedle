@@ -213,9 +213,10 @@ fn routes() -> Vec<Route> {
             json!({"release-group-count": 0, "release-group-offset": 0, "release-groups": []})
                 .to_string(),
         ),
+        // Only the band's releases: every other artist browses as missing.
         route(
             "/mb/ws/2/release".to_owned(),
-            Some(("inc", "artist-credits")),
+            Some(("artist", BAND)),
             fixture("mb_artist_releases_band.json"),
         ),
         route(
@@ -1020,7 +1021,7 @@ async fn artist_sections_use_listenbrainz_then_lastfm() {
             "requested": false,
             "cover_url": format!("/api/v3/covers/release-group/{DUMMY_GROUP}?size=500")
         }]),
-        "no ListenBrainz albums for the similar artists, so Last.fm's fill in"
+        "no MusicBrainz albums for the similar artists, so Last.fm's fill in"
     );
     assert_eq!(similar_albums["source"], "lastfm", "{similar_albums}");
 
