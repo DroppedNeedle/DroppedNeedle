@@ -1,5 +1,4 @@
-//! App connect: a native app signs in through the browser and gets an
-//! ordinary app password for the signed-in user.
+//! App Connect signs a client into the native or compatibility API through the browser.
 //!
 //! The flow is the OAuth 2.0 authorization code grant with PKCE for native
 //! apps (RFC 6749, RFC 7636, RFC 8252), so standard app libraries such as
@@ -18,10 +17,9 @@
 //!    request's `error=access_denied` address.
 //! 3. The app trades the code and its verifier at
 //!    `POST /api/v3/auth/app-connect/token` (the token endpoint: public, a
-//!    form body, the RFC's answers) for an app password, named
-//!    `<app name> · <device>`. One with the same name of the same user is
-//!    revoked in the same transaction, so signing in again replaces the old
-//!    password instead of piling up new ones.
+//!    form body, the RFC's answers) for the registered credential. App
+//!    passwords use the display label for replacement. Native device sessions
+//!    replace the same user's session for the same client id and device name.
 //!
 //! Only the apps in the `app_connect` settings section may ask, each at
 //! exactly its listed return addresses; with none listed the page's routes
@@ -44,13 +42,14 @@ pub mod token;
 
 use std::sync::Arc;
 
-use droppedneedle_kernel::runtime_config::sections::AppConnect;
+use droppedneedle_kernel::runtime_config::sections::{AppConnect, AppConnectCredentialKind};
 use droppedneedle_kernel::runtime_config::{Live, Plain};
 
+use crate::session::tokens;
 use crate::users::services::{self, MAX_ACTIVE_APP_PASSWORDS};
 use crate::users::{Principal, UsersDeps, UsersError};
 use codes::{Grant, PendingCodes};
-use request::{ConnectRequest, Rejection, check};
+use request::{Checked, ConnectRequest, Rejection, check};
 use routes::{AppConnectRedirect, AppConnectRequestView};
 use token::{
     AppConnectTokenErrorCode, AppConnectTokenRequest, AppConnectTokenResponse, AppConnectTokenType,
@@ -74,8 +73,10 @@ pub enum AppConnectError {
         /// The error address for the app.
         redirect: String,
     },
-    /// The user holds the most app passwords allowed under other names.
-    AtLimit,
+    /// The user holds the most credentials of this kind allowed for other devices.
+    AtLimit(AppConnectCredentialKind),
+    /// Access changed between displaying the consent page and approving it.
+    ConsentChanged,
     /// The section does not read; nothing is allowed until it is saved.
     SettingsUnreadable,
     /// The caller, the account store or the code source failed.
@@ -137,13 +138,36 @@ impl AppConnectService {
         self.settings.read()
     }
 
-    /// Live app passwords of `user_id` under names other than `name`.
-    async fn others(&self, user_id: &str, name: &str) -> Result<u64, UsersError> {
-        let own = services::list_app_passwords(&self.users, user_id)
-            .await?
-            .app_passwords;
-        let others = own.iter().filter(|row| row.name != name).count();
-        Ok(u64::try_from(others).unwrap_or(u64::MAX))
+    /// Whether allowing replaces a credential and whether the user's pool is full.
+    async fn credential_status(
+        &self,
+        user_id: &str,
+        checked: &Checked,
+    ) -> Result<(bool, bool), UsersError> {
+        match checked.client.credential_kind {
+            AppConnectCredentialKind::AppPassword => {
+                let passwords = services::list_app_passwords(&self.users, user_id)
+                    .await?
+                    .app_passwords;
+                let others = passwords
+                    .iter()
+                    .filter(|row| row.name != checked.password_name)
+                    .count();
+                Ok((
+                    others < passwords.len(),
+                    u64::try_from(others).unwrap_or(u64::MAX) >= MAX_ACTIVE_APP_PASSWORDS,
+                ))
+            }
+            AppConnectCredentialKind::DeviceSession => self
+                .users
+                .sessions
+                .connected_device_status(
+                    user_id,
+                    request::device_key(&checked.client.client_id, checked.device_name.as_deref()),
+                )
+                .await
+                .map_err(services::store_internal),
+        }
     }
 
     /// What `request` asks of `caller`, for the confirmation page.
@@ -154,42 +178,38 @@ impl AppConnectService {
     ) -> Result<AppConnectRequestView, AppConnectError> {
         let apps = self.apps().ok_or(AppConnectError::SettingsUnreadable)?;
         let checked = check(&apps, request)?;
-        let own = services::list_app_passwords(&self.users, caller.user_id())
-            .await?
-            .app_passwords;
-        let replaces_existing = own.iter().any(|row| row.name == checked.password_name);
-        let others = own
-            .iter()
-            .filter(|row| row.name != checked.password_name)
-            .count();
+        let (replaces_existing, at_limit) =
+            self.credential_status(caller.user_id(), &checked).await?;
         Ok(AppConnectRequestView {
             client_id: checked.client.client_id.clone(),
             client_name: checked.client.name.clone(),
             device_name: checked.device_name.clone(),
             password_name: checked.password_name.clone(),
             replaces_existing,
-            at_limit: u64::try_from(others).unwrap_or(u64::MAX) >= MAX_ACTIVE_APP_PASSWORDS,
+            at_limit,
+            credential_kind: checked.client.credential_kind,
             cancel_redirect: checked.cancel_redirect(),
         })
     }
 
     /// Allow `request` for `caller`: issue its one-time code and answer the
     /// address that hands it to the app. Needs a standard session, as
-    /// creating an app password by hand does.
+    /// creating a credential by hand does.
     pub async fn allow(
         &self,
         caller: &Principal,
         request: &ConnectRequest,
+        confirmed_kind: AppConnectCredentialKind,
     ) -> Result<AppConnectRedirect, AppConnectError> {
         caller.require_standard_session()?;
         let apps = self.apps().ok_or(AppConnectError::SettingsUnreadable)?;
         let checked = check(&apps, request)?;
-        if self
-            .others(caller.user_id(), &checked.password_name)
-            .await?
-            >= MAX_ACTIVE_APP_PASSWORDS
-        {
-            return Err(AppConnectError::AtLimit);
+        if confirmed_kind != checked.client.credential_kind {
+            return Err(AppConnectError::ConsentChanged);
+        }
+        let (_, at_limit) = self.credential_status(caller.user_id(), &checked).await?;
+        if at_limit {
+            return Err(AppConnectError::AtLimit(confirmed_kind));
         }
         let code = self
             .codes
@@ -200,6 +220,8 @@ impl AppConnectService {
                     redirect_uri: checked.redirect_uri.clone(),
                     code_challenge: checked.code_challenge.clone(),
                     password_name: checked.password_name.clone(),
+                    credential_kind: confirmed_kind,
+                    device_name: checked.device_name.clone(),
                 },
                 self.users.clock.now_unix(),
             )
@@ -214,7 +236,7 @@ impl AppConnectService {
         })
     }
 
-    /// Trade a code and its verifier for an app password of the user who
+    /// Trade a code and its verifier for the approved credential of the user who
     /// allowed it. A code the app may hold is taken only once the section
     /// reads and the app is listed; after that it is gone, whatever the
     /// answer.
@@ -240,9 +262,12 @@ impl AppConnectService {
             tracing::debug!("app connect trade refused: unknown, used, expired or mismatched code");
             return Err(TokenStepError::Refused(InvalidGrant));
         };
-        // The admin may have taken the address off the list since.
-        if apps.client(&trade.client_id, &trade.redirect_uri).is_none() {
-            tracing::debug!("app connect trade refused: the address is no longer listed");
+        // Registration access and callback may have changed since approval.
+        if apps
+            .client(&trade.client_id, &trade.redirect_uri)
+            .is_none_or(|client| client.credential_kind != redeemed.credential_kind())
+        {
+            tracing::debug!("app connect trade refused: the registration changed");
             return Err(TokenStepError::Refused(InvalidGrant));
         }
         let user = self
@@ -255,12 +280,32 @@ impl AppConnectService {
             tracing::debug!("app connect trade refused: the user is gone");
             return Err(TokenStepError::Refused(InvalidGrant));
         };
-        let Some(minted) = services::replace_app_password(&self.users, &redeemed).await? else {
-            tracing::debug!("app connect trade refused: app-password limit reached");
-            return Err(TokenStepError::Refused(InvalidGrant));
+        let (access_token, expires_in) = match redeemed.credential_kind() {
+            AppConnectCredentialKind::AppPassword => {
+                let Some(minted) = services::replace_app_password(&self.users, &redeemed).await?
+                else {
+                    return Err(TokenStepError::Refused(InvalidGrant));
+                };
+                (minted.secret, None)
+            }
+            AppConnectCredentialKind::DeviceSession => {
+                let token = tokens::mint_token().map_err(|error| UsersError::internal(&error))?;
+                let stored = self
+                    .users
+                    .sessions
+                    .replace_connected_device(&redeemed, &tokens::hash_token(&token))
+                    .await
+                    .map_err(services::store_internal)?;
+                if !stored {
+                    return Err(TokenStepError::Refused(InvalidGrant));
+                }
+                (token, Some(tokens::SESSION_MAX_AGE_SECS))
+            }
         };
         Ok(AppConnectTokenResponse {
-            access_token: minted.secret,
+            access_token,
+            credential_kind: redeemed.credential_kind(),
+            expires_in,
             token_type: AppConnectTokenType::Bearer,
             username: user.username_display.or(user.username).unwrap_or(user.id),
         })

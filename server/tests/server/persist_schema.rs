@@ -453,7 +453,43 @@ const SHIPPED: &[(&str, &str)] = &[
         "0170_playlist_syncs.sql",
         "b20ac5bcccd90548022449d986bf89a8d9f28fe740f5e2a295e8fb474edfb509",
     ),
+    (
+        "0171_app_connect_sessions.sql",
+        "45ac54c0a284d83543aa4461071aed1a25b3e1d23e7a976fcd18b5352ac266fd",
+    ),
 ];
+
+/// Upgrading an instance keeps existing sessions valid and outside the
+/// replacement namespace reserved for newly connected apps.
+#[test]
+fn app_connect_upgrade_preserves_existing_sessions() {
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 171)
+        .unwrap();
+    let conn = migrate(
+        Connection::open_in_memory().unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    conn.execute_batch(
+        "INSERT INTO auth_users (id, display_name, created_at) VALUES ('u', 'Listener', 1);
+         INSERT INTO auth_tokens
+             (id, user_id, token_hash, issued_at, expires_at, last_seen_at, session_kind, label)
+         VALUES ('browser', 'u', 'browser-hash', 1, 100, 1, 'standard', NULL),
+                ('phone',   'u', 'phone-hash',   1, 100, 1, 'companion', 'My Player');",
+    )
+    .unwrap();
+    let conn = migrate(conn, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    assert_eq!(
+        texts(
+            &conn,
+            "SELECT token_hash FROM auth_tokens WHERE revoked = 0 AND app_connect_key IS NULL ORDER BY id",
+            []
+        ),
+        ["browser-hash", "phone-hash"]
+    );
+}
 
 /// The files in `server/migrations/`, by name.
 fn migration_files() -> Vec<(String, Vec<u8>)> {

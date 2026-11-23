@@ -358,24 +358,38 @@ pub const MAX_APP_CONNECT_REDIRECTS: usize = 4;
 /// Longest app name, in characters.
 pub const MAX_APP_CONNECT_NAME_LEN: usize = 48;
 
-/// One native app that may ask for an app password through the browser.
+/// Which credential a registered app may receive after browser approval.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AppConnectCredentialKind {
+    /// An app password for compatibility clients.
+    #[default]
+    AppPassword,
+    /// A companion bearer session for the native API.
+    DeviceSession,
+}
+
+/// One app that may request a credential through the browser.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 pub struct AppConnectClient {
     /// What the app sends as `client_id`: 1-64 of `a-z`, `0-9`, `.`, `_`
     /// and `-`, starting with a letter or digit.
     pub client_id: String,
-    /// The name the confirmation page shows and the app password is
-    /// named after, such as `My Player`. Never taken from the request.
+    /// The name the confirmation page shows and the credential's label
+    /// starts with, such as `My Player`. Never taken from the request.
     pub name: String,
     /// The addresses the browser may hand the result to, matched exactly:
     /// a private-use scheme named after a domain the app's maker owns
     /// (`com.example.player:/connect`, RFC 8252 section 7.1) or an `https`
     /// address. Up to four.
     pub redirect_uris: Vec<String>,
+    /// Credential shown at consent and issued after the PKCE exchange.
+    #[serde(default)]
+    pub credential_kind: AppConnectCredentialKind,
 }
 
-/// Native app sign-in ("app connect"): the apps that may get an app
-/// password for the signed-in user after the user confirms it in the
+/// Native app sign-in ("app connect"): the apps that may get a
+/// credential for the signed-in user after the user confirms it in the
 /// browser (OAuth 2.0 authorization code with PKCE, RFC 6749/7636/8252).
 /// Off while the list is empty, which is the default.
 ///
@@ -609,6 +623,7 @@ mod tests {
         AppConnectClient {
             client_id: client_id.to_owned(),
             name: name.to_owned(),
+            credential_kind: AppConnectCredentialKind::AppPassword,
             redirect_uris: redirects.iter().map(|&uri| uri.to_owned()).collect(),
         }
     }

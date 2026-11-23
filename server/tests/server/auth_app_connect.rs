@@ -1,10 +1,10 @@
 //! App connect: a native app signs in through the browser and trades a
 //! one-time code and its PKCE verifier at an OAuth 2.0 token endpoint for
-//! an app password.
+//! a registered client's configured credential.
 //!
 //! The journey runs the whole flow through `create_app` with a cookie
 //! session, the origin check and the request limiter, and signs in to
-//! Subsonic with the result. The refusal table drives the routes over the
+//! Subsonic or the native API with the result. The refusal table drives the routes over the
 //! auth rig and its manual clock.
 
 use axum::{
@@ -18,15 +18,16 @@ use droppedneedle_auth::app_connect::{AppConnectService, CODE_TTL_SECS};
 use droppedneedle_auth::compat_auth::prod::CompatPasswords;
 use droppedneedle_auth::compat_auth::subsonic::{SubsonicParams, authenticate};
 use droppedneedle_auth::session::store::SessionKind;
+use droppedneedle_auth::session::tokens::SESSION_MAX_AGE_SECS;
 use droppedneedle_auth::users::Role;
 use droppedneedle_kernel::mount::{Routes, routes};
-use droppedneedle_kernel::runtime_config::sections::{AppConnect, AppConnectClient};
+use droppedneedle_kernel::runtime_config::sections::AppConnect;
 use ring::rand::{SecureRandom as _, SystemRandom};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tower::ServiceExt as _;
 
-use crate::auth_e2e::{E2e, HOST, setup_admin};
+use crate::auth_e2e::{E2e, HOST, login, set_cookie_token, setup_admin};
 use crate::common::auth::{AuthRig, test_principal, with_test_principal};
 
 const CLIENT: &str = "my-player";
@@ -47,13 +48,13 @@ fn pkce() -> (String, String) {
 }
 
 fn apps() -> AppConnect {
-    AppConnect {
-        clients: vec![AppConnectClient {
-            client_id: CLIENT.to_owned(),
-            name: "My Player".to_owned(),
-            redirect_uris: vec![REDIRECT.to_owned()],
-        }],
-    }
+    // Instances configured before credential kinds existed stored exactly these fields.
+    serde_json::from_value(json!({ "clients": [{
+        "client_id": CLIENT,
+        "name": "My Player",
+        "redirect_uris": [REDIRECT],
+    }] }))
+    .unwrap()
 }
 
 fn connect_request(challenge: &str) -> Value {
@@ -66,6 +67,14 @@ fn connect_request(challenge: &str) -> Value {
         "state": STATE,
         "name": "Pixel 9",
     })
+}
+
+/// The page's Allow body for an app-password app: the request and the
+/// kind it showed.
+fn authorize_body(challenge: &str) -> Value {
+    let mut body = connect_request(challenge);
+    body["confirmed_credential_kind"] = json!("app_password");
+    body
 }
 
 fn encode(value: &str) -> String {
@@ -94,11 +103,15 @@ fn request_uri(request: &Value) -> String {
 
 /// The form an app sends to trade `code`.
 fn trade_form(code: &str, verifier: &str) -> String {
+    client_trade_form(CLIENT, code, verifier)
+}
+
+fn client_trade_form(client_id: &str, code: &str, verifier: &str) -> String {
     form(&[
         ("grant_type", "authorization_code"),
         ("code", code),
         ("redirect_uri", REDIRECT),
-        ("client_id", CLIENT),
+        ("client_id", client_id),
         ("code_verifier", verifier),
     ])
 }
@@ -215,6 +228,7 @@ async fn journey_app_connect_through_the_app() {
         json!({
             "client_id": CLIENT,
             "client_name": "My Player",
+            "credential_kind": "app_password",
             "device_name": "Pixel 9",
             "password_name": "My Player · Pixel 9",
             "replaces_existing": false,
@@ -229,7 +243,7 @@ async fn journey_app_connect_through_the_app() {
         "POST",
         AUTHORIZE,
         &[("cookie", &cookie), ("origin", "http://evil.test")],
-        Payload::Json(connect_request(&challenge)),
+        Payload::Json(authorize_body(&challenge)),
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
@@ -240,7 +254,7 @@ async fn journey_app_connect_through_the_app() {
             "POST",
             AUTHORIZE,
             &signed_in,
-            Payload::Json(connect_request(&challenge)),
+            Payload::Json(authorize_body(&challenge)),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{allowed}");
@@ -257,6 +271,8 @@ async fn journey_app_connect_through_the_app() {
     assert_eq!(headers["pragma"], "no-cache");
     assert_eq!(minted["token_type"], json!("Bearer"));
     assert_eq!(minted["username"], json!("e2e-owner"));
+    assert!(minted.get("expires_in").is_none());
+    assert_eq!(minted["credential_kind"], json!("app_password"));
     let first = minted["access_token"].as_str().unwrap().to_owned();
 
     // A code trades once.
@@ -371,7 +387,7 @@ impl Rig {
                 user_id,
                 "POST",
                 AUTHORIZE,
-                Payload::Json(connect_request(challenge)),
+                Payload::Json(authorize_body(challenge)),
             )
             .await;
         assert_eq!(status, StatusCode::OK, "{body}");
@@ -451,8 +467,10 @@ async fn app_connect_refusals() {
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["error"]["details"], Value::Null, "{body}");
+    let mut unlisted_allow = unlisted;
+    unlisted_allow["confirmed_credential_kind"] = json!("app_password");
     let (status, _) = rig
-        .call(&molly.id, "POST", AUTHORIZE, Payload::Json(unlisted))
+        .call(&molly.id, "POST", AUTHORIZE, Payload::Json(unlisted_allow))
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
@@ -475,7 +493,7 @@ async fn app_connect_refusals() {
         "POST",
         AUTHORIZE,
         &[],
-        Payload::Json(connect_request(&challenge)),
+        Payload::Json(authorize_body(&challenge)),
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
@@ -526,12 +544,337 @@ async fn app_connect_refusals() {
             &molly.id,
             "POST",
             AUTHORIZE,
-            Payload::Json(connect_request(&challenge)),
+            Payload::Json(authorize_body(&challenge)),
         )
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(
         rig.trade(trade_form("any", &verifier)).await,
         refused("invalid_client")
+    );
+}
+
+fn native_apps(client_ids: &[&str]) -> AppConnect {
+    // Use the settings wire representation an instance admin saves.
+    let clients: Vec<_> = client_ids
+        .iter()
+        .map(|id| {
+            json!({
+                "client_id": id,
+                "name": "My Player",
+                "redirect_uris": [REDIRECT],
+                "credential_kind": "device_session",
+            })
+        })
+        .collect();
+    serde_json::from_value(json!({ "clients": clients })).unwrap()
+}
+
+/// Follow the handoff and return the bearer header exactly as a native client would use it.
+async fn native_bearer(app: &Router, browser: &[(&str, &str)], client_id: &str) -> String {
+    let (verifier, challenge) = pkce();
+    let mut request = connect_request(&challenge);
+    request["client_id"] = json!(client_id);
+    let (status, view, _) = send(
+        app.clone(),
+        "GET",
+        &request_uri(&request),
+        browser,
+        Payload::None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    assert_eq!(view["credential_kind"], "device_session");
+    request["confirmed_credential_kind"] = view["credential_kind"].clone();
+    let (status, allowed, headers) = send(
+        app.clone(),
+        "POST",
+        AUTHORIZE,
+        browser,
+        Payload::Json(request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers["cache-control"], "no-store");
+    let redirect = allowed["redirect"].as_str().expect("redirect");
+    assert_eq!(param(redirect, "state").as_deref(), Some(STATE));
+    let code = param(redirect, "code").expect("code in redirect");
+    let (status, token, headers) = send(
+        app.clone(),
+        "POST",
+        TOKEN,
+        &[],
+        Payload::Form(client_trade_form(client_id, &code, &verifier)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers["cache-control"], "no-store");
+    assert_eq!(headers["pragma"], "no-cache");
+    assert_eq!(token["token_type"], "Bearer");
+    assert_eq!(token["expires_in"], SESSION_MAX_AGE_SECS);
+    assert_eq!(token["credential_kind"], "device_session");
+    format!(
+        "Bearer {}",
+        token["access_token"].as_str().expect("access token")
+    )
+}
+
+#[tokio::test]
+async fn journey_app_connect_device_session() {
+    const SECOND: &str = "another-player";
+    let (e2e, clock) = E2e::with_manual_clock("native-app-connect").await;
+    let app = e2e.router();
+    let (_, session) = setup_admin(app.clone(), "owner", "owner-password-1234", "bearer").await;
+    let admin_bearer = format!("Bearer {}", session.as_str().unwrap());
+    let admin = [("authorization", admin_bearer.as_str())];
+    let (status, listener, _) = send(
+        app.clone(),
+        "POST",
+        "/api/v3/admin/users",
+        &admin,
+        Payload::Json(json!({"username": "listener", "password": "listener-password-1234"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, _, headers) =
+        login(app.clone(), "listener", "listener-password-1234", "cookie").await;
+    assert_eq!(status, StatusCode::OK);
+    let cookie = format!(
+        "droppedneedle_sid={}",
+        set_cookie_token(&headers).expect("cookie")
+    );
+    let browser = [("cookie", cookie.as_str()), ("origin", ORIGIN)];
+    e2e.store
+        .save_blocking(native_apps(&[CLIENT, SECOND]))
+        .unwrap();
+
+    // A manually minted session can have exactly the same visible label.
+    let (status, manual, _) = send(
+        app.clone(),
+        "POST",
+        "/api/v3/auth/device-sessions",
+        &browser,
+        Payload::Json(json!({"label": "My Player · Pixel 9"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let manual = format!("Bearer {}", manual["token"].as_str().unwrap());
+
+    // Same display name and device name across two separate registrations.
+    let first = native_bearer(&app, &browser, CLIENT).await;
+    // These are separate sign-ins. Allow the per-address budget to refill
+    // between them, as it would while a person opens the next app.
+    clock.advance(3_000);
+    let second = native_bearer(&app, &browser, SECOND).await;
+    clock.advance(3_000);
+    let replacement = native_bearer(&app, &browser, CLIENT).await;
+    let me = |bearer: String| {
+        let app = app.clone();
+        async move {
+            let (status, body, _) = send(
+                app,
+                "GET",
+                "/api/v3/me",
+                &[("authorization", &bearer)],
+                Payload::None,
+            )
+            .await;
+            (status, body["id"].clone())
+        }
+    };
+    assert_eq!(me(first).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        me(second.clone()).await,
+        (StatusCode::OK, listener["id"].clone())
+    );
+    assert_eq!(
+        me(replacement.clone()).await,
+        (StatusCode::OK, listener["id"].clone())
+    );
+    let (_, listed, _) = send(
+        app.clone(),
+        "GET",
+        "/api/v3/me/app-passwords",
+        &browser,
+        Payload::None,
+    )
+    .await;
+    assert_eq!(listed["app_passwords"], json!([]));
+
+    // Identify the current device session using that device's own token.
+    let device = [("authorization", replacement.as_str())];
+    let (status, _, _) = send(
+        app.clone(),
+        "GET",
+        "/api/v3/admin/users",
+        &device,
+        Payload::None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "the app keeps the listener's role"
+    );
+
+    let (status, listed, _) = send(
+        app.clone(),
+        "GET",
+        "/api/v3/auth/sessions",
+        &device,
+        Payload::None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    let sessions = listed["sessions"].as_array().unwrap();
+    assert_eq!(
+        sessions
+            .iter()
+            .filter(|row| row["kind"] == "companion")
+            .count(),
+        3
+    );
+    let current = sessions.iter().find(|row| row["current"] == true).unwrap();
+    assert_eq!(current["kind"], "companion");
+    let uri = format!("/api/v3/auth/sessions/{}", current["id"].as_str().unwrap());
+    let (status, _, _) = send(
+        app.clone(),
+        "POST",
+        "/api/v3/auth/device-sessions",
+        &device,
+        Payload::Json(json!({"label": "another device"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, _, _) = send(app.clone(), "DELETE", &uri, &admin, Payload::None).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "own-session revocation is scoped to the caller"
+    );
+    let (status, _, _) = send(app.clone(), "DELETE", &uri, &browser, Payload::None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(me(replacement).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(me(second).await.0, StatusCode::OK);
+    assert_eq!(me(manual).await.0, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn app_connect_consent_is_bound_to_the_registered_kind() {
+    let rig = Rig::new("app-connect-credential-kind").await;
+    let user = rig.rig.seed_user("molly", Role::User).await;
+    let (verifier, challenge) = pkce();
+    let password_code = rig.code_for(&user.id, &challenge).await;
+    rig.rig
+        .config
+        .save_blocking(native_apps(&[CLIENT]))
+        .unwrap();
+    assert_eq!(
+        rig.trade(trade_form(&password_code, &verifier)).await,
+        refused("invalid_grant")
+    );
+
+    // A stale confirmation is rejected even when the client ID and
+    // redirect have stayed the same.
+    let mut request = connect_request(&challenge);
+    request["confirmed_credential_kind"] = json!("app_password");
+    let (status, _, _) = send(
+        rig.router(&user.id, SessionKind::Standard),
+        "POST",
+        AUTHORIZE,
+        &[],
+        Payload::Json(request.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    request["confirmed_credential_kind"] = json!("device_session");
+    let (status, _, _) = send(
+        rig.router(&user.id, SessionKind::Companion),
+        "POST",
+        AUTHORIZE,
+        &[],
+        Payload::Json(request.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, allowed) = rig
+        .call(&user.id, "POST", AUTHORIZE, Payload::Json(request))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let code = param(allowed["redirect"].as_str().unwrap(), "code").unwrap();
+    rig.rig.config.save_blocking(apps()).unwrap();
+    assert_eq!(
+        rig.trade(trade_form(&code, &verifier)).await,
+        refused("invalid_grant")
+    );
+    assert!(rig.live_names(&user.id).await.is_empty());
+}
+
+/// The consent view reports the cap, but grants already issued still have to
+/// obey it when their token trades arrive together.
+#[tokio::test]
+async fn app_connect_device_session_limit() {
+    let rig = Rig::new("app-connect-device-cap").await;
+    let user = rig.rig.seed_user("molly", Role::User).await;
+    rig.rig
+        .config
+        .save_blocking(native_apps(&[CLIENT]))
+        .unwrap();
+
+    let allow = |name: String| {
+        let rig = &rig;
+        let user_id = &user.id;
+        async move {
+            let (verifier, challenge) = pkce();
+            let mut request = connect_request(&challenge);
+            request["name"] = json!(name);
+            request["confirmed_credential_kind"] = json!("device_session");
+            let (status, allowed) = rig
+                .call(user_id, "POST", AUTHORIZE, Payload::Json(request))
+                .await;
+            assert_eq!(status, StatusCode::OK);
+            let code = param(allowed["redirect"].as_str().unwrap(), "code").unwrap();
+            trade_form(&code, &verifier)
+        }
+    };
+    for n in 0..24 {
+        assert_eq!(
+            rig.trade(allow(format!("Device {n}")).await).await.0,
+            StatusCode::OK
+        );
+    }
+    let a = allow("Next device".to_owned()).await;
+    let b = allow("Another device".to_owned()).await;
+    let (a, b) = tokio::join!(rig.trade(a), rig.trade(b));
+    let (success, failure) = if a.0 == StatusCode::OK {
+        (a, b)
+    } else {
+        (b, a)
+    };
+    assert_eq!(success.0, StatusCode::OK);
+    assert_eq!(failure, refused("invalid_grant"));
+
+    let mut request = connect_request(&pkce().1);
+    let view = |request: Value| {
+        let rig = &rig;
+        let user_id = &user.id;
+        async move {
+            rig.call(user_id, "GET", &request_uri(&request), Payload::None)
+                .await
+        }
+    };
+    request["name"] = json!("Brand new");
+    let (status, page) = view(request.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(page["at_limit"], true);
+    request["name"] = json!("Device 0");
+    let (status, page) = view(request).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(page["replaces_existing"], true);
+    assert_eq!(page["at_limit"], false);
+    assert_eq!(
+        rig.trade(allow("Device 0".to_owned()).await).await.0,
+        StatusCode::OK
     );
 }

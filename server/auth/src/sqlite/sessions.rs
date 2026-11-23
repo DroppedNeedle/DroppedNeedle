@@ -23,6 +23,26 @@ use crate::users::stores::StoreError;
 use droppedneedle_kernel::db::{DbError, Lane};
 use droppedneedle_kernel::ids::IdGenerator;
 
+/// Active App Connect device sessions one account may hold.
+pub(crate) const MAX_CONNECTED_DEVICES: u64 = 25;
+
+fn connected_device_status(
+    conn: &rusqlite::Connection,
+    user_id: &str,
+    key: &str,
+    now: i64,
+) -> rusqlite::Result<(bool, bool)> {
+    let counts = conn.query_row(
+        sql::CONNECTED_DEVICE_COUNTS.text(),
+        rusqlite::params![user_id, key, secs_to_ms(now)],
+        sql::ConnectedDeviceCountsRow::read,
+    )?;
+    Ok((
+        counts.existing,
+        counts.total.saturating_sub(u64::from(counts.existing)) >= MAX_CONNECTED_DEVICES,
+    ))
+}
+
 /// How stale `last_seen_at` must be before a lookup rewrites it (5 minutes).
 const LAST_SEEN_TOUCH_SECS: i64 = 5 * 60;
 
@@ -352,52 +372,108 @@ impl Sessions {
         issued_at: i64,
         expires_at: i64,
     ) -> Result<ManagedSession, StoreError> {
-        let (id, user_id) = (self.ids.new_id(), user_id.to_owned());
-        let (cid, cuser, chash, clabel) = (
-            id.clone(),
-            user_id.clone(),
-            token_hash.to_owned(),
-            label.to_owned(),
-        );
-        let outcome: Result<(), super::WriteError> = self
-            .db
+        let session = self.companion(user_id, label, issued_at, expires_at);
+        self.store_companion(session.clone(), token_hash, None)
+            .await?;
+        Ok(session)
+    }
+
+    fn companion(
+        &self,
+        user_id: &str,
+        label: &str,
+        issued_at: i64,
+        expires_at: i64,
+    ) -> ManagedSession {
+        ManagedSession {
+            id: self.ids.new_id(),
+            user_id: user_id.to_owned(),
+            kind: SessionKind::Companion,
+            label: label.to_owned(),
+            created_at: issued_at,
+            last_seen_at: issued_at,
+            expires_at,
+        }
+    }
+
+    /// Whether this device would replace an existing App Connect session and
+    /// whether other active devices have filled this user's allowance.
+    pub(crate) async fn connected_device_status(
+        &self,
+        user_id: &str,
+        key: String,
+    ) -> Result<(bool, bool), StoreError> {
+        let user_id = user_id.to_owned();
+        let now = self.db.now_unix();
+        self.db
+            .read("auth.sessions.connected_devices", move |conn| {
+                connected_device_status(conn, &user_id, &key, now)
+            })
+            .await
+    }
+
+    /// Replace only the connected device identity bound to the redeemed grant.
+    /// Return false when the other active devices have filled the allowance.
+    pub(crate) async fn replace_connected_device(
+        &self,
+        grant: &crate::app_connect::Redeemed,
+        token_hash: &str,
+    ) -> Result<bool, StoreError> {
+        let now = self.db.now_unix();
+        let session = self.companion(grant.user_id(), grant.password_name(), now, expires_at(now));
+        self.store_companion(session, token_hash, Some(grant.device_key()))
+            .await
+    }
+
+    async fn store_companion(
+        &self,
+        session: ManagedSession,
+        token_hash: &str,
+        key: Option<String>,
+    ) -> Result<bool, StoreError> {
+        let token_hash = token_hash.to_owned();
+        self.db
             .lane()
             .write(Lane::Foreground, "auth.sessions.replace", move |tx| {
+                if let Some(key) = &key {
+                    let (_, full) =
+                        connected_device_status(tx, &session.user_id, key, session.created_at)?;
+                    if full {
+                        return Ok(false);
+                    }
+                    tx.execute(
+                        sql::REVOKE_CONNECTED_DEVICE.text(),
+                        rusqlite::params![session.user_id, key],
+                    )?;
+                } else {
+                    tx.execute(
+                        sql::REVOKE_MANUAL_COMPANIONS.text(),
+                        rusqlite::params![session.user_id, session.label],
+                    )?;
+                }
                 tx.execute(
                     sql::INSERT_COMPANION_TOKEN.text(),
                     rusqlite::params![
-                        cid,
-                        cuser,
-                        chash,
-                        secs_to_ms(issued_at),
-                        secs_to_ms(expires_at),
-                        secs_to_ms(issued_at),
-                        clabel,
+                        session.id,
+                        session.user_id,
+                        token_hash,
+                        secs_to_ms(session.created_at),
+                        secs_to_ms(session.expires_at),
+                        session.label,
+                        key
                     ],
                 )
                 .map_err(op_error)?;
-                // Same transaction: the replace is atomic.
-                tx.execute(
-                    sql::REVOKE_OTHER_COMPANIONS.text(),
-                    rusqlite::params![cuser, clabel, cid],
-                )
-                .map_err(op_error)?;
-                Ok(())
+                Ok(true)
             })
-            .await;
-        match outcome {
-            Ok(()) => Ok(ManagedSession {
-                id,
-                user_id,
-                kind: SessionKind::Companion,
-                label: label.to_owned(),
-                created_at: issued_at,
-                last_seen_at: issued_at,
-                expires_at,
-            }),
-            Err(error) if is_write_conflict(&error) => Err(StoreError::Conflict),
-            Err(error) => Err(store_error(error)),
-        }
+            .await
+            .map_err(|error| {
+                if is_write_conflict(&error) {
+                    StoreError::Conflict
+                } else {
+                    store_error(error)
+                }
+            })
     }
 
     /// Resolve a live token hash to its owner. None for unknown, revoked,

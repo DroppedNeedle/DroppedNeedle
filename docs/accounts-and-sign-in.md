@@ -124,7 +124,7 @@ TOKEN=$(jq -nc '{username: "alice", password: $ENV.DN_PASSWORD, transport: "bear
 unset DN_PASSWORD
 ```
 
-A token lasts 30 days from when it was issued, and there is no refresh. After that the script signs in again, or a new device token is minted. The server keeps only a hash of each token, so a lost token cannot be shown again. Every token shows in Profile > Sessions, and "Sign out everywhere" ends them all. App passwords and app-connect tokens work only on the Subsonic and Jellyfin APIs, never on `/api/v3`.
+A token lasts 30 days from when it was issued, and there is no refresh. After that the script signs in again, or a new device token is minted. The server keeps only a hash of each token, so a lost token cannot be shown again. Every token shows in Profile > Sessions, and "Sign out everywhere" ends them all. Apps registered for the DroppedNeedle API can also request a device session using [browser sign-in](app-connect.md). Apps registered for Subsonic or Jellyfin receive an app password valid only on those compatibility APIs.
 
 ### Wrapped API
 

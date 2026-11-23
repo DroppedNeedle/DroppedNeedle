@@ -1112,7 +1112,7 @@ export interface paths {
         /**
          * Allow an app connect request: issue its one-time code and answer the
          *     address that hands it to the app. Needs a standard session, as creating
-         *     an app password by hand does.
+         *     a credential by hand does.
          */
         post: operations["app_connect_authorize_handler"];
         delete?: never;
@@ -1149,7 +1149,7 @@ export interface paths {
         put?: never;
         /**
          * The OAuth 2.0 token endpoint: trade an app connect code and its PKCE
-         *     verifier for an app password of the user who allowed it. The code is
+         *     verifier for the credential the user approved. The code is
          *     gone after this call, whatever it answers.
          */
         post: operations["app_connect_token_handler"];
@@ -11369,8 +11369,8 @@ export interface components {
             total_listens: number;
         };
         /**
-         * @description Native app sign-in ("app connect"): the apps that may get an app
-         *     password for the signed-in user after the user confirms it in the
+         * @description Native app sign-in ("app connect"): the apps that may get a
+         *     credential for the signed-in user after the user confirms it in the
          *     browser (OAuth 2.0 authorization code with PKCE, RFC 6749/7636/8252).
          *     Off while the list is empty, which is the default.
          *
@@ -11380,16 +11380,23 @@ export interface components {
             /** @description Up to eight apps. */
             clients: components["schemas"]["AppConnectClient"][];
         };
-        /** @description One native app that may ask for an app password through the browser. */
+        /** @description The request and the kind of credential displayed by the consent page. */
+        AppConnectAuthorization: components["schemas"]["ConnectRequest"] & {
+            /** @description The kind the consent page showed; it must still be the app's. */
+            confirmed_credential_kind: components["schemas"]["AppConnectCredentialKind"];
+        };
+        /** @description One app that may request a credential through the browser. */
         AppConnectClient: {
             /**
              * @description What the app sends as `client_id`: 1-64 of `a-z`, `0-9`, `.`, `_`
              *     and `-`, starting with a letter or digit.
              */
             client_id: string;
+            /** @description Credential shown at consent and issued after the PKCE exchange. */
+            credential_kind?: components["schemas"]["AppConnectCredentialKind"];
             /**
-             * @description The name the confirmation page shows and the app password is
-             *     named after, such as `My Player`. Never taken from the request.
+             * @description The name the confirmation page shows and the credential's label
+             *     starts with, such as `My Player`. Never taken from the request.
              */
             name: string;
             /**
@@ -11400,6 +11407,11 @@ export interface components {
              */
             redirect_uris: string[];
         };
+        /**
+         * @description Which credential a registered app may receive after browser approval.
+         * @enum {string}
+         */
+        AppConnectCredentialKind: "app_password" | "device_session";
         /** @description Where "Allow" sends the browser. */
         AppConnectRedirect: {
             /** @description The app's address with the one-time `code` and the `state`. */
@@ -11407,10 +11419,7 @@ export interface components {
         };
         /** @description What the confirmation page shows. */
         AppConnectRequestView: {
-            /**
-             * @description The user holds the most app passwords allowed under other names, so
-             *     allowing would be refused until one is revoked.
-             */
+            /** @description The user must revoke another credential of this kind before connecting. */
             at_limit: boolean;
             /**
              * @description Where "Cancel" sends the browser: the app's address with
@@ -11421,17 +11430,16 @@ export interface components {
             client_id: string;
             /** @description The app's name from the settings. */
             client_name: string;
+            /** @description The kind of credential the user is being asked to approve. */
+            credential_kind: components["schemas"]["AppConnectCredentialKind"];
             /**
              * @description The device name the app reported, cleaned up; absent when it sent
              *     none.
              */
             device_name?: string | null;
-            /** @description The name the new app password will carry. */
+            /** @description The label the new credential will carry. */
             password_name: string;
-            /**
-             * @description The user already has a live app password of that name, which
-             *     allowing replaces.
-             */
+            /** @description Allowing replaces an active credential for this user. */
             replaces_existing: boolean;
         };
         /** @description A refused trade (400). */
@@ -11457,21 +11465,24 @@ export interface components {
             /** @description The return address, exactly as in the authorization request. */
             redirect_uri: string;
         };
-        /** @description The app password a trade mints. */
+        /** @description The credential a trade mints. */
         AppConnectTokenResponse: {
-            /**
-             * @description The app password, shown this once. Subsonic takes it as `apiKey`,
-             *     or as the password next to `username`.
-             */
+            /** @description The credential, shown once. A device session authenticates native API requests with Bearer. */
             access_token: string;
+            /** @description What the credential is: an app password or a native device session. */
+            credential_kind: components["schemas"]["AppConnectCredentialKind"];
+            /**
+             * Format: int64
+             * @description Lifetime in seconds for a native device session.
+             */
+            expires_in?: number | null;
             /** @description Always `Bearer`. */
             token_type: components["schemas"]["AppConnectTokenType"];
             /** @description The login name of the user who allowed it. */
             username: string;
         };
         /**
-         * @description The kind of token handed out. Libraries expect `Bearer`; the token is
-         *     an app password, used the way any app password is.
+         * @description The token type returned by the OAuth token endpoint.
          * @enum {string}
          */
         AppConnectTokenType: "Bearer";
@@ -29604,7 +29615,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ConnectRequest"];
+                "application/json": components["schemas"]["AppConnectAuthorization"];
             };
         };
         responses: {
@@ -29644,7 +29655,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description The user holds the most app passwords allowed */
+            /** @description The account has reached the credential limit or the registered access changed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -29724,7 +29735,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The new app password, shown once */
+            /** @description The new credential, shown once */
             200: {
                 headers: {
                     [name: string]: unknown;

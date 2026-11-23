@@ -3342,13 +3342,13 @@
         "tags": [
           "auth"
         ],
-        "summary": "Allow an app connect request: issue its one-time code and answer the\naddress that hands it to the app. Needs a standard session, as creating\nan app password by hand does.",
+        "summary": "Allow an app connect request: issue its one-time code and answer the\naddress that hands it to the app. Needs a standard session, as creating\na credential by hand does.",
         "operationId": "app_connect_authorize_handler",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ConnectRequest"
+                "$ref": "#/components/schemas/AppConnectAuthorization"
               }
             }
           },
@@ -3396,7 +3396,7 @@
             }
           },
           "409": {
-            "description": "The user holds the most app passwords allowed",
+            "description": "The account has reached the credential limit or the registered access changed",
             "content": {
               "application/json": {
                 "schema": {
@@ -3533,7 +3533,7 @@
         "tags": [
           "auth"
         ],
-        "summary": "The OAuth 2.0 token endpoint: trade an app connect code and its PKCE\nverifier for an app password of the user who allowed it. The code is\ngone after this call, whatever it answers.",
+        "summary": "The OAuth 2.0 token endpoint: trade an app connect code and its PKCE\nverifier for the credential the user approved. The code is\ngone after this call, whatever it answers.",
         "operationId": "app_connect_token_handler",
         "requestBody": {
           "content": {
@@ -3547,7 +3547,7 @@
         },
         "responses": {
           "200": {
-            "description": "The new app password, shown once",
+            "description": "The new credential, shown once",
             "content": {
               "application/json": {
                 "schema": {
@@ -40006,7 +40006,7 @@
       },
       "AppConnect": {
         "type": "object",
-        "description": "Native app sign-in (\"app connect\"): the apps that may get an app\npassword for the signed-in user after the user confirms it in the\nbrowser (OAuth 2.0 authorization code with PKCE, RFC 6749/7636/8252).\nOff while the list is empty, which is the default.\n\nA section of its own, so that saving another one can never empty it.",
+        "description": "Native app sign-in (\"app connect\"): the apps that may get a\ncredential for the signed-in user after the user confirms it in the\nbrowser (OAuth 2.0 authorization code with PKCE, RFC 6749/7636/8252).\nOff while the list is empty, which is the default.\n\nA section of its own, so that saving another one can never empty it.",
         "required": [
           "clients"
         ],
@@ -40020,9 +40020,30 @@
           }
         }
       },
+      "AppConnectAuthorization": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ConnectRequest",
+            "description": "The checked app request."
+          },
+          {
+            "type": "object",
+            "required": [
+              "confirmed_credential_kind"
+            ],
+            "properties": {
+              "confirmed_credential_kind": {
+                "$ref": "#/components/schemas/AppConnectCredentialKind",
+                "description": "The kind the consent page showed; it must still be the app's."
+              }
+            }
+          }
+        ],
+        "description": "The request and the kind of credential displayed by the consent page."
+      },
       "AppConnectClient": {
         "type": "object",
-        "description": "One native app that may ask for an app password through the browser.",
+        "description": "One app that may request a credential through the browser.",
         "required": [
           "client_id",
           "name",
@@ -40033,9 +40054,13 @@
             "type": "string",
             "description": "What the app sends as `client_id`: 1-64 of `a-z`, `0-9`, `.`, `_`\nand `-`, starting with a letter or digit."
           },
+          "credential_kind": {
+            "$ref": "#/components/schemas/AppConnectCredentialKind",
+            "description": "Credential shown at consent and issued after the PKCE exchange."
+          },
           "name": {
             "type": "string",
-            "description": "The name the confirmation page shows and the app password is\nnamed after, such as `My Player`. Never taken from the request."
+            "description": "The name the confirmation page shows and the credential's label\nstarts with, such as `My Player`. Never taken from the request."
           },
           "redirect_uris": {
             "type": "array",
@@ -40045,6 +40070,14 @@
             "description": "The addresses the browser may hand the result to, matched exactly:\na private-use scheme named after a domain the app's maker owns\n(`com.example.player:/connect`, RFC 8252 section 7.1) or an `https`\naddress. Up to four."
           }
         }
+      },
+      "AppConnectCredentialKind": {
+        "type": "string",
+        "description": "Which credential a registered app may receive after browser approval.",
+        "enum": [
+          "app_password",
+          "device_session"
+        ]
       },
       "AppConnectRedirect": {
         "type": "object",
@@ -40065,6 +40098,7 @@
         "required": [
           "client_id",
           "client_name",
+          "credential_kind",
           "password_name",
           "replaces_existing",
           "at_limit",
@@ -40073,7 +40107,7 @@
         "properties": {
           "at_limit": {
             "type": "boolean",
-            "description": "The user holds the most app passwords allowed under other names, so\nallowing would be refused until one is revoked."
+            "description": "The user must revoke another credential of this kind before connecting."
           },
           "cancel_redirect": {
             "type": "string",
@@ -40087,6 +40121,10 @@
             "type": "string",
             "description": "The app's name from the settings."
           },
+          "credential_kind": {
+            "$ref": "#/components/schemas/AppConnectCredentialKind",
+            "description": "The kind of credential the user is being asked to approve."
+          },
           "device_name": {
             "type": [
               "string",
@@ -40096,11 +40134,11 @@
           },
           "password_name": {
             "type": "string",
-            "description": "The name the new app password will carry."
+            "description": "The label the new credential will carry."
           },
           "replaces_existing": {
             "type": "boolean",
-            "description": "The user already has a live app password of that name, which\nallowing replaces."
+            "description": "Allowing replaces an active credential for this user."
           }
         }
       },
@@ -40162,16 +40200,29 @@
       },
       "AppConnectTokenResponse": {
         "type": "object",
-        "description": "The app password a trade mints.",
+        "description": "The credential a trade mints.",
         "required": [
           "access_token",
+          "credential_kind",
           "token_type",
           "username"
         ],
         "properties": {
           "access_token": {
             "type": "string",
-            "description": "The app password, shown this once. Subsonic takes it as `apiKey`,\nor as the password next to `username`."
+            "description": "The credential, shown once. A device session authenticates native API requests with Bearer."
+          },
+          "credential_kind": {
+            "$ref": "#/components/schemas/AppConnectCredentialKind",
+            "description": "What the credential is: an app password or a native device session."
+          },
+          "expires_in": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Lifetime in seconds for a native device session."
           },
           "token_type": {
             "$ref": "#/components/schemas/AppConnectTokenType",
@@ -40185,7 +40236,7 @@
       },
       "AppConnectTokenType": {
         "type": "string",
-        "description": "The kind of token handed out. Libraries expect `Bearer`; the token is\nan app password, used the way any app password is.",
+        "description": "The token type returned by the OAuth token endpoint.",
         "enum": [
           "Bearer"
         ]
