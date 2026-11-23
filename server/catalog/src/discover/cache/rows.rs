@@ -1,11 +1,12 @@
 //! The rows of `catalog_cached_pages` and the clear generation in
 //! `catalog_page_generations`. Reads use the reader pool; writes go
-//! through the writer lane. A save for a user who no longer exists, or
-//! under a generation a clear has since passed, does nothing, so a build
-//! that ends after the account was deleted or the cache was cleared
-//! leaves no row behind.
+//! through the writer lane. A save for a user who no longer exists, under
+//! a generation a clear has since passed, or under a forget count the
+//! person's forget has since passed, does nothing, so a build that ends
+//! after the account was deleted, the cache was cleared or the person
+//! forgot their history leaves no row behind.
 
-use super::{PageKind, StoredPage, Variant};
+use super::{ForgetCounts, Generation, PageKind, StoredPage, Variant};
 use crate::discover::sql;
 use droppedneedle_kernel::db::{Db, DbError, writer::Lane};
 
@@ -67,17 +68,24 @@ pub(super) async fn load(
     Ok((read.generation, row))
 }
 
-/// Keep `row` as the user's page when the cache is still at `generation`.
+/// Keep `row` as the user's page when the cache is still at `generation`;
+/// whether it was written. The forget count is read on the writer, so a
+/// forget's delete and this save are ordered: whichever runs first, a page
+/// built before the forget does not stay.
 pub(super) async fn save(
     db: &Db,
     user_id: &str,
     kind: PageKind,
     row: Row,
-    generation: i64,
-) -> Result<(), DbError> {
+    generation: Generation,
+    forgets: ForgetCounts,
+) -> Result<bool, DbError> {
     let user_id = user_id.to_owned();
     db.write(Lane::Background, "discover.page_cache.save", move |tx| {
-        tx.execute(
+        if !forgets.holds(&user_id, generation) {
+            return Ok(false);
+        }
+        let written = tx.execute(
             sql::SAVE_CACHED_PAGE.text(),
             rusqlite::params![
                 user_id,
@@ -87,10 +95,10 @@ pub(super) async fn save(
                 row.variant.lastfm,
                 row.payload,
                 row.built_at,
-                generation
+                generation.clear
             ],
         )?;
-        Ok(())
+        Ok(written > 0)
     })
     .await
 }
@@ -134,6 +142,25 @@ pub(super) async fn of_kinds(
             built_at: row.built_at.0,
         })
         .collect())
+}
+
+/// Drop every page of one user, moving their forget count on in the same
+/// write, so no save of theirs ordered after it keeps a page.
+pub(super) async fn forget_user(
+    db: &Db,
+    user_id: &str,
+    forgets: ForgetCounts,
+) -> Result<usize, DbError> {
+    let user_id = user_id.to_owned();
+    db.write(
+        Lane::Foreground,
+        "discover.page_cache.forget_user",
+        move |tx| {
+            forgets.bump(&user_id);
+            Ok(tx.execute(sql::FORGET_USER_PAGES.text(), [user_id])?)
+        },
+    )
+    .await
 }
 
 /// Drop every page and move to the next generation, in one transaction.

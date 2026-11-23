@@ -1766,6 +1766,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/discover/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Forget the caller's history: how their plays ended, the albums
+         *     Discover offered them and what came of each, and their saved Discover
+         *     pages, which are built again. Plays, play counts, the library, requests
+         *     and what they told Discover stay. A failure leaves the steps before it
+         *     done; asking again finishes the rest.
+         */
+        delete: operations["forget_history"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/discover/picks/events": {
         parameters: {
             query?: never;
@@ -30044,6 +30067,42 @@ export interface operations {
                 };
             };
             /** @description The change could not be saved */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    forget_history: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Forgotten */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not all of it could be removed; asking again finishes it */
             500: {
                 headers: {
                     [name: string]: unknown;

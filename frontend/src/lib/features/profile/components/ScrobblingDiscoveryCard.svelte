@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Radio, Music, LoaderCircle, ExternalLink, Check, Sparkles } from 'lucide-svelte';
+	import { Radio, Music, LoaderCircle, ExternalLink, Check, Sparkles, Eraser } from 'lucide-svelte';
 	import { ApiError } from '$lib/api/errors';
 	import { getIntegrationStatusQuery } from '$lib/features/home/queries/home.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -22,8 +22,10 @@
 		ScrobblePreferencesUpdate
 	} from '$lib/features/profile/queries/scrobble-preferences.svelte';
 	import type { MusicSource } from '$lib/stores/musicSource';
+	import { createForgetDiscoverHistoryMutation } from '$lib/features/profile/queries/discover-history.svelte';
 	import { scrobbleManager } from '$lib/features/player/state/scrobble.svelte';
 	import Button from '$lib/ui/Button.svelte';
+	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 
@@ -56,6 +58,8 @@
 	const disconnectMutation = createDisconnectMutation();
 	const updatePrefsMutation = createUpdateScrobblePreferencesMutation();
 	const refreshMixMutation = createRefreshPersonalMixMutation();
+	const forgetHistoryMutation = createForgetDiscoverHistoryMutation();
+	let forgetOpen = $state(false);
 
 	const loading = $derived(connectionsQuery.isPending || prefsQuery.isPending);
 
@@ -215,6 +219,18 @@
 					: "Refreshing in the background - we'll let you know when it's ready.";
 		} catch (e) {
 			mixRefreshMessage = errorMessage(e, "Couldn't refresh Your Weekly Mix.");
+		}
+	}
+
+	async function forgetHistory() {
+		try {
+			await forgetHistoryMutation.mutateAsync();
+		} catch (e) {
+			if (e instanceof ApiError && e.status === 429) {
+				throw new Error('Too many tries just now. Try again in a minute.', { cause: e });
+			}
+			// Each step can run again, so asking again finishes the rest.
+			throw new Error('Not all of it was removed. Forget again to finish.', { cause: e });
 		}
 	}
 </script>
@@ -572,8 +588,36 @@
 				{/if}
 			</div>
 		</div>
+
+		<hr class="border-line" />
+
+		<div class="space-y-2 px-1">
+			<span class="text-sm font-semibold">Your history</span>
+			<p class="text-xs text-muted">
+				Kept for you: your plays here, what you told Discover, the picks it showed you and how your
+				plays ended. Backups made earlier still hold what they held.
+			</p>
+			<Button
+				variant="danger-outline"
+				size="display-sm"
+				icon={Eraser}
+				onclick={() => (forgetOpen = true)}
+			>
+				Forget my history
+			</Button>
+		</div>
 	{/if}
 </div>
+
+<ConfirmDialog
+	bind:open={forgetOpen}
+	title="Forget your history?"
+	message="This removes the picks and the play endings. Play counts, your library and what you told Discover stay."
+	confirmLabel="Forget"
+	tone="danger"
+	pending={forgetHistoryMutation.isPending}
+	onconfirm={forgetHistory}
+/>
 
 <style>
 	.sc-icon {

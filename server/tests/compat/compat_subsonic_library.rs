@@ -2115,6 +2115,7 @@ async fn a_busy_read_answers_503_with_retry_after_in_both_protocols() {
     let user = auth.seed_user("alice", Role::User).await;
     auth.seed_app_password(&user.id, SECRET).await;
     let (library, _) = crate::common::library::library_at(&platform);
+    let playback = crate::common::playback_store(&platform);
     let catalog_setup = crate::common::bundles::catalog_setup_at(
         &platform,
         auth.deps.clone(),
@@ -2125,6 +2126,7 @@ async fn a_busy_read_answers_503_with_retry_after_in_both_protocols() {
             LocalCatalog::new(runtime.db().clone()),
         ),
         None,
+        playback.clone(),
     );
     let collections = crate::common::bundles::collections_at(&platform);
     let acquire = crate::common::bundles::acquire_at(
@@ -2139,6 +2141,7 @@ async fn a_busy_read_answers_503_with_retry_after_in_both_protocols() {
         &library,
         &catalog_setup,
         &acquire,
+        playback,
     );
     platform
         .settings
@@ -2304,6 +2307,7 @@ async fn a_busy_playlist_create_writes_nothing_and_asking_again_makes_one() {
         .execute_batch(crate::compat_catalog::LIBRARY)
         .expect("catalog seeds");
     let (library, _) = crate::common::library::library_at(&platform);
+    let playback = crate::common::playback_store(&platform);
     let catalog_setup = crate::common::bundles::catalog_setup_at(
         &platform,
         auth.deps.clone(),
@@ -2314,6 +2318,7 @@ async fn a_busy_playlist_create_writes_nothing_and_asking_again_makes_one() {
             LocalCatalog::new(main.db().clone()),
         ),
         None,
+        playback.clone(),
     );
     let collections = crate::common::bundles::collections_at(&platform);
     let acquire = crate::common::bundles::acquire_at(
@@ -2328,6 +2333,7 @@ async fn a_busy_playlist_create_writes_nothing_and_asking_again_makes_one() {
         &library,
         &catalog_setup,
         &acquire,
+        playback,
     );
     platform
         .settings

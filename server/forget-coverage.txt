@@ -1,0 +1,96 @@
+# What "Forget my history" (catalog/src/discover/forget.rs) does to each
+# table with a column whose name ends in user_id.
+#
+# One table per line: its name, then one of
+#   forgotten     its rows for the person go, in a step of forget.rs
+#   kept          they stay; the reason follows on the line
+#   not_personal  no data about the person, such as a change counter
+#
+# persist_schema.rs fails on a table with such a column that is not named
+# here, and on a name the schema lacks. A table that holds something new
+# about a person adds its line in the change that creates it.
+
+# Discover and playback: what forget removes.
+catalog_cached_pages forgotten
+catalog_discover_activity forgotten
+catalog_discover_picks forgotten
+media_playback_events forgotten
+
+# What the person told Discover.
+catalog_discover_feedback kept: what the person told Discover, listed and undone by them
+
+# Plays and play counts.
+library_play_history kept: plays in the app, which play counts and statistics come from
+library_user_album_plays kept: the album play counts worked out from those plays
+catalog_user_play_marks kept: songs a Jellyfin app marked played or unplayed, which play counts show
+compat_bookmarks kept: positions a music app saved to resume from
+compat_play_queues kept: the play queue a music app saved
+compat_play_queue_items kept: the songs in that saved play queue
+
+# Their library, playlists and marks.
+catalog_user_favorites kept: hearts on artists, albums and songs
+catalog_user_favorite_names kept: the names shown with those hearts
+catalog_user_ratings kept: ratings on artists, albums and songs
+catalog_playlists kept: their playlists
+catalog_playlist_members kept: playlists shared with them
+library_album_looks_wrong kept: albums they marked as looking wrong
+catalog_new_release_seen_marks kept: when they last looked at new releases, for the unseen count
+catalog_event_seen_marks kept: when they last looked at concerts, for the unseen count
+catalog_event_cities kept: the cities they asked for concerts in
+
+# Requests and downloads.
+request_history kept: requests, which the library and the request list need
+request_history_requesters kept: who asked for each request, and from which page
+request_history_dismissals kept: requests they cleared from their list
+acquire_discovery_batches kept: their discovery batches, and the page each came from
+acquire_followed_artists kept: artists they follow
+acquire_held_entries kept: their held downloads and uploads waiting for a decision
+auto_download_approvals kept: artists they asked to auto-download, and an admin's answer
+personal_mix_approvals kept: their Weekly Mix auto-request, and an admin's answer
+download_tasks kept: their downloads
+drop_import_jobs kept: their uploads
+search_jobs kept: their manual album searches
+wanted_watches kept: albums they are waiting for
+user_quotas kept: their request quota
+
+# Account, sign-in, links and settings.
+auth_tokens kept: their sign-ins
+auth_app_passwords kept: their app passwords
+auth_password_recovery_codes kept: their recovery codes
+auth_providers kept: their single sign-on links
+spotify_auth_requests kept: a Spotify sign-in under way, gone when it expires
+user_connections kept: their ListenBrainz, Last.fm and media server links
+user_listening_prefs kept: their scrobbling and listening settings
+compat_user_settings kept: their music app settings
+media_navidrome_folder_preferences kept: the Navidrome folders they chose
+app_section_prefs kept: which Discover and Home sections they switched off
+app_user_appearances kept: their theme and look
+app_custom_css_saves kept: their saved custom CSS
+
+# A change counter.
+download_activity_user_revisions not_personal
+
+# Who did library and admin work.
+library_artist_reconciliation_dismissals kept: who did a library or admin task, for its history
+library_catalog_actions kept: who did a library or admin task, for its history
+library_contribution_callback_tokens kept: who did a library or admin task, for its history
+library_contribution_drafts kept: who did a library or admin task, for its history
+library_custom_edition_manifests kept: who did a library or admin task, for its history
+library_edition_remap_queue kept: who did a library or admin task, for its history
+library_identification_attempts kept: who did a library or admin task, for its history
+library_identify_jobs kept: who did a library or admin task, for its history
+library_identify_reviews kept: who did a library or admin task, for its history
+library_management_baseline_purges kept: who did a library or admin task, for its history
+library_management_exclusions kept: who did a library or admin task, for its history
+library_management_overrides kept: who did a library or admin task, for its history
+library_operation_jobs kept: who did a library or admin task, for its history
+library_publish_operations kept: who did a library or admin task, for its history
+library_publish_resolutions kept: who did a library or admin task, for its history
+library_recycle_bin_empties kept: who did a library or admin task, for its history
+library_scan_confirmed_scopes kept: who did a library or admin task, for its history
+library_scan_runs kept: who did a library or admin task, for its history
+library_track_hand_matches kept: who did a library or admin task, for its history
+library_work_control kept: who did a library or admin task, for its history
+local_album_external_identities kept: who did a library or admin task, for its history
+local_artist_external_identities kept: who did a library or admin task, for its history
+local_entity_source_links kept: who did a library or admin task, for its history

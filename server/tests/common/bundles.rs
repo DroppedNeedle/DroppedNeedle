@@ -204,7 +204,8 @@ pub fn acquire_hosted(
 /// upstreams and no plugins, files read through `library`, and download
 /// readiness from `acquire` when there is one. Image warms and discover's
 /// background work queue on the platform's jobs table, where nothing runs
-/// them.
+/// them. Discover forgets through `playback`, the store the rig's media
+/// bundle shares.
 pub fn catalog_setup_at(
     platform: &Platform,
     users: UsersDeps,
@@ -212,6 +213,7 @@ pub fn catalog_setup_at(
     library: &LibrarySetup,
     collections: CollectionsState,
     acquire: Option<&AcquireSetup>,
+    playback: Arc<droppedneedle_media::playback::sqlite::PlaybackStore>,
 ) -> CatalogSetup {
     let cover_warm = cover_warm_at(&platform.db, platform.clock.clone());
     let catalog = Catalog::new(
@@ -248,6 +250,7 @@ pub fn catalog_setup_at(
             download_readiness,
             cover_warm,
             jobs: JobQueue::new(platform.db.clone(), platform.clock.clone()),
+            playback,
         },
     )
 }
@@ -462,14 +465,16 @@ pub fn media_jobs(platform: &Platform) -> droppedneedle_media::remotes::presence
 
 /// The production media bundle over `platform`, with no ffmpeg: files read
 /// through `library`, remote playlist imports landing in `catalog_setup`'
-/// collections and the personal mix granted through `acquire`. Its workers
-/// are not started.
+/// collections and the personal mix granted through `acquire`, playback
+/// through `playback`, the store `catalog_setup` was built with. Its
+/// workers are not started.
 pub fn media_at(
     platform: &Platform,
     users: UsersDeps,
     library: &LibrarySetup,
     catalog_setup: &CatalogSetup,
     acquire: &AcquireSetup,
+    playback: Arc<droppedneedle_media::playback::sqlite::PlaybackStore>,
 ) -> droppedneedle_media::MediaSetup {
     let outbound = super::closed_outbound();
     let providers = Providers::build(
@@ -493,11 +498,7 @@ pub fn media_at(
         Arc::new(droppedneedle_acquire::requests::mix::MixGrantHooks::new(
             acquire.mixer.clone(),
         )),
-        super::listening_store(platform),
-        droppedneedle_kernel::jobs::queue::JobQueue::new(
-            platform.db.clone(),
-            platform.clock.clone(),
-        ),
+        playback,
         platform.clock.clone(),
     )
     .expect("media bundle builds");

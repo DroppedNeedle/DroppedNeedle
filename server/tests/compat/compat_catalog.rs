@@ -909,6 +909,7 @@ struct Rig {
     platform: Platform,
     library: LibrarySetup,
     catalog_setup: CatalogSetup,
+    playback: std::sync::Arc<droppedneedle_media::playback::sqlite::PlaybackStore>,
     auth: AuthRig,
 }
 
@@ -965,6 +966,7 @@ impl Rig {
             .await;
         let auth = AuthRig::on(&platform);
         let (library, _) = crate::common::library::library_at(&platform);
+        let playback = crate::common::playback_store(&platform);
         let catalog_setup = crate::common::bundles::catalog_setup_at(
             &platform,
             auth.deps.clone(),
@@ -975,6 +977,7 @@ impl Rig {
                 droppedneedle_catalog::local::store::LocalCatalog::new(runtime.db().clone()),
             ),
             None,
+            playback.clone(),
         );
         Self {
             _dir: dir,
@@ -982,6 +985,7 @@ impl Rig {
             platform,
             library,
             catalog_setup,
+            playback,
             auth,
         }
     }
@@ -1350,6 +1354,7 @@ fn jellyfin_router(rig: &Rig, ids: &JellyfinIds) -> axum::Router {
         &rig.library,
         &rig.catalog_setup,
         &acquire,
+        rig.playback.clone(),
     );
     let library = CompatLibrary::from_catalog(&rig.catalog_setup, rig.platform.db.clone());
     rig.platform

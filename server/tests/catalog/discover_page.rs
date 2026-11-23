@@ -20,7 +20,9 @@ use axum::{
     body::Body,
     http::{Request, StatusCode, Uri},
 };
-use droppedneedle_catalog::discover::cache::{PageKind, Timing, UserPageCache, Variant, clear_all};
+use droppedneedle_catalog::discover::cache::{
+    ForgetCounts, PageKind, Timing, UserPageCache, Variant, clear_all,
+};
 use droppedneedle_catalog::discover::listening::shared::{self, Lender};
 use droppedneedle_catalog::discover::listening::{
     AlbumRow, ArtistRow, Ask, LastFmAlbum, ListenedAlbum, ListeningData, PlaylistTrack,
@@ -326,6 +328,7 @@ fn page_cache(rig: &AuthRig) -> UserPageCache<String> {
             fresh_ms: 300_000,
             retry_ms: 300_000,
         },
+        ForgetCounts::default(),
     )
 }
 
@@ -491,6 +494,7 @@ async fn the_page_cache_keeps_what_it_should() {
             fresh_ms: 300_000,
             retry_ms: 300_000,
         },
+        ForgetCounts::default(),
     );
     let loaded = new.load("user-3", &built_for()).await;
     assert!(loaded.is_none(), "an old shape reads as missing");

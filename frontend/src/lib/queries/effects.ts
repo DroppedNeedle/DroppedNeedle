@@ -237,6 +237,14 @@ export const EFFECTS = {
 		{ key: DiscoverQueryKeyFactory.v3.home(userId) }
 	],
 	/**
+	 * The caller forgot their history: everything Discover answered them and
+	 * the home page, saved copies included, since they were built from it.
+	 */
+	discoverHistoryForgotten: (userId: UserId): Sweep[] => [
+		{ key: DiscoverQueryKeyFactory.v3.root(userId), dropSaved: true },
+		{ key: HomeQueryKeyFactory.home(userId), dropSaved: true }
+	],
+	/**
 	 * Where recommendations come from changed (the ListenBrainz switch or the
 	 * caller's primary source): the album and artist shelves and which
 	 * sections can show.
@@ -550,6 +558,7 @@ export const connectionsChanged = fact('connectionsChanged');
 export const sourcePlaylistsChanged = fact('sourcePlaylistsChanged');
 export const spotifyPlaylistsChanged = fact('spotifyPlaylistsChanged');
 export const discoverHomeChanged = fact('discoverHomeChanged');
+export const discoverHistoryForgotten = fact('discoverHistoryForgotten');
 export const recommendationSourcesChanged = fact('recommendationSourcesChanged');
 export const discoveryBatchesChanged = fact('discoveryBatchesChanged');
 export const discoveryBatchChanged = fact('discoveryBatchChanged');

@@ -17,6 +17,7 @@ pub(super) async fn offered(
     surface: MadeFrom,
     offers: Vec<Offer>,
     now_ms: i64,
+    built: super::Built<'_>,
 ) -> Result<(), DbError> {
     let rows: Vec<(String, Offer, String)> = offers
         .into_iter()
@@ -27,7 +28,12 @@ pub(super) async fn offered(
         })
         .collect();
     let user_id = user_id.to_owned();
+    let (generation, forgets) = (built.generation, built.forgets.clone());
     db.write(Lane::Background, "discover.picks.offered", move |tx| {
+        // Read on the writer, so a forget's delete and these rows are ordered.
+        if !forgets.holds(&user_id, generation) {
+            return Ok(());
+        }
         let mut statement = tx.prepare_cached(sql::OFFER_PICK.text())?;
         for (group, offer, evidence) in rows {
             statement.execute(rusqlite::params![

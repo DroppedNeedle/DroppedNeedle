@@ -87,6 +87,7 @@ use droppedneedle_kernel::{
 };
 use droppedneedle_library::wiring::{LibraryServices, LibrarySetup};
 use droppedneedle_media::playback::listening::ListeningStore;
+use droppedneedle_media::playback::sqlite::PlaybackStore;
 use droppedneedle_media::{
     MediaSetup,
     remotes::{
@@ -383,6 +384,14 @@ pub(crate) async fn build_on(
     // The one listening store: discovery, wrapped, the Weekly Mix,
     // playback reporting and the listening settings all hold it.
     let listening = ListeningStore::new(db.clone(), crypto.clone(), p.clock.clone());
+    // The one playback store: media reports and scrobbles through it, and
+    // Discover's forget removes how a person's plays ended through it.
+    let playback = Arc::new(PlaybackStore::new(
+        db.clone(),
+        p.ids.clone(),
+        listening.clone(),
+        queues.queue().clone(),
+    ));
     // Read live so turning ListenBrainz, Last.fm or lyrics on or off takes effect
     // at once.
     let lyrics = OnlineLyrics::new(&providers, config_store.live());
@@ -499,6 +508,7 @@ pub(crate) async fn build_on(
             download_readiness: Arc::new(acquire.readiness.clone()),
             cover_warm,
             jobs: queues.queue().clone(),
+            playback: playback.clone(),
         },
     );
     // Your Weekly Mix: one builder behind the refresh route, the daily
@@ -517,8 +527,7 @@ pub(crate) async fn build_on(
         outbound.ffmpeg.clone(),
         &providers,
         mix_hooks.clone(),
-        listening.clone(),
-        queues.queue().clone(),
+        playback,
         queues.clock(),
     )
     .map_err(stage("media setup"))?;

@@ -64,6 +64,9 @@ pub struct CatalogPorts {
     pub cover_warm: art::warm::CoverWarm,
     /// The jobs table discover queues each person's background work on.
     pub jobs: droppedneedle_kernel::jobs::queue::JobQueue,
+    /// The app's one playback store, for forgetting how a person's plays
+    /// ended.
+    pub playback: Arc<droppedneedle_media::playback::sqlite::PlaybackStore>,
 }
 
 /// The cover and artist image service: local and Cover Art Archive art
@@ -117,6 +120,7 @@ impl CatalogSetup {
             download_readiness,
             cover_warm,
             jobs,
+            playback,
         } = ports;
         let discover = discover::wiring::production_deps(
             discover::wiring::DiscoverInputs {
@@ -132,6 +136,7 @@ impl CatalogSetup {
                 warm: cover_warm,
                 jobs,
                 remotes,
+                playback,
             },
             settings,
         );

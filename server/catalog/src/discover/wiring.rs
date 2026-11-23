@@ -11,7 +11,8 @@ use std::sync::Arc;
 use crate::discover::listening::{ListeningData, ListeningNetwork, LiveNetwork};
 use crate::discover::services::DiscoverDeps;
 use crate::discover::{
-    charts, content, due, home, page, previews, queue, radio, record, scheduler, youtube,
+    cache, charts, content, due, forget, home, page, previews, queue, radio, record, scheduler,
+    youtube,
 };
 use crate::metadata::library::LocalCatalog;
 use crate::metadata::ports::{NoDetails, NoFollows, NoPurchaseLinks};
@@ -21,6 +22,7 @@ use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_media::playback::listening::ListeningStore;
+use droppedneedle_media::playback::sqlite::PlaybackStore;
 use droppedneedle_media::remotes::connections::ConnectionResolver;
 use droppedneedle_providers::{
     Providers,
@@ -57,6 +59,8 @@ pub struct DiscoverInputs {
     pub download_readiness: Arc<dyn content::DownloadReadiness>,
     /// The app's connection resolver, for the user's Jellyfin reads.
     pub remotes: Arc<ConnectionResolver>,
+    /// The playback rows, for forgetting how a person's plays ended.
+    pub playback: Arc<PlaybackStore>,
 }
 
 /// The live listening reads production makes.
@@ -138,6 +142,8 @@ fn deps_with(
         Arc::clone(&inputs.clock),
     ));
     let settings = config.live();
+    // One count per person, shared by every page cache and the forget.
+    let forgets = cache::ForgetCounts::default();
     let queues = Arc::new(queue::LiveQueue::new(queue::QueueInputs {
         listening: listening.clone(),
         db: inputs.db.clone(),
@@ -145,6 +151,7 @@ fn deps_with(
         youtube: youtube.clone(),
         cache: inputs.providers.cache.clone(),
         settings: settings.clone(),
+        forgets: forgets.clone(),
     }));
     let radio = radio::LiveRadio::new(radio::RadioInputs {
         listening: listening.clone(),
@@ -164,6 +171,7 @@ fn deps_with(
         advanced: config.live(),
         integrations: content::IntegrationSettings::new(config, inputs.download_readiness.clone()),
         warm: inputs.warm.clone(),
+        forgets: forgets.clone(),
     });
     let (home, genre_art, charts) = home::wire(home::HomeWiring {
         db: inputs.db.clone(),
@@ -173,6 +181,7 @@ fn deps_with(
         discover: pages.clone(),
         warm: inputs.warm.clone(),
         charts,
+        forgets: forgets.clone(),
     });
     let due = Arc::new(due::Due::new(
         inputs.db.clone(),
@@ -210,6 +219,7 @@ fn deps_with(
         youtube,
         radio: Arc::new(radio),
         record: record::PickRecord::new(inputs.db.clone(), Arc::clone(&inputs.clock)),
+        history: forget::HistoryStores::new(inputs.db.clone(), inputs.playback.clone(), forgets),
     }
 }
 

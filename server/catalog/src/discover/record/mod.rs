@@ -25,6 +25,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::discover::cache::{ForgetCounts, Generation};
 use crate::discover::models::{QueueItemLight, ShelfSource, TopPicksSection};
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError};
@@ -241,15 +242,33 @@ impl PickRecord {
     }
 }
 
+/// What a build that offers picks was started under: its generation and
+/// the forget counts it is held to.
+#[derive(Clone, Copy)]
+pub struct Built<'a> {
+    /// The generation the build was claimed under.
+    pub generation: Generation,
+    /// Each person's forget count.
+    pub forgets: &'a ForgetCounts,
+}
+
 /// Record that `offers` were offered to `user_id` on `surface` at `now_ms`,
-/// in one background write. A failed write is logged and dropped: a build
+/// in one background write. A build the person's "Forget my history" came
+/// after records nothing. A failed write is logged and dropped: a build
 /// never fails because of it, and the next build offers again.
-pub async fn offered(db: &Db, user_id: &str, surface: MadeFrom, offers: Vec<Offer>, now_ms: i64) {
+pub async fn offered(
+    db: &Db,
+    user_id: &str,
+    surface: MadeFrom,
+    offers: Vec<Offer>,
+    now_ms: i64,
+    built: Built<'_>,
+) {
     if offers.is_empty() {
         return;
     }
     let count = offers.len();
-    if let Err(error) = store::offered(db, user_id, surface, offers, now_ms).await {
+    if let Err(error) = store::offered(db, user_id, surface, offers, now_ms, built).await {
         tracing::warn!(%error, surface = surface.as_str(), count, "picks offered not recorded");
     }
 }

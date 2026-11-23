@@ -238,6 +238,7 @@ impl E2e {
             &library,
             &collections.stores,
         );
+        let playback = crate::common::playback_store(p);
         let catalog_setup = crate::common::bundles::catalog_setup_at(
             p,
             auth.users.clone(),
@@ -253,6 +254,7 @@ impl E2e {
             &library,
             collections.wired(),
             Some(&acquire),
+            playback.clone(),
         );
         let providers = Arc::new(Providers::unpaced(Arc::new(
             droppedneedle_providers::test_support::ScriptedWire::new(),
@@ -273,8 +275,7 @@ impl E2e {
             Arc::new(droppedneedle_acquire::requests::mix::MixGrantHooks::new(
                 acquire.mixer.clone(),
             )),
-            crate::common::listening_store(p),
-            droppedneedle_kernel::jobs::queue::JobQueue::new(p.db.clone(), p.clock.clone()),
+            playback,
             p.clock.clone(),
         )
         .expect("media bundle builds");

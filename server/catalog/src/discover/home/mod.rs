@@ -244,6 +244,9 @@ pub struct HomeInputs {
     pub warm: CoverWarm,
     /// The discover pages, for the teaser.
     pub discover: DiscoverPages,
+    /// Each person's forget count, shared with every page cache and the
+    /// forget.
+    pub forgets: crate::discover::cache::ForgetCounts,
 }
 
 /// Sitewide or user album rows that map to a release group, one per
@@ -262,7 +265,13 @@ impl LiveHome {
         let db = inputs.db.clone();
         Self {
             inner: Arc::new(Inner {
-                cache: UserPageCache::new(inputs.db, inputs.clock, PageKind::Home, TIMING),
+                cache: UserPageCache::new(
+                    inputs.db,
+                    inputs.clock,
+                    PageKind::Home,
+                    TIMING,
+                    inputs.forgets,
+                ),
                 listening: inputs.listening,
                 library: HomeLibrary::new(db.clone()),
                 db,
@@ -649,6 +658,9 @@ pub struct HomeWiring {
     pub warm: CoverWarm,
     /// The charts genre pages are added to.
     pub charts: super::charts::LiveCharts,
+    /// Each person's forget count, shared with every page cache and the
+    /// forget.
+    pub forgets: crate::discover::cache::ForgetCounts,
 }
 
 /// Production home: the page, the genre artwork shared with discover, and
@@ -664,6 +676,7 @@ pub fn wire(wiring: HomeWiring) -> (LiveHome, Arc<GenreArt>, genre::WithGenrePag
         art: art.clone(),
         warm: wiring.warm.clone(),
         discover: wiring.discover,
+        forgets: wiring.forgets,
     });
     let pages = Arc::new(genre::GenrePages::new(
         db,

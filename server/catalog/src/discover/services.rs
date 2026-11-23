@@ -10,6 +10,7 @@ use droppedneedle_providers::ProviderError;
 use crate::discover::{
     content::LiveContent,
     feedback::{self, FeedbackError},
+    forget::{self, HistoryStores},
     genre::WithGenrePages,
     models::{
         AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection,
@@ -110,6 +111,8 @@ pub struct DiscoverDeps {
     pub radio: Arc<LiveRadio>,
     /// The pick record's events from the web UI.
     pub record: PickRecord,
+    /// What "Forget my history" deletes from.
+    pub history: HistoryStores,
 }
 
 /// Clamp a limit into `1..=max`, defaulting when missing.
@@ -434,6 +437,22 @@ pub async fn undo_feedback(
         .undo_feedback(user_id, target, &mbid)
         .await
         .map_err(owned_store_failure)
+}
+
+/// Forget the user's history (see [`forget`]). An error means a step
+/// failed and the steps before it are done; asking again finishes it.
+pub async fn forget_history(deps: &DiscoverDeps, user_id: &str) -> Result<(), ServiceError> {
+    let forgotten = forget::forget(deps, user_id)
+        .await
+        .map_err(|error| ServiceError::Internal(error.to_string()))?;
+    tracing::info!(
+        playback_events = forgotten.playback_events,
+        picks = forgotten.picks,
+        activity = forgotten.activity,
+        pages = forgotten.pages,
+        "a person's history forgotten"
+    );
+    Ok(())
 }
 
 /// Everything the user told Discover that is in effect, newest first.

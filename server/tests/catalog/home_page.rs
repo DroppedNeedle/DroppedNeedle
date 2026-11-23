@@ -168,7 +168,9 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
                 advanced: settings.live(),
                 integrations: integrations(),
                 warm: warm.clone(),
+                forgets: Default::default(),
             }),
+            forgets: Default::default(),
         })
     };
     let home = home_over();
@@ -305,7 +307,9 @@ async fn home_shows_weekly(date: &str) -> bool {
             advanced: settings.live(),
             integrations: integrations(),
             warm,
+            forgets: Default::default(),
         }),
+        forgets: Default::default(),
     });
     home.page("user-1").await;
     let page = after_commits(&db, "the home build kept its shelves", || async {
@@ -405,7 +409,9 @@ async fn top_albums_after_plays(albums: usize) -> ((String, Vec<String>), usize)
             advanced: settings.live(),
             integrations: integrations(),
             warm,
+            forgets: Default::default(),
         }),
+        forgets: Default::default(),
     });
     home.page("user-1").await;
     let page = after_commits(&db, "the home build kept its shelves", || async {

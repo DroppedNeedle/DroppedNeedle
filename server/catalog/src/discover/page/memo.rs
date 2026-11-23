@@ -45,8 +45,8 @@ pub struct MemoKey<'a> {
     pub user_id: &'a str,
     /// What the page is built for.
     pub variant: &'a Variant,
-    /// The clear generation the build was claimed in.
-    pub generation: i64,
+    /// What the build was claimed under.
+    pub generation: crate::discover::cache::Generation,
     /// The service the shelf is built from.
     pub listening: &'a str,
     /// Today (`YYYY-MM-DD`, UTC).

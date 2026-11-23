@@ -5438,6 +5438,47 @@
         ]
       }
     },
+    "/api/v3/discover/history": {
+      "delete": {
+        "tags": [
+          "discover"
+        ],
+        "summary": "Forget the caller's history: how their plays ended, the albums\nDiscover offered them and what came of each, and their saved Discover\npages, which are built again. Plays, play counts, the library, requests\nand what they told Discover stay. A failure leaves the steps before it\ndone; asking again finishes the rest.",
+        "operationId": "forget_history",
+        "responses": {
+          "204": {
+            "description": "Forgotten"
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Not all of it could be removed; asking again finishes it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/discover/picks/events": {
       "post": {
         "tags": [

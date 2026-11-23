@@ -1913,6 +1913,28 @@ async fn caller_keyed_state_stays_with_its_caller() {
     assert_eq!(status, StatusCode::NO_CONTENT, "A's shown: {answer}");
     assert_eq!(seen(), (1, 1, 0), "A's own event stamps A's pick");
 
+    // Forgetting takes the caller's history only: B's forget and an
+    // admin's leave A's pick, and A's takes it.
+    let forget = "/api/v3/discover/history";
+    let a_pick = || -> i64 {
+        app.db()
+            .query_row(
+                "SELECT COUNT(*) FROM catalog_discover_picks \
+                 WHERE user_id = ?1 AND release_group_mbid_lower = ?2",
+                [ada.id.as_str(), hidden_album],
+                |row| row.get(0),
+            )
+            .unwrap()
+    };
+    for (who, what) in [(&bob, "B"), (&admin, "an admin")] {
+        let (status, answer) = call(&app, who, "DELETE", forget, None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{what} forgets: {answer}");
+        assert_eq!(a_pick(), 1, "{what}'s forget took A's pick");
+    }
+    let (status, answer) = call(&app, &ada, "DELETE", forget, None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "A forgets: {answer}");
+    assert_eq!(a_pick(), 0, "A's forget takes A's pick");
+
     // Remote-server links and folder choices, against the mock Navidrome.
     let navidrome = droppedneedle_testkit::remotes::serve_navidrome()
         .await

@@ -666,6 +666,7 @@ pub(crate) fn discover_inputs(rig: &AuthRig, dir: &Path, providers: Providers) -
         ),
         download_readiness: Arc::new(NoDownloadSource),
         remotes: Arc::new(remotes_resolver(platform)),
+        playback: crate::common::playback_store(platform),
     }
 }
 

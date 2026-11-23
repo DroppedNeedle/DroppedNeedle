@@ -254,6 +254,22 @@ pub async fn loop_row(
     }
 }
 
+/// The playback store over `platform`, as bootstrap builds it once for the
+/// catalog and the media bundle to share.
+pub fn playback_store(
+    platform: &droppedneedle_kernel::platform::Platform,
+) -> std::sync::Arc<droppedneedle_media::playback::sqlite::PlaybackStore> {
+    std::sync::Arc::new(droppedneedle_media::playback::sqlite::PlaybackStore::new(
+        platform.db.clone(),
+        platform.ids.clone(),
+        listening_store(platform),
+        droppedneedle_kernel::jobs::queue::JobQueue::new(
+            platform.db.clone(),
+            platform.clock.clone(),
+        ),
+    ))
+}
+
 /// The listening store over `platform`, as bootstrap builds it.
 pub fn listening_store(
     platform: &droppedneedle_kernel::platform::Platform,

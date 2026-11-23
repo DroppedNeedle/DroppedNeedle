@@ -61,6 +61,17 @@ impl ActivityDb {
             .await
     }
 
+    /// Remove every activity row of `user_id` (their "Forget my history");
+    /// the count removed.
+    pub async fn forget(&self, user_id: &str) -> Result<usize, DbError> {
+        let user_id = user_id.to_owned();
+        self.db
+            .write(Lane::Foreground, "discover.activity.forget", move |tx| {
+                Ok(tx.execute(sql::FORGET_ACTIVITY.text(), [user_id])?)
+            })
+            .await
+    }
+
     /// Forget activity last used at or before `before`, and all but each
     /// user's newest hundred rows.
     pub async fn prune(&self, before: i64) -> Result<(), DbError> {

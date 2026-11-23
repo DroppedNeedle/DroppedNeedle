@@ -15,6 +15,7 @@ pub mod demand;
 pub mod due;
 pub mod error;
 pub mod feedback;
+pub mod forget;
 pub mod genre;
 pub mod handlers;
 pub mod health;

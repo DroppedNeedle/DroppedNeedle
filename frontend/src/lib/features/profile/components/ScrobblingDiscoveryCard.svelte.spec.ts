@@ -126,3 +126,53 @@ describe('Last.fm link on the profile', () => {
 		await expect.element(page.getByLabelText('Last.fm API key')).toBeVisible();
 	});
 });
+
+describe('Your history on the profile', () => {
+	it('says what is kept and forgets it once confirmed', async () => {
+		const api = fakeApi({
+			'GET /api/v3/me/connections': { connections: [] },
+			'GET /api/v3/me/scrobble-preferences': prefs,
+			'GET /api/v3/home/integration-status': integrations(true),
+			'DELETE /api/v3/discover/history': undefined
+		});
+		const forgotten = () => api.calls('DELETE /api/v3/discover/history').length;
+		await renderWithQuery(ScrobblingDiscoveryCard, { navidromeEnabled: false });
+
+		await expect
+			.element(
+				page.getByText(
+					'Kept for you: your plays here, what you told Discover, the picks it showed you',
+					{ exact: false }
+				)
+			)
+			.toBeVisible();
+		await page.getByRole('button', { name: 'Forget my history' }).click();
+		await expect
+			.element(page.getByText('This removes the picks and the play endings.', { exact: false }))
+			.toBeVisible();
+		expect(forgotten()).toBe(0);
+
+		await page.getByRole('button', { name: 'Forget', exact: true }).click();
+		await expect.poll(forgotten).toBe(1);
+		await expect
+			.element(page.getByRole('button', { name: 'Forget', exact: true }))
+			.not.toBeInTheDocument();
+	});
+
+	it.each([
+		[500, 'INTERNAL_ERROR', 'Not all of it was removed. Forget again to finish.'],
+		[429, 'RATE_LIMITED', 'Too many tries just now. Try again in a minute.']
+	])('says what to do when the forget answers %i', async (status, code, line) => {
+		fakeApi({
+			'GET /api/v3/me/connections': { connections: [] },
+			'GET /api/v3/me/scrobble-preferences': prefs,
+			'GET /api/v3/home/integration-status': integrations(true),
+			'DELETE /api/v3/discover/history': apiError(status, code)
+		});
+		await renderWithQuery(ScrobblingDiscoveryCard, { navidromeEnabled: false });
+
+		await page.getByRole('button', { name: 'Forget my history' }).click();
+		await page.getByRole('button', { name: 'Forget', exact: true }).click();
+		await expect.element(page.getByText(line)).toBeVisible();
+	});
+});

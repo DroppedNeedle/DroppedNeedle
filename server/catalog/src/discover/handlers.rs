@@ -482,6 +482,31 @@ pub async fn record_pick_event(
         .map_err(ApiError::from)
 }
 
+/// Forget the caller's history: how their plays ended, the albums
+/// Discover offered them and what came of each, and their saved Discover
+/// pages, which are built again. Plays, play counts, the library, requests
+/// and what they told Discover stay. A failure leaves the steps before it
+/// done; asking again finishes the rest.
+#[utoipa::path(
+    delete,
+    tag = "discover",
+    path = "/api/v3/discover/history",
+    responses(
+        (status = 204, description = "Forgotten"),
+        (status = 401, description = "Not authenticated"),
+        (status = 500, description = "Not all of it could be removed; asking again finishes it"),
+    )
+)]
+pub async fn forget_history(
+    State(deps): State<DiscoverDeps>,
+    User(user): User,
+) -> Result<StatusCode, ApiError> {
+    services::forget_history(&deps, user.user_id())
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(ApiError::from)
+}
+
 /// The given cards whose albums the library already holds.
 #[utoipa::path(
     post,
@@ -808,6 +833,7 @@ pub fn routes() -> Routes<DiscoverDeps> {
         .user(routes!(list_feedback))
         .user(routes!(undo_feedback))
         .user(routes!(record_pick_event))
+        .user(routes!(forget_history))
         .user(routes!(validate_queue))
         .user(routes!(youtube_track_search))
         .user(routes!(track_preview))

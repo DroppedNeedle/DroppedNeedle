@@ -30,7 +30,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::discover::cache::{PageKind, Saved, Timing, UserPageCache, Variant};
+use crate::discover::cache::{PageKind, SaveOutcome, Saved, Timing, UserPageCache, Variant};
 use crate::discover::feedback::{self, Feedback, FeedbackError, FeedbackTarget};
 use crate::discover::health::{DeckHealth, deck_health, log_deck_health};
 use crate::discover::listening::{Ask, ListeningData};
@@ -305,6 +305,7 @@ struct Inner {
     settings: Live<AdvancedSettings>,
     states: Mutex<HashMap<String, UserState>>,
     last_prune: Mutex<i64>,
+    forgets: crate::discover::cache::ForgetCounts,
 }
 
 /// The live queue deck.
@@ -327,6 +328,9 @@ pub struct QueueInputs {
     pub cache: ProviderCacheStore,
     /// The advanced settings, read on every call.
     pub settings: Live<AdvancedSettings>,
+    /// Each person's forget count, shared with every page cache and the
+    /// forget.
+    pub forgets: crate::discover::cache::ForgetCounts,
 }
 
 impl LiveQueue {
@@ -339,6 +343,7 @@ impl LiveQueue {
                     inputs.clock,
                     PageKind::Queue,
                     DECK_TIMING,
+                    inputs.forgets.clone(),
                 ),
                 db: QueueDb::new(inputs.db),
                 listening: inputs.listening,
@@ -347,6 +352,7 @@ impl LiveQueue {
                 settings: inputs.settings,
                 states: Mutex::new(HashMap::new()),
                 last_prune: Mutex::new(0),
+                forgets: inputs.forgets.clone(),
             }),
         }
     }
@@ -427,9 +433,9 @@ impl Inner {
     ) -> (QueueGenerateResponse, Option<tokio::task::JoinHandle<()>>) {
         let variant = Variant::for_user(&self.listening, user_id).await;
         let deck = self.deck(user_id, &variant).await;
-        // The deck is saved under the clear generation of its start, so a
-        // clear while it builds keeps nothing.
-        let generation = self.decks.generation().await;
+        // The deck is saved under the generation of its start, so a clear
+        // or the person's forget while it builds keeps nothing.
+        let generation = self.decks.generation(user_id).await;
         let settings = QueueSettings::read(&self.settings);
         let scheduled = trigger == QueueTrigger::Scheduled;
         let force = trigger == QueueTrigger::Request { force: true };
@@ -505,7 +511,7 @@ impl Inner {
         user_id: String,
         variant: Variant,
         settings: QueueSettings,
-        generation: Option<i64>,
+        generation: Option<crate::discover::cache::Generation>,
         run: u64,
         priority: RequestPriority,
     ) {
@@ -584,15 +590,17 @@ impl Inner {
         if let Some(health) = &built.value.health {
             log_deck_health(&user_id, started.elapsed().as_secs_f64(), health);
         }
-        let saved = match generation {
+        let outcome = match generation {
             Some(generation) => {
                 self.decks
                     .save(&user_id, &variant, &built.value, generation)
                     .await
             }
-            None => false,
+            None => SaveOutcome::Failed,
         };
-        if saved {
+        if let Some(generation) = generation
+            && outcome.kept()
+        {
             let policy = self.listening.policy(&user_id).await;
             let service = if seeds::links_listening(policy.user()) {
                 ShelfSource::from(policy.listening())
@@ -611,13 +619,18 @@ impl Inner {
                 MadeFrom::Deck,
                 offers,
                 built.built_at,
+                record::Built {
+                    generation,
+                    forgets: &self.forgets,
+                },
             )
             .await;
         }
         {
             let mut states = self.states();
+            // A dropped deck was built from before a clear or a forget.
             if let Some(state) = states.get_mut(&user_id)
-                && saved
+                && outcome != SaveOutcome::Failed
                 && state
                     .unsaved
                     .as_ref()
@@ -761,6 +774,14 @@ impl Inner {
 }
 
 impl LiveQueue {
+    /// Drop the person's built deck not yet written (their "Forget my
+    /// history"), so it is never served.
+    pub fn forget_unsaved(&self, user_id: &str) {
+        if let Some(state) = self.inner.states().get_mut(user_id) {
+            state.unsaved = None;
+        }
+    }
+
     /// The user's last built deck, stale or not, when there is one,
     /// without what they hid.
     pub fn current<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, Option<QueueDeck>> {

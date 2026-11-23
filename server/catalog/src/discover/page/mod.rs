@@ -46,7 +46,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::artwork::warm::{CoverWarm, WarmTargets};
-use crate::discover::cache::{PageKind, Saved, Timing, UserPageCache, Variant};
+use crate::discover::cache::{
+    ForgetCounts, Generation, PageKind, Saved, Timing, UserPageCache, Variant,
+};
 use crate::discover::content::IntegrationSettings;
 use crate::discover::feedback::Feedback;
 use crate::discover::health::{BuildFacts, PageHealth, log_page_health, page_health};
@@ -138,6 +140,9 @@ pub struct PageInputs {
     pub integrations: IntegrationSettings,
     /// Where a published page queues its image warm.
     pub warm: CoverWarm,
+    /// Each person's forget count, shared with every page cache and the
+    /// forget.
+    pub forgets: ForgetCounts,
 }
 
 struct Inner {
@@ -149,6 +154,7 @@ struct Inner {
     advanced: Live<AdvancedSettings>,
     integrations: IntegrationSettings,
     warm: CoverWarm,
+    forgets: ForgetCounts,
 }
 
 /// The discover pages: their cache and their build.
@@ -166,12 +172,14 @@ impl DiscoverPages {
                 inputs.clock.clone(),
                 PageKind::DailyMixes,
                 MEMO_TIMING,
+                inputs.forgets.clone(),
             ),
             picks: UserPageCache::new(
                 inputs.db.clone(),
                 inputs.clock.clone(),
                 PageKind::TopPicks,
                 MEMO_TIMING,
+                inputs.forgets.clone(),
             ),
         };
         Self {
@@ -182,6 +190,7 @@ impl DiscoverPages {
                     inputs.clock.clone(),
                     PageKind::Discover,
                     TIMING,
+                    inputs.forgets.clone(),
                 ),
                 listening: inputs.listening,
                 queue_db: inputs.queue_db,
@@ -189,6 +198,7 @@ impl DiscoverPages {
                 advanced: inputs.advanced,
                 integrations: inputs.integrations,
                 warm: inputs.warm,
+                forgets: inputs.forgets,
             }),
         }
     }
@@ -288,7 +298,7 @@ impl DiscoverPages {
         &self,
         user_id: &str,
         variant: &Variant,
-        generation: i64,
+        generation: Generation,
         settings: PageSettings,
     ) -> Option<BuiltPage> {
         let started = tokio::time::Instant::now();
@@ -308,6 +318,7 @@ impl DiscoverPages {
             memo: &self.inner.memo,
             variant,
             generation,
+            forgets: &self.inner.forgets,
             settings,
             today,
             year,

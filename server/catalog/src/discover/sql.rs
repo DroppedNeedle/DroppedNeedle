@@ -594,6 +594,8 @@ droppedneedle_kernel::sql! {
     /// Drop one user's page.
     pub(super) FORGET_CACHED_PAGE = "DELETE FROM catalog_cached_pages \
          WHERE user_id = ?1 AND page = ?2";
+    /// Drop every page of one user.
+    pub(super) FORGET_USER_PAGES = "DELETE FROM catalog_cached_pages WHERE user_id = ?1";
     /// Drop every page.
     pub(super) CLEAR_CACHED_PAGES = "DELETE FROM catalog_cached_pages";
     /// Move to the next clear generation.
@@ -621,6 +623,8 @@ droppedneedle_kernel::sql! {
              used_at = excluded.used_at, source = excluded.source, \
              retry_at = CASE WHEN catalog_discover_activity.source != excluded.source \
                  THEN 0 ELSE catalog_discover_activity.retry_at END";
+    /// Forget every activity row of one user.
+    pub(super) FORGET_ACTIVITY = "DELETE FROM catalog_discover_activity WHERE user_id = ?1";
     /// Forget activity last used at or before a time.
     pub(super) PRUNE_ACTIVITY_BEFORE = "DELETE FROM catalog_discover_activity WHERE used_at <= ?1";
     /// Forget all but each user's newest rows.

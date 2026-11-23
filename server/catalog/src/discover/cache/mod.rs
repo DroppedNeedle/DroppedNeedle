@@ -19,7 +19,10 @@
 //! held in memory and served until a later visit writes it. A clear of the
 //! cache wins over a build already running: each build saves under the
 //! clear generation it was claimed in, and a save under an older one
-//! keeps nothing. A clear also drops the waits after failed builds.
+//! keeps nothing. A clear also drops the waits after failed builds. A
+//! person's "Forget my history" wins the same way over that person's
+//! builds alone: each build also carries the person's forget count from
+//! its start, and a save under an older count keeps nothing.
 
 mod rows;
 
@@ -117,13 +120,76 @@ pub struct Timing {
     pub retry_ms: i64,
 }
 
+/// How many times each person has forgotten their history since the
+/// server started, shared by every page cache and by the forget. Built
+/// once by the discover wiring. A count starts at zero after a restart,
+/// which is safe: no build outlives the process.
+#[derive(Clone, Default)]
+pub struct ForgetCounts(Arc<Mutex<HashMap<String, u64>>>);
+
+impl ForgetCounts {
+    fn counts(&self) -> MutexGuard<'_, HashMap<String, u64>> {
+        // The map stays whole whatever panicked while the lock was held.
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn of(&self, user_id: &str) -> u64 {
+        self.counts().get(user_id).copied().unwrap_or(0)
+    }
+
+    /// Move the person's count on, so every build of theirs started
+    /// before now keeps nothing and records nothing.
+    pub(crate) fn bump(&self, user_id: &str) {
+        *self.counts().entry(user_id.to_owned()).or_insert(0) += 1;
+    }
+
+    /// Whether a build of the person's started under `generation` may
+    /// still keep what it built: no forget of theirs came since. Read it
+    /// on the writer, inside the write that keeps it.
+    pub(crate) fn holds(&self, user_id: &str, generation: Generation) -> bool {
+        self.of(user_id) == generation.forgets
+    }
+}
+
+/// What a build's pages are saved under: the clear generation and the
+/// person's forget count when it started. A save keeps nothing once
+/// either has moved on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Generation {
+    clear: i64,
+    forgets: u64,
+}
+
+/// What became of a page a build tried to keep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveOutcome {
+    /// Written.
+    Written,
+    /// The database was busy; held in memory and written by a later visit.
+    Held,
+    /// Not kept, and not a failure: the cache was cleared, the person
+    /// forgot their history or their account went after the build began.
+    Dropped,
+    /// Not kept because something failed, with a log line.
+    Failed,
+}
+
+impl SaveOutcome {
+    /// Whether the page is kept, written or held.
+    pub fn kept(self) -> bool {
+        matches!(self, Self::Written | Self::Held)
+    }
+}
+
 /// A built page whose save found the database busy.
 #[derive(Clone)]
 struct Pending {
     variant: Variant,
     payload: Vec<u8>,
     built_at: i64,
-    generation: i64,
+    generation: Generation,
 }
 
 /// Builds running, builds that failed and pages not yet written, per
@@ -141,6 +207,7 @@ struct Inner {
     clock: Arc<dyn Clock>,
     kind: PageKind,
     timing: Timing,
+    forgets: ForgetCounts,
     flights: Mutex<Flights>,
 }
 
@@ -164,19 +231,28 @@ impl Inner {
         }
         flights
             .pending
-            .retain(|_, pending| pending.generation == generation);
+            .retain(|_, pending| pending.generation.clear == generation);
         flights.generation = Some(generation);
     }
 
     /// Write a page; a busy database holds it for a later try.
-    async fn write(&self, user_id: &str, pending: Pending) -> bool {
+    async fn write(&self, user_id: &str, pending: Pending) -> SaveOutcome {
         let row = rows::Row {
             variant: pending.variant.clone(),
             payload: pending.payload.clone(),
             built_at: pending.built_at,
         };
-        match rows::save(&self.db, user_id, self.kind, row, pending.generation).await {
-            Ok(()) => {
+        let saved = rows::save(
+            &self.db,
+            user_id,
+            self.kind,
+            row,
+            pending.generation,
+            self.forgets.clone(),
+        )
+        .await;
+        match saved {
+            Ok(written) => {
                 let mut flights = self.flights();
                 if flights
                     .pending
@@ -185,7 +261,11 @@ impl Inner {
                 {
                     flights.pending.remove(user_id);
                 }
-                true
+                if written {
+                    SaveOutcome::Written
+                } else {
+                    SaveOutcome::Dropped
+                }
             }
             Err(DbError::Busy { .. }) => {
                 tracing::debug!(
@@ -200,12 +280,12 @@ impl Inner {
                 if !newer {
                     flights.pending.insert(user_id.to_owned(), pending);
                 }
-                true
+                SaveOutcome::Held
             }
             Err(error) => {
                 tracing::warn!(%error, page = self.kind.as_str(), "page not saved");
                 self.flights().pending.remove(user_id);
-                false
+                SaveOutcome::Failed
             }
         }
     }
@@ -232,14 +312,14 @@ impl<T> Clone for UserPageCache<T> {
 pub struct Claim {
     inner: Arc<Inner>,
     user_id: String,
-    generation: i64,
+    generation: Generation,
     finished: bool,
 }
 
 impl Claim {
-    /// The clear generation the build was claimed in, which every page it
-    /// keeps is saved under.
-    pub fn generation(&self) -> i64 {
+    /// What the build was claimed under, which every page it keeps is
+    /// saved under.
+    pub fn generation(&self) -> Generation {
         self.generation
     }
 
@@ -270,14 +350,22 @@ impl Drop for Claim {
 }
 
 impl<T: Serialize + DeserializeOwned> UserPageCache<T> {
-    /// The `kind` pages in `db`, aged by `clock`.
-    pub fn new(db: Db, clock: Arc<dyn Clock>, kind: PageKind, timing: Timing) -> Self {
+    /// The `kind` pages in `db`, aged by `clock`, kept from builds that
+    /// started before a person's forget by `forgets`.
+    pub fn new(
+        db: Db,
+        clock: Arc<dyn Clock>,
+        kind: PageKind,
+        timing: Timing,
+        forgets: ForgetCounts,
+    ) -> Self {
         Self {
             inner: Arc::new(Inner {
                 db,
                 clock,
                 kind,
                 timing,
+                forgets,
                 flights: Mutex::default(),
             }),
             page: PhantomData,
@@ -297,7 +385,12 @@ impl<T: Serialize + DeserializeOwned> UserPageCache<T> {
     pub async fn load(&self, user_id: &str, wanted: &Variant) -> Option<Saved<T>> {
         let held = self.inner.flights().pending.get(user_id).cloned();
         if let Some(held) = held {
-            self.inner.write(user_id, held).await;
+            if self.inner.forgets.holds(user_id, held.generation) {
+                self.inner.write(user_id, held).await;
+            } else {
+                // Built before the person forgot their history.
+                self.inner.flights().pending.remove(user_id);
+            }
         }
         let (generation, row) = match rows::load(&self.inner.db, user_id, self.inner.kind).await {
             Ok(found) => found,
@@ -329,13 +422,15 @@ impl<T: Serialize + DeserializeOwned> UserPageCache<T> {
         }
     }
 
-    /// The clear generation now, which a build outside [`Self::claim`]
-    /// saves under. `None`, with a log line, when it cannot be read.
-    pub async fn generation(&self) -> Option<i64> {
+    /// What a build of the user's page started now saves under, for a
+    /// build outside [`Self::claim`]. `None`, with a log line, when the
+    /// clear generation cannot be read.
+    pub async fn generation(&self, user_id: &str) -> Option<Generation> {
+        let forgets = self.inner.forgets.of(user_id);
         match rows::generation(&self.inner.db).await {
-            Ok(generation) => {
-                self.inner.note_generation(generation);
-                Some(generation)
+            Ok(clear) => {
+                self.inner.note_generation(clear);
+                Some(Generation { clear, forgets })
             }
             Err(error) => {
                 tracing::warn!(%error, page = self.inner.kind.as_str(), "page generation unreadable");
@@ -344,15 +439,21 @@ impl<T: Serialize + DeserializeOwned> UserPageCache<T> {
         }
     }
 
-    /// Keep `value` as the user's page, built now for `variant` in clear
+    /// Keep `value` as the user's page, built now for `variant` under
     /// `generation`. A busy database holds it in memory until a later
-    /// visit writes it. False, with a log line, when it could not be kept.
-    pub async fn save(&self, user_id: &str, variant: &Variant, value: &T, generation: i64) -> bool {
+    /// visit writes it.
+    pub async fn save(
+        &self,
+        user_id: &str,
+        variant: &Variant,
+        value: &T,
+        generation: Generation,
+    ) -> SaveOutcome {
         let payload = match serde_json::to_vec(value) {
             Ok(payload) => payload,
             Err(error) => {
                 tracing::warn!(%error, page = self.inner.kind.as_str(), "page does not encode");
-                return false;
+                return SaveOutcome::Failed;
             }
         };
         let pending = Pending {
@@ -406,12 +507,12 @@ impl<T: Serialize + DeserializeOwned> UserPageCache<T> {
         saved.is_none_or(|saved| now - saved.built_at > timing.fresh_ms)
     }
 
-    /// Claim the user's one build in the clear generation now; `None`
+    /// Claim the user's one build under the generation now; `None`
     /// while another runs, within the retry wait after a failed build
     /// (the warm cycle claims without asking [`Self::due`]; a refresh drops
     /// the wait first), or when the generation cannot be read.
     pub async fn claim(&self, user_id: &str) -> Option<Claim> {
-        let generation = self.generation().await?;
+        let generation = self.generation(user_id).await?;
         let now = self.now_ms();
         let retry_ms = self.inner.timing.retry_ms;
         let mut flights = self.inner.flights();
@@ -433,8 +534,9 @@ impl<T: Serialize + DeserializeOwned> UserPageCache<T> {
     }
 
     /// Run a claimed build. A page it returns replaces the saved one, unless
-    /// the cache was cleared since the claim; `None` (failed, empty, or
-    /// built for a source that changed meanwhile) keeps the old page and
+    /// the cache was cleared or the person forgot their history since the
+    /// claim (no retry wait: the next visit builds); `None` (failed, empty,
+    /// or built for a source that changed meanwhile) keeps the old page and
     /// starts the retry wait. True when a page was kept or held.
     pub async fn run(
         &self,
@@ -442,15 +544,15 @@ impl<T: Serialize + DeserializeOwned> UserPageCache<T> {
         variant: &Variant,
         build: impl Future<Output = Option<T>>,
     ) -> bool {
-        let kept = match build.await {
+        let outcome = match build.await {
             Some(page) => {
                 self.save(&claim.user_id, variant, &page, claim.generation)
                     .await
             }
-            None => false,
+            None => SaveOutcome::Failed,
         };
-        claim.finish(kept);
-        kept
+        claim.finish(outcome != SaveOutcome::Failed);
+        outcome.kept()
     }
 }
 
@@ -460,6 +562,14 @@ impl<T: Serialize + DeserializeOwned> UserPageCache<T> {
 /// warm pass. Returns how many went.
 pub async fn clear_all(db: &Db) -> Result<usize, DbError> {
     rows::clear_all(db).await
+}
+
+/// Drop every saved page of one user (their "Forget my history"). Their
+/// forget count moves on inside the same write, so every build of theirs
+/// claimed before it commits keeps nothing; other people's builds and
+/// pages are left alone. Returns how many pages went.
+pub async fn forget_user(db: &Db, forgets: &ForgetCounts, user_id: &str) -> Result<usize, DbError> {
+    rows::forget_user(db, user_id, forgets.clone()).await
 }
 
 /// One user's saved page as stored, undecoded.

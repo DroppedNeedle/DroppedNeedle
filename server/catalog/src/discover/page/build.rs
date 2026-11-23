@@ -133,8 +133,10 @@ pub struct Builder<'a> {
     pub memo: &'a BuildMemo,
     /// What the page is built for, which the memos are kept under.
     pub variant: &'a Variant,
-    /// The clear generation the build was claimed in.
-    pub generation: i64,
+    /// What the build was claimed under.
+    pub generation: crate::discover::cache::Generation,
+    /// Each person's forget count, which the picks it offers are held to.
+    pub forgets: &'a crate::discover::cache::ForgetCounts,
     /// Settings for this build.
     pub settings: PageSettings,
     /// Today's date (`YYYY-MM-DD`, UTC).
@@ -1653,6 +1655,10 @@ impl Builder<'_> {
                 MadeFrom::TopPicks,
                 offers,
                 now_ms,
+                record::Built {
+                    generation: self.generation,
+                    forgets: self.forgets,
+                },
             )
             .await;
         }

@@ -3346,6 +3346,64 @@ fn every_table_has_one_owner() {
     assert!(stale.is_empty(), "listed but not in the schema: {stale:?}");
 }
 
+/// Every table with a column whose name ends in `user_id` is named once in
+/// `server/forget-coverage.txt` as forgotten, kept with its reason, or
+/// not personal, and the list names no other table: a new table about a
+/// person fails here until it says what "Forget my history" does to it.
+#[test]
+fn every_personal_table_says_what_forget_does() {
+    let mut listed = BTreeMap::new();
+    for line in include_str!("../../forget-coverage.txt")
+        .lines()
+        .map(str::trim)
+    {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (name, rest) = line.split_once(' ').unwrap_or((line, ""));
+        let (class, reason) = rest.split_once(':').unwrap_or((rest, ""));
+        let class = class.trim();
+        assert!(
+            ["forgotten", "kept", "not_personal"].contains(&class),
+            "{name}: `{class}` is not forgotten, kept or not_personal"
+        );
+        assert_eq!(
+            class == "kept",
+            !reason.trim().is_empty(),
+            "{name}: a kept table gives its reason, and only a kept one"
+        );
+        assert!(
+            listed.insert(name, class).is_none(),
+            "{name} is listed twice"
+        );
+    }
+    let connection = migrated();
+    let personal: Vec<String> = table_names(&connection)
+        .into_iter()
+        .filter(|table| {
+            column_names(&connection, table)
+                .iter()
+                .any(|column| column.ends_with("user_id"))
+        })
+        .collect();
+    let unlisted: Vec<&String> = personal
+        .iter()
+        .filter(|table| !listed.contains_key(table.as_str()))
+        .collect();
+    assert!(
+        unlisted.is_empty(),
+        "not in forget-coverage.txt: {unlisted:?}"
+    );
+    let stray: Vec<&&str> = listed
+        .keys()
+        .filter(|name| !personal.iter().any(|table| table == *name))
+        .collect();
+    assert!(
+        stray.is_empty(),
+        "listed but no such table with a user_id column: {stray:?}"
+    );
+}
+
 /// Every foreign key has an index whose leading columns are the key's
 /// columns: without one, deleting or rekeying a parent row scans the
 /// child table once per row. A primary key or unique index counts; a
