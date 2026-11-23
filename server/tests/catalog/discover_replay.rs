@@ -696,7 +696,9 @@ fn copy_time(db: &Path) -> i64 {
 
 /// The person's listens the copy imported.
 fn imported_listens(db: &Path, user: &str) -> Vec<Listen> {
-    let rows: Vec<(
+    /// When, the artist's id and name, the track, the recording's id, the
+    /// release's name and id.
+    type Row = (
         i64,
         Option<String>,
         String,
@@ -704,7 +706,8 @@ fn imported_listens(db: &Path, user: &str) -> Vec<Listen> {
         Option<String>,
         Option<String>,
         Option<String>,
-    )> = db.rows(
+    );
+    let rows: Vec<Row> = db.rows(
         "SELECT listened_at, lower(artist_mbid), artist_name, track_name, \
              lower(recording_mbid), release_name, lower(release_mbid) \
              FROM media_imported_listens WHERE user_id = ?1",
