@@ -8,11 +8,14 @@
 //! database through the one playback store. Remote attribution and
 //! now-playing reports drain through [`MediaWorkers`], one job on the loop
 //! supervisor. Scrobbles wait as jobs on the jobs table; their handlers are
-//! [`MediaSetup::scrobble_jobs`], registered by the builder.
+//! [`MediaSetup::scrobble_jobs`], registered by the builder. A person's
+//! ListenBrainz history, imported from an export file, is kept by the one
+//! [`history::HistoryStore`] and read in by its job kind.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+pub mod history;
 pub mod playback;
 pub mod remotes;
 pub mod stream;
@@ -24,6 +27,8 @@ use std::sync::Arc;
 
 use axum::extract::FromRef;
 
+use crate::history::HistoryStore;
+use crate::history::import::{self as history_import, ImportJobs};
 use crate::playback::PlaybackDeps;
 use crate::playback::forwarding::{Courier, NowPlayingSender, NowPlayingWorker, ScrobbleJobs};
 use crate::playback::listening_routes::{ListeningDeps, MixGrants};
@@ -74,6 +79,8 @@ pub struct MediaSetup {
     pub playback: PlaybackDeps,
     /// Listening-settings route deps.
     pub listening: ListeningDeps,
+    /// Each person's imported listening history.
+    pub history: Arc<HistoryStore>,
     /// The scrobble job handlers, one per service.
     scrobble_jobs: Vec<(KindSpec, Arc<dyn JobHandler>)>,
 }
@@ -152,7 +159,9 @@ impl MediaSetup {
     /// personal-mix standing grant the listening settings report and feed;
     /// `store` is the app's one playback store, whose listening store
     /// reporting reads and the listening settings save through, and whose
-    /// jobs queue scrobbles wait on; `jobs_clock` measures their window.
+    /// jobs queue scrobbles wait on; `jobs_clock` measures their window;
+    /// `history` is the app's one listening history store, whose uploads
+    /// the listening routes take.
     #[allow(clippy::too_many_arguments)]
     pub fn build(
         platform: &Platform,
@@ -166,6 +175,7 @@ impl MediaSetup {
         mix: Arc<dyn MixGrants>,
         store: Arc<PlaybackStore>,
         jobs_clock: Arc<dyn Clock>,
+        history: Arc<HistoryStore>,
     ) -> Result<(Self, MediaWorkers), String> {
         let (db, app_config, config) = (&platform.db, &platform.config, &*platform.settings);
         let http_factory = &platform.http;
@@ -249,6 +259,7 @@ impl MediaSetup {
                 download,
                 playback,
                 listening,
+                history,
                 scrobble_jobs: ScrobbleJobs::handlers(&courier),
             },
             worker,
@@ -259,6 +270,15 @@ impl MediaSetup {
     /// register with the jobs table.
     pub fn scrobble_jobs(&self) -> Vec<(KindSpec, Arc<dyn JobHandler>)> {
         self.scrobble_jobs.clone()
+    }
+
+    /// The listening history import kind and its handler, for the builder
+    /// to register with the jobs table.
+    pub fn history_jobs(&self) -> (KindSpec, Arc<dyn JobHandler>) {
+        (
+            history_import::SPEC,
+            Arc::new(ImportJobs::new(self.history.clone())),
+        )
     }
 
     /// What the jobs bundle reads from media: the presence registry the
@@ -282,6 +302,7 @@ pub fn routes() -> Routes<MediaSetup> {
         .merge(stream::download::routes())
         .merge(playback::routes())
         .merge(playback::listening_routes::routes())
+        .merge(playback::listening_routes::history_routes())
 }
 
 impl FromRef<MediaSetup> for RemotesDeps {
@@ -311,6 +332,12 @@ impl FromRef<MediaSetup> for PlaybackDeps {
 impl FromRef<MediaSetup> for ListeningDeps {
     fn from_ref(setup: &MediaSetup) -> Self {
         setup.listening.clone()
+    }
+}
+
+impl FromRef<MediaSetup> for Arc<HistoryStore> {
+    fn from_ref(setup: &MediaSetup) -> Self {
+        setup.history.clone()
     }
 }
 

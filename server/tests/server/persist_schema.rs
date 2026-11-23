@@ -72,7 +72,7 @@ fn schema_rows(connection: &Connection) -> Vec<(String, String, String, Option<S
 fn fresh_migrate_marks_version_and_seeds() {
     let connection = migrated();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), latest_version());
-    assert_eq!(table_names(&connection).len(), 184);
+    assert_eq!(table_names(&connection).len(), 186);
     assert_eq!(
         scalar(
             &connection,
@@ -412,6 +412,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0160_discover_picks.sql",
         "d938a966ff6114bfb93eb6928843b05196ca5937b0aa69adf3e752712547be78",
+    ),
+    (
+        "0161_listening_history.sql",
+        "8320c7052fc7186cdcab1cf30426d3aeaf694678a9f1a84b1ad0f1edca921a5b",
     ),
 ];
 
@@ -2667,6 +2671,117 @@ fn discover_picks_upgrade_keeps_every_row_with_no_place() {
     );
 }
 
+/// 0161 adds the imported listens and the import rows, both empty, and
+/// changes nothing else. A listen is kept once by its person, second and
+/// names without case; a state or source outside its list is refused; and
+/// a person's listens and import go with their account.
+#[test]
+fn listening_history_upgrade_adds_two_empty_tables() {
+    let dir = ScratchDir::new("listening-history-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 161)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 160);
+    let before = schema_rows(&connection);
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 161);
+    let after = schema_rows(&connection);
+    assert!(
+        before.iter().all(|row| after.contains(row)),
+        "nothing else changes"
+    );
+    let added: Vec<_> = after.iter().filter(|row| !before.contains(row)).collect();
+    assert_eq!(
+        added
+            .iter()
+            .map(|(kind, name, table, _)| (kind.as_str(), name.as_str(), table.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            (
+                "index",
+                "idx_media_imported_listens_once",
+                "media_imported_listens"
+            ),
+            (
+                "index",
+                "idx_media_imported_listens_user_artist",
+                "media_imported_listens"
+            ),
+            (
+                "index",
+                "sqlite_autoindex_media_history_imports_1",
+                "media_history_imports"
+            ),
+            ("table", "media_history_imports", "media_history_imports"),
+            ("table", "media_imported_listens", "media_imported_listens"),
+        ]
+    );
+    for (_, name, _, sql) in &added {
+        if name.starts_with("media_") {
+            assert!(
+                sql.as_deref().is_some_and(|sql| sql.ends_with("STRICT")),
+                "{name}: {sql:?}"
+            );
+        }
+    }
+    for table in ["media_imported_listens", "media_history_imports"] {
+        assert_eq!(
+            scalar(&connection, &format!("SELECT COUNT(*) FROM {table}")),
+            0
+        );
+    }
+
+    connection
+        .execute_batch(
+            "PRAGMA foreign_keys = ON;
+             INSERT INTO auth_users (id, display_name, created_at)
+                 VALUES ('u1', 'One', 1), ('u2', 'Two', 1);
+             INSERT INTO media_imported_listens (user_id, listened_at, artist_name,
+                 track_name, imported_at)
+                 VALUES ('u1', 1000, 'Artist', 'Song', 5), ('u2', 1000, 'Artist', 'Song', 5),
+                        ('u1', 2000, 'Artist', 'Song', 5);
+             INSERT INTO media_history_imports (user_id, state, source, updated_at)
+                 VALUES ('u1', 'current', 'upload', 5), ('u2', 'pending', 'export', 5);",
+        )
+        .expect("listens and imports are stored");
+    for refused in [
+        "INSERT INTO media_imported_listens (user_id, listened_at, artist_name, track_name, \
+         imported_at) VALUES ('u1', 1000, 'ARTIST', 'song', 6)",
+        "INSERT INTO media_imported_listens (user_id, listened_at, artist_name, track_name, \
+         imported_at) VALUES ('nobody', 1000, 'Artist', 'Song', 6)",
+        "INSERT INTO media_imported_listens (user_id, listened_at, artist_name, track_name, \
+         imported_at) VALUES ('u1', 'soon', 'Artist', 'Other', 6)",
+        "UPDATE media_history_imports SET state = 'done' WHERE user_id = 'u1'",
+        "UPDATE media_history_imports SET source = 'lastfm' WHERE user_id = 'u1'",
+        "UPDATE media_history_imports SET entries_read = -1 WHERE user_id = 'u1'",
+    ] {
+        assert!(connection.execute_batch(refused).is_err(), "{refused}");
+    }
+    connection
+        .execute("DELETE FROM auth_users WHERE id = 'u1'", [])
+        .unwrap();
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT user_id FROM media_imported_listens UNION ALL \
+             SELECT user_id FROM media_history_imports",
+            []
+        ),
+        ["u2", "u2"],
+        "an account's listens and import go with it, and only those"
+    );
+}
+
 /// 0146 adds the table of recycle bin paths v2 used, empty, and changes
 /// nothing else: only an upgrade from v2 records a path in it.
 #[test]
@@ -3130,6 +3245,8 @@ const FOREIGN_KEYS: &[(&str, &str, &str, &str)] = &[
     ("local_track_genres", "local_track_id", "local_tracks", "CASCADE"),
     ("local_track_lyrics", "local_track_id", "local_tracks", "CASCADE"),
     ("local_tracks", "local_album_id", "local_albums", "RESTRICT"),
+    ("media_history_imports", "user_id", "auth_users", "CASCADE"),
+    ("media_imported_listens", "user_id", "auth_users", "CASCADE"),
     ("media_navidrome_folder_preferences", "user_id", "auth_users", "CASCADE"),
     ("media_playback_events", "user_id", "auth_users", "CASCADE"),
     ("personal_mix_approvals", "reviewed_by_id", "auth_users", "SET NULL"),
@@ -3584,6 +3701,7 @@ fn state_columns() -> Vec<StateColumn> {
     };
     use droppedneedle_library::scan::sqlite_store::retag_pairs::{RetagPairReason, RetagPairState};
     use droppedneedle_library::tags::lyrics::LyricsSource;
+    use droppedneedle_media::history::{HistoryImportSource, HistoryImportState};
     use droppedneedle_media::playback::events::{PlayClient, PlayEnd, PlayOrigin, PlaySource};
     use droppedneedle_media::playback::ports::Visibility;
     use droppedneedle_media::remotes::folders::FolderMode;
@@ -3640,6 +3758,8 @@ fn state_columns() -> Vec<StateColumn> {
         state("durable_jobs", "state", &QueueState::ALL, QueueState::as_str),
         state("durable_loops", "state", &LoopState::ALL, LoopState::as_str),
         // media
+        state("media_history_imports", "source", &HistoryImportSource::ALL, HistoryImportSource::as_str),
+        state("media_history_imports", "state", &HistoryImportState::ALL, HistoryImportState::as_str),
         state("media_navidrome_folder_preferences", "mode", &FolderMode::ALL, FolderMode::as_str),
         state("media_playback_events", "came_from", &PlayOrigin::ALL, PlayOrigin::as_str),
         state("media_playback_events", "client", &PlayClient::ALL, PlayClient::as_str),

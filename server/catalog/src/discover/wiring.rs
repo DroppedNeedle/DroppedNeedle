@@ -21,6 +21,7 @@ use crate::metadata::{Catalog, PageSources};
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_media::history::HistoryStore;
 use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_media::playback::sqlite::PlaybackStore;
 use droppedneedle_media::remotes::connections::ConnectionResolver;
@@ -61,6 +62,8 @@ pub struct DiscoverInputs {
     pub remotes: Arc<ConnectionResolver>,
     /// The playback rows, for forgetting how a person's plays ended.
     pub playback: Arc<PlaybackStore>,
+    /// The imported listening history, for forgetting it.
+    pub history: Arc<HistoryStore>,
 }
 
 /// The live listening reads production makes.
@@ -219,7 +222,12 @@ fn deps_with(
         youtube,
         radio: Arc::new(radio),
         record: record::PickRecord::new(inputs.db.clone(), Arc::clone(&inputs.clock)),
-        history: forget::HistoryStores::new(inputs.db.clone(), inputs.playback.clone(), forgets),
+        history: forget::HistoryStores::new(
+            inputs.db.clone(),
+            inputs.playback.clone(),
+            inputs.history.clone(),
+            forgets,
+        ),
     }
 }
 

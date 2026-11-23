@@ -241,7 +241,7 @@ impl PlaybackStore {
 /// Run blocking database work. On a multi-threaded runtime the worker hands
 /// its other tasks to the rest of the pool first (`block_in_place`); on a
 /// current-thread runtime (tests) or outside a runtime it runs inline.
-fn off_worker<R>(work: impl FnOnce() -> R) -> R {
+pub(crate) fn off_worker<R>(work: impl FnOnce() -> R) -> R {
     match tokio::runtime::Handle::try_current() {
         Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
             tokio::task::block_in_place(work)

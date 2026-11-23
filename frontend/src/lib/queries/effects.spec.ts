@@ -81,8 +81,10 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 	discoverHomeChanged: [key(U, 'discover', 'home')],
 	discoverHistoryForgotten: [
 		{ key: [U, 'discover'], dropSaved: true },
-		{ key: [U, 'home', 'page'], dropSaved: true }
+		{ key: [U, 'home', 'page'], dropSaved: true },
+		key(U, 'me', 'listening-history')
 	],
+	listeningHistoryChanged: [key(U, 'me', 'listening-history')],
 	recommendationSourcesChanged: [
 		key(U, 'albums', 'similar'),
 		key(U, 'artist'),

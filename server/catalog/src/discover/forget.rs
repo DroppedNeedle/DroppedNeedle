@@ -1,5 +1,6 @@
 //! "Forget my history": a person removes what the app keeps about their
-//! listening and what Discover did for them, and everything built from it.
+//! listening and what Discover did for them, and everything built from it:
+//! the copy of their ListenBrainz history among it.
 //!
 //! One function runs every step, each deleting the person's rows by their
 //! id and safe to run again, so a forget cut off part way is finished by
@@ -11,6 +12,7 @@
 use std::sync::Arc;
 
 use droppedneedle_kernel::db::{Db, DbError};
+use droppedneedle_media::history::{self, HistoryStore};
 use droppedneedle_media::playback::{events, sqlite::PlaybackStore};
 
 use crate::discover::cache::{self, ForgetCounts};
@@ -22,18 +24,26 @@ pub struct HistoryStores {
     db: Db,
     activity: ActivityDb,
     playback: Arc<PlaybackStore>,
+    history: Arc<HistoryStore>,
     forgets: ForgetCounts,
 }
 
 impl HistoryStores {
     /// The pick record, the Discover activity and saved pages in `db`, how
-    /// plays ended in `playback`, and the forget counts every page cache
-    /// shares in `forgets`.
-    pub fn new(db: Db, playback: Arc<PlaybackStore>, forgets: ForgetCounts) -> Self {
+    /// plays ended in `playback`, the imported ListenBrainz history in
+    /// `history`, and the forget counts every page cache shares in
+    /// `forgets`.
+    pub fn new(
+        db: Db,
+        playback: Arc<PlaybackStore>,
+        history: Arc<HistoryStore>,
+        forgets: ForgetCounts,
+    ) -> Self {
         Self {
             activity: ActivityDb::new(db.clone()),
             db,
             playback,
+            history,
             forgets,
         }
     }
@@ -44,6 +54,8 @@ impl HistoryStores {
 pub struct Forgotten {
     /// How the person's plays ended.
     pub playback_events: usize,
+    /// The listens imported from their ListenBrainz history.
+    pub imported_listens: usize,
     /// The albums Discover offered them and what came of each.
     pub picks: usize,
     /// Which Discover pages and artist pages they opened lately.
@@ -59,28 +71,48 @@ pub struct ForgetError {
     /// The step that failed.
     pub step: &'static str,
     /// Why.
-    pub error: DbError,
+    pub error: StepError,
 }
 
-fn at(step: &'static str) -> impl FnOnce(DbError) -> ForgetError {
-    move |error| ForgetError { step, error }
+/// Why a step failed.
+#[derive(Debug, thiserror::Error)]
+pub enum StepError {
+    /// The database refused it.
+    #[error(transparent)]
+    Db(#[from] DbError),
+    /// The imported history was not forgotten.
+    #[error(transparent)]
+    History(#[from] history::ForgetError),
 }
 
-/// Forget `user_id`'s history: how their plays ended, the pick record,
-/// their Discover activity and their saved pages, in that order, then start
-/// one rebuild of their Discover page. Their forget count moves on before
-/// the first step and again inside the pages step's write, so a build of
-/// theirs claimed before that commit keeps no page and records no pick. A
-/// built deck not yet written is dropped too. While such a build runs no
-/// rebuild starts here: their next visit builds the page, which is due
-/// because its row is gone. Fails at the first step that fails; the
-/// rebuild is asked for only once every step ran.
+fn at<E: Into<StepError>>(step: &'static str) -> impl FnOnce(E) -> ForgetError {
+    move |error| ForgetError {
+        step,
+        error: error.into(),
+    }
+}
+
+/// Forget `user_id`'s history: how their plays ended, their imported
+/// ListenBrainz history (its import is marked forgotten and its jobs
+/// cancelled in the same write, so an import running across the forget
+/// keeps nothing), the pick record, their Discover activity and their
+/// saved pages, in that order, then start one rebuild of their Discover
+/// page. Their forget count moves on before the first step and again
+/// inside the pages step's write, so a build of theirs claimed before that
+/// commit keeps no page and records no pick. A built deck not yet written
+/// is dropped too. While such a build runs no rebuild starts here: their
+/// next visit builds the page, which is due because its row is gone. Fails
+/// at the first step that fails; the rebuild is asked for only once every
+/// step ran.
 pub async fn forget(deps: &DiscoverDeps, user_id: &str) -> Result<Forgotten, ForgetError> {
     let stores = &deps.history;
     stores.forgets.bump(user_id);
     let playback_events = events::forget(&stores.playback, user_id)
         .await
         .map_err(at("playback events"))?;
+    let imported_listens = history::forget(&stores.history, user_id)
+        .await
+        .map_err(at("listening history"))?;
     let picks = record::forget(&stores.db, user_id)
         .await
         .map_err(at("pick record"))?;
@@ -98,6 +130,7 @@ pub async fn forget(deps: &DiscoverDeps, user_id: &str) -> Result<Forgotten, For
     }
     Ok(Forgotten {
         playback_events,
+        imported_listens,
         picks,
         activity,
         pages,

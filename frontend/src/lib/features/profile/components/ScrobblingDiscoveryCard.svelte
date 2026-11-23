@@ -1,5 +1,14 @@
 <script lang="ts">
-	import { Radio, Music, LoaderCircle, ExternalLink, Check, Sparkles, Eraser } from 'lucide-svelte';
+	import {
+		Radio,
+		Music,
+		LoaderCircle,
+		ExternalLink,
+		Check,
+		Sparkles,
+		Eraser,
+		Upload
+	} from 'lucide-svelte';
 	import { ApiError } from '$lib/api/errors';
 	import { getIntegrationStatusQuery } from '$lib/features/home/queries/home.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -23,10 +32,16 @@
 	} from '$lib/features/profile/queries/scrobble-preferences.svelte';
 	import type { MusicSource } from '$lib/stores/musicSource';
 	import { createForgetDiscoverHistoryMutation } from '$lib/features/profile/queries/discover-history.svelte';
+	import {
+		createUploadListeningHistoryMutation,
+		getListeningHistoryQuery
+	} from '$lib/features/profile/queries/listening-history.svelte';
+	import type { ListeningHistory } from '$lib/features/profile/queries/listening-history.svelte';
 	import { scrobbleManager } from '$lib/features/player/state/scrobble.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 	import Input from '$lib/ui/Input.svelte';
+	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 
 	interface Props {
@@ -60,6 +75,18 @@
 	const refreshMixMutation = createRefreshPersonalMixMutation();
 	const forgetHistoryMutation = createForgetDiscoverHistoryMutation();
 	let forgetOpen = $state(false);
+
+	const historyQuery = getListeningHistoryQuery();
+	const uploadHistoryMutation = createUploadListeningHistoryMutation();
+	let historyInput = $state<HTMLInputElement | null>(null);
+	let historyError = $state<string | null>(null);
+	function historyLine(history: ListeningHistory): string {
+		if (history.state === 'importing') return 'Reading your file';
+		if (history.state === 'failed') return 'Your file could not be read.';
+		const count = history.imported_listens;
+		if (count === 0) return 'Nothing imported yet.';
+		return `${count.toLocaleString()} ${count === 1 ? 'listen' : 'listens'} from ListenBrainz`;
+	}
 
 	const loading = $derived(connectionsQuery.isPending || prefsQuery.isPending);
 
@@ -222,9 +249,27 @@
 		}
 	}
 
+	async function uploadHistory(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		// Cleared, so choosing the same file again uploads it again.
+		input.value = '';
+		if (!file) return;
+		historyError = null;
+		try {
+			await uploadHistoryMutation.mutateAsync(file);
+		} catch (e) {
+			historyError =
+				e instanceof ApiError && e.status === 413
+					? 'That file is over 512 MB.'
+					: errorMessage(e, 'Could not upload that file.');
+		}
+	}
+
 	async function forgetHistory() {
 		try {
 			await forgetHistoryMutation.mutateAsync();
+			historyError = null;
 		} catch (e) {
 			if (e instanceof ApiError && e.status === 429) {
 				throw new Error('Too many tries just now. Try again in a minute.', { cause: e });
@@ -352,6 +397,48 @@
 					</div>
 				</div>
 			{/if}
+
+			<div class="pf-box mt-2 px-4 py-3">
+				<div class="flex flex-wrap items-center justify-between gap-3">
+					<div class="min-w-0">
+						<span class="text-sm font-semibold">Listening history</span>
+						<QueryBoundary query={historyQuery} what="your listening history">
+							{#snippet children(history)}
+								<p class="pf-meta">{historyLine(history)}</p>
+							{/snippet}
+							{#snippet loading()}
+								<p class="pf-meta">Checking your history</p>
+							{/snippet}
+							{#snippet failed(_error, retry)}
+								<p class="pf-meta">
+									Couldn't check your history.
+									<Button variant="ghost" size="xs" onclick={retry}>Try again</Button>
+								</p>
+							{/snippet}
+						</QueryBoundary>
+					</div>
+					<input
+						type="file"
+						accept=".zip,application/zip"
+						class="hidden"
+						aria-label="Choose a ListenBrainz export file"
+						bind:this={historyInput}
+						onchange={uploadHistory}
+					/>
+					<Button
+						variant="outline"
+						size="sm"
+						icon={Upload}
+						loading={uploadHistoryMutation.isPending}
+						onclick={() => historyInput?.click()}
+					>
+						Add a ListenBrainz export file
+					</Button>
+				</div>
+				{#if historyError}
+					<p class="mt-2 text-xs text-error">{historyError}</p>
+				{/if}
+			</div>
 		</div>
 
 		<div>
@@ -594,8 +681,9 @@
 		<div class="space-y-2 px-1">
 			<span class="text-sm font-semibold">Your history</span>
 			<p class="text-xs text-muted">
-				Kept for you: your plays here, what you told Discover, the picks it showed you and how your
-				plays ended. Backups made earlier still hold what they held.
+				Kept for you: your plays here, a copy of your ListenBrainz history, what you told Discover,
+				the picks it showed you and how your plays ended. Backups made earlier still hold what they
+				held.
 			</p>
 			<Button
 				variant="danger-outline"
@@ -612,7 +700,7 @@
 <ConfirmDialog
 	bind:open={forgetOpen}
 	title="Forget your history?"
-	message="This removes the picks and the play endings. Play counts, your library and what you told Discover stay."
+	message="This removes the picks, the play endings and the copy of your ListenBrainz history. Play counts, your library and what you told Discover stay."
 	confirmLabel="Forget"
 	tone="danger"
 	pending={forgetHistoryMutation.isPending}

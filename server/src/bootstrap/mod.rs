@@ -86,6 +86,7 @@ use droppedneedle_kernel::{
     runtime_config::crypto::CryptoError,
 };
 use droppedneedle_library::wiring::{LibraryServices, LibrarySetup};
+use droppedneedle_media::history::HistoryStore;
 use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_media::playback::sqlite::PlaybackStore;
 use droppedneedle_media::{
@@ -392,6 +393,9 @@ pub(crate) async fn build_on(
         listening.clone(),
         queues.queue().clone(),
     ));
+    // The one listening history store: uploads land through the media
+    // routes, its job reads them, and Discover's forget removes them.
+    let history = Arc::new(HistoryStore::new(p, queues.queue().clone()));
     // Read live so turning ListenBrainz, Last.fm or lyrics on or off takes effect
     // at once.
     let lyrics = OnlineLyrics::new(&providers, config_store.live());
@@ -509,6 +513,7 @@ pub(crate) async fn build_on(
             cover_warm,
             jobs: queues.queue().clone(),
             playback: playback.clone(),
+            history: history.clone(),
         },
     );
     // Your Weekly Mix: one builder behind the refresh route, the daily
@@ -529,6 +534,7 @@ pub(crate) async fn build_on(
         mix_hooks.clone(),
         playback,
         queues.clock(),
+        history,
     )
     .map_err(stage("media setup"))?;
     // Startup recovery before serving traffic. Re-running after a clean
@@ -578,12 +584,14 @@ pub(crate) async fn build_on(
     // it. Library Management queues the media-server rescans after a run,
     // sent through media's connection resolver; pages queue their image
     // warms, run through the artwork service.
+    let (history_spec, history_jobs) = media.history_jobs();
     let handlers = media
         .scrobble_jobs()
         .into_iter()
         .fold(Handlers::default(), |handlers, (spec, handler)| {
             handlers.with(spec, handler)
         })
+        .with(history_spec, history_jobs)
         .with(
             droppedneedle_media::remotes::refresh::SPEC,
             Arc::new(droppedneedle_media::remotes::refresh::RefreshJobs::new(

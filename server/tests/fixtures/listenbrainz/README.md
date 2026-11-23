@@ -88,6 +88,18 @@ unless said otherwise:
   one call. The bytes as received: one row per id in that order, 20 of them
   with both counts null.
 
+A hand-made export file, 2026-11-23:
+
+- `history_export.zip`: a ListenBrainz export ZIP in the layout of a real
+  one (an export made at listenbrainz.org on 2026-11-22, read on its
+  owner's machine and not kept): `user.json`, `feedback.jsonl` and
+  `listens/2026/1.jsonl` and `listens/2026/2.jsonl`, one listen a line,
+  with the real file's keys and value types (`listened_at` a float of whole
+  seconds, `mbid_mapping` null on some lines, the submitter's ids in
+  `additional_info` on others). Five invented listens by invented artists;
+  the ids are made up and name nothing in MusicBrainz. No real person's
+  listens.
+
 No file: HTTP 204 with an empty body while a new account's stats are not
 computed yet. Recorded for `GET /1/stats/user/DroppedNeedle/artists?count=5`,
 `.../recordings?count=5`, `.../release-groups?count=5` and

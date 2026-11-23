@@ -148,6 +148,11 @@ export const ScrobblePreferencesQueryKeyFactory = {
 	personalMixApprovals: () => key(ADMIN, 'me', 'scrobble-preferences', 'personal-mix-approvals')
 };
 
+// The caller's listening history imported from ListenBrainz.
+export const ListeningHistoryQueryKeyFactory = {
+	get: (userId: UserId) => key(userScope(userId), 'me', 'listening-history')
+};
+
 // Which Home, Discover and sidebar sections the caller shows.
 export const SectionPrefsQueryKeyFactory = {
 	prefs: (userId: UserId) => key(userScope(userId), 'section-prefs')

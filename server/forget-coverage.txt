@@ -14,6 +14,10 @@
 catalog_cached_pages forgotten
 catalog_discover_activity forgotten
 catalog_discover_picks forgotten
+# media_history_imports is cleared to a forgotten mark, so nothing is
+# imported until they add a file.
+media_history_imports forgotten
+media_imported_listens forgotten
 media_playback_events forgotten
 
 # What the person told Discover.

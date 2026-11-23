@@ -1913,8 +1913,30 @@ async fn caller_keyed_state_stays_with_its_caller() {
     assert_eq!(status, StatusCode::NO_CONTENT, "A's shown: {answer}");
     assert_eq!(seen(), (1, 1, 0), "A's own event stamps A's pick");
 
+    // A's listening history from ListenBrainz: B's and an admin's reads
+    // show none of it.
+    app.seed(format!(
+        "INSERT INTO media_imported_listens (user_id, listened_at, artist_name, track_name, \
+         imported_at) VALUES ('{id}', 1000, 'Someone', 'Song', 1000); \
+         INSERT INTO media_history_imports (user_id, state, source, updated_at) \
+         VALUES ('{id}', 'current', 'upload', 1000)",
+        id = ada.id
+    ))
+    .await;
+    let listening = "/api/v3/me/listening-history";
+    for (who, what, listens, state) in [
+        (&ada, "A", 1, json!("current")),
+        (&bob, "B", 0, Value::Null),
+        (&admin, "an admin", 0, Value::Null),
+    ] {
+        let (status, body) = call(&app, who, "GET", listening, None).await;
+        ok(status, &body, "reads their listening history");
+        assert_eq!(body["imported_listens"], listens, "{what}: {body}");
+        assert_eq!(body["state"], state, "{what}: {body}");
+    }
+
     // Forgetting takes the caller's history only: B's forget and an
-    // admin's leave A's pick, and A's takes it.
+    // admin's leave A's pick and listens, and A's takes them.
     let forget = "/api/v3/discover/history";
     let a_pick = || -> i64 {
         app.db()
@@ -1926,14 +1948,25 @@ async fn caller_keyed_state_stays_with_its_caller() {
             )
             .unwrap()
     };
+    let a_listens = || -> i64 {
+        app.db()
+            .query_row(
+                "SELECT COUNT(*) FROM media_imported_listens WHERE user_id = ?1",
+                [ada.id.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap()
+    };
     for (who, what) in [(&bob, "B"), (&admin, "an admin")] {
         let (status, answer) = call(&app, who, "DELETE", forget, None).await;
         assert_eq!(status, StatusCode::NO_CONTENT, "{what} forgets: {answer}");
         assert_eq!(a_pick(), 1, "{what}'s forget took A's pick");
+        assert_eq!(a_listens(), 1, "{what}'s forget took A's listens");
     }
     let (status, answer) = call(&app, &ada, "DELETE", forget, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "A forgets: {answer}");
     assert_eq!(a_pick(), 0, "A's forget takes A's pick");
+    assert_eq!(a_listens(), 0, "A's forget takes A's listens");
 
     // Remote-server links and folder choices, against the mock Navidrome.
     let navidrome = droppedneedle_testkit::remotes::serve_navidrome()

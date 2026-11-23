@@ -42,6 +42,7 @@ use self::models::{
     TopRecordingsAnswer, TopReleaseGroupRow, TopReleaseGroupsAnswer, ValidateTokenAnswer,
 };
 
+pub mod history;
 pub mod models;
 pub mod playlists;
 pub mod stats;

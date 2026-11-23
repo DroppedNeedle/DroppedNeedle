@@ -67,6 +67,9 @@ pub struct CatalogPorts {
     /// The app's one playback store, for forgetting how a person's plays
     /// ended.
     pub playback: Arc<droppedneedle_media::playback::sqlite::PlaybackStore>,
+    /// The app's one listening history store, for forgetting a person's
+    /// imported history.
+    pub history: Arc<droppedneedle_media::history::HistoryStore>,
 }
 
 /// The cover and artist image service: local and Cover Art Archive art
@@ -121,6 +124,7 @@ impl CatalogSetup {
             cover_warm,
             jobs,
             playback,
+            history,
         } = ports;
         let discover = discover::wiring::production_deps(
             discover::wiring::DiscoverInputs {
@@ -137,6 +141,7 @@ impl CatalogSetup {
                 jobs,
                 remotes,
                 playback,
+                history,
             },
             settings,
         );

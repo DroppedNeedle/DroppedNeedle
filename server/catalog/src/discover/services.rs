@@ -447,6 +447,7 @@ pub async fn forget_history(deps: &DiscoverDeps, user_id: &str) -> Result<(), Se
         .map_err(|error| ServiceError::Internal(error.to_string()))?;
     tracing::info!(
         playback_events = forgotten.playback_events,
+        imported_listens = forgotten.imported_listens,
         picks = forgotten.picks,
         activity = forgotten.activity,
         pages = forgotten.pages,

@@ -4,19 +4,28 @@
 //! A ListenBrainz link is verified before it is stored, and only a verified
 //! pair is stored. A saved visibility reaches the live presence feed at
 //! once, and the personal-mix toggle feeds the requests side's approval
-//! queue through [`MixGrants`].
+//! queue through [`MixGrants`]. A ListenBrainz export file the person
+//! uploads lands in the cache folder and is read by the history import
+//! job ([`crate::history`]).
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::{
     Json,
-    extract::{FromRef, State},
+    extract::{
+        DefaultBodyLimit, FromRef, Multipart, State,
+        multipart::{MultipartError, MultipartRejection},
+    },
+    http::{HeaderMap, StatusCode, header},
 };
+use tokio::io::AsyncWriteExt as _;
 
 use droppedneedle_auth::{Role, User};
 use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::ValidJson;
+use droppedneedle_kernel::jobs::queue::JobError;
 use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_plugins::models::StatusMessage;
 use droppedneedle_providers::listenbrainz::ListenBrainzVerifier;
@@ -29,6 +38,13 @@ use super::models::{
     ScrobblePreferencesUpdate,
 };
 use super::presence::PresenceRegistry;
+use super::sqlite::off_worker;
+use crate::history::archive::Export;
+use crate::history::store::remove;
+use crate::history::{HistoryStore, ListeningHistory, ListeningHistoryUpload};
+
+/// The largest listening history upload accepted, in bytes.
+const MAX_HISTORY_UPLOAD_BYTES: usize = 512 * (1 << 20);
 
 /// The personal-mix standing grant, which the requests side keeps. A
 /// trait because that side is built above this crate.
@@ -271,6 +287,138 @@ pub async fn disconnect_listenbrainz_route(
     }
 }
 
+/// A job write refused: busy asks the caller to try again.
+fn job_error(error: JobError) -> ApiError {
+    match error {
+        JobError::Db(error) => store_error(error),
+        other => ApiError::internal(other),
+    }
+}
+
+/// A form part that stopped part way: over the limit is 413, anything else
+/// a cut-off upload.
+fn unreadable_upload(error: MultipartError) -> ApiError {
+    if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
+        ApiError::too_large()
+    } else {
+        ApiError::invalid_input("The upload was cut off or malformed.")
+    }
+}
+
+/// An upload's file until its import owns it. A refused or dropped upload
+/// leaves nothing behind.
+struct Landing(Option<PathBuf>);
+
+impl Drop for Landing {
+    fn drop(&mut self) {
+        if let Some(path) = self.0.take()
+            && let Err(error) = std::fs::remove_file(&path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(%error, "an unused listening history upload was not deleted");
+        }
+    }
+}
+
+/// Stream the first `file` part to `path`. False when the form has none.
+async fn receive(mut multipart: Multipart, path: &Path) -> Result<bool, ApiError> {
+    while let Some(mut field) = multipart.next_field().await.map_err(unreadable_upload)? {
+        if field.name() != Some("file") {
+            continue;
+        }
+        let mut file = tokio::fs::File::create(path)
+            .await
+            .map_err(ApiError::internal)?;
+        while let Some(chunk) = field.chunk().await.map_err(unreadable_upload)? {
+            file.write_all(&chunk).await.map_err(ApiError::internal)?;
+        }
+        file.sync_all().await.map_err(ApiError::internal)?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+/// Import a ListenBrainz export ZIP: the file the person downloaded from
+/// ListenBrainz, up to 512 MB. It is read in the background; the answer
+/// says where the caller's history stands. A new upload replaces one still
+/// being read, and a listen already kept is never added twice.
+#[utoipa::path(
+    post,
+    tag = "listening",
+    path = "/api/v3/me/listening-history/upload",
+    request_body(content = ListeningHistoryUpload, content_type = "multipart/form-data"),
+    responses(
+        (status = 202, description = "The file is being read", body = ListeningHistory),
+        (status = 400, description = "No file, or not a ListenBrainz export"),
+        (status = 401, description = "Not authenticated"),
+        (status = 413, description = "Over 512 MB"),
+        (status = 503, description = "The server is busy; try again"),
+    )
+)]
+pub async fn upload_listening_history(
+    State(history): State<Arc<HistoryStore>>,
+    User(user): User,
+    headers: HeaderMap,
+    multipart: Result<Multipart, MultipartRejection>,
+) -> Result<(StatusCode, Json<ListeningHistory>), ApiError> {
+    let declared = headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok());
+    if declared.is_some_and(|length| length > MAX_HISTORY_UPLOAD_BYTES as u64) {
+        return Err(ApiError::too_large());
+    }
+    let multipart =
+        multipart.map_err(|_| ApiError::invalid_input("Send the file as a multipart form."))?;
+    tokio::fs::create_dir_all(history.dir())
+        .await
+        .map_err(ApiError::internal)?;
+    let (import_id, path) = history.new_upload(user.user_id());
+    let mut landing = Landing(Some(path.clone()));
+    if !receive(multipart, &path).await? {
+        return Err(ApiError::invalid_input(
+            "Choose a ListenBrainz export file.",
+        ));
+    }
+    let months = off_worker(|| Export::open(&path).map(|export| export.months().len()));
+    if !months.is_ok_and(|months| months > 0) {
+        return Err(ApiError::invalid_input(
+            "That file is not a ListenBrainz export.",
+        ));
+    }
+    // Not deleted on a drop from here on: a request dropped while the import
+    // starts may have started it. A file no import names is swept later.
+    landing.0 = None;
+    if let Err(error) = history.start_upload(user.user_id(), &import_id).await {
+        remove(&path).await;
+        return Err(job_error(error));
+    }
+    history.remove_unread(user.user_id()).await;
+    tracing::info!(bytes = declared, "a listening history upload received");
+    let status = history.status(user.user_id()).await.map_err(store_error)?;
+    Ok((StatusCode::ACCEPTED, Json(status.into())))
+}
+
+/// Where the caller's listening history stands: their import, the listens
+/// kept from ListenBrainz and their plays here.
+#[utoipa::path(
+    get,
+    tag = "listening",
+    path = "/api/v3/me/listening-history",
+    responses(
+        (status = 200, description = "Listening history", body = ListeningHistory),
+        (status = 401, description = "Not authenticated"),
+        (status = 503, description = "The server is busy; try again"),
+    )
+)]
+pub async fn get_listening_history(
+    State(history): State<Arc<HistoryStore>>,
+    User(user): User,
+) -> Result<Json<ListeningHistory>, ApiError> {
+    let status = history.status(user.user_id()).await.map_err(store_error)?;
+    Ok(Json(status.into()))
+}
+
 /// Every listening-settings route, for any signed-in user.
 pub fn routes<S>() -> Routes<S>
 where
@@ -286,4 +434,18 @@ where
             connect_listenbrainz_route,
             disconnect_listenbrainz_route
         ))
+}
+
+/// The listening history routes, for any signed-in user. The upload takes
+/// a body up to 512 MB.
+pub fn history_routes<S>() -> Routes<S>
+where
+    S: Clone + Send + Sync + 'static,
+    Arc<HistoryStore>: FromRef<S>,
+{
+    let (schemas, paths, upload) = routes!(upload_listening_history);
+    let upload = upload.layer(DefaultBodyLimit::max(MAX_HISTORY_UPLOAD_BYTES));
+    Routes::new()
+        .user((schemas, paths, upload))
+        .user(routes!(get_listening_history))
 }

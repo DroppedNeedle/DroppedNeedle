@@ -3,8 +3,8 @@
 //! `server/forget-coverage.txt` lists as forgotten, another person's stay,
 //! every kept table is left as it was, a forget cut off after its first
 //! step is finished by asking again, and the person's Discover page is
-//! built again. A build of theirs running across the forget keeps nothing,
-//! and another person's running build is left alone.
+//! built again. A build or a history import of theirs running across the
+//! forget keeps nothing, and another person's is left alone.
 
 use std::sync::Arc;
 
@@ -81,6 +81,21 @@ fn forgotten_row(table: &str, user: &str, at: i64) -> (String, &'static str) {
                  'web', {at}, {at}, 1000, 'skipped', 'album', 1);"
             ),
             "ended_at",
+        ),
+        "media_imported_listens" => (
+            format!(
+                "INSERT INTO media_imported_listens (user_id, listened_at, artist_name, \
+                 track_name, imported_at) VALUES ('{user}', {at}, 'Someone', 'Song', {at});"
+            ),
+            "imported_at",
+        ),
+        "media_history_imports" => (
+            format!(
+                "INSERT INTO media_history_imports (user_id, state, source, \
+                 last_synced_at, updated_at) VALUES ('{user}', 'current', 'upload', \
+                 {at}, {at});"
+            ),
+            "last_synced_at",
         ),
         other => panic!("{other} is listed as forgotten: give it a row here and a step"),
     }
@@ -186,8 +201,9 @@ async fn forgetting_takes_the_callers_history_and_nothing_else() {
     };
     let pages_before = user_rows("catalog_cached_pages", "user-1");
 
-    // Cut off after its first step: the playback events are gone, and the
-    // picks, the activity and the saved pages are all still there.
+    // Cut off after its second step: the playback events and the imported
+    // listens are gone, and the picks, the activity and the saved pages are
+    // all still there.
     insert(
         &db,
         "CREATE TRIGGER test_hold_picks BEFORE DELETE ON catalog_discover_picks \
@@ -197,6 +213,7 @@ async fn forgetting_takes_the_callers_history_and_nothing_else() {
     .await;
     assert_eq!(forget(&app).await, StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(user_rows("media_playback_events", "user-1"), 0);
+    assert_eq!(user_rows("media_imported_listens", "user-1"), 0);
     assert!(user_rows("catalog_discover_picks", "user-1") > 0);
     assert_eq!(user_rows("catalog_discover_activity", "user-1"), 1);
     assert_eq!(user_rows("catalog_cached_pages", "user-1"), pages_before);
@@ -347,5 +364,89 @@ async fn a_forget_stops_only_that_persons_running_builds() {
             .map(|page| page.value),
         Some("after".to_owned()),
         "a build claimed after the forget is kept"
+    );
+}
+
+/// A history import claimed before a person's forget writes nothing after
+/// it, and their queued import is cancelled; another person's import
+/// running across the forget keeps its listens. Nothing more is read for
+/// the person who forgot.
+#[tokio::test]
+async fn a_forget_stops_only_that_persons_running_import() {
+    use droppedneedle_media::history::{self, store::WriteError};
+    use droppedneedle_providers::listenbrainz::history::HistoryListen;
+
+    let rig = AuthRig::new("discover-forget-import").await;
+    let db = rig.platform.db.clone();
+    insert(
+        &db,
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('user-1', 'Ada', 'user', 0), ('user-2', 'Bob', 'user', 0); \
+         INSERT INTO media_history_imports (user_id, state, source, import_id, updated_at) \
+         VALUES ('user-1', 'importing', 'upload', 'ada', 0), \
+                ('user-2', 'importing', 'upload', 'bob', 0); \
+         INSERT INTO durable_jobs (kind, idempotency_key, state, not_before_at, \
+         payload_json, created_at, updated_at) \
+         VALUES ('listens.import', 'user-1', 'queued', 0, '{}', 0, 0), \
+                ('listens.import', 'user-2', 'queued', 0, '{}', 0, 0);"
+            .to_owned(),
+    )
+    .await;
+    let store = crate::common::history_store(&rig.platform);
+    let ada = store
+        .reading("user-1")
+        .await
+        .expect("read")
+        .expect("Ada's run");
+    let bob = store
+        .reading("user-2")
+        .await
+        .expect("read")
+        .expect("Bob's run");
+    // Before the clock the rig starts on, 2024-01-01.
+    let listen = HistoryListen {
+        listened_at: 1_700_000_000,
+        track_name: "Song".to_owned(),
+        artist_name: "Someone".to_owned(),
+        release_name: None,
+        recording_mbid: None,
+        release_mbid: None,
+        artist_mbid: None,
+    };
+
+    history::forget(&store, "user-1")
+        .await
+        .expect("Ada forgets");
+    let late = store
+        .write_month("user-1", &ada, vec![listen.clone()], false, |_| Ok(()))
+        .await;
+    assert!(matches!(late, Err(WriteError::MovedOn)), "{late:?}");
+    let kept = store
+        .write_month("user-2", &bob, vec![listen], false, |_| Ok(()))
+        .await;
+    assert!(matches!(kept, Ok(1)), "{kept:?}");
+
+    let count = |sql: &str, user: &str| db.one::<i64>(sql, [user]);
+    let listens = "SELECT COUNT(*) FROM media_imported_listens WHERE user_id = ?1";
+    let queued = "SELECT COUNT(*) FROM durable_jobs WHERE kind = 'listens.import' \
+                  AND idempotency_key = ?1";
+    assert_eq!(count(listens, "user-1"), 0, "Ada's run kept nothing");
+    assert_eq!(count(listens, "user-2"), 1, "Bob's run kept his listen");
+    assert_eq!(
+        count(queued, "user-1"),
+        0,
+        "Ada's queued import is cancelled"
+    );
+    assert!(count(queued, "user-2") > 0, "Bob's import stays queued");
+    assert!(
+        store.reading("user-1").await.expect("read").is_none(),
+        "nothing more is read for Ada"
+    );
+    assert_eq!(
+        db.one::<String>(
+            "SELECT state FROM media_history_imports WHERE user_id = ?1",
+            ["user-1"]
+        ),
+        "forgotten"
     );
 }

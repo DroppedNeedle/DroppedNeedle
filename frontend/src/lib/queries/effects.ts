@@ -33,6 +33,7 @@ import { ConnectionsQueryKeyFactory } from '$lib/features/profile/queries/Connec
 import { LibraryContributionQueryKeyFactory } from '$lib/features/library/queries/LibraryContributionQueryKeyFactory';
 import { LibraryManagementQueryKeyFactory } from '$lib/features/library-management/queries/LibraryManagementQueryKeyFactory';
 import { LidarrImportQueryKeyFactory } from '$lib/queries/featureKeys';
+import { ListeningHistoryQueryKeyFactory } from '$lib/queries/featureKeys';
 import { PluginQueryKeyFactory } from '$lib/features/settings/queries/plugins/PluginQueryKeyFactory';
 import { ProfileQueryKeyFactory } from '$lib/queries/featureKeys';
 import { RemoteQueryKeyFactory } from '$lib/features/remote-library/queries/RemoteQueryKeyFactory';
@@ -238,11 +239,17 @@ export const EFFECTS = {
 	],
 	/**
 	 * The caller forgot their history: everything Discover answered them and
-	 * the home page, saved copies included, since they were built from it.
+	 * the home page, saved copies included, since they were built from it,
+	 * and where their imported listening history stands.
 	 */
 	discoverHistoryForgotten: (userId: UserId): Sweep[] => [
 		{ key: DiscoverQueryKeyFactory.v3.root(userId), dropSaved: true },
-		{ key: HomeQueryKeyFactory.home(userId), dropSaved: true }
+		{ key: HomeQueryKeyFactory.home(userId), dropSaved: true },
+		{ key: ListeningHistoryQueryKeyFactory.get(userId) }
+	],
+	/** The caller uploaded a ListenBrainz export: where their history stands. */
+	listeningHistoryChanged: (userId: UserId): Sweep[] => [
+		{ key: ListeningHistoryQueryKeyFactory.get(userId) }
 	],
 	/**
 	 * Where recommendations come from changed (the ListenBrainz switch or the
@@ -559,6 +566,7 @@ export const sourcePlaylistsChanged = fact('sourcePlaylistsChanged');
 export const spotifyPlaylistsChanged = fact('spotifyPlaylistsChanged');
 export const discoverHomeChanged = fact('discoverHomeChanged');
 export const discoverHistoryForgotten = fact('discoverHistoryForgotten');
+export const listeningHistoryChanged = fact('listeningHistoryChanged');
 export const recommendationSourcesChanged = fact('recommendationSourcesChanged');
 export const discoveryBatchesChanged = fact('discoveryBatchesChanged');
 export const discoveryBatchChanged = fact('discoveryBatchChanged');

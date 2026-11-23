@@ -2280,3 +2280,88 @@ async fn a_decode_failure_never_quotes_the_answer() {
     );
     assert!(!format!("{error} {error:?}").contains(secret), "{error:?}");
 }
+
+/// The lines of the hand-made ListenBrainz export, read out of its ZIP.
+fn export_lines() -> Vec<String> {
+    use std::io::Read as _;
+    let bytes: &[u8] = include_bytes!("../fixtures/listenbrainz/history_export.zip");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("the fixture opens");
+    let mut lines = Vec::new();
+    for name in ["listens/2026/1.jsonl", "listens/2026/2.jsonl"] {
+        let mut text = String::new();
+        zip.by_name(name)
+            .expect("the month is there")
+            .read_to_string(&mut text)
+            .expect("the month reads");
+        lines.extend(text.lines().map(str::to_owned));
+    }
+    lines
+}
+
+/// Every line of an export decodes into a listen: ListenBrainz's mapping
+/// names the ids first, the submitter's extras stand in where there is no
+/// mapping, and the first credited artist is the listen's. A line without
+/// its time, track or artist is refused, and so is a blank name.
+#[test]
+fn listenbrainz_export_lines_decode_and_need_their_identity() {
+    use droppedneedle_providers::listenbrainz::history::{HistoryListen, LineError, parse_line};
+    let lines = export_lines();
+    let listens: Vec<HistoryListen> = lines
+        .iter()
+        .map(|line| parse_line(line).expect("the line decodes"))
+        .collect();
+    assert_eq!(listens.len(), 5);
+    assert_eq!(
+        listens[0],
+        HistoryListen {
+            listened_at: 1_767_312_000,
+            track_name: "Paper Lanterns".to_owned(),
+            artist_name: "The Quiet Harbour".to_owned(),
+            release_name: Some("Low Tide".to_owned()),
+            recording_mbid: Some("5dab7e96-c04f-4cbe-9e87-af6d4b5c9a05".to_owned()),
+            release_mbid: Some("6ebc8fa7-d15a-4dcf-8f98-b07e5c6dab06".to_owned()),
+            artist_mbid: Some("1f6d3a52-8c0b-4e7a-9a43-6b2f0d1e5c01".to_owned()),
+        }
+    );
+    assert_eq!(
+        (&listens[1].recording_mbid, &listens[1].artist_mbid),
+        (&listens[0].recording_mbid, &listens[0].artist_mbid),
+        "with no mapping, the submitter's ids"
+    );
+    assert_eq!(
+        listens[2].artist_mbid.as_deref(),
+        Some("2a7e4b63-9d1c-4f8b-8b54-7c3a1e2f6d02"),
+        "the first of two credited artists"
+    );
+    assert_eq!(
+        (&listens[3].recording_mbid, &listens[3].artist_mbid),
+        (&None, &None),
+        "a listen with no ids keeps its names"
+    );
+
+    let first: serde_json::Value = serde_json::from_str(&lines[0]).expect("json");
+    for (path, field) in [
+        ("", "listened_at"),
+        ("track_metadata", "track_name"),
+        ("track_metadata", "artist_name"),
+    ] {
+        let mut line = first.clone();
+        let object = if path.is_empty() {
+            &mut line
+        } else {
+            &mut line[path]
+        };
+        object.as_object_mut().expect("object").remove(field);
+        let refused = parse_line(&line.to_string());
+        assert!(
+            matches!(refused, Err(LineError::Shape(_))),
+            "a line with no {field}: {refused:?}"
+        );
+    }
+    let mut blank = first.clone();
+    blank["track_metadata"]["artist_name"] = serde_json::json!("  ");
+    assert!(
+        matches!(parse_line(&blank.to_string()), Err(LineError::Names)),
+        "a blank artist"
+    );
+}

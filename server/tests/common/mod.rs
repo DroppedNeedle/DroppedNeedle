@@ -270,6 +270,20 @@ pub fn playback_store(
     ))
 }
 
+/// The listening history store over `platform`, as bootstrap builds it.
+/// It keeps nothing in memory, so two built over one platform agree.
+pub fn history_store(
+    platform: &droppedneedle_kernel::platform::Platform,
+) -> std::sync::Arc<droppedneedle_media::history::HistoryStore> {
+    std::sync::Arc::new(droppedneedle_media::history::HistoryStore::new(
+        platform,
+        droppedneedle_kernel::jobs::queue::JobQueue::new(
+            platform.db.clone(),
+            platform.clock.clone(),
+        ),
+    ))
+}
+
 /// The listening store over `platform`, as bootstrap builds it.
 pub fn listening_store(
     platform: &droppedneedle_kernel::platform::Platform,

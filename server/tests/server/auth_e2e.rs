@@ -277,6 +277,7 @@ impl E2e {
             )),
             playback,
             p.clock.clone(),
+            crate::common::history_store(p),
         )
         .expect("media bundle builds");
         let compat = droppedneedle_compat::CompatSetup::build(

@@ -33,6 +33,7 @@ tokio.workspace = true
 tracing.workspace = true
 utoipa.workspace = true
 uuid.workspace = true
+zip.workspace = true
 
 [features]
 # Fakes, memory stores and test constructors for the test suites above.
@@ -45,4 +46,3 @@ test-support = [
 
 [dev-dependencies]
 droppedneedle-kernel = { workspace = true, features = ["test-support"] }
-zip.workspace = true

@@ -3,6 +3,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+mod listening_history;
 mod media_journey;
 mod playback_reporting;
 mod remotes_adapter;

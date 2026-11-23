@@ -5,6 +5,7 @@ import { queryClient } from '$lib/queries/QueryClient';
 import { renderWithQuery } from '$lib/test/render';
 import type { ScrobblePreferences } from '$lib/features/profile/queries/scrobble-preferences.svelte';
 import type { IntegrationStatus } from '$lib/features/home/queries/home.svelte';
+import type { ListeningHistory } from '$lib/features/profile/queries/listening-history.svelte';
 
 // The preferences read waits for a signed-in user.
 vi.mock('$lib/stores/authStore.svelte', () => ({
@@ -21,6 +22,18 @@ const prefs: ScrobblePreferences = {
 	primary_music_source: 'listenbrainz',
 	now_playing_visibility: 'full',
 	auto_request_personal_mix: false
+};
+
+// Nothing imported from ListenBrainz yet.
+const nothing: ListeningHistory = {
+	state: null,
+	source: null,
+	account: null,
+	imported_listens: 0,
+	plays: 0,
+	oldest_listened_at: null,
+	newest_listened_at: null,
+	last_synced_at: null
 };
 
 const integrations = (lastfm: boolean): IntegrationStatus => ({
@@ -54,6 +67,7 @@ describe('Last.fm link on the profile', () => {
 			},
 			'GET /api/v3/me/scrobble-preferences': prefs,
 			'GET /api/v3/home/integration-status': integrations(true),
+			'GET /api/v3/me/listening-history': nothing,
 			'POST /api/v3/me/connections/lastfm/token': {
 				token: 'lfm-token',
 				auth_url: 'https://www.last.fm/api/auth/?api_key=k&token=lfm-token'
@@ -88,7 +102,8 @@ describe('Last.fm link on the profile', () => {
 		fakeApi({
 			'GET /api/v3/me/connections': { connections: [] },
 			'GET /api/v3/me/scrobble-preferences': { ...prefs, primary_music_source: 'lastfm' },
-			'GET /api/v3/home/integration-status': integrations(false)
+			'GET /api/v3/home/integration-status': integrations(false),
+			'GET /api/v3/me/listening-history': nothing
 		});
 		await renderWithQuery(ScrobblingDiscoveryCard, { navidromeEnabled: false });
 
@@ -111,6 +126,7 @@ describe('Last.fm link on the profile', () => {
 			'GET /api/v3/me/connections': { connections: [] },
 			'GET /api/v3/me/scrobble-preferences': prefs,
 			'GET /api/v3/home/integration-status': integrations(true),
+			'GET /api/v3/me/listening-history': nothing,
 			'POST /api/v3/me/connections/lastfm/token': apiError(
 				409,
 				'PROVIDER_NOT_CONFIGURED',
@@ -133,6 +149,7 @@ describe('Your history on the profile', () => {
 			'GET /api/v3/me/connections': { connections: [] },
 			'GET /api/v3/me/scrobble-preferences': prefs,
 			'GET /api/v3/home/integration-status': integrations(true),
+			'GET /api/v3/me/listening-history': nothing,
 			'DELETE /api/v3/discover/history': undefined
 		});
 		const forgotten = () => api.calls('DELETE /api/v3/discover/history').length;
@@ -141,14 +158,18 @@ describe('Your history on the profile', () => {
 		await expect
 			.element(
 				page.getByText(
-					'Kept for you: your plays here, what you told Discover, the picks it showed you',
+					'Kept for you: your plays here, a copy of your ListenBrainz history, what you told',
 					{ exact: false }
 				)
 			)
 			.toBeVisible();
 		await page.getByRole('button', { name: 'Forget my history' }).click();
 		await expect
-			.element(page.getByText('This removes the picks and the play endings.', { exact: false }))
+			.element(
+				page.getByText('This removes the picks, the play endings and the copy of your', {
+					exact: false
+				})
+			)
 			.toBeVisible();
 		expect(forgotten()).toBe(0);
 
@@ -167,6 +188,7 @@ describe('Your history on the profile', () => {
 			'GET /api/v3/me/connections': { connections: [] },
 			'GET /api/v3/me/scrobble-preferences': prefs,
 			'GET /api/v3/home/integration-status': integrations(true),
+			'GET /api/v3/me/listening-history': nothing,
 			'DELETE /api/v3/discover/history': apiError(status, code)
 		});
 		await renderWithQuery(ScrobblingDiscoveryCard, { navidromeEnabled: false });
@@ -174,5 +196,84 @@ describe('Your history on the profile', () => {
 		await page.getByRole('button', { name: 'Forget my history' }).click();
 		await page.getByRole('button', { name: 'Forget', exact: true }).click();
 		await expect.element(page.getByText(line)).toBeVisible();
+	});
+});
+
+describe('Listening history on the profile', () => {
+	it('says what is imported and sends a chosen export file', async () => {
+		let uploaded = false;
+		const api = fakeApi({
+			'GET /api/v3/me/connections': { connections: [] },
+			'GET /api/v3/me/scrobble-preferences': prefs,
+			'GET /api/v3/home/integration-status': integrations(true),
+			'GET /api/v3/me/listening-history': () =>
+				uploaded
+					? { ...nothing, state: 'importing', source: 'upload', imported_listens: 4512 }
+					: { ...nothing, state: 'current', source: 'upload', imported_listens: 4512 },
+			'POST /api/v3/me/listening-history/upload': () => {
+				uploaded = true;
+				return { ...nothing, state: 'importing', source: 'upload', imported_listens: 4512 };
+			}
+		});
+		const sent = () => api.calls('POST /api/v3/me/listening-history/upload').length;
+		// The upload's effect refreshes the status on the app's own client.
+		await renderWithQuery(
+			ScrobblingDiscoveryCard,
+			{ navidromeEnabled: false },
+			{ client: queryClient }
+		);
+
+		await expect.element(page.getByText('4,512 listens from ListenBrainz')).toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: 'Add a ListenBrainz export file' }))
+			.toBeVisible();
+		expect(sent()).toBe(0);
+
+		await page
+			.getByLabelText('Choose a ListenBrainz export file')
+			.upload(new File(['PK'], 'listenbrainz_export.zip', { type: 'application/zip' }));
+		await expect.poll(sent).toBe(1);
+		await expect.element(page.getByText('Reading your file')).toBeVisible();
+	});
+
+	it('says nothing is imported, and why a file was refused', async () => {
+		fakeApi({
+			'GET /api/v3/me/connections': { connections: [] },
+			'GET /api/v3/me/scrobble-preferences': prefs,
+			'GET /api/v3/home/integration-status': integrations(true),
+			'GET /api/v3/me/listening-history': nothing,
+			'POST /api/v3/me/listening-history/upload': apiError(
+				400,
+				'INVALID_INPUT',
+				'That file is not a ListenBrainz export.'
+			),
+			'DELETE /api/v3/discover/history': undefined
+		});
+		await renderWithQuery(ScrobblingDiscoveryCard, { navidromeEnabled: false });
+
+		await expect.element(page.getByText('Nothing imported yet.')).toBeVisible();
+		await page
+			.getByLabelText('Choose a ListenBrainz export file')
+			.upload(new File(['not a zip'], 'notes.zip', { type: 'application/zip' }));
+		const refused = page.getByText('That file is not a ListenBrainz export.');
+		await expect.element(refused).toBeVisible();
+
+		// A forget clears the line.
+		await page.getByRole('button', { name: 'Forget my history' }).click();
+		await page.getByRole('button', { name: 'Forget', exact: true }).click();
+		await expect.element(refused).not.toBeInTheDocument();
+	});
+
+	it('says when the history could not be checked, and offers to try again', async () => {
+		fakeApi({
+			'GET /api/v3/me/connections': { connections: [] },
+			'GET /api/v3/me/scrobble-preferences': prefs,
+			'GET /api/v3/home/integration-status': integrations(true),
+			'GET /api/v3/me/listening-history': apiError(500, 'INTERNAL_ERROR')
+		});
+		await renderWithQuery(ScrobblingDiscoveryCard, { navidromeEnabled: false });
+
+		await expect.element(page.getByText("Couldn't check your history.")).toBeVisible();
+		await expect.element(page.getByRole('button', { name: 'Try again' })).toBeVisible();
 	});
 });

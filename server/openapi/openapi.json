@@ -23565,6 +23565,132 @@
         ]
       }
     },
+    "/api/v3/me/listening-history": {
+      "get": {
+        "tags": [
+          "listening"
+        ],
+        "summary": "Where the caller's listening history stands: their import, the listens\nkept from ListenBrainz and their plays here.",
+        "operationId": "get_listening_history",
+        "responses": {
+          "200": {
+            "description": "Listening history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListeningHistory"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server is busy; try again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/me/listening-history/upload": {
+      "post": {
+        "tags": [
+          "listening"
+        ],
+        "summary": "Import a ListenBrainz export ZIP: the file the person downloaded from\nListenBrainz, up to 512 MB. It is read in the background; the answer\nsays where the caller's history stands. A new upload replaces one still\nbeing read, and a listen already kept is never added twice.",
+        "operationId": "upload_listening_history",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ListeningHistoryUpload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "The file is being read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListeningHistory"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No file, or not a ListenBrainz export",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Over 512 MB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server is busy; try again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/me/local-password": {
       "post": {
         "tags": [
@@ -49352,6 +49478,26 @@
           }
         }
       },
+      "HistoryImportSource": {
+        "type": "string",
+        "description": "Where an import's file came from. Declared whole: `export` is first\nwritten by the export fetched from ListenBrainz.",
+        "enum": [
+          "upload",
+          "export"
+        ]
+      },
+      "HistoryImportState": {
+        "type": "string",
+        "description": "Where a person's import stands. Declared whole: `pending` and\n`exporting` are first written by the export fetched from ListenBrainz.",
+        "enum": [
+          "pending",
+          "exporting",
+          "importing",
+          "current",
+          "failed",
+          "forgotten"
+        ]
+      },
       "HistoryPage": {
         "type": "object",
         "description": "Listening history page.",
@@ -52738,6 +52884,93 @@
           "listenbrainz",
           "lastfm"
         ]
+      },
+      "ListeningHistory": {
+        "type": "object",
+        "description": "Where the caller's listening history stands.",
+        "required": [
+          "imported_listens",
+          "plays"
+        ],
+        "properties": {
+          "account": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The ListenBrainz account the history is from; null for an upload."
+          },
+          "imported_listens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Listens kept from ListenBrainz. Never counted as plays."
+          },
+          "last_synced_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the last import finished, unix seconds."
+          },
+          "newest_listened_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The newest listen kept, unix seconds."
+          },
+          "oldest_listened_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The oldest listen kept, unix seconds."
+          },
+          "plays": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Plays here, in the web player and in apps."
+          },
+          "source": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HistoryImportSource"
+              }
+            ],
+            "description": "Where the last import's file came from; null while none."
+          },
+          "state": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HistoryImportState"
+              }
+            ],
+            "description": "Where their import stands; null while they never imported."
+          }
+        }
+      },
+      "ListeningHistoryUpload": {
+        "type": "object",
+        "description": "The upload form: one `file` part, a ListenBrainz export ZIP.",
+        "required": [
+          "file"
+        ],
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "description": "The export ZIP."
+          }
+        }
       },
       "ListeningLinkStatus": {
         "type": "object",

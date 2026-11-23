@@ -34,6 +34,7 @@ where
 /// Every `sql.rs` of this crate, one line each, for the schema test.
 pub fn statement_files() -> Vec<StatementFile> {
     vec![
+        crate::history::sql::registered(),
         crate::playback::sql::registered(),
         crate::remotes::sql::registered(),
         crate::stream::sql::registered(),

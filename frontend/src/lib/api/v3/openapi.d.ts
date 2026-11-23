@@ -6099,6 +6099,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/me/listening-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Where the caller's listening history stands: their import, the listens
+         *     kept from ListenBrainz and their plays here.
+         */
+        get: operations["get_listening_history"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/me/listening-history/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import a ListenBrainz export ZIP: the file the person downloaded from
+         *     ListenBrainz, up to 512 MB. It is read in the background; the answer
+         *     says where the caller's history stands. A new upload replaces one still
+         *     being read, and a listen already kept is never added twice.
+         */
+        post: operations["upload_listening_history"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/me/local-password": {
         parameters: {
             query?: never;
@@ -15861,6 +15903,18 @@ export interface components {
              */
             viewed_at: number;
         };
+        /**
+         * @description Where an import's file came from. Declared whole: `export` is first
+         *     written by the export fetched from ListenBrainz.
+         * @enum {string}
+         */
+        HistoryImportSource: "upload" | "export";
+        /**
+         * @description Where a person's import stands. Declared whole: `pending` and
+         *     `exporting` are first written by the export fetched from ListenBrainz.
+         * @enum {string}
+         */
+        HistoryImportState: "pending" | "exporting" | "importing" | "current" | "failed" | "forgotten";
         /** @description Listening history page. */
         HistoryPage: {
             /** @description Page items, newest first. */
@@ -17567,6 +17621,48 @@ export interface components {
          * @enum {string}
          */
         ListenSource: "listenbrainz" | "lastfm";
+        /** @description Where the caller's listening history stands. */
+        ListeningHistory: {
+            /** @description The ListenBrainz account the history is from; null for an upload. */
+            account?: string | null;
+            /**
+             * Format: int64
+             * @description Listens kept from ListenBrainz. Never counted as plays.
+             */
+            imported_listens: number;
+            /**
+             * Format: int64
+             * @description When the last import finished, unix seconds.
+             */
+            last_synced_at?: number | null;
+            /**
+             * Format: int64
+             * @description The newest listen kept, unix seconds.
+             */
+            newest_listened_at?: number | null;
+            /**
+             * Format: int64
+             * @description The oldest listen kept, unix seconds.
+             */
+            oldest_listened_at?: number | null;
+            /**
+             * Format: int64
+             * @description Plays here, in the web player and in apps.
+             */
+            plays: number;
+            /** @description Where the last import's file came from; null while none. */
+            source?: null | components["schemas"]["HistoryImportSource"];
+            /** @description Where their import stands; null while they never imported. */
+            state?: null | components["schemas"]["HistoryImportState"];
+        };
+        /** @description The upload form: one `file` part, a ListenBrainz export ZIP. */
+        ListeningHistoryUpload: {
+            /**
+             * Format: binary
+             * @description The export ZIP.
+             */
+            file: string;
+        };
         /**
          * @description One linked listening account. Never carries the secret, only the name.
          *     Named apart from the remotes `ConnectionStatus` in the one OpenAPI
@@ -42634,6 +42730,104 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+        };
+    };
+    get_listening_history: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Listening history */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListeningHistory"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The server is busy; try again */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    upload_listening_history: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["ListeningHistoryUpload"];
+            };
+        };
+        responses: {
+            /** @description The file is being read */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListeningHistory"];
+                };
+            };
+            /** @description No file, or not a ListenBrainz export */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Over 512 MB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The server is busy; try again */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

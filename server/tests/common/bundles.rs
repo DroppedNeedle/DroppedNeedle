@@ -251,6 +251,7 @@ pub fn catalog_setup_at(
             cover_warm,
             jobs: JobQueue::new(platform.db.clone(), platform.clock.clone()),
             playback,
+            history: super::history_store(platform),
         },
     )
 }
@@ -500,6 +501,7 @@ pub fn media_at(
         )),
         playback,
         platform.clock.clone(),
+        super::history_store(platform),
     )
     .expect("media bundle builds");
     media

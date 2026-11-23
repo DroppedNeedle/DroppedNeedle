@@ -112,6 +112,8 @@ compat_user_settings
 
 [media]
 library_play_history
+media_history_imports
+media_imported_listens
 media_navidrome_folder_preferences
 media_playback_events
 user_listening_prefs
