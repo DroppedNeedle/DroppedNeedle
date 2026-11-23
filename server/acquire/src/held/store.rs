@@ -719,15 +719,15 @@ impl<'c> HeldRows<'c> {
         Ok(())
     }
 
-    /// Whether a download task still has a file held in an open entry: its
-    /// automatic retry waits while it does.
+    /// Whether a download task, or another task for the same ask, still has
+    /// a file held in an open entry: its automatic retry waits while it does.
     pub fn task_holds(&self, task_id: &str) -> rusqlite::Result<bool> {
         self.conn
             .query_row(sql::TASK_HOLDS.text(), params![task_id], |row| row.get(0))
     }
 
-    /// The tasks among `task_ids` that still have a file held in an open
-    /// entry.
+    /// The tasks among `task_ids` that, themselves or through another task
+    /// for the same ask, still have a file held in an open entry.
     pub fn tasks_holding(&self, task_ids: &[String]) -> rusqlite::Result<HashSet<String>> {
         if task_ids.is_empty() {
             return Ok(HashSet::new());

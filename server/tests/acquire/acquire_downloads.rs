@@ -438,7 +438,7 @@ fn auto_retry_sweep_honors_backoff_newest_wins_and_held_gate() {
         )
         .unwrap();
     assert!(held.task_holds("orig-r1").unwrap());
-    assert!(!held.task_holds("orig").unwrap());
+    assert!(!held.task_holds("up").unwrap(), "another album's task");
     held.release(entry, 2).unwrap();
     assert!(held.claim(entry).unwrap());
     assert!(
@@ -454,6 +454,66 @@ fn auto_retry_sweep_honors_backoff_newest_wins_and_held_gate() {
     let upgrade_spawn = plan_retry("up", TaskStatus::Failed, "upgrade", 0).unwrap();
     assert_eq!(upgrade_spawn.origin, DispatchOrigin::Upgrade);
     assert!(plan_retry("live", TaskStatus::Downloading, "user", 0).is_none());
+}
+
+/// A copy of a track already held is not held twice, so a later download
+/// for the same album owns no held file of its own. It waits on the held
+/// one all the same: retrying it would only download another copy into the
+/// same hold.
+#[test]
+fn a_held_track_pauses_later_tasks_for_its_album() {
+    let dir = scratch_dir("held-ask");
+    let conn = scratch_store(&dir);
+    let store = DownloadStore::new(&conn);
+    let now = 1_700_000_000.0;
+    for (id, group, origin, at) in [
+        ("first", "rg-held", "user", now - 9000.0),
+        ("again", "rg-held", "wanted", now - 5000.0),
+        ("elsewhere", "rg-other", "user", now - 5000.0),
+    ] {
+        let mut task = new_task(id);
+        task.release_group_mbid = group.to_owned();
+        task.origin = origin.to_owned();
+        store.insert_task(&task, at).unwrap();
+        store
+            .transition_task(
+                id,
+                TaskStatus::Failed,
+                at + 100.0,
+                Some(TaskOutcome::new(Reason::TargetOccupied, "occupied")),
+            )
+            .unwrap();
+    }
+    let held = HeldRows::new(&conn);
+    held.hold(
+        &NewEntry {
+            user_id: Some("u1".to_owned()),
+            origin: EntryOrigin::Download,
+            key: GroupKey::Album("rg-held".to_owned()),
+            release_group_mbid: Some("rg-held".to_owned()),
+            recording_mbid: None,
+            drop_item_id: None,
+            artist_name: None,
+            album_title: None,
+        },
+        &[NewFile {
+            source_task_id: Some("first".to_owned()),
+            ..NewFile::new(
+                HeldRoot::Held,
+                "01.flac",
+                Reason::TargetOccupied,
+                "soulseek",
+            )
+        }],
+        1,
+    )
+    .unwrap();
+
+    assert!(held.task_holds("again").unwrap());
+    assert!(!held.task_holds("elsewhere").unwrap());
+    let ids = ["again".to_owned(), "elsewhere".to_owned()];
+    let holding = held.tasks_holding(&ids).unwrap();
+    assert_eq!(holding, ["again".to_owned()].into_iter().collect());
 }
 
 /// Quarantine rows expire and clear on a manual retry, and a suspect file

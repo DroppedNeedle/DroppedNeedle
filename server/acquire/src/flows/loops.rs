@@ -471,7 +471,7 @@ fn notify_wanted(
 /// Enrol availability-dead album requests as watches: `failed` rows, plus
 /// `incomplete` rows when the partial toggle is on. Never auto-revives a
 /// stopped or removed watch, skips rows with no requester, and skips rows whose
-/// linked task is still active.
+/// linked task is still active or waits on a held file.
 async fn enrol_watches(now: i64, settings: &WantedSettings, deps: &WantedDeps) -> usize {
     let mut statuses = vec![(RequestStatus::Failed, WatchKind::Missing)];
     if settings.watch_partial_albums {
@@ -495,7 +495,10 @@ async fn enrol_watches(now: i64, settings: &WantedSettings, deps: &WantedDeps) -
             }
             if let Some(task_id) = row.task_id.as_deref() {
                 match deps.downloads.task(task_id).await {
-                    Ok(Some(task)) if !task.status.is_terminal() => {
+                    // A file of the ask waits in the held list: a person
+                    // decides first. Searching again only downloads another
+                    // copy into the same hold.
+                    Ok(Some(task)) if !task.status.is_terminal() || task.held_for_review => {
                         continue;
                     }
                     Ok(_) => {}

@@ -86,11 +86,25 @@ droppedneedle_kernel::sql! {
              release_track_mbid = ?3, recording_mbid = ?4, disc_number = ?5, \
              track_number = ?6, track_title = ?7, expected_duration_seconds = ?8 \
              WHERE id = ?1 AND state = 'held'";
-    /// Whether download task `?1` still has a file held in an open entry.
+    /// Download `o` is for the same ask as download `t`: the same owner and
+    /// track, or the same owner and album, grouped as the retry pass groups
+    /// them. A copy of a track already held is not held twice, so a later
+    /// task for it owns no held file of its own and waits on the earlier one.
+    pub(super) fragment SAME_ASK = "o.user_id = t.user_id \
+             AND o.download_type = t.download_type \
+             AND (t.download_type = 'track' OR o.release_group_mbid = t.release_group_mbid) \
+             AND COALESCE(o.recording_mbid, '') = COALESCE(t.recording_mbid, '') \
+             AND (o.id = t.id OR o.origin != 'upgrade')";
+    /// Whether download task `?1`, or another task for the same ask, still
+    /// has a file held in an open entry.
     pub(super) TASK_HOLDS = "SELECT EXISTS (SELECT 1 FROM acquire_held_files f \
              JOIN acquire_held_entries e ON e.id = f.entry_id \
-             WHERE f.source_task_id = ?1 AND f.state = 'held' AND e.state IN " + OPEN + ")";
-    /// Tasks among a list that still have a file held in an open entry.
+             WHERE f.state = 'held' AND e.state IN " + OPEN + " \
+               AND (f.source_task_id = ?1 OR f.source_task_id IN ( \
+                 SELECT o.id FROM download_tasks t JOIN download_tasks o ON " + SAME_ASK + " \
+                 WHERE t.id = ?1)))";
+    /// Tasks among a list that, themselves or through another task for the
+    /// same ask, still have a file held in an open entry.
     family TASKS_HOLDING = tasks_holding;
     /// Open entries of owner `?1` (NULL for everyone); with `?2`, those of
     /// no user too.
@@ -208,12 +222,15 @@ fn marks(len: ListLen) -> String {
     vec!["?"; len.get()].join(", ")
 }
 
-/// Tasks among the list that still have a file held in an open entry.
+/// Tasks among the list that, themselves or through another task for the
+/// same ask, still have a file held in an open entry.
 pub(super) fn tasks_holding(tasks: ListLen) -> String {
     format!(
-        "SELECT DISTINCT f.source_task_id FROM acquire_held_files f \
+        "SELECT DISTINCT t.id FROM download_tasks t \
+         JOIN download_tasks o ON {SAME_ASK} \
+         JOIN acquire_held_files f ON f.source_task_id = o.id \
          JOIN acquire_held_entries e ON e.id = f.entry_id \
-         WHERE f.state = 'held' AND e.state IN {OPEN} AND f.source_task_id IN ({})",
+         WHERE f.state = 'held' AND e.state IN {OPEN} AND t.id IN ({})",
         marks(tasks)
     )
 }
