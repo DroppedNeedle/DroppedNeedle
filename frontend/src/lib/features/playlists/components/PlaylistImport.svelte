@@ -13,6 +13,7 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import Button from '$lib/ui/Button.svelte';
 	import Modal from '$lib/ui/Modal.svelte';
+	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 
 	const MAX_BYTES = 2 * 1024 * 1024;
 	const SHOWN_UNMATCHED = 200;
@@ -27,6 +28,7 @@
 	let fileInput = $state<HTMLInputElement | null>(null);
 	let importing = $state(false);
 	let open = $state(false);
+	let libraryOnly = $state(false);
 	let report = $state<ImportPlaylistResponseV3 | null>(null);
 
 	function chooseFile() {
@@ -53,7 +55,8 @@
 			report = await mutation.mutateAsync({
 				name: playlistName(file.name),
 				format,
-				content
+				content,
+				library_only: libraryOnly
 			});
 			open = true;
 		} catch (error) {
@@ -80,9 +83,14 @@
 	}
 </script>
 
-<Button variant="outline" size="display" icon={Upload} loading={importing} onclick={chooseFile}>
-	Import playlist
-</Button>
+<div class="flex flex-wrap items-center gap-3">
+	<Button variant="outline" size="display" icon={Upload} loading={importing} onclick={chooseFile}>
+		Import playlist
+	</Button>
+	<div class="w-64">
+		<ToggleRow label="Only songs already in the library" bind:checked={libraryOnly} />
+	</div>
+</div>
 <input
 	type="file"
 	accept=".m3u,.m3u8,.csv"
@@ -106,6 +114,10 @@
 				<strong>{report.matched}</strong>
 				{report.matched === 1 ? 'track' : 'tracks'} added to
 				<strong>{report.name}</strong>.
+				{#if report.kept > 0}
+					<strong>{report.kept}</strong>
+					kept to request.
+				{/if}
 				{#if report.unmatched.length > 0}
 					{report.unmatched.length}
 					{report.unmatched.length === 1 ? 'entry was' : 'entries were'} left out.

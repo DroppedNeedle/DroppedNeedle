@@ -50542,6 +50542,10 @@
             "$ref": "#/components/schemas/ImportFormat",
             "description": "The file's format."
           },
+          "library_only": {
+            "type": "boolean",
+            "description": "Leave out the rows the library lacks. Off by default, so an import\nkeeps them as entries to request."
+          },
           "name": {
             "type": "string",
             "description": "Name for the new playlist. Must not be blank."
@@ -50555,10 +50559,16 @@
           "playlist_id",
           "name",
           "matched",
+          "kept",
           "unmatched",
           "over_limit"
         ],
         "properties": {
+          "kept": {
+            "type": "integer",
+            "description": "Entries the library lacks, kept with no source to request.",
+            "minimum": 0
+          },
           "matched": {
             "type": "integer",
             "description": "Entries that became playlist tracks.",

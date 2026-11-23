@@ -16336,11 +16336,18 @@ export interface components {
             content: string;
             /** @description The file's format. */
             format: components["schemas"]["ImportFormat"];
+            /**
+             * @description Leave out the rows the library lacks. Off by default, so an import
+             *     keeps them as entries to request.
+             */
+            library_only?: boolean;
             /** @description Name for the new playlist. Must not be blank. */
             name: string;
         };
         /** @description Playlist import answer. */
         ImportPlaylistResponse: {
+            /** @description Entries the library lacks, kept with no source to request. */
+            kept: number;
             /** @description Entries that became playlist tracks. */
             matched: number;
             /** @description Its name as stored. */

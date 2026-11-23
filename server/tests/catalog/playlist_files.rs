@@ -88,7 +88,10 @@ async fn track_names(app: &TestApp, who: &Login, id: &str) -> Vec<(String, Strin
         .map(|track| {
             (
                 track["track_name"].as_str().unwrap().to_owned(),
-                track["track_source_id"].as_str().unwrap().to_owned(),
+                track["track_source_id"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
             )
         })
         .collect()
@@ -96,8 +99,8 @@ async fn track_names(app: &TestApp, who: &Login, id: &str) -> Vec<(String, Strin
 
 /// Export as M3U and CSV under a path prefix, leaving out an entry with no
 /// file and one whose file is gone, then import each file back with an
-/// entry the library lacks: the tracks come back in order while the
-/// missing entry is reported. A CSV cell a spreadsheet would run is
+/// entry the library lacks: the tracks come back in order and the entry
+/// the library lacks is kept. A CSV cell a spreadsheet would run is
 /// guarded on the way out and read plainly on the way in. A Spotify
 /// exporter's CSV, with a byte-order mark and a credit of two artists, reads
 /// back to the same tracks. A file over 2 MB is refused, a very long path is
@@ -137,7 +140,11 @@ async fn playlists_export_and_import_back() {
         ("Mysterons".to_owned(), "t1".to_owned()),
         ("=Sour Times".to_owned(), "t2".to_owned()),
     ];
-    let missing = json!([{"title": "Ghost", "artist": "Nobody", "reason": "no_match"}]);
+    let copied = vec![
+        ("Mysterons".to_owned(), "t1".to_owned()),
+        ("=Sour Times".to_owned(), "t2".to_owned()),
+        ("Ghost".to_owned(), String::new()),
+    ];
 
     let (m3u, skipped) = export(&app, &ada, &id, "format=m3u8&prefix=Music/").await;
     assert_eq!(skipped, "2");
@@ -152,10 +159,11 @@ async fn playlists_export_and_import_back() {
     .await;
     assert_eq!(status, StatusCode::CREATED, "{report}");
     assert_eq!(report["matched"], 2, "{report}");
-    assert_eq!(report["unmatched"], missing);
+    assert_eq!(report["kept"], 1, "{report}");
+    assert_eq!(report["unmatched"], json!([]));
     assert_eq!(report["over_limit"], 0);
     let copy = report["playlist_id"].as_str().unwrap();
-    assert_eq!(track_names(&app, &ada, copy).await, expected);
+    assert_eq!(track_names(&app, &ada, copy).await, copied);
 
     let (csv, skipped) = export(&app, &ada, &id, "format=csv").await;
     assert_eq!(skipped, "2");
@@ -169,9 +177,10 @@ async fn playlists_export_and_import_back() {
     .await;
     assert_eq!(status, StatusCode::CREATED, "{report}");
     assert_eq!(report["matched"], 2, "{report}");
-    assert_eq!(report["unmatched"], missing);
+    assert_eq!(report["kept"], 1, "{report}");
+    assert_eq!(report["unmatched"], json!([]));
     let copy = report["playlist_id"].as_str().unwrap();
-    assert_eq!(track_names(&app, &ada, copy).await, expected);
+    assert_eq!(track_names(&app, &ada, copy).await, copied);
 
     // With no path to go by, the guarded title still names its track.
     let (status, report) =

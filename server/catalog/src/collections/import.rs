@@ -21,6 +21,8 @@ const EXPORT_COLUMNS: Columns = Columns {
     artist: Some(1),
     album: Some(2),
     path: Some(5),
+    track_number: None,
+    disc_number: None,
 };
 /// Header names each column is read from, lowercased. The header test and
 /// the column lookup both read these, so they cannot drift apart.
@@ -28,6 +30,9 @@ const TITLE_NAMES: &[&str] = &["title", "track name", "track", "name", "song"];
 const ARTIST_NAMES: &[&str] = &["artist", "artist name", "artist name(s)", "artists"];
 const ALBUM_NAMES: &[&str] = &["album", "album name"];
 const PATH_NAMES: &[&str] = &["path"];
+/// Track and disc numbers, read when the export writes them.
+const TRACK_NUMBER_NAMES: &[&str] = &["track number", "track no"];
+const DISC_NUMBER_NAMES: &[&str] = &["disc number", "disc no", "disc", "disk number"];
 /// Other columns the common exports write. They mark a header row but are
 /// not read.
 const OTHER_NAMES: &[&str] = &["album artist", "duration"];
@@ -44,6 +49,10 @@ pub(crate) struct ParsedEntry {
     /// The file the entry names, as the file spells it; empty when it
     /// names none.
     pub path: String,
+    /// Track number the file gives, when it gives one.
+    pub track_number: Option<i32>,
+    /// Disc number the file gives, when it gives one.
+    pub disc_number: Option<i32>,
 }
 
 /// What a file holds: its first [`MAX_IMPORT_ENTRIES`] entries in file
@@ -119,6 +128,8 @@ fn parse_m3u(content: &str) -> Parsed {
                 artist,
                 album: String::new(),
                 path: line.to_owned(),
+                track_number: None,
+                disc_number: None,
             }
         });
     }
@@ -142,6 +153,8 @@ struct Columns {
     artist: Option<usize>,
     album: Option<usize>,
     path: Option<usize>,
+    track_number: Option<usize>,
+    disc_number: Option<usize>,
 }
 
 impl Columns {
@@ -161,6 +174,8 @@ impl Columns {
             ARTIST_NAMES,
             ALBUM_NAMES,
             PATH_NAMES,
+            TRACK_NUMBER_NAMES,
+            DISC_NUMBER_NAMES,
             OTHER_NAMES,
         ];
         let is_header = header
@@ -174,6 +189,8 @@ impl Columns {
             artist: column(ARTIST_NAMES),
             album: column(ALBUM_NAMES),
             path: column(PATH_NAMES),
+            track_number: column(TRACK_NUMBER_NAMES),
+            disc_number: column(DISC_NUMBER_NAMES),
         })
     }
 }
@@ -211,7 +228,16 @@ fn csv_entry(row: &[String], columns: Columns) -> ParsedEntry {
         artist: cell(columns.artist),
         album: cell(columns.album),
         path: cell(columns.path),
+        track_number: number(row, columns.track_number),
+        disc_number: number(row, columns.disc_number),
     }
+}
+
+/// A number cell, also read as `1/12` when an export writes the pair.
+fn number(row: &[String], at: Option<usize>) -> Option<i32> {
+    let cell = row.get(at?)?.trim();
+    let first = cell.split('/').next()?.trim();
+    first.parse().ok()
 }
 
 /// A CSV field without the quote an export puts before a field a
