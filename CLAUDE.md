@@ -57,9 +57,9 @@ In every change:
   series, nothing unrelated in a commit.
 - **Before every commit and push**, read the diff and message as a stranger
   browsing the public repo would, and fix what you find. The Writing rules
-  apply. No leftovers: plans, summaries, reports or notes files,
-  narration comments, commented-out code, debug prints.
-  Nothing private: review notes, local config, credentials, test output.
+  apply. No leftovers: plans, summaries, reports or notes files, narration
+  comments, commented-out code, debug prints. Nothing private: review notes,
+  local config, credentials, test output.
 - Stage files by name. Never `git add -A` or `git add -f`: they sweep in stray
   and gitignored private files.
 
@@ -112,10 +112,10 @@ Run from the repo root. `make help` lists every target.
   areas is one.
 - Wall time comes from the one kernel clock (`kernel/src/clock.rs`, passed
   in), never `SystemTime::now()` in an area; tests use the kernel's
-  `test_support::ManualClock`.
-  Files that still read the system clock are listed with a reason in
-  `server/clock-outside-kernel.txt`; `source_gates.rs` fails on any other
-  read and on a listed file that no longer reads it.
+  `test_support::ManualClock`. Files that still read the system clock are
+  listed with a reason in `server/clock-outside-kernel.txt`;
+  `source_gates.rs` fails on any other read and on a listed file that no
+  longer reads it.
 - Every route is registered through the mount API in
   `server/kernel/src/mount.rs`: documented routes with `routes!` over their
   `#[utoipa::path]`, one path per call, in a posture group (public, user,
@@ -150,12 +150,12 @@ Run from the repo root. `make help` lists every target.
 - No handler's message survives at 5xx. Handlers return `ApiError`
   (`server/kernel/src/error.rs`), and the boundary in
   `server/src/middleware.rs` is the only place a 5xx body is written and
-  logged. A 5xx answers the fixed internal error with the request id,
-  except the closed list in `Unavailable` (server busy, media server down,
-  GitHub refusing, limiting or failing a plugin install, the server waiting
-  for its upgrade from v2), each with a fixed sentence. A compat 5xx gets
-  its protocol's failure shape. A message a user must read needs an honest
-  4xx or a new `Unavailable` row.
+  logged. A 5xx answers the fixed internal error with the request id, except
+  the closed list in `Unavailable` (server busy, media server down, GitHub
+  refusing, limiting or failing a plugin install, the server waiting for its
+  upgrade from v2), each with a fixed sentence. A compat 5xx gets its
+  protocol's failure shape. A message a user must read needs an honest 4xx
+  or a new `Unavailable` row.
 - Request bodies and query strings are read through `ValidJson` and
   `ValidQuery` from `server/kernel/src/extract.rs`, never an area's own
   copy.
@@ -191,13 +191,12 @@ Run from the repo root. `make help` lists every target.
   service that needs an admin takes an `&Admin`, which only an admin
   principal from a request can make. A role check written as an `if` is a
   bug unless it depends on the request body or a setting; a check that a
-  resource belongs to the caller stays in the service
-  (`Principal::is_admin` for owner-or-admin). Auto-approve and quota skips
-  read `principal.role()` and are not access checks. Work done for a user
-  with no request builds its principal only through
-  `Principal::acting_for`, in the service doing the work, from the stored
-  row; it never proves a role and never signs a request in.
-  `server/tests/server/caller_shapes.rs` enforces this.
+  resource belongs to the caller stays in the service (`Principal::is_admin`
+  for owner-or-admin). Auto-approve and quota skips read `principal.role()`
+  and are not access checks. Work done for a user with no request builds its
+  principal only through `Principal::acting_for`, in the service doing the
+  work, from the stored row; it never proves a role and never signs a
+  request in. `server/tests/server/caller_shapes.rs` enforces this.
 - Compat APIs and the wrapped routes have their own credentials outside that
   gate. Never assume `/api` auth covers them.
 - A locked-out admin recovers from the host: stop the server, run
@@ -215,13 +214,13 @@ Run from the repo root. `make help` lists every target.
   values inside `db/`, and `Lane::Bulk` inside `db/` and the scan, whose
   writes may wait out a WAL hold. A journal write before a file moves is a
   durable write (`Durable`), so a publish step cannot place a file ahead of
-  its row. One server process per data directory, always: the writer
-  lane only orders writes within one process, so boot takes an exclusive
-  lock (`DataLock::server`) and a second server on the folder refuses to
-  start. A server started on v2 data holds only the server lock
-  (`DataLock::server_only`) until Continue takes the shared lock.
-  rusqlite is the only SQLite library (`source_gates.rs` refuses another in
-  the lock).
+  its row. One server process per data directory, always: the writer lane
+  only orders writes within one process, so boot takes an exclusive lock
+  (`DataLock::server`) and a second server on the folder refuses to start. A
+  server started on v2 data holds only the server lock
+  (`DataLock::server_only`) until Continue takes the shared lock. rusqlite
+  is the only SQLite library (`source_gates.rs` refuses another in the
+  lock).
 - One exception: provider answers are cached in `metadata-cache.db` (in
   `CACHE_DIR`, or beside `library.db` when that folder is refused), a
   throwaway file opened in `kernel/src/db/cache/` under a lock of its own,
@@ -230,17 +229,16 @@ Run from the repo root. `make help` lists every target.
   one that does not read, is deleted and rebuilt at start; rows otherwise
   carry across releases, and a release that must clear stale answers bumps
   `CACHE_VERSION`), a row that does not decode reads as a miss, it is never
-  backed up or exported, keeps its rows under 512 MB, and holds nothing that cannot be
-  fetched again. A cache key starts with its source and carries every value
-  that changes the answer, so no settings save clears it, and a lookup that
-  met any failure stores nothing.
+  backed up or exported, keeps its rows under 512 MB, and holds nothing that
+  cannot be fetched again. A cache key starts with its source and carries
+  every value that changes the answer, so no settings save clears it, and a
+  lookup that met any failure stores nothing.
 - All writes go through the single writer lane, one transaction per atomic
-  change. No network calls inside one: writes run one at a time, so a slow one
-  stalls the rest.
-  The offline upgrade tool is the one exception: with the server stopped and the
-  data lock held, the importer writes on one connection, because it attaches
-  the export (which a transaction refuses) and a large section outlasts the
-  lane's time limit.
+  change. No network calls inside one: writes run one at a time, so a slow
+  one stalls the rest. The offline upgrade tool is the one exception: with
+  the server stopped and the data lock held, the importer writes on one
+  connection, because it attaches the export (which a transaction refuses)
+  and a large section outlasts the lane's time limit.
 - Reads go through the `Db`'s read pools. A read closure holds one
   connection and one snapshot for its whole length: on the request path it
   runs one statement, and statements share a closure only when they must
@@ -250,28 +248,29 @@ Run from the repo root. `make help` lists every target.
 - A write closure fails with the caller's own error type
   (`E: From<DbError>`); an outcome a caller branches on is a variant of that
   type, never the text of a database error. A chunked write commits chunk by
-  chunk: any prefix may be all that lands, so use it only where each chunk is
-  a complete change. Its error says how many rows committed, and a caller
+  chunk: any prefix may be all that lands, so use it only where each chunk
+  is a complete change. Its error says how many rows committed, and a caller
   resumes from there.
 - SQL text lives in the area's `sql.rs`, declared through `sql!`
   (statements, fragments, and families whose builders take only
   `sql_choice!`, `bool` or `ListLen` values);
-  `every_registered_statement_prepares` prepares each against the schema.
-  A crate with a `sql.rs` lists it and has a row in that test. A gate
-  (`raw_sql_stays_in_sql_files`) keeps raw SQL out of every other file;
-  its one permanent exception is the v2 export's bundle builder, which
-  builds each statement at run time from the columns the v2 database has.
-  A `sql!` block whose statements read a v2 database starts with
-  `schema = V2;` and is prepared against the v2 fixture.
+  `every_registered_statement_prepares` prepares each against the schema. A
+  crate with a `sql.rs` lists it and has a row in that test. A gate
+  (`raw_sql_stays_in_sql_files`) keeps raw SQL out of every other file; its
+  one permanent exception is the v2 export's bundle builder, which builds
+  each statement at run time from the columns the v2 database has. A `sql!`
+  block whose statements read a v2 database starts with `schema = V2;` and
+  is prepared against the v2 fixture.
 - A statement that answers more than one column is read through a `row` in its
   `sql!` block, whose fields the schema test holds to the statement's columns.
   A family's row names its builders (`row Name for family [builder]`).
 - `db::time` (`kernel/src/db/time.rs`) says what a stored time is: a row reads
   an `_at` column it turns into seconds as `Millis`, whose decode fails on
   anything but an integer, and the library converts it with `clock::at_secs`.
-- SQLite is built with its memory counters off (`SQLITE_DEFAULT_MEMSTATUS=0`), in
-  `.cargo/config.toml` and the Dockerfile: on every allocation they take one
-  process-wide mutex. `persist_schema` holds it.
+- SQLite is built with its memory counters off
+  (`SQLITE_DEFAULT_MEMSTATUS=0`), in `.cargo/config.toml` and the
+  Dockerfile: on every allocation they take one process-wide mutex.
+  `persist_schema` holds it.
 - Migrations are numbered and forward-only, starting from the v3 baseline
   in `server/migrations/`. One runner, keyed on `user_version`, applies each
   listed file above the stamp in number order, each in one transaction with
@@ -443,11 +442,11 @@ Run from the repo root. `make help` lists every target.
   opener is the kernel's one no-follow opener (`kernel/src/beneath.rs`),
   which local cover art and the scan's folder images also read through.
 - Response security headers are added in one place,
-  `server/src/security_headers.rs`: the web UI's content-security policy,
-  a "nothing runs here" policy and `nosniff` on every other native
-  response, and `Cache-Control: no-store` on any `/api/v3` JSON answer that
-  sets no cache rule of its own. A route sets its own policy only to be
-  stricter. Compat responses are left alone.
+  `server/src/security_headers.rs`: the web UI's content-security policy, a
+  "nothing runs here" policy and `nosniff` on every other native response,
+  and `Cache-Control: no-store` on any `/api/v3` JSON answer that sets no
+  cache rule of its own. A route sets its own policy only to be stricter.
+  Compat responses are left alone.
 - A playlist entry's cover address is loaded by everyone who reads the
   playlist, so it is kept only through `entry_cover`
   (`catalog/src/collections/entry_cover.rs`): one of DroppedNeedle's own
@@ -483,11 +482,11 @@ Run from the repo root. `make help` lists every target.
   `SECRET_MASK`, on the server and in the web UI. Each settings section is
   listed once in `runtime_config/registry.rs` and declares its save effects
   there.
-- The audio stack is decided: lofty behind its save
-  wrapper, symphonia, rusty-chromaprint, ffmpeg for transcoding, no WMA.
-  The image's ffmpeg is a slim LGPL-only build: a new codec goes on its lists in
-  the Dockerfile with a transcode in `server/scripts/e2e-container.sh`.
-  Unrelated tags survive every mutation.
+- The audio stack is decided: lofty behind its save wrapper, symphonia,
+  rusty-chromaprint, ffmpeg for transcoding, no WMA. The image's ffmpeg is a
+  slim LGPL-only build: a new codec goes on its lists in the Dockerfile with
+  a transcode in `server/scripts/e2e-container.sh`. Unrelated tags survive
+  every mutation.
 - Prefer a healthy, maintained crate over home-made parser, crypto or retry
   code. New licenses and advisory ignores are reviewed edits to
   `server/deny.toml`, with the reason beside them.
@@ -511,13 +510,13 @@ Run from the repo root. `make help` lists every target.
   identity (revision and ids), before staging and again inside its commit.
   The catalog revision is a change counter, bumped by every commit that
   changes catalog rows and never compared (a plugin's added file or its
-  take-back changes none, so it skips the bump). A write that changes catalog rows bumps it inside its own
-  transaction through `catalog_revision::bump_catalog`. It is also the
-  high-water mark album match revisions start above: a new or moved match
-  row takes one past it, and a removal first raises it to the row's
-  revision (`raise_catalog`, never lowered), so an album never sees one of
-  its revisions twice. Event loops wait on the lane's commit counter
-  (`Db::commits`), never a timer.
+  take-back changes none, so it skips the bump). A write that changes
+  catalog rows bumps it inside its own transaction through
+  `catalog_revision::bump_catalog`. It is also the high-water mark album
+  match revisions start above: a new or moved match row takes one past it,
+  and a removal first raises it to the row's revision (`raise_catalog`,
+  never lowered), so an album never sees one of its revisions twice. Event
+  loops wait on the lane's commit counter (`Db::commits`), never a timer.
 - The web UI lists an album only while it is live and has files: one
   definition, `owned_album!` in `library/src/identity/sql.rs`, which every
   list, count, Check albums and Copies read. A removed album leaves the
@@ -579,19 +578,18 @@ Run from the repo root. `make help` lists every target.
   bin, as v2 did, only at the top of a library folder's `.recycle` or of a
   marked configured bin, and only while the folder holds nothing but plain
   files.
-- A scan judges a track gone (walked past) in one place, `walked_past!`
-  in `library/src/scan/sqlite_store/`, and never under a folder the run
-  refused as a link (`refused_scope!`, a rule's scope or a link the walk
-  met with rows under it: a folder replaced by a link keeps its tracks and
-  they do not count toward the mass-missing guard), and never while a
-  publish journal
-  row naming it is open, needs attention and is not marked handled, or
-  was written after its scope's walk began (marking one handled counts as
+- A scan judges a track gone (walked past) in one place, `walked_past!` in
+  `library/src/scan/sqlite_store/`, and never under a folder the run refused
+  as a link (`refused_scope!`, a rule's scope or a link the walk met with
+  rows under it: a folder replaced by a link keeps its tracks and they do
+  not count toward the mass-missing guard), and never while a publish
+  journal row naming it is open, needs attention and is not marked handled,
+  or was written after its scope's walk began (marking one handled counts as
   a write). A scan writes no row for a file whose track such a row names
-  (open or written after the walk began), whose path such a row moved a
-  file away from, or whose path an open row, or a move that needs
-  attention and is not marked handled, is placing a file at. A trigger on
-  the journal stamps that revision, so no write can skip it.
+  (open or written after the walk began), whose path such a row moved a file
+  away from, or whose path an open row, or a move that needs attention and
+  is not marked handled, is placing a file at. A trigger on the journal
+  stamps that revision, so no write can skip it.
 - A track a scan judged gone continues into a track an earlier scan read
   only in the run end's late pass (`scan_end_continue_moved`): the match
   `find_moved_track` makes, unambiguous both ways and timed by
@@ -664,19 +662,19 @@ Run from the repo root. `make help` lists every target.
 
 **Identity** (product rules, not up for debate)
 - An edition a person chose is the album's identity; a v2 pin carries as
-  one. Reads of identity have two tiers. Usable (a row exists) serves
-  pages, playback and compat. Accepted (a release, no match flag, no custom
+  one. Reads of identity have two tiers. Usable (a row exists) serves pages,
+  playback and compat. Accepted (a release, no match flag, no custom
   edition) serves proof, merges and retag joins. Ownership is one
   definition, `owns_group!` in `library/src/identity/`, which the catalog
   and acquire share. An album owns a group through its row, unless the row
   is a guess flagged `NAMED_GROUP_DIFFERS`. It owns one through its files'
-  tags only when it has no row and no match flag, or holds such a guess,
-  and no file names another group. A match taken off, withdrawn or undone,
-  or a finished identification that found nothing, is never brought back
-  by tags. A landing never clears a person's detach or a
-  `NAMED_GROUP_DIFFERS` flag. The accepted tier, the match flags and a
-  track's recording id (its row's, else its tags') are named once in
-  `library/src/identity/sql.rs`. `source_gates.rs` holds these reads.
+  tags only when it has no row and no match flag, or holds such a guess, and
+  no file names another group. A match taken off, withdrawn or undone, or a
+  finished identification that found nothing, is never brought back by tags.
+  A landing never clears a person's detach or a `NAMED_GROUP_DIFFERS` flag.
+  The accepted tier, the match flags and a track's recording id (its row's,
+  else its tags') are named once in `library/src/identity/sql.rs`.
+  `source_gates.rs` holds these reads.
 - Manual and imported identities survive rescans and moves. An imported
   match that names a release group but no edition may gain one edition of
   that group, at most once, when identification confirms the files fit
@@ -684,12 +682,11 @@ Run from the repo root. `make help` lists every target.
   listed in the album's history with an Undo. Automatic ones stay
   revisable and retract on contradiction.
 - A match a person took off, or an automatic edition an admin undid with
-  nothing to go back to, stays off: the album keeps its
-  `DETACHED_BY_PERSON` or `AUTOMATIC_EDITION_UNDONE` flag
-  (`declined_flag!`), and identification leaves it alone, whatever its
-  files do, until a person picks an edition or asks it to look again (a
-  `manual` job). An undo that leaves no match marks the album
-  `AUTOMATIC_EDITION_UNDONE`, whatever flag it puts back.
+  nothing to go back to, stays off: the album keeps its `DETACHED_BY_PERSON`
+  or `AUTOMATIC_EDITION_UNDONE` flag (`declined_flag!`), and identification
+  leaves it alone, whatever its files do, until a person picks an edition or
+  asks it to look again (a `manual` job). An undo that leaves no match marks
+  the album `AUTOMATIC_EDITION_UNDONE`, whatever flag it puts back.
 - An album whose last identification found nothing, or only guessed, is
   looked at again by itself: 1, 3, 7 and 14 days after its last look, then
   every 30 days, as backlog work. At most 20 backlog looks are queued in
@@ -769,18 +766,17 @@ Run from the repo root. `make help` lists every target.
   unconfirmed guess.
 - An AcoustID answer that could not be had is never "heard nothing":
   identification and landings wait.
-- A curator may use an edition no file fits ("Use anyway"). It becomes
-  the album's edition as the person's choice and owns its group, but
-  places no file: the files lose any guessed track, and a file reaches a
-  track only by a person's match by hand or by its own MusicBrainz ids.
-  Disc and track numbers, then file order, only suggest a match; nothing
-  applies a suggestion by itself. The album stays flagged
+- A curator may use an edition no file fits ("Use anyway"). It becomes the
+  album's edition as the person's choice and owns its group, but places no
+  file: the files lose any guessed track, and a file reaches a track only by
+  a person's match by hand or by its own MusicBrainz ids. Disc and track
+  numbers, then file order, only suggest a match; nothing applies a
+  suggestion by itself. The album stays flagged
   `CHOSEN_EDITION_FITS_NO_FILE`, not accepted and replaced by no upgrade,
-  until its first match, and again when its only match is undone.
-  Automatic management waits until every file has its track. The
-  edition's undo takes the choice back with every match
-  made on it; files the app wrote meanwhile are undone through Library
-  management.
+  until its first match, and again when its only match is undone. Automatic
+  management waits until every file has its track. The edition's undo takes
+  the choice back with every match made on it; files the app wrote meanwhile
+  are undone through Library management.
 - A person's album hearts and ratings on an album with no files move to
   the copy its release group opens, when both are accepted, that copy has
   files and nothing of the album can still be put back; a rating on both
@@ -808,16 +804,16 @@ Run from the repo root. `make help` lists every target.
   keeps the deck before it.
 
 **Compat, plugins, upgrade, readiness**
-- Compat support means the tested matrix and its golden
-  traces, for the apps the README lists only, not "parity". Streaming keeps its
-  explicit tests: ranges, HEAD, lengths, auth.
+- Compat support means the tested matrix and its golden traces, for the apps
+  the README lists only, not "parity". Streaming keeps its explicit tests:
+  ranges, HEAD, lengths, auth.
 - Which Jellyfin routes are public is the one route table in
   `compat/src/jellyfin/router.rs`; every other row is signed in by its
   layer before the handler runs, and the limiter reads the same table.
-- A Jellyfin id is stored in `compat_jellyfin_ids` by compat's fill loop,
-  or carried from v2 by the upgrade, and never minted again, a data-key
-  reset included. A request resolves
-  ids from that table and never lists the catalog.
+- A Jellyfin id is stored in `compat_jellyfin_ids` by compat's fill loop, or
+  carried from v2 by the upgrade, and never minted again, a data-key reset
+  included. A request resolves ids from that table and never lists the
+  catalog.
 - A plugin is trusted, unsandboxed code. Nothing runs until an admin enables
   it. `PLUGINS.md` is the public contract: change the manifest, protocol or
   limits and update it in the same branch.
@@ -868,10 +864,10 @@ Run from the repo root. `make help` lists every target.
   pieces live in `lib/ui` (the kit), `lib/media` and `lib/shell`, and the
   query core (client, keys, effects, events, persister) in `lib/queries`.
 - Data fetching is TanStack Query only, in each feature's `queries/` with
-  `get<Thing>Query` hooks. Calls go through the `api`
-  client with URL builders and forward the abort signal. Types come from the
-  generated contract. Query parameters and DELETE bodies are typed from the
-  contract; the client has no untyped request methods.
+  `get<Thing>Query` hooks. Calls go through the `api` client with URL
+  builders and forward the abort signal. Types come from the generated
+  contract. Query parameters and DELETE bodies are typed from the contract;
+  the client has no untyped request methods.
 - Query keys come from factory helpers built on `lib/queries/keys.ts`,
   never inline arrays: `[scope, feature, ...parts]`, with the scope
   (`user:<id>`, `signed-out`, `shared` or `admin`) always first, so a
@@ -888,67 +884,64 @@ Run from the repo root. `make help` lists every target.
   prefix, including other features'.
 - Mutation hooks are `create<Action>Mutation`; lint refuses another shape.
 - What a change invalidates is a named effect in `lib/queries/effects.ts`;
-  only that module invalidates. Mutations are built with
-  `createAppMutation` and declare their `effects` (`() => []` when they
-  change nothing cached); other callers apply effects, never hand-listed
-  prefixes. Server events reach the
-  app through one dispatcher (`lib/queries/events/dispatcher.ts`) keyed by
-  the contract's event union, so a missing or extra event name does not
-  compile.
-- A settings form is a `createSettingsSection` (`src/lib/ui/settingsSection.svelte.ts`):
-  draft, dirty, save, test and mask-means-keep in one place, with the
-  unsaved-changes guard; a tab never hand-writes that state.
+  only that module invalidates. Mutations are built with `createAppMutation`
+  and declare their `effects` (`() => []` when they change nothing cached);
+  other callers apply effects, never hand-listed prefixes. Server events
+  reach the app through one dispatcher (`lib/queries/events/dispatcher.ts`)
+  keyed by the contract's event union, so a missing or extra event name does
+  not compile.
+- A settings form is a `createSettingsSection`
+  (`src/lib/ui/settingsSection.svelte.ts`): draft, dirty, save, test and
+  mask-means-keep in one place, with the unsaved-changes guard; a tab never
+  hand-writes that state.
 - Stores hold client and session state only.
 - UI: Tailwind v4 with the daisyUI themes and the named colours (muted,
   title, action, paper, focus, edge, line) in `src/theme.css`, no new hex
-  colors elsewhere.
-  Build on `src/lib/ui` (`Button`, `IconButton`, `Card`, `Input`, `Modal`,
-  `CardTitle`, `CardActions`, `ConfirmDialog`, `Field`, `TextField`,
-  `NumberField`, `SecretField`, `PasswordField`, `SelectField`, `TextAreaField`,
-  `CodeField` (a CSS editor, CodeMirror loaded on first use),
-  `ToggleRow`, `RadioCards`, `StatusChip`, `SectionHead` (a shelf's title
-  row), `ListPageHeader` (a browse page's title, count, lede or a hub's
-  tagline, ticket and record, with an optional brush stroke after the title;
-  `backStyle="link"` puts a mono caps back link over the title, `compact`
-  suits a working page),
-  `SaveBar`, `AsyncButton`, `QueryBoundary`, `RatingStars` (`quiet`
-  in list rows), `StatRow` (counts split by rules), `JumpTabs` (a page's
-  sticky section strip; `look="pills"` fills the current link, `actions` sit at
-  its end, `look="rail"` stands it in a left column with icons, `onjump`
-  opens a folded section first), `HalftonePhoto` (a photo printed as a fading
-  halftone), `FillText` (text that fills its flex parent's height and fades
-  where it is cut), `Knob` (a rotary slider: a dial over a dotted scale),
-  `SideDrawer` (a panel from the right over a dimmed page, with `Tabs`'
-  `caps` look for its tabs), `PageShell`, `Toaster`, `CoverPlaceholder`,
-  `UnsavedChangesGuard`, `Logo`, `PaperPanel` (the light island), `Card`'s
-  `torn` paper, `acid` torn sheet and `note` callout (a hint beside a
-  page's main actions), `Modal`'s and `ConfirmDialog`'s
-  `paper` stock (a confirm that starts a write), `Button`'s condensed caps
-  sizes (`display`, `display-sm`), `paper` outline (a button on a paper card)
-  and `danger-outline` (a red outline beside outline buttons), `AuthFrame`
-  and `AuthCard` (a signed-out page's frame and its torn paper card with
-  folder tabs),
-  the `dn-toolbar` and `dn-list-grid` classes for a list's controls and grid,
-  and the decoration `FritFrame` (the page's dot frame, mounted once by the
-  shell and once by `AuthFrame`), `FritEdge`, `VinylSleeve`, `VinylRecord`, `BarcodeOrnament`,
+  colors elsewhere. Build on `src/lib/ui` (`Button`, `IconButton`, `Card`,
+  `Input`, `Modal`, `CardTitle`, `CardActions`, `ConfirmDialog`, `Field`,
+  `TextField`, `NumberField`, `SecretField`, `PasswordField`, `SelectField`,
+  `TextAreaField`, `CodeField` (a CSS editor, CodeMirror loaded on first
+  use), `ToggleRow`, `RadioCards`, `StatusChip`, `SectionHead` (a shelf's
+  title row), `ListPageHeader` (a browse page's title, count, lede or a
+  hub's tagline, ticket and record, with an optional brush stroke after the
+  title; `backStyle="link"` puts a mono caps back link over the title,
+  `compact` suits a working page), `SaveBar`, `AsyncButton`,
+  `QueryBoundary`, `RatingStars` (`quiet` in list rows), `StatRow` (counts
+  split by rules), `JumpTabs` (a page's sticky section strip; `look="pills"`
+  fills the current link, `actions` sit at its end, `look="rail"` stands it
+  in a left column with icons, `onjump` opens a folded section first),
+  `HalftonePhoto` (a photo printed as a fading halftone), `FillText` (text
+  that fills its flex parent's height and fades where it is cut), `Knob` (a
+  rotary slider: a dial over a dotted scale), `SideDrawer` (a panel from the
+  right over a dimmed page, with `Tabs`' `caps` look for its tabs),
+  `PageShell`, `Toaster`, `CoverPlaceholder`, `UnsavedChangesGuard`, `Logo`,
+  `PaperPanel` (the light island), `Card`'s `torn` paper, `acid` torn sheet
+  and `note` callout (a hint beside a page's main actions), `Modal`'s and
+  `ConfirmDialog`'s `paper` stock (a confirm that starts a write),
+  `Button`'s condensed caps sizes (`display`, `display-sm`), `paper` outline
+  (a button on a paper card) and `danger-outline` (a red outline beside
+  outline buttons), `AuthFrame` and `AuthCard` (a signed-out page's frame
+  and its torn paper card with folder tabs), the `dn-toolbar` and
+  `dn-list-grid` classes for a list's controls and grid, and the decoration
+  `FritFrame` (the page's dot frame, mounted once by the shell and once by
+  `AuthFrame`), `FritEdge`, `VinylSleeve`, `VinylRecord`, `BarcodeOrnament`,
   `BarcodeTicket`, `Illustration` (turntable, dripping heart, folder
-  sticker, and the halftone prints record crate, tag boxes and
-  fingerprint), `HalftoneArt` (a record, crowd or map printed in dots, for an
-  empty card's corner); in `src/lib/media` the one
-  album and artist tile, `MediaTile` (`wrapName` in a dense artist grid) and
-  `MediaTileSkeleton`):
-  do not hand-write a button, a card, a text input, a modal, a confirm, a
-  form row, a `<dialog>` or a query's loading, error and empty branches
-  (lint refuses a `<dialog>` outside `src/lib/ui` and any `confirm()`). Lint refuses a
-  raw `btn` or `card` class (or their DaisyUI modifiers) and a text-like
+  sticker, and the halftone prints record crate, tag boxes and fingerprint),
+  `HalftoneArt` (a record, crowd or map printed in dots, for an empty card's
+  corner); in `src/lib/media` the one album and artist tile, `MediaTile`
+  (`wrapName` in a dense artist grid) and `MediaTileSkeleton`): do not
+  hand-write a button, a card, a text input, a modal, a confirm, a form row,
+  a `<dialog>` or a query's loading, error and empty branches (lint refuses
+  a `<dialog>` outside `src/lib/ui` and any `confirm()`). Lint refuses a raw
+  `btn` or `card` class (or their DaisyUI modifiers) and a text-like
   `<input>` outside `src/lib/ui`. A look the kit lacks is added to the kit
-  as a variant, not to one screen.
-  Lucide icons, `AlbumImage` and `ArtistImage`, matching `*Skeleton`
-  loaders. Missing art shows `CoverPlaceholder` (a colour pair worked out
-  from the item's id), never a grey box or a hand-drawn icon. `app.css` holds tokens, fonts, keyframes and `@utility`
-  definitions; a component's styles live in its own `<style>` block, or
-  in a stylesheet beside the components that share them. One rule in
-  `app.css` stops motion under `prefers-reduced-motion`; motion that
+  as a variant, not to one screen. Lucide icons, `AlbumImage` and
+  `ArtistImage`, matching `*Skeleton` loaders. Missing art shows
+  `CoverPlaceholder` (a colour pair worked out from the item's id), never a
+  grey box or a hand-drawn icon. `app.css` holds tokens, fonts, keyframes
+  and `@utility` definitions; a component's styles live in its own `<style>`
+  block, or in a stylesheet beside the components that share them. One rule
+  in `app.css` stops motion under `prefers-reduced-motion`; motion that
   carries meaning opts out with `motion-keep`, and Svelte transitions come
   from `$lib/ui/motion`.
 - Never mark something as selected, current or highlighted with a coloured
@@ -971,16 +964,16 @@ Run from the repo root. `make help` lists every target.
   sections.
 - The UI runs under an enforced content-security policy: no inline script,
   no `eval`, no `<style>` or static `style="..."` in markup (set styles
-  through Svelte's style bindings; eslint refuses a static one), and
-  outside hosts only from the list in `server/src/security_headers.rs`.
-  Loading a script, frame, audio clip or connection from a new host is a
-  reviewed edit to that list, with the reason beside it. The browser
-  journeys fail on any violation. Besides the code editor's own styles,
-  which `CodeField` keeps in its shadow root, the stylesheets made at run
-  time are the site CSS and the person's custom CSS
-  (`lib/stores/customCss.svelte.ts`), site first: applied per user, removed at sign-out, and refused when one
-  holds a backslash, `@import`, `@font-face` or a CSS function off the
-  allowlist in `lib/stores/customCssRules.json`. The server's check
+  through Svelte's style bindings; eslint refuses a static one), and outside
+  hosts only from the list in `server/src/security_headers.rs`. Loading a
+  script, frame, audio clip or connection from a new host is a reviewed edit
+  to that list, with the reason beside it. The browser journeys fail on any
+  violation. Besides the code editor's own styles, which `CodeField` keeps
+  in its shadow root, the stylesheets made at run time are the site CSS and
+  the person's custom CSS (`lib/stores/customCss.svelte.ts`), site first:
+  applied per user, removed at sign-out, and refused when one holds a
+  backslash, `@import`, `@font-face` or a CSS function off the allowlist in
+  `lib/stores/customCssRules.json`. The server's check
   (`server/src/appearance/check.rs`) is the one that counts; both checks
   read that file and pass its cases.
 - The style hooks a person's CSS may rely on are the `data-part` names in
