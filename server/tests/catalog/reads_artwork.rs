@@ -31,6 +31,7 @@ use crate::common::ScratchDir;
 use crate::common::auth::{test_principal, with_test_principal};
 
 const RG: &str = "0a1b2c3d-0000-4000-8000-000000000001";
+const ARTIST: &str = "0a1b2c3d-0000-4000-8000-0000000000a1";
 
 /// 1x1 PNG standing in for archive art.
 const PNG_BYTES: &[u8] = &[
@@ -765,8 +766,9 @@ async fn set_folder_art(rig: &Rig, path: &Path, version: i64) {
 
 /// The covers on a user's Discover page are fetched in the background once
 /// the page is built, so a later visit draws them from disk even when the
-/// archive no longer answers. The warm runs on the jobs table, whose runner
-/// the admin view lists.
+/// archive no longer answers. The person follows an artist with a new
+/// release, which their page shows. The warm runs on the jobs table, whose
+/// runner the admin view lists.
 #[tokio::test]
 async fn a_built_discover_page_warms_its_covers_onto_disk() {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -782,17 +784,6 @@ async fn a_built_discover_page_warms_its_covers_onto_disk() {
     let archive = Arc::new(Archive::default());
     let front = archive.clone();
     let stub = Router::new()
-        .route(
-            "/listenbrainz/1/stats/sitewide/release-groups",
-            route(|| async {
-                axum::Json(serde_json::json!({"payload": {"release_groups": [{
-                    "release_group_name": "First Light",
-                    "artist_name": "Aurora",
-                    "listen_count": 900,
-                    "release_group_mbid": RG,
-                }]}}))
-            }),
-        )
         .route(
             &format!("/coverart/release-group/{RG}/front-500"),
             route(move || {
@@ -815,6 +806,16 @@ async fn a_built_discover_page_warms_its_covers_onto_disk() {
             .await;
     let user = app.login_user("warm").await;
     let auth = [("authorization", user.authorization.as_str())];
+    app.seed(format!(
+        "INSERT INTO acquire_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
+         artist_name, followed_at, updated_at) VALUES ('{}', '{ARTIST}', '{ARTIST}', \
+         'Aurora', 1, 1); \
+         INSERT INTO acquire_new_release_feed (release_group_mbid_lower, release_group_mbid, \
+         artist_mbid_lower, artist_name, title, first_release_date, discovered_at) \
+         VALUES ('{RG}', '{RG}', '{ARTIST}', 'Aurora', 'First Light', '2026-11-01', 1);",
+        user.user_id
+    ))
+    .await;
 
     let (status, _) = app.call("GET", "/api/v3/discover", &auth, None).await;
     assert_eq!(status, StatusCode::OK);
