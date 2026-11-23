@@ -11,8 +11,9 @@
 //! Artists are keyed by MusicBrainz id alone. A row without one,
 //! Various Artists and MusicBrainz's other special-purpose ids are dropped,
 //! and a name never joins two inputs. The inputs add up to one weight per
-//! artist; a seed needs [`MIN_WEIGHT`], and the heaviest [`MAX_SEEDS`] are
-//! kept, ties by id.
+//! artist; a seed needs [`MIN_WEIGHT`], or [`SEED_PLAYS`] plays and listens
+//! while its ratings do not count against it, and the heaviest
+//! [`MAX_SEEDS`] are kept, ties by id.
 //!
 //! Plays are the person's plays in the app and the listens imported from
 //! their ListenBrainz history; while that import is current, ListenBrainz's
@@ -71,9 +72,13 @@ const LINKED_SCALE: f64 = 0.5;
 const JELLYFIN_FAVORITE: f64 = HEART_ARTIST;
 /// The library's albums of the artist weigh `ln(1 + albums)` times this.
 const LIBRARY_SCALE: f64 = 0.25;
-/// The least weight a seed has: two recent plays, a heart on the artist
-/// or an album, or a follow.
+/// The weight that makes an artist a seed by itself: a heart on
+/// the artist or an album, a follow, or two plays in the last three weeks.
 pub(in crate::discover) const MIN_WEIGHT: f64 = 1.0;
+/// The plays in the app and imported listens, a scrobbled play counted
+/// once, that make an artist a seed at any weight, unless its ratings count
+/// against it.
+pub(in crate::discover) const SEED_PLAYS: i64 = 2;
 /// The most seeds one list holds.
 pub(in crate::discover) const MAX_SEEDS: usize = 30;
 /// The ListenBrainz range read for top artists...
@@ -158,9 +163,23 @@ pub(in crate::discover) struct Tally {
     pub name: String,
     /// The person's plays of it in the app.
     pub plays: i64,
+    /// Their plays in the app and imported listens of it.
+    history: i64,
     /// The inputs' weight added up.
     pub weight: f64,
+    /// Whether their ratings of it add up to less than nothing.
+    rated_down: bool,
     inputs: Vec<SeedInput>,
+}
+
+impl Tally {
+    /// Whether the artist is a seed: weight [`MIN_WEIGHT`] or more, or
+    /// [`SEED_PLAYS`] plays and listens with ratings that do not count
+    /// against it.
+    fn is_seed(&self) -> bool {
+        self.weight >= MIN_WEIGHT
+            || (self.history >= SEED_PLAYS && self.weight > 0.0 && !self.rated_down)
+    }
 }
 
 /// Every artist an input named, by MusicBrainz id.
@@ -189,10 +208,7 @@ impl Tallies {
     }
 
     fn seeds(&self) -> usize {
-        self.0
-            .values()
-            .filter(|tally| tally.weight >= MIN_WEIGHT)
-            .count()
+        self.0.values().filter(|tally| tally.is_seed()).count()
     }
 
     /// Every artist named, by id.
@@ -200,13 +216,12 @@ impl Tallies {
         &self.0
     }
 
-    /// The seeds' ids, heaviest first, ties by id: at most [`MAX_SEEDS`],
-    /// each of weight [`MIN_WEIGHT`] or more.
+    /// The seeds' ids, heaviest first, ties by id: at most [`MAX_SEEDS`].
     pub(in crate::discover) fn seed_ids(&self) -> Vec<String> {
         let mut ids: Vec<(&String, f64)> = self
             .0
             .iter()
-            .filter(|(_, tally)| tally.weight >= MIN_WEIGHT)
+            .filter(|(_, tally)| tally.is_seed())
             .map(|(mbid, tally)| (mbid, tally.weight))
             .collect();
         // The map is in id order and the sort is stable, so ties stay by id.
@@ -261,10 +276,10 @@ where
 }
 
 /// The person's seed artists, heaviest first: at most [`MAX_SEEDS`], each
-/// of weight [`MIN_WEIGHT`] or more. Once their taste is built they come
-/// from it; until then they are weighed here. `source` is the service
-/// their listening follows; with both linked, both feed while the server
-/// blends them. A list too short is topped up from the library.
+/// of weight [`MIN_WEIGHT`] or with [`SEED_PLAYS`]. Once their taste is
+/// built they come from it; until then they are weighed here. `source` is
+/// the service their listening follows; with both linked, both feed while
+/// the server blends them. A list too short is topped up from the library.
 pub(in crate::discover) async fn weighted_seeds(
     ctx: &BuildContext<'_>,
     user_id: &str,
@@ -406,6 +421,7 @@ pub(in crate::discover) async fn weigh(
         if let Some(tally) = tallies.add(Some(&played.mbid), &played.name, SeedInput::Plays, weight)
         {
             tally.plays += played.plays;
+            tally.history += listens;
         }
     }
     // An album they know already counts as a heart on it.
@@ -427,7 +443,9 @@ pub(in crate::discover) async fn weigh(
         let good =
             (RATING_FIVE * row.fives as f64 + RATING_FOUR * row.fours as f64).min(RATINGS_MAX);
         let weight = good + RATING_LOW * row.lows as f64;
-        tallies.add(Some(&row.mbid), &row.name, SeedInput::Ratings, weight);
+        if let Some(tally) = tallies.add(Some(&row.mbid), &row.name, SeedInput::Ratings, weight) {
+            tally.rated_down |= weight < 0.0;
+        }
     }
     for row in follows {
         tallies.add(Some(&row.mbid), &row.name, SeedInput::Follows, FOLLOW);

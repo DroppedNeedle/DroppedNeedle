@@ -533,3 +533,47 @@ async fn discover_taste_counts_a_scrobbled_play_once() {
     let (plays, listens, ..) = build_row(&db);
     assert_eq!((plays, listens), (2, 3), "the build counts what was kept");
 }
+
+/// Two plays make an artist a seed even long after them, and so do a play
+/// and a listen of another of its tracks. One play is not enough, nor a
+/// play and its own scrobble, and a one-star rating keeps two plays out.
+#[tokio::test]
+async fn discover_taste_two_plays_make_a_seed() {
+    let dir = crate::common::ScratchDir::new("discover-taste-two-plays");
+    let rig = AuthRig::new("discover-taste-two-plays").await;
+    let db = rig.platform.db.clone();
+    let at = rig.clock().now_ms() - 200 * DAY;
+    let mut rows = String::from(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('user-1', 'Ada', 'user', 0);",
+    );
+    let names = ["Twice", "Once", "Scrobbled", "Mixed", "Low"];
+    for (n, name) in (1..).zip(names) {
+        let artist = mbid('a', n);
+        let id = format!("art-{}", name.to_lowercase());
+        let song = mbid('d', n);
+        rows += &library_artist(&id, name, &artist, "group");
+        rows += &play("user-1", &id, "Song", Some(&song), at);
+        match name {
+            "Twice" | "Low" => rows += &play("user-1", &id, "Song", Some(&song), at + 4 * MINUTE),
+            "Scrobbled" => rows += &listen(&artist, "Song", &song, at + MINUTE),
+            "Mixed" => rows += &listen(&artist, "Other Song", &mbid('e', 9), at + 4 * MINUTE),
+            _ => {}
+        }
+    }
+    rows += "INSERT INTO catalog_user_ratings (user_id, item_kind, item_id, rating, rated_at) \
+             VALUES ('user-1', 'artist', 'art-low', 1, 1);";
+    insert(&db, rows).await;
+    import_current(&db).await;
+    let deps = discover_deps(&rig, &dir, Providers::closed(), |slot| {
+        *slot = Arc::new(Script::default());
+    });
+
+    build(&deps).await;
+    let seeds: Vec<String> = db.column(
+        "SELECT name FROM catalog_taste_artists WHERE user_id = 'user-1' AND is_seed = 1 \
+         ORDER BY name",
+        [],
+    );
+    assert_eq!(seeds, ["Mixed", "Twice"]);
+}
