@@ -461,6 +461,8 @@ droppedneedle_kernel::sql! {
              WHERE status IN ('completed', 'cancelled') AND (?1 IS NULL OR user_id = ?1)";
     /// Remove one quarantine entry (`?1`).
     pub(super) DELETE_QUARANTINE = "DELETE FROM download_quarantine WHERE id = ?1";
+    /// Remove every quarantine entry.
+    pub(super) CLEAR_QUARANTINE = "DELETE FROM download_quarantine";
 }
 
 /// `?, ?, ...` for a list of `len` values.

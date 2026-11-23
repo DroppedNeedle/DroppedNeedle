@@ -2248,6 +2248,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/downloads/quarantine/clear": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove every blocklist entry so every release may be tried again.
+         *     Admin only. `POST /api/v3/downloads/quarantine/clear`.
+         */
+        post: operations["clear_quarantine_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/downloads/quarantine/{quarantine_id}": {
         parameters: {
             query?: never;
@@ -12777,6 +12797,14 @@ export interface components {
         ClearHistoryResponse: {
             /** @description Whether a row was cleared. */
             success: boolean;
+        };
+        /** @description Quarantine clear outcome. */
+        ClearQuarantineResponse: {
+            /**
+             * Format: int64
+             * @description Blocklist entries removed.
+             */
+            cleared: number;
         };
         /** @description One upcoming gig in one of the caller's cities. */
         Concert: {
@@ -31609,6 +31637,25 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["QuarantineListResponse"];
+                };
+            };
+        };
+    };
+    clear_quarantine_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClearQuarantineResponse"];
                 };
             };
         };

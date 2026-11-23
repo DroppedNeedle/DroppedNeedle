@@ -351,6 +351,13 @@ pub struct ClearDownloadsResponse {
     pub cleared: i64,
 }
 
+/// Quarantine clear outcome.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ClearQuarantineResponse {
+    /// Blocklist entries removed.
+    pub cleared: i64,
+}
+
 /// Stop-all-retries outcome.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct StopRetriesResponse {
@@ -714,6 +721,22 @@ pub async fn delete_quarantine_handler(
     Ok(Json(DownloadActionResponse { success: true }))
 }
 
+/// Remove every blocklist entry so every release may be tried again.
+/// Admin only. `POST /api/v3/downloads/quarantine/clear`.
+#[utoipa::path(
+    post,
+    tag = "downloads",
+    path = "/api/v3/downloads/quarantine/clear",
+    responses((status = 200, body = ClearQuarantineResponse))
+)]
+pub async fn clear_quarantine_handler(
+    State(state): State<DownloadsState>,
+    _admin: Admin,
+) -> Result<Json<ClearQuarantineResponse>, ApiError> {
+    let cleared = state.queue.clear_quarantine().await?;
+    Ok(Json(ClearQuarantineResponse { cleared }))
+}
+
 /// Import a failed or short-landed task's files again, right away, from
 /// the files its last download left on disk (no new search or download).
 /// `POST /api/v3/downloads/tasks/{task_id}/reimport`. Admin only. Missing
@@ -992,6 +1015,7 @@ pub fn routes() -> Routes<DownloadsRoutes> {
         .user(routes!(activity_summary_handler))
         .admin(routes!(list_quarantine_handler))
         .admin(routes!(delete_quarantine_handler))
+        .admin(routes!(clear_quarantine_handler))
 }
 
 // Manual album searches.

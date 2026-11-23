@@ -33,3 +33,19 @@ export function createDeleteQuarantineEntryMutation() {
 			})
 	}));
 }
+
+export function createClearQuarantineMutation() {
+	return createAppMutation(() => ({
+		mutationFn: () => api.v3.POST(v3('/api/v3/downloads/quarantine/clear')),
+		onSuccess: ({ cleared }) => {
+			toastStore.show({
+				message:
+					cleared > 0
+						? `Cleared ${cleared} ${cleared === 1 ? 'entry' : 'entries'}`
+						: 'Nothing to clear',
+				type: cleared > 0 ? 'success' : 'info'
+			});
+		},
+		effects: () => [quarantineChanged()]
+	}));
+}

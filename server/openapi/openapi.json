@@ -7037,6 +7037,34 @@
         ]
       }
     },
+    "/api/v3/downloads/quarantine/clear": {
+      "post": {
+        "tags": [
+          "downloads"
+        ],
+        "summary": "Remove every blocklist entry so every release may be tried again.\nAdmin only. `POST /api/v3/downloads/quarantine/clear`.",
+        "operationId": "clear_quarantine_handler",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClearQuarantineResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/downloads/quarantine/{quarantine_id}": {
       "delete": {
         "tags": [
@@ -42597,6 +42625,20 @@
           "success": {
             "type": "boolean",
             "description": "Whether a row was cleared."
+          }
+        }
+      },
+      "ClearQuarantineResponse": {
+        "type": "object",
+        "description": "Quarantine clear outcome.",
+        "required": [
+          "cleared"
+        ],
+        "properties": {
+          "cleared": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Blocklist entries removed."
           }
         }
       },

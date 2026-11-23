@@ -482,4 +482,64 @@ describe('why a source was turned down', () => {
 		await expect.element(page.getByText('The download contains no music files.')).toBeVisible();
 		await expect.element(page.getByText(finding)).toBeVisible();
 	});
+
+	it('clears the whole blocklist after one confirm', async () => {
+		authStore.setUser(
+			toAuthUser({
+				id: 'admin-1',
+				display_name: 'Admin',
+				role: 'admin',
+				email: null,
+				avatar_url: null,
+				username: 'admin',
+				username_display: 'Admin'
+			})
+		);
+		let cleared = false;
+		const api = fakeApi({
+			'GET /api/v3/downloads/tasks': { items: [], page: 1, page_size: 100 },
+			'GET /api/v3/held': { entries: [] },
+			'GET /api/v3/downloads/quarantine': () => ({
+				items: cleared
+					? []
+					: [
+							{
+								id: 1,
+								source: 'soulseek',
+								client_id: 'slskd',
+								username: 'peer',
+								filename: 'Drift/01.flac',
+								identity: 'peer/Drift/01.flac',
+								reason: 'download_failed',
+								reason_code: null,
+								reason_text: 'The download failed.',
+								detail: null,
+								quarantined_at: 1,
+								release_group_mbid: null
+							}
+						],
+				page: 1
+			}),
+			'POST /api/v3/downloads/quarantine/clear': () => {
+				cleared = true;
+				return { cleared: 1 };
+			}
+		});
+		onTestFinished(() => {
+			queryClient.clear();
+			toastStore.hide();
+		});
+		// The app's client: the clear refreshes the blocklist there.
+		await renderWithQuery(DownloadQueue, {}, { client: queryClient });
+
+		await expect.element(page.getByRole('button', { name: 'Clear all' })).not.toBeInTheDocument();
+		await page.getByRole('button', { name: /^Quarantine/ }).click();
+		await page.getByRole('button', { name: 'Clear all' }).click();
+		expect(api.calls('POST /api/v3/downloads/quarantine/clear')).toHaveLength(0);
+		await page.getByRole('dialog').getByRole('button', { name: 'Clear all' }).click();
+
+		await expect.poll(() => api.calls('POST /api/v3/downloads/quarantine/clear').length).toBe(1);
+		await expect.element(page.getByRole('dialog')).not.toBeInTheDocument();
+		await expect.element(page.getByRole('button', { name: /^Quarantine/ })).not.toBeInTheDocument();
+	});
 });

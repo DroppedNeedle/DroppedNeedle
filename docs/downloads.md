@@ -148,7 +148,7 @@ The Wanted tab on the Requests page lists the albums DroppedNeedle keeps looking
 
 ## Blocked sources
 
-Admins can see blocked sources (Downloads > Quarantine) with the reason each was blocked, and remove one so it can be tried again. Blocks expire on their own after a week.
+Admins can see blocked sources (Downloads > Quarantine) with the reason each was blocked, and remove one so it can be tried again. Clear all removes every block at once. Blocks expire on their own after a week.
 
 Each block says which check turned the download down and what it found, such as "the download holds no audio tracks". Once a download stops, its line on the Downloads page shows what its last check found, and the server log writes a `download source blocklisted` line with the task id, the check (`code`) and the finding (`detail`). Blocks made by an earlier version show only the general reason.
 

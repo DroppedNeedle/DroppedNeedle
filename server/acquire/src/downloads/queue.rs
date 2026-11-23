@@ -273,6 +273,21 @@ impl DownloadQueue {
         }
     }
 
+    /// Remove every blocklist entry so every release may be tried again.
+    pub async fn clear_quarantine(&self) -> Result<i64, QueueError> {
+        let cleared = self
+            .journal
+            .run_foreground("downloads.quarantine_clear", |store| {
+                store.clear_quarantine()
+            })
+            .await
+            .map_err(unavailable)?;
+        if cleared > 0 {
+            tracing::info!(cleared, "quarantine cleared");
+        }
+        Ok(cleared)
+    }
+
     /// One task, refused when the viewer may not touch it.
     async fn owned(&self, viewer: &Viewer, task_id: &str) -> Result<QueueTask, QueueError> {
         let row = self

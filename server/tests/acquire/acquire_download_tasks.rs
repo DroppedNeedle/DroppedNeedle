@@ -576,7 +576,7 @@ fn get(uri: &str, who: Who) -> (Request<Body>, Who) {
 // The queue journey: a user sees only their own tasks, each failure
 // carries one plain reason from the import decision, a retry clears the
 // album's blocklist and starts a successor, cancel stops it, clear removes
-// finished rows, and the blocklist stays admin only.
+// finished rows, the blocklist stays admin only and an admin clears it.
 #[tokio::test]
 async fn queue_journey_scopes_explains_retries_and_clears() {
     use droppedneedle_acquire::downloads::QUARANTINE_TTL_SECONDS;
@@ -650,6 +650,33 @@ async fn queue_journey_scopes_explains_retries_and_clears() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let successor = body["task_id"].as_str().unwrap().to_owned();
+    let (_, body) = send(&journal, get("/api/v3/downloads/quarantine", ADMIN)).await;
+    assert_eq!(body["items"].as_array().map(Vec::len), Some(0));
+
+    journal
+        .run("test.seed", |store| {
+            let blocked = |identity: &str, album: Option<&str>| {
+                store.record_quarantine(
+                    "soulseek",
+                    identity,
+                    "download_failed",
+                    None,
+                    album,
+                    now_f64(),
+                    QUARANTINE_TTL_SECONDS,
+                )
+            };
+            blocked("peer/b.flac", Some("rg-2"))?;
+            blocked("peer/c.flac", None)
+        })
+        .await
+        .unwrap();
+    let clear = "/api/v3/downloads/quarantine/clear";
+    let (status, _) = send(&journal, post(clear, USER)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, body) = send(&journal, post(clear, ADMIN)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["cleared"], 2, "every entry, whatever its album");
     let (_, body) = send(&journal, get("/api/v3/downloads/quarantine", ADMIN)).await;
     assert_eq!(body["items"].as_array().map(Vec::len), Some(0));
 

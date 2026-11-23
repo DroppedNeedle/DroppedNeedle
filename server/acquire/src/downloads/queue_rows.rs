@@ -323,6 +323,13 @@ impl DownloadStore<'_> {
             .execute(sql::DELETE_QUARANTINE.text(), params![id])?;
         Ok(removed > 0)
     }
+
+    /// Remove every quarantine entry, so every blocked release may be
+    /// tried again. Answers the entries removed.
+    pub fn clear_quarantine(&self) -> Result<i64, StoreError> {
+        let removed = self.conn.execute(sql::CLEAR_QUARANTINE.text(), [])?;
+        Ok(removed as i64)
+    }
 }
 
 /// Columns of a task the queue view shows beyond [`TaskRow`].

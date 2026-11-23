@@ -12,7 +12,10 @@
 		getHeldEntriesQuery,
 		createRecheckAllHeldMutation
 	} from '$lib/features/downloads/queries/HeldQueries.svelte';
-	import { getQuarantineQuery } from '$lib/features/downloads/queries/QuarantineQueries.svelte';
+	import {
+		createClearQuarantineMutation,
+		getQuarantineQuery
+	} from '$lib/features/downloads/queries/QuarantineQueries.svelte';
 	import {
 		bucketSections,
 		collapseRetryChains,
@@ -21,6 +24,7 @@
 	} from '$lib/features/downloads/queries/downloadStatus';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
+	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 
 	import DownloadItem from './DownloadItem.svelte';
 	import HeldEntryCard from './HeldEntryCard.svelte';
@@ -67,6 +71,7 @@
 	const stopAll = createStopAllRetriesMutation();
 	const retryAll = createRetryAllFailedMutation();
 	const recheckAll = createRecheckAllHeldMutation();
+	const clearQuarantine = createClearQuarantineMutation();
 
 	// collapse auto-retry chains so each album is one row (latest attempt), then group into
 	// the dashboard's stacked sections
@@ -114,6 +119,7 @@
 
 	let historyOpen = $state(false);
 	let quarantineOpen = $state(false);
+	let clearQuarantineOpen = $state(false);
 </script>
 
 <div class="space-y-9">
@@ -299,7 +305,22 @@
 							count={quarantineCount}
 							open={quarantineOpen}
 							ontoggle={() => (quarantineOpen = !quarantineOpen)}
-						/>
+						>
+							{#snippet actions()}
+								{#if quarantineOpen}
+									<Button
+										variant="ghost"
+										size="sm"
+										icon={Trash2}
+										onclick={() => (clearQuarantineOpen = true)}
+										disabled={clearQuarantine.isPending}
+										title="Remove every entry so blocked sources can be tried again"
+									>
+										Clear all
+									</Button>
+								{/if}
+							{/snippet}
+						</QueueSectionHead>
 						{#if quarantineOpen}<QuarantinePanel />{/if}
 					</section>
 				{/if}
@@ -307,6 +328,17 @@
 		{/if}
 	{/if}
 </div>
+
+<ConfirmDialog
+	bind:open={clearQuarantineOpen}
+	title="Clear the quarantine?"
+	message="Every blocked source can be picked again."
+	confirmLabel="Clear all"
+	tone="danger"
+	paper
+	pending={clearQuarantine.isPending}
+	onconfirm={() => clearQuarantine.mutateAsync()}
+/>
 
 <style>
 	.dl-pulse {
