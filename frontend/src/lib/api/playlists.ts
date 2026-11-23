@@ -8,8 +8,9 @@ import { downloadBlob } from '$lib/utils/blobDownload';
 type Schemas = components['schemas'];
 
 // The contract's rows with dates as ISO strings and every optional field filled.
-export type PlaylistTrack = Required<Omit<Schemas['PlaylistTrack'], 'created_at'>> & {
+export type PlaylistTrack = Required<Omit<Schemas['PlaylistTrack'], 'created_at' | 'state'>> & {
 	created_at: string;
+	state?: Schemas['PlaylistTrackState'] | null;
 };
 
 export type PlaylistSummary = Required<

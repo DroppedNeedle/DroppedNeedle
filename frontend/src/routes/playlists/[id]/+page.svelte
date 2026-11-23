@@ -123,6 +123,7 @@
 		requested: number;
 		skipped: number;
 		failed: number;
+		awaiting_review: number;
 		total: number;
 	} | null>(null);
 	let pageAlive = true;
@@ -145,7 +146,7 @@
 	function openRequestDialog() {
 		const next: Record<string, 'album' | 'track'> = {};
 		for (const row of requestRows) {
-			next[row.id] = row.album_id || !row.album_name.trim() ? 'track' : 'album';
+			next[row.id] = row.album_name.trim() ? 'album' : 'track';
 		}
 		requestChoices = next;
 		requestOpen = true;
@@ -183,7 +184,9 @@
 			const requested = progress?.requested ?? 0;
 			const failed = progress?.failed ?? 0;
 			const skipped = progress?.skipped ?? 0;
+			const awaitingReview = progress?.awaiting_review ?? 0;
 			const parts = [`${requested} requested`];
+			if (awaitingReview > 0) parts.push(`${awaitingReview} awaiting review`);
 			if (skipped > 0) parts.push(`${skipped} skipped`);
 			if (failed > 0) parts.push(`${failed} unmatched`);
 			toastStore.show({
@@ -460,7 +463,7 @@
 								<span class="font-medium">{row.track_name}</span>
 								<span class="text-muted">by {row.artist_name}</span>
 							</span>
-							{#if row.album_name.trim() && !row.album_id}
+							{#if row.album_name.trim()}
 								<span class="flex shrink-0 items-center gap-3">
 									<label class="inline-flex items-center gap-1">
 										<input type="radio" value="album" bind:group={requestChoices[row.id]} />

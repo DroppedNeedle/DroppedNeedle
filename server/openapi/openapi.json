@@ -36657,9 +36657,15 @@
           "requested",
           "skipped",
           "failed",
+          "awaiting_review",
           "total"
         ],
         "properties": {
+          "awaiting_review": {
+            "type": "integer",
+            "description": "Items whose album already waits for a person's pick on Downloads.",
+            "minimum": 0
+          },
           "failed": {
             "type": "integer",
             "description": "Items the resolver or the intake could not place.",
@@ -59008,6 +59014,17 @@
             "type": "string",
             "description": "Preferred source type, empty when unresolved."
           },
+          "state": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PlaylistTrackState"
+              }
+            ],
+            "description": "What the row's album is doing, when the row is not in the library.\nNone when the row owns a local file: owned rows keep no badge."
+          },
           "track_name": {
             "type": "string",
             "description": "Track title."
@@ -59028,6 +59045,16 @@
             "description": "Library track source id, when resolved."
           }
         }
+      },
+      "PlaylistTrackState": {
+        "type": "string",
+        "description": "What a playlist row's album is doing, when the row is not in the\nlibrary. Owned rows carry no state; every other row reads one of these.",
+        "enum": [
+          "missing",
+          "awaiting_approval",
+          "awaiting_review",
+          "downloading"
+        ]
       },
       "PlexConnectPollResult": {
         "type": "object",

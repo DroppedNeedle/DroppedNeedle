@@ -24,7 +24,7 @@ use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 
 use super::super::db::{CollectionsDb, StoreError};
 use super::super::entry_cover::entry_cover;
-use super::super::models::{PlaylistMember, PlaylistTrack};
+use super::super::models::{PlaylistMember, PlaylistTrack, PlaylistTrackState};
 use super::super::sql::{self, PlaylistExportRow};
 use droppedneedle_auth::users::roles::Admin;
 use droppedneedle_kernel::db::{DbError, fold_text};
@@ -268,7 +268,26 @@ fn track_from_row(row: &Row<'_>) -> rusqlite::Result<PlaylistTrack> {
         plex_rating_key: row.get(16)?,
         library_file_id: row.get(17)?,
         recording_mbid: row.get(18)?,
+        state: None,
     })
+}
+
+/// The row state a playlist row's album reads, from its album request's
+/// status and its album's download tasks. A parked task (a live search job
+/// with no candidate picked) wins; then an approval wait; then any live
+/// request or task; a row with none of those is missing.
+fn derive_state(status: Option<&str>, parked: bool, live: bool) -> PlaylistTrackState {
+    if parked {
+        return PlaylistTrackState::AwaitingReview;
+    }
+    match status {
+        Some("awaiting_approval") => PlaylistTrackState::AwaitingApproval,
+        Some("pending" | "queued" | "downloading" | "cancelling") => {
+            PlaylistTrackState::Downloading
+        }
+        _ if live => PlaylistTrackState::Downloading,
+        _ => PlaylistTrackState::Missing,
+    }
 }
 
 fn cover_from_row(row: &Row<'_>) -> rusqlite::Result<CoverImage> {
@@ -1069,6 +1088,30 @@ impl VisiblePlaylists<'_> {
                     .prepare(sql::TRACKS_READABLE.text())?
                     .query_map(params![user_id, playlist_id], track_from_row)?
                     .collect::<rusqlite::Result<_>>()?)
+            })
+            .await
+    }
+
+    /// What each album of a playlist the caller may read is doing, keyed by
+    /// its lowercased release-group MBID. One read for the whole playlist,
+    /// not one per row.
+    pub async fn album_states(
+        &self,
+        playlist_id: &str,
+    ) -> Result<std::collections::HashMap<String, PlaylistTrackState>, StoreError> {
+        let playlist_id = playlist_id.to_owned();
+        self.store
+            .db
+            .read("playlists.album_states", move |conn| {
+                let mut statement = conn.prepare(sql::ALBUM_STATES.text())?;
+                let rows = statement.query_map(params![playlist_id], |row| {
+                    let id: String = row.get(0)?;
+                    let status: Option<String> = row.get(1)?;
+                    let parked: bool = row.get::<_, i64>(2)? != 0;
+                    let live: bool = row.get::<_, i64>(3)? != 0;
+                    Ok((id, derive_state(status.as_deref(), parked, live)))
+                })?;
+                Ok(rows.collect::<rusqlite::Result<_>>()?)
             })
             .await
     }

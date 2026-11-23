@@ -10099,6 +10099,8 @@ export interface components {
         AcquireKind: "album" | "track";
         /** @description A press's answer, and its progress while it runs. */
         AcquireState: {
+            /** @description Items whose album already waits for a person's pick on Downloads. */
+            awaiting_review: number;
             /** @description Items the resolver or the intake could not place. */
             failed: number;
             /** @description Requests filed so far. */
@@ -20241,6 +20243,11 @@ export interface components {
             recording_mbid?: string | null;
             /** @description Preferred source type, empty when unresolved. */
             source_type: string;
+            /**
+             * @description What the row's album is doing, when the row is not in the library.
+             *     None when the row owns a local file: owned rows keep no badge.
+             */
+            state?: null | components["schemas"]["PlaylistTrackState"];
             /** @description Track title. */
             track_name: string;
             /**
@@ -20251,6 +20258,12 @@ export interface components {
             /** @description Library track source id, when resolved. */
             track_source_id?: string | null;
         };
+        /**
+         * @description What a playlist row's album is doing, when the row is not in the
+         *     library. Owned rows carry no state; every other row reads one of these.
+         * @enum {string}
+         */
+        PlaylistTrackState: "missing" | "awaiting_approval" | "awaiting_review" | "downloading";
         /** @description Settings-completion poll answer: the raw auth token, untouched. */
         PlexConnectPollResult: {
             /** @description Present only when completed. */

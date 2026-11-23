@@ -54,6 +54,25 @@ pub struct PlaylistTrack {
     /// The MusicBrainz recording `source_type` gave for this entry, when
     /// known.
     pub recording_mbid: Option<String>,
+    /// What the row's album is doing, when the row is not in the library.
+    /// None when the row owns a local file: owned rows keep no badge.
+    pub state: Option<PlaylistTrackState>,
+}
+
+/// What a playlist row's album is doing, when the row is not in the
+/// library. Owned rows carry no state; every other row reads one of these.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaylistTrackState {
+    /// Nothing known and nothing pending: the current "Not in library".
+    Missing,
+    /// A request for the row's album waits for approval.
+    AwaitingApproval,
+    /// A task for the row's album is parked on a search job, waiting for a
+    /// pick on Downloads.
+    AwaitingReview,
+    /// A live request or task is downloading.
+    Downloading,
 }
 
 /// Playlist summary for lists and visibility answers.

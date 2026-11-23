@@ -52,6 +52,13 @@
 	let bulkRemoving = $state(false);
 	let selectionMode = $derived(selectedIds.size > 0);
 
+	const ROW_STATE_LABELS: Record<string, string> = {
+		missing: 'Not in library',
+		awaiting_approval: 'Awaiting approval',
+		awaiting_review: 'Awaiting review',
+		downloading: 'Downloading'
+	};
+
 	const removeTrackMutation = createRemovePlaylistTrackV3Mutation();
 	const acquireMutation = createAcquirePlaylistV3Mutation();
 	let acquiringId = $state<string | null>(null);
@@ -62,8 +69,9 @@
 		const album = track.album_name.trim();
 		const artist = track.artist_name.trim();
 		const title = track.track_name.trim();
-		// A row that links to its album is missing the song, not the album.
-		const wantsAlbum = !track.album_id && album.length > 0;
+		// A row that names its album asks for the album; a row without one
+		// asks for its song.
+		const wantsAlbum = album.length > 0;
 		const item = wantsAlbum
 			? { kind: 'album' as const, album, artist, title: null }
 			: { kind: 'track' as const, album: null, artist, title };
@@ -520,7 +528,7 @@
 								<span
 									class="shrink-0 rounded-full border border-warning/60 bg-warning/8 px-1.5 text-[0.6875rem] font-medium leading-5 text-warning"
 								>
-									Not in library
+									{ROW_STATE_LABELS[track.state ?? 'missing']}
 								</span>
 							{/if}
 						</span>
@@ -553,9 +561,7 @@
 								<button
 									type="button"
 									class="mr-1 rounded p-1 text-muted hover:text-warning disabled:opacity-50"
-									title={!track.album_id && track.album_name.trim()
-										? 'Request this album'
-										: 'Request this song'}
+									title={track.album_name.trim() ? 'Request this album' : 'Request this song'}
 									disabled={acquiringId === track.id}
 									onclick={(e) => {
 										e.stopPropagation();

@@ -14,7 +14,7 @@ use utoipa::ToSchema;
 use crate::imports::spotify_albums::AlbumResolver;
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::{ApprovalState, RequestStatus};
-use crate::requests::models::{AlbumIntake, RequestKind, TrackIntake};
+use crate::requests::models::{AlbumIntake, RequestKind, RequestTaskState, TrackIntake};
 use crate::requests::service::RequestsService;
 
 /// How many items one run files, paced by the wait between them.
@@ -57,6 +57,8 @@ pub struct AcquireState {
     pub skipped: usize,
     /// Items the resolver or the intake could not place.
     pub failed: usize,
+    /// Items whose album already waits for a person's pick on Downloads.
+    pub awaiting_review: usize,
     /// Items the press asked for.
     pub total: usize,
 }
@@ -114,11 +116,19 @@ impl PlaylistAcquire {
             Err(_) => return AcquireState::default(),
         };
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let items: Vec<AcquireItem> = items
+        let items: Vec<PendingItem> = items
             .into_iter()
-            .filter(|item| row_allows(&rows, item))
+            .filter_map(|item| {
+                let row = matching_row(&rows, &item)?;
+                Some(PendingItem {
+                    release_group_mbid: row.album_id.clone(),
+                    album_title: non_blank(row.album_name.trim()),
+                    item,
+                })
+            })
             .take(MAX_ITEMS_PER_PRESS)
-            .filter(|item| {
+            .filter(|pending| {
+                let item = &pending.item;
                 let key = match item.kind {
                     AcquireKind::Album => format!(
                         "a|{}|{}",
@@ -139,6 +149,7 @@ impl PlaylistAcquire {
             requested: 0,
             skipped: 0,
             failed: 0,
+            awaiting_review: 0,
             total: items.len(),
         };
         {
@@ -180,7 +191,7 @@ impl PlaylistAcquire {
         self: Arc<Self>,
         principal: Principal,
         playlist_id: String,
-        items: Vec<AcquireItem>,
+        items: Vec<PendingItem>,
         generation: u64,
     ) {
         let service = RequestsService::new(&self.requests);
@@ -205,8 +216,8 @@ impl PlaylistAcquire {
                 self.requests.mixes.state(principal.user_id()).await,
                 Ok(Some(ApprovalState::Approved))
             );
-        for (index, item) in items.iter().enumerate() {
-            let outcome = self.file(&service, &principal, granted, item).await;
+        for (index, pending) in items.iter().enumerate() {
+            let outcome = self.file(&service, &principal, granted, pending).await;
             {
                 let current = self
                     .generations
@@ -226,6 +237,7 @@ impl PlaylistAcquire {
                     Filed::Requested => state.requested += 1,
                     Filed::Skipped => state.skipped += 1,
                     Filed::Failed => state.failed += 1,
+                    Filed::AwaitingReview => state.awaiting_review += 1,
                 }
                 if index + 1 == items.len() {
                     state.state = "done".to_owned();
@@ -240,8 +252,9 @@ impl PlaylistAcquire {
         service: &RequestsService,
         principal: &Principal,
         granted: bool,
-        item: &AcquireItem,
+        pending: &PendingItem,
     ) -> Filed {
+        let item = &pending.item;
         match item.kind {
             AcquireKind::Album => {
                 let Some(album) = item
@@ -261,6 +274,13 @@ impl PlaylistAcquire {
                     Ok(None) => return Filed::Failed,
                     Err(_) => return Filed::Failed,
                 };
+                // An album already parked on a search job waits for a person
+                // to pick a candidate; re-filing would queue a duplicate.
+                if let Ok(Some(task)) = self.requests.dispatch.active_task_for_album(&group).await
+                    && RequestTaskState::of(&task) == Some(RequestTaskState::AwaitingReview)
+                {
+                    return Filed::AwaitingReview;
+                }
                 match self.requests.store.get(RequestKind::Album, &group).await {
                     Ok(Some(row)) if row.status.is_active() => return Filed::Skipped,
                     Ok(Some(row))
@@ -309,10 +329,28 @@ impl PlaylistAcquire {
                 if artist.is_empty() {
                     return Filed::Skipped;
                 }
-                let recording = match self.resolver.resolve_track(title, artist).await {
-                    Ok(Some(recording)) => recording,
-                    Ok(None) => return Filed::Failed,
-                    Err(_) => return Filed::Failed,
+                // A row that links to its album asks for its song inside
+                // that album; a row without one uses the global search.
+                let (recording, album_title, release_group_mbid) = if let Some(group) = pending
+                    .release_group_mbid
+                    .as_deref()
+                    .filter(|group| !group.is_empty())
+                {
+                    match self.resolver.resolve_track_in_group(title, group).await {
+                        Ok(Some(recording)) => (
+                            recording,
+                            pending.album_title.clone(),
+                            Some(group.to_owned()),
+                        ),
+                        Ok(None) => return Filed::Failed,
+                        Err(_) => return Filed::Failed,
+                    }
+                } else {
+                    match self.resolver.resolve_track(title, artist).await {
+                        Ok(Some(recording)) => (recording, None, None),
+                        Ok(None) => return Filed::Failed,
+                        Err(_) => return Filed::Failed,
+                    }
                 };
                 match self
                     .requests
@@ -335,9 +373,9 @@ impl PlaylistAcquire {
                     recording_mbid: recording,
                     artist_name: artist.to_owned(),
                     track_title: title.to_owned(),
-                    album_title: None,
+                    album_title,
                     duration_seconds: None,
-                    release_group_mbid: None,
+                    release_group_mbid,
                     artist_mbid: None,
                     release_mbid: None,
                 };
@@ -376,7 +414,7 @@ impl PlaylistAcquire {
             if artist.is_empty() || title.is_empty() {
                 continue;
             }
-            if album.is_empty() || track.album_id.is_some() {
+            if album.is_empty() {
                 if !items.iter().any(|seen| {
                     seen.kind == AcquireKind::Track
                         && seen.title.as_deref() == Some(title.as_str())
@@ -418,38 +456,55 @@ fn askable(track: &PlaylistTrack) -> bool {
         && !track.track_name.trim().is_empty()
 }
 
-/// Whether an item names a missing row of this playlist. A song may be
-/// taken from a row that names its album, which is what a row linking to
-/// its album offers.
-fn row_allows(rows: &[PlaylistTrack], item: &AcquireItem) -> bool {
-    rows.iter().any(|row| {
-        askable(row)
-            && row
-                .artist_name
+/// The first missing row an item names, when one does.
+fn matching_row<'a>(rows: &'a [PlaylistTrack], item: &AcquireItem) -> Option<&'a PlaylistTrack> {
+    rows.iter().find(|row| row_allows(row, item))
+}
+
+/// Whether one row may be asked for by an item: no library file, no other
+/// source, both names present, and the item's name matches the row's. A
+/// linked row (its album known, its file missing) answers both an album
+/// and a track, because a link means the identity is matched, not that the
+/// file exists.
+fn row_allows(row: &PlaylistTrack, item: &AcquireItem) -> bool {
+    askable(row)
+        && row
+            .artist_name
+            .trim()
+            .eq_ignore_ascii_case(item.artist.trim())
+        && match item.kind {
+            AcquireKind::Album => row
+                .album_name
                 .trim()
-                .eq_ignore_ascii_case(item.artist.trim())
-            && match item.kind {
-                // A row that links to its album asks for its song, not
-                // for an album the library already knows.
-                AcquireKind::Album => {
-                    row.album_id.is_none()
-                        && row
-                            .album_name
-                            .trim()
-                            .eq_ignore_ascii_case(item.album.as_deref().unwrap_or(""))
-                }
-                AcquireKind::Track => row
-                    .track_name
-                    .trim()
-                    .eq_ignore_ascii_case(item.title.as_deref().unwrap_or("")),
-            }
-    })
+                .eq_ignore_ascii_case(item.album.as_deref().unwrap_or("")),
+            AcquireKind::Track => row
+                .track_name
+                .trim()
+                .eq_ignore_ascii_case(item.title.as_deref().unwrap_or("")),
+        }
+}
+
+/// One accepted item, with the album identity its row names.
+struct PendingItem {
+    /// The item as the caller asked for it.
+    item: AcquireItem,
+    /// The row's release-group MBID, when the row links to its album.
+    release_group_mbid: Option<String>,
+    /// The row's album title, when it names one.
+    album_title: Option<String>,
+}
+
+/// A trimmed, non-empty string as an owned value.
+fn non_blank(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
 enum Filed {
     Requested,
     Skipped,
     Failed,
+    AwaitingReview,
 }
 
 impl Default for AcquireState {
@@ -459,6 +514,7 @@ impl Default for AcquireState {
             requested: 0,
             skipped: 0,
             failed: 0,
+            awaiting_review: 0,
             total: 0,
         }
     }

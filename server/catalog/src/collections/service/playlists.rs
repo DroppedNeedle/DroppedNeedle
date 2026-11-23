@@ -564,7 +564,23 @@ impl CollectionsService<'_> {
     ) -> Result<PlaylistDetail, CollectionsError> {
         let row = self.readable_playlist(user_id, playlist_id).await?;
         let visible = self.playlists().visible_to(user_id);
-        let tracks = visible.tracks(playlist_id).await?;
+        let mut tracks = visible.tracks(playlist_id).await?;
+        // A row without a file carries what its album is doing, so the page
+        // can say "awaiting approval" instead of "not in library".
+        let album_states = visible.album_states(playlist_id).await?;
+        for track in &mut tracks {
+            if track.library_file_id.is_some() {
+                continue;
+            }
+            track.state = Some(
+                track
+                    .album_id
+                    .as_deref()
+                    .map(str::to_lowercase)
+                    .and_then(|key| album_states.get(&key).copied())
+                    .unwrap_or(super::super::models::PlaylistTrackState::Missing),
+            );
+        }
         let mut detail = detail(&row, user_id, admin, tracks);
         detail.import_state = visible
             .import_state(playlist_id)

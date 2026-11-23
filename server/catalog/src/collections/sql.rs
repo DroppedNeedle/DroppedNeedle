@@ -87,6 +87,24 @@ droppedneedle_kernel::sql! {
     pub(super) TRACKS_OWNED = TRACK_COLUMNS
         + " WHERE playlist_id = (SELECT p.id FROM catalog_playlists p WHERE p.id = ?2 AND "
         + OWNED + ") ORDER BY position";
+    /// What each distinct album of playlist `?1` is doing: `(album id
+    /// lowercased, album request status, parked task, live task)`, one row
+    /// per release group rather than per playlist row, so a detail page
+    /// reads the request ledger and the download tasks once.
+    pub(super) ALBUM_STATES = "SELECT lower(t.album_id) AS album_id, \
+         (SELECT rh.status FROM request_history rh \
+           WHERE rh.musicbrainz_id_lower = lower(t.album_id) \
+             AND rh.request_kind = 'album') AS request_status, \
+         EXISTS (SELECT 1 FROM download_tasks dt \
+           WHERE lower(dt.release_group_mbid) = lower(t.album_id) \
+             AND dt.search_job_id IS NOT NULL AND dt.candidate_index IS NULL \
+             AND dt.status IN ('queued','downloading','processing')) AS parked, \
+         EXISTS (SELECT 1 FROM download_tasks dt \
+           WHERE lower(dt.release_group_mbid) = lower(t.album_id) \
+             AND dt.status IN ('queued','downloading','processing')) AS live \
+       FROM catalog_playlist_tracks t \
+       WHERE t.playlist_id = ?1 AND t.album_id IS NOT NULL \
+       GROUP BY lower(t.album_id)";
     /// The uploaded cover of playlist `?2`, which the caller may read.
     pub(super) COVER_READABLE = "SELECT c.content_type, c.image FROM catalog_playlist_covers c \
          JOIN catalog_playlists p ON p.id = c.playlist_id WHERE c.playlist_id = ?2 AND " + READABLE;

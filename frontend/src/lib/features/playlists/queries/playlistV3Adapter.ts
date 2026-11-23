@@ -63,7 +63,8 @@ export function toPageTrack(track: PlaylistTrackV3): PlaylistTrack {
 		created_at: epochSecToIso(track.created_at),
 		plex_rating_key: track.plex_rating_key ?? null,
 		library_file_id: track.library_file_id ?? null,
-		recording_mbid: track.recording_mbid ?? null
+		recording_mbid: track.recording_mbid ?? null,
+		state: track.state ?? null
 	};
 }
 

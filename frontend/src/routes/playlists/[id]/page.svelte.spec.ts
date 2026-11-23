@@ -13,6 +13,7 @@ const mockRequestMissing = vi.fn().mockResolvedValue({
 	requested: 1,
 	skipped: 0,
 	failed: 0,
+	awaiting_review: 0,
 	total: 1
 });
 const mockForgetSources = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
@@ -56,9 +57,14 @@ vi.mock('$lib/features/playlists/queries/PlaylistV3Mutations.svelte', () => ({
 	createSetPlaylistVisibilityV3Mutation: () => ({ mutateAsync: mockShareMutate, isPending: false }),
 	createDeletePlaylistV3Mutation: () => ({ mutateAsync: mockDeleteMutate, isPending: false }),
 	createAcquirePlaylistV3Mutation: () => ({ mutateAsync: mockRequestMissing, isPending: false }),
-	getAcquireProgressV3: vi
-		.fn()
-		.mockResolvedValue({ state: 'done', requested: 0, skipped: 0, failed: 0, total: 0 }),
+	getAcquireProgressV3: vi.fn().mockResolvedValue({
+		state: 'done',
+		requested: 0,
+		skipped: 0,
+		failed: 0,
+		awaiting_review: 0,
+		total: 0
+	}),
 	createSetPlaylistPullV3Mutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	createCheckPlaylistPullV3Mutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	createLeavePlaylistV3Mutation: () => ({ mutateAsync: vi.fn(), isPending: false }),

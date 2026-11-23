@@ -42,6 +42,9 @@ const SEARCH_LIMIT: u32 = 5;
 /// releases inline with no extra lookups.
 const RECORDING_SEARCH_LIMIT: u32 = 25;
 
+/// Editions of one release group scanned for a playlist track's recording.
+const GROUP_EDITION_LIMIT: u32 = 10;
+
 /// An album's ISRCs asked by recording search, in order, until one
 /// proves a group: one is enough when MusicBrainz knows the album.
 const ISRC_SEARCHES: usize = 2;
@@ -216,6 +219,78 @@ impl AlbumResolver {
             let id = normalize_mb_id(&hit.id);
             if is_valid_mbid(&id) {
                 recordings.insert(id);
+            }
+        }
+        Ok((recordings.len() == 1)
+            .then(|| recordings.into_iter().next())
+            .flatten())
+    }
+
+    /// A recording inside a known release group, matched by title, or
+    /// `None` when the group does not carry exactly one recording of that
+    /// title. A playlist row that links to its album resolves its song
+    /// here, scoped to the group it already names, so a global recording
+    /// search that misses the title or the artist cannot fail it.
+    ///
+    /// # Errors
+    ///
+    /// A MusicBrainz failure, so the caller can stop asking while the
+    /// service is down.
+    pub async fn resolve_track_in_group(
+        &self,
+        title: &str,
+        release_group_id: &str,
+    ) -> Result<Option<String>, ProviderError> {
+        let wanted = title_key(title);
+        let group = normalize_mb_id(release_group_id);
+        if wanted.is_empty() || !is_valid_mbid(&group) {
+            return Ok(None);
+        }
+        let Some(settings) = self.settings.read() else {
+            return Err(ProviderError::NotConfigured {
+                provider: SOURCE,
+                message: "the musicbrainz settings cannot be read".to_owned(),
+            });
+        };
+        let view = self.musicbrainz.fixed(
+            self.musicbrainz.source_from(&settings),
+            RequestPriority::BackgroundSync,
+        );
+        let page = view
+            .search_release_group_editions(
+                &group,
+                GROUP_EDITION_LIMIT,
+                0,
+                Criticality::IdentityCritical,
+            )
+            .await?;
+        let mut recordings: BTreeSet<String> = BTreeSet::new();
+        for hit in &page.items {
+            let Some(release) = view
+                .lookup_release(&hit.id, &["recordings"], Criticality::IdentityCritical)
+                .await?
+            else {
+                continue;
+            };
+            for track in release
+                .entity
+                .media
+                .iter()
+                .flat_map(|medium| &medium.tracks)
+            {
+                if !track
+                    .display_title()
+                    .is_some_and(|title| title_key(title) == wanted)
+                {
+                    continue;
+                }
+                let Some(recording) = track.recording.as_ref() else {
+                    continue;
+                };
+                let id = normalize_mb_id(&recording.id);
+                if is_valid_mbid(&id) {
+                    recordings.insert(id);
+                }
             }
         }
         Ok((recordings.len() == 1)
