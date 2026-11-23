@@ -583,6 +583,8 @@ const CALLER_KEYED_OPERATIONS: &[(&str, &str)] = &[
     ("PUT", "/api/v3/remotes/{source}/connection"),
     ("DELETE", "/api/v3/remotes/{source}/connection"),
     ("DELETE", "/api/v3/discover/feedback/{target}/{mbid}"),
+    ("GET", "/api/v3/discover/picks/{release_group_mbid}/why"),
+    ("DELETE", "/api/v3/discover/tunings/{kind}/{target}"),
     ("PUT", "/api/v3/library/albums/{album_id}/looks-wrong"),
 ];
 
@@ -1912,6 +1914,63 @@ async fn caller_keyed_state_stays_with_its_caller() {
     let (status, answer) = call(&app, &ada, "POST", picks, Some(body)).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "A's shown: {answer}");
     assert_eq!(seen(), (1, 1, 0), "A's own event stamps A's pick");
+
+    // A pick in A's pool and A's "Less from this": B and an admin read no
+    // evidence of it, see none of A's tunings and undo nothing of A's.
+    let seed_artist = "8e7c3eaf-4b2d-4f9c-9d9a-5b3f4e6c7d82";
+    app.seed(&format!(
+        "INSERT INTO catalog_taste_builds (user_id, built_at, plays_counted, \
+         imported_listens_counted, artists_played, seeds, incomplete) \
+         VALUES ('{id}', 1000, 3, 0, 1, 1, 0); \
+         INSERT INTO catalog_taste_artists (user_id, artist_mbid_lower, artist_mbid, name, \
+         plays, imported_listens, months_active, weight, is_seed) \
+         VALUES ('{id}', '{seed_artist}', '{seed_artist}', 'Seed', 3, 0, 1, 1.0, 1); \
+         INSERT INTO catalog_discover_candidates (user_id, release_group_mbid_lower, rank, \
+         kind, title, artist_mbid, artist_name, credited_artist_mbids, support, \
+         group_support) VALUES ('{id}', '{hidden_album}', 0, 'new_artist', 'Album', \
+         '{hidden_artist}', 'Artist', '[]', 1.0, 1.0); \
+         INSERT INTO catalog_discover_candidate_paths (user_id, release_group_mbid_lower, \
+         path_no, kind, source, artist_mbid, artist_name, artist_plays, artist_weight, \
+         artist_albums_owned, link_strength, link_rank, link_of, named_by_labs, \
+         named_by_lastfm) VALUES ('{id}', '{hidden_album}', 0, 'seed', 'listenbrainz_labs', \
+         '{seed_artist}', 'Seed', 3, 1.0, 0, 1.0, 1, 10, 1, 0); \
+         INSERT INTO catalog_discover_tunings (user_id, kind, target, target_name, \
+         created_at) VALUES ('{id}', 'less_from_seed', '{seed_artist}', 'Seed', 1000)",
+        id = ada.id
+    ))
+    .await;
+    let why = format!("/api/v3/discover/picks/{hidden_album}/why");
+    for (who, what) in [(&bob, "B"), (&admin, "an admin")] {
+        let (status, body) = call(&app, who, "GET", &why, None).await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "{what} read A's pick: {body}"
+        );
+    }
+    let (status, body) = call(&app, &ada, "GET", &why, None).await;
+    ok(status, &body, "A reads A's pick");
+    assert_eq!(body["reason"]["line"], "Close to Seed.", "{body}");
+    let tunings = "/api/v3/discover/tunings";
+    let undo_tuning = format!("{tunings}/less_from_seed/{seed_artist}");
+    for (who, what) in [(&bob, "B"), (&admin, "an admin")] {
+        let (status, body) = call(&app, who, "DELETE", &undo_tuning, None).await;
+        ok(
+            status,
+            &body,
+            &format!("{what} undoes their own, of which there is none"),
+        );
+        let (status, body) = call(&app, who, "GET", tunings, None).await;
+        ok(status, &body, &format!("{what} reads their tunings"));
+        assert_eq!(
+            body["items"],
+            json!([]),
+            "{what} sees only their own: {body}"
+        );
+    }
+    let (status, body) = call(&app, &ada, "GET", tunings, None).await;
+    ok(status, &body, "A reads A's tunings");
+    assert_eq!(body["items"].as_array().map(Vec::len), Some(1), "{body}");
 
     // A's listening history from ListenBrainz: B's and an admin's reads
     // show none of it.

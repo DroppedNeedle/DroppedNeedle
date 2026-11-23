@@ -116,6 +116,10 @@ pub struct Link {
     pub labs: bool,
     /// Whether Last.fm's list names it.
     pub lastfm: bool,
+    /// Whether the candidate's artist was the first in that artist's labs
+    /// list the person did not know, every artist above it being one of
+    /// theirs.
+    pub closest_new: bool,
 }
 
 /// One piece of evidence.

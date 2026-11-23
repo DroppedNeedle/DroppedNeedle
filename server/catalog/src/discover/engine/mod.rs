@@ -16,6 +16,8 @@
 //! - [`sources`]: where the pool's candidates come from.
 //! - [`pool`]: the `discover.pool` job kind, and [`pool_store`] its three
 //!   tables and the pool read back.
+//! - [`reason`]: a pick's one line, pure, from its paths; [`evidence`]
+//!   what "Why this?" opens, from stored rows.
 //! - [`schedule`]: who is due a build, asked by
 //!   [`Due`](crate::discover::due::Due).
 //!
@@ -23,11 +25,13 @@
 //! read live where it is needed, never copied here.
 
 pub mod candidate;
+pub mod evidence;
 pub mod history;
 pub mod jobs;
 pub mod pool;
 pub mod pool_store;
 pub mod rank;
+pub mod reason;
 pub(crate) mod schedule;
 pub mod select;
 pub(crate) mod sources;

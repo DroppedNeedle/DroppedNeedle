@@ -54,6 +54,7 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 		key(U, 'albums', 'similar'),
 		key(U, 'artist')
 	],
+	tuningsChanged: [key(U, 'discover', 'tunings'), key(U, 'discover', 'pick-evidence')],
 	artistDuplicatesChanged: [every('library', 'artist-reconciliation')],
 	usersChanged: [key(U, 'auth', 'admin-users')],
 	userImportCandidatesChanged: [key(U, 'auth', 'import', 'job')],

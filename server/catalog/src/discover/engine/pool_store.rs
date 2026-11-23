@@ -14,11 +14,14 @@ use droppedneedle_kernel::jobs::queue::JobError;
 use rusqlite::{Connection, Transaction, params};
 
 use super::candidate::{Candidate, CandidateKind, Link, Path, PathArtist};
+use super::rank;
+use super::reason;
 use super::select::Shown;
 use super::sql;
 use super::taste_store::Kept;
 use crate::discover::cache::ForgetCounts;
 use crate::discover::feedback::Feedback;
+use crate::discover::tunings;
 
 fn json(ids: &[String]) -> String {
     serde_json::to_string(ids).unwrap_or_else(|_| "[]".to_owned())
@@ -43,11 +46,30 @@ pub(in crate::discover) struct Taste {
 }
 
 /// `user_id`'s taste for the pool; `None` while they have no taste build.
+/// A seed they asked for less from weighs what [`rank::tuned_weight`] says,
+/// and the seeds stay heaviest first.
 ///
 /// # Errors
 ///
-/// The read's failure.
+/// A read's failure.
 pub(in crate::discover) async fn taste(db: &Db, user_id: &str) -> Result<Option<Taste>, DbError> {
+    let less_from = tunings::less_from(db, user_id).await?;
+    let mut taste = taste_rows(db, user_id).await?;
+    if let Some(taste) = taste.as_mut() {
+        for seed in &mut taste.seeds {
+            seed.weight = rank::tuned_weight(seed.weight, less_from.contains(&seed.mbid));
+        }
+        taste.seeds.sort_by(|a, b| {
+            b.weight
+                .total_cmp(&a.weight)
+                .then_with(|| a.mbid.cmp(&b.mbid))
+        });
+    }
+    Ok(taste)
+}
+
+/// `user_id`'s taste rows as kept.
+async fn taste_rows(db: &Db, user_id: &str) -> Result<Option<Taste>, DbError> {
     let user = user_id.to_owned();
     db.read("discover.pool.taste", move |conn| {
         // A background read whose statements must agree: the seeds, the
@@ -120,6 +142,27 @@ pub(crate) async fn library(db: &Db, artists: &[String]) -> Result<Library, DbEr
             fetching,
             albums_owned,
         })
+    })
+    .await
+}
+
+/// How many albums the library holds of each of `artists` (lowercased),
+/// one entry an artist that has any.
+///
+/// # Errors
+///
+/// The read's failure.
+pub(crate) async fn library_albums(
+    db: &Db,
+    artists: &[String],
+) -> Result<HashMap<String, i64>, DbError> {
+    let asked = json(artists);
+    db.read("discover.pool.albums_owned", move |conn| {
+        conn.prepare_cached(sql::POOL_ALBUMS_OWNED.text())?
+            .query_map([asked], sql::PoolAlbumsOwned::read)?
+            .map(|row| row.map(|row| (row.mbid, row.albums)))
+            .collect::<rusqlite::Result<_>>()
+            .map_err(DbError::from)
     })
     .await
 }
@@ -237,6 +280,7 @@ fn path_of(row: sql::PoolPath) -> Path {
         of: row.link_of.unwrap_or(1),
         labs: row.named_by_labs,
         lastfm: row.named_by_lastfm,
+        closest_new: row.link_closest_new,
     });
     Path {
         kind: row.kind,
@@ -245,6 +289,26 @@ fn path_of(row: sql::PoolPath) -> Path {
         artist,
         link,
         known_credit: row.known_credit_mbid,
+    }
+}
+
+/// A candidate as stored, with `paths`.
+fn candidate_of(row: sql::PoolCandidate, paths: Vec<Path>) -> Candidate {
+    Candidate {
+        paths,
+        credited_artist_mbids: serde_json::from_str(&row.credited_artist_mbids).unwrap_or_default(),
+        release_group_mbid: row.release_group_mbid_lower,
+        title: row.title,
+        artist_mbid: row.artist_mbid,
+        artist_name: row.artist_name,
+        primary_type: row.primary_type,
+        first_release_date: row.first_release_date,
+        album_listeners: row.album_listeners,
+        artist_listeners: row.artist_listeners,
+        kind: row.kind,
+        support: row.support,
+        group: row.group_no,
+        group_support: row.group_support,
     }
 }
 
@@ -267,26 +331,61 @@ fn read_pool(conn: &Connection, user: &str) -> rusqlite::Result<Vec<Candidate>> 
     }
     Ok(rows
         .into_iter()
-        .map(|row| Candidate {
-            paths: paths
+        .map(|row| {
+            let own = paths
                 .remove(&row.release_group_mbid_lower)
-                .unwrap_or_default(),
-            credited_artist_mbids: serde_json::from_str(&row.credited_artist_mbids)
-                .unwrap_or_default(),
-            release_group_mbid: row.release_group_mbid_lower,
-            title: row.title,
-            artist_mbid: row.artist_mbid,
-            artist_name: row.artist_name,
-            primary_type: row.primary_type,
-            first_release_date: row.first_release_date,
-            album_listeners: row.album_listeners,
-            artist_listeners: row.artist_listeners,
-            kind: row.kind,
-            support: row.support,
-            group: row.group_no,
-            group_support: row.group_support,
+                .unwrap_or_default();
+            candidate_of(row, own)
         })
         .collect())
+}
+
+/// One candidate of `user_id`'s pool, by its release group (lowercased),
+/// with its paths; `None` when their pool holds no such album.
+///
+/// # Errors
+///
+/// The read's failure.
+pub(crate) async fn candidate(
+    db: &Db,
+    user_id: &str,
+    release_group: &str,
+) -> Result<Option<Candidate>, DbError> {
+    let (user, group) = (user_id.to_owned(), release_group.to_owned());
+    db.read("discover.pool.candidate", move |conn| {
+        // The row and its paths are read in one snapshot, so a pool
+        // replaced between them never reads as pathless.
+        let row = conn
+            .prepare_cached(sql::POOL_CANDIDATE.text())?
+            .query_map(params![user, group], sql::PoolCandidate::read)?
+            .next()
+            .transpose()?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let paths = conn
+            .prepare_cached(sql::POOL_CANDIDATE_PATHS.text())?
+            .query_map(params![user, group], sql::PoolPath::read)?
+            .map(|row| row.map(path_of))
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(Some(candidate_of(row, paths)))
+    })
+    .await
+}
+
+/// `user_id`'s seeds as their taste rows hold them now, lowercased.
+///
+/// # Errors
+///
+/// The read's failure.
+pub(crate) async fn seed_ids(db: &Db, user_id: &str) -> Result<HashSet<String>, DbError> {
+    let user = user_id.to_owned();
+    db.read("discover.pool.seed_ids", move |conn| {
+        column(conn, sql::POOL_SEED_IDS.text(), &user)
+            .map(|ids| ids.into_iter().collect())
+            .map_err(DbError::from)
+    })
+    .await
 }
 
 /// `user_id`'s pool as last built, unfiltered: the rows a build may keep.
@@ -413,6 +512,7 @@ fn insert(tx: &Transaction, user: &str, build: &PoolBuild) -> rusqlite::Result<(
                 link.is_some_and(|link| link.labs),
                 link.is_some_and(|link| link.lastfm),
                 path.known_credit,
+                link.is_some_and(|link| link.closest_new),
             ])?;
         }
     }
@@ -471,7 +571,9 @@ pub(crate) async fn rebuild(
 
 /// `user_id`'s pool at `now_ms`, in its order, with the gates that move
 /// applied as it is read: an album the library now holds or is fetching,
-/// and one the person hid or whose artist they turned down, is left out.
+/// one the person hid or whose artist they turned down, and one with no
+/// reason that still holds ([`reason::reason`]: an artist it would name is
+/// no longer one of their seeds), is left out.
 ///
 /// # Errors
 ///
@@ -501,6 +603,7 @@ pub async fn ranked(db: &Db, user_id: &str, now_ms: i64) -> Result<Vec<Candidate
         })
         .await?;
     let feedback = Feedback::load(db, user_id, now_ms).await?;
+    let seeds = seed_ids(db, user_id).await?;
     Ok(pool
         .into_iter()
         .filter(|candidate| {
@@ -508,6 +611,7 @@ pub async fn ranked(db: &Db, user_id: &str, now_ms: i64) -> Result<Vec<Candidate
             !owned.contains(group)
                 && !fetching.contains(group)
                 && !feedback.hides_album(Some(group), Some(&candidate.artist_mbid))
+                && reason::reason(candidate, &seeds).is_some()
         })
         .collect())
 }

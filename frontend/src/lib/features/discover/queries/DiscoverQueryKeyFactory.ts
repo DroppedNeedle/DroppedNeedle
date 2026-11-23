@@ -30,6 +30,11 @@ export const DiscoverQueryKeyFactory = {
 		queueEnrich: (userId: DiscoverV3UserId, releaseGroupMbid: string) =>
 			[...root(userId), 'queue-enrich', releaseGroupMbid] as const,
 		feedback: (userId: DiscoverV3UserId) => [...root(userId), 'feedback'] as const,
+		tunings: (userId: DiscoverV3UserId) => [...root(userId), 'tunings'] as const,
+		// What "Why this?" opens for one pick, and every pick's, as a prefix.
+		pickEvidence: (userId: DiscoverV3UserId, releaseGroupMbid: string) =>
+			[...root(userId), 'pick-evidence', releaseGroupMbid] as const,
+		allPickEvidence: (userId: DiscoverV3UserId) => [...root(userId), 'pick-evidence'] as const,
 		batches: (userId: DiscoverV3UserId) => [...root(userId), 'batches'] as const,
 		batch: (userId: DiscoverV3UserId, batchId: string) =>
 			[...root(userId), 'batch', batchId] as const,

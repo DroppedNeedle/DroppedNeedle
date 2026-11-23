@@ -10,7 +10,8 @@ import {
 	downloadsChanged,
 	type Effect,
 	libraryCountsChanged,
-	recommendationsChanged
+	recommendationsChanged,
+	tuningsChanged
 } from '$lib/queries/effects';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { type FeedbackTarget, undoDiscoverFeedback } from './DiscoverQueueQueries';
@@ -29,6 +30,29 @@ export const createUndoDiscoverFeedbackMutation = () =>
 		mutationFn: ({ target, mbid }: { target: FeedbackTarget; mbid: string }) =>
 			undoDiscoverFeedback(target, mbid),
 		effects: () => [recommendationsChanged(authStore.user?.id)],
+		onError: () => toastStore.show({ message: "Couldn't undo that.", type: 'error' })
+	}));
+
+export type TuningKindV3 = components['schemas']['TuningKind'];
+
+/** "Less from this": one of the caller's artists counts for less in their picks. */
+export const createLessFromSeedMutation = () =>
+	createAppMutation(() => ({
+		mutationFn: (artistMbid: string) =>
+			api.v3.POST(v3('/api/v3/discover/tunings'), {
+				kind: 'less_from_seed',
+				target: artistMbid
+			}),
+		effects: () => [tuningsChanged(authStore.user?.id)],
+		onError: () => toastStore.show({ message: "Couldn't save that.", type: 'error' })
+	}));
+
+/** Takes back one way the caller tuned Discover, from the list of them. */
+export const createUndoTuningMutation = () =>
+	createAppMutation(() => ({
+		mutationFn: ({ kind, target }: { kind: TuningKindV3; target: string }) =>
+			api.v3.DELETE(v3('/api/v3/discover/tunings/{kind}/{target}', { path: { kind, target } })),
+		effects: () => [tuningsChanged(authStore.user?.id)],
 		onError: () => toastStore.show({ message: "Couldn't undo that.", type: 'error' })
 	}));
 

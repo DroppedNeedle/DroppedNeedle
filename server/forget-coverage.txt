@@ -29,6 +29,7 @@ media_playback_events forgotten
 
 # What the person told Discover.
 catalog_discover_feedback kept: what the person told Discover, listed and undone by them
+catalog_discover_tunings kept: how the person tuned Discover, listed and undone by them
 
 # Plays and play counts.
 library_play_history kept: plays in the app, which play counts and statistics come from

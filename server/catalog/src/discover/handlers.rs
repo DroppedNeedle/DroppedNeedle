@@ -21,11 +21,13 @@ use super::{
         DiscoverActivityRequest, DiscoverActivityResponse, DiscoverFeedbackEntry,
         DiscoverFeedbackRequest, DiscoverFeedbackResponse, DiscoverHealthResponse,
         DiscoverPickEventRequest, DiscoverQueuePreview, DiscoverQueueResponse,
-        DiscoverQueueStatusResponse, DiscoverResponse, FeedbackTarget, GenreDetailResponse,
-        HomeResponse, IntegrationStatus, ListenSource, PlaylistSuggestionsRequest,
+        DiscoverQueueStatusResponse, DiscoverResponse, DiscoverTuningEntry, DiscoverTuningRequest,
+        DiscoverTuningsResponse, FeedbackTarget, GenreDetailResponse, HomeResponse,
+        IntegrationStatus, ListenSource, PickEvidence, PlaylistSuggestionsRequest,
         PlaylistSuggestionsResponse, QueueEnrichment, QueueGenerateRequest, QueueGenerateResponse,
         QueueValidateRequest, QueueValidateResponse, RadioPlanRequest, RadioPlanResponse,
-        RadioRequest, RefreshResponse, StatsRange, TrackPreviewResponse, YouTubeSearchResponse,
+        RadioRequest, RefreshResponse, StatsRange, TrackPreviewResponse, TuningKind,
+        YouTubeSearchResponse,
     },
     services::{self, DiscoverDeps},
 };
@@ -482,6 +484,110 @@ pub async fn record_pick_event(
         .map_err(ApiError::from)
 }
 
+/// Everything behind one of the caller's picks: its line, the caller's
+/// artists that led to it, whether it is new to them, how well known it is
+/// and how it was found. Read from the caller's own pool alone.
+#[utoipa::path(
+    get,
+    tag = "discover",
+    path = "/api/v3/discover/picks/{release_group_mbid}/why",
+    params(
+        ("release_group_mbid" = String, Path, description = "The pick's MusicBrainz release-group id"),
+    ),
+    responses(
+        (status = 200, description = "The pick's evidence", body = PickEvidence),
+        (status = 400, description = "Not a MusicBrainz id"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Not a pick of the caller's with a reason that holds"),
+        (status = 500, description = "The evidence could not be read"),
+    )
+)]
+pub async fn pick_why(
+    State(deps): State<DiscoverDeps>,
+    User(user): User,
+    Path(release_group_mbid): Path<String>,
+) -> Result<Json<PickEvidence>, ApiError> {
+    services::pick_evidence(&deps, user.user_id(), &release_group_mbid)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+/// Keep one way the caller tunes what Discover offers them. Only "Less
+/// from this" (`less_from_seed`, about one of their artists) is taken; the
+/// other kinds are refused. Their pool is built again.
+#[utoipa::path(
+    post,
+    tag = "discover",
+    path = "/api/v3/discover/tunings",
+    request_body = DiscoverTuningRequest,
+    responses(
+        (status = 200, description = "The tuning as stored", body = DiscoverTuningEntry),
+        (status = 400, description = "Bad request body, a kind not taken yet, or not one of the caller's artists"),
+        (status = 401, description = "Not authenticated"),
+        (status = 500, description = "The tuning could not be saved"),
+    )
+)]
+pub async fn save_tuning(
+    State(deps): State<DiscoverDeps>,
+    User(user): User,
+    ValidJson(body): ValidJson<DiscoverTuningRequest>,
+) -> Result<Json<DiscoverTuningEntry>, ApiError> {
+    services::save_tuning(&deps, user.user_id(), &body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+/// Every way the caller tuned what Discover offers them, newest first.
+#[utoipa::path(
+    get,
+    tag = "discover",
+    path = "/api/v3/discover/tunings",
+    responses(
+        (status = 200, description = "The caller's tunings", body = DiscoverTuningsResponse),
+        (status = 401, description = "Not authenticated"),
+        (status = 500, description = "The tunings could not be read"),
+    )
+)]
+pub async fn list_tunings(
+    State(deps): State<DiscoverDeps>,
+    User(user): User,
+) -> Result<Json<DiscoverTuningsResponse>, ApiError> {
+    services::list_tunings(&deps, user.user_id())
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+/// Take back one way the caller tuned Discover. Their pool is built again.
+/// Answers the same when there was no such tuning.
+#[utoipa::path(
+    delete,
+    tag = "discover",
+    path = "/api/v3/discover/tunings/{kind}/{target}",
+    params(
+        ("kind" = TuningKind, Path, description = "What the tuning is"),
+        ("target" = String, Path, description = "What it is about: an artist's MusicBrainz id"),
+    ),
+    responses(
+        (status = 204, description = "No such tuning is in effect"),
+        (status = 400, description = "Not a kind taken yet, or not a MusicBrainz id"),
+        (status = 401, description = "Not authenticated"),
+        (status = 500, description = "The change could not be saved"),
+    )
+)]
+pub async fn undo_tuning(
+    State(deps): State<DiscoverDeps>,
+    User(user): User,
+    Path((kind, target)): Path<(String, String)>,
+) -> Result<StatusCode, ApiError> {
+    services::undo_tuning(&deps, user.user_id(), &kind, &target)
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(ApiError::from)
+}
+
 /// Forget the caller's history: how their plays ended, the albums
 /// Discover offered them and what came of each, and their saved Discover
 /// pages, which are built again. Plays, play counts, the library, requests
@@ -833,6 +939,10 @@ pub fn routes() -> Routes<DiscoverDeps> {
         .user(routes!(list_feedback))
         .user(routes!(undo_feedback))
         .user(routes!(record_pick_event))
+        .user(routes!(pick_why))
+        .user(routes!(save_tuning))
+        .user(routes!(list_tunings))
+        .user(routes!(undo_tuning))
         .user(routes!(forget_history))
         .user(routes!(validate_queue))
         .user(routes!(youtube_track_search))

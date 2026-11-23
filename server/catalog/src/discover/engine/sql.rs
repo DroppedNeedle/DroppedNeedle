@@ -10,6 +10,7 @@ use droppedneedle_kernel::db::time::Millis;
 use droppedneedle_library::owns_group;
 
 use super::candidate::{CandidateKind, PathKind, PathSource};
+use crate::discover::tunings::TuningKind;
 use crate::local::sql::{OPEN_REQUEST, musicbrainz, owned_album, owned_artist};
 
 droppedneedle_kernel::sql! {
@@ -299,7 +300,12 @@ droppedneedle_kernel::sql! {
          artist_mbid, artist_name, credited_artist_mbids, primary_type, first_release_date, \
          album_listeners, artist_listeners, kind, support, group_no, group_support \
          FROM catalog_discover_candidates WHERE user_id = ?1 ORDER BY rank";
-    pub(in crate::discover) row PoolCandidate for [POOL_CANDIDATES] {
+    /// One of a person's candidates, by release group (`?2`, lowercased).
+    pub(in crate::discover) POOL_CANDIDATE = "SELECT release_group_mbid_lower, title, \
+         artist_mbid, artist_name, credited_artist_mbids, primary_type, first_release_date, \
+         album_listeners, artist_listeners, kind, support, group_no, group_support \
+         FROM catalog_discover_candidates WHERE user_id = ?1 AND release_group_mbid_lower = ?2";
+    pub(in crate::discover) row PoolCandidate for [POOL_CANDIDATES, POOL_CANDIDATE] {
         release_group_mbid_lower: String,
         title: String,
         artist_mbid: String,
@@ -318,9 +324,17 @@ droppedneedle_kernel::sql! {
     pub(in crate::discover) POOL_PATHS = "SELECT release_group_mbid_lower, kind, source, \
          fetched_at, artist_mbid, artist_name, artist_plays, artist_weight, \
          artist_albums_owned, link_strength, link_rank, link_of, named_by_labs, \
-         named_by_lastfm, known_credit_mbid FROM catalog_discover_candidate_paths \
+         named_by_lastfm, link_closest_new, known_credit_mbid \
+         FROM catalog_discover_candidate_paths \
          WHERE user_id = ?1 ORDER BY release_group_mbid_lower, path_no";
-    pub(in crate::discover) row PoolPath for [POOL_PATHS] {
+    /// One of a person's candidates' paths (`?2`, lowercased), in order.
+    pub(in crate::discover) POOL_CANDIDATE_PATHS = "SELECT release_group_mbid_lower, kind, \
+         source, fetched_at, artist_mbid, artist_name, artist_plays, artist_weight, \
+         artist_albums_owned, link_strength, link_rank, link_of, named_by_labs, \
+         named_by_lastfm, link_closest_new, known_credit_mbid \
+         FROM catalog_discover_candidate_paths \
+         WHERE user_id = ?1 AND release_group_mbid_lower = ?2 ORDER BY path_no";
+    pub(in crate::discover) row PoolPath for [POOL_PATHS, POOL_CANDIDATE_PATHS] {
         release_group_mbid_lower: String,
         kind: PathKind,
         source: PathSource,
@@ -335,6 +349,7 @@ droppedneedle_kernel::sql! {
         link_of: Option<i64>,
         named_by_labs: bool,
         named_by_lastfm: bool,
+        link_closest_new: bool,
         known_credit_mbid: Option<String>,
     }
     /// A person's pool build row.
@@ -363,8 +378,54 @@ droppedneedle_kernel::sql! {
     pub(in crate::discover) POOL_PATH_INSERT = "INSERT INTO catalog_discover_candidate_paths \
          (user_id, release_group_mbid_lower, path_no, kind, source, fetched_at, artist_mbid, \
           artist_name, artist_plays, artist_weight, artist_albums_owned, link_strength, \
-          link_rank, link_of, named_by_labs, named_by_lastfm, known_credit_mbid) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)";
+          link_rank, link_of, named_by_labs, named_by_lastfm, known_credit_mbid, \
+          link_closest_new) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, \
+          ?18)";
+
+    /// A person's seeds, by MusicBrainz id, lowercased.
+    pub(in crate::discover) POOL_SEED_IDS = "SELECT artist_mbid_lower \
+         FROM catalog_taste_artists WHERE user_id = ?1 AND is_seed = 1";
+
+    // -- a pick's evidence ---------------------------------------------------------
+
+    /// Whether a person has no plays or imported listens of the artist `?2`
+    /// (lowercased) and has not played the release group `?3` (lowercased),
+    /// as their taste rows hold them.
+    pub(in crate::discover) EVIDENCE_NO_PLAYS = "SELECT NOT EXISTS (SELECT 1 \
+         FROM catalog_taste_artists WHERE user_id = ?1 AND artist_mbid_lower = ?2 \
+           AND plays + imported_listens > 0) \
+         AND NOT EXISTS (SELECT 1 FROM catalog_known_release_groups \
+           WHERE user_id = ?1 AND release_group_mbid_lower = ?3)";
+
+    // -- how a person tuned Discover -------------------------------------------------
+
+    /// The name a person's taste rows give the artist `?2` (lowercased);
+    /// no row when it is not one of their artists.
+    pub(in crate::discover) TUNING_TARGET_NAME = "SELECT name FROM catalog_taste_artists \
+         WHERE user_id = ?1 AND artist_mbid_lower = ?2";
+    /// Keep one tuning of a person's; the same one again takes the new name
+    /// and time.
+    pub(in crate::discover) TUNING_SAVE = "INSERT INTO catalog_discover_tunings \
+         (user_id, kind, target, target_name, created_at) VALUES (?1, ?2, ?3, ?4, ?5) \
+         ON CONFLICT (user_id, kind, target) DO UPDATE SET \
+           target_name = excluded.target_name, created_at = excluded.created_at";
+    /// Take back one tuning of a person's.
+    pub(in crate::discover) TUNING_UNDO = "DELETE FROM catalog_discover_tunings \
+         WHERE user_id = ?1 AND kind = ?2 AND target = ?3";
+    /// A person's tunings, newest first.
+    pub(in crate::discover) TUNING_LIST = "SELECT kind, target, target_name, created_at \
+         FROM catalog_discover_tunings WHERE user_id = ?1 \
+         ORDER BY created_at DESC, kind, target";
+    pub(in crate::discover) row TuningRow for [TUNING_LIST] {
+        kind: TuningKind,
+        target: String,
+        target_name: String,
+        created_at: Millis,
+    }
+    /// The targets of a person's tunings of kind `?2`.
+    pub(in crate::discover) TUNING_TARGETS = "SELECT target FROM catalog_discover_tunings \
+         WHERE user_id = ?1 AND kind = ?2";
 
     // -- who is due a pool build -------------------------------------------------
 

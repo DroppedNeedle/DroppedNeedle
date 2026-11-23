@@ -17,11 +17,12 @@ use crate::discover::{
         DiscoverActivityResponse, DiscoverFeedbackEntry, DiscoverFeedbackRequest,
         DiscoverFeedbackResponse, DiscoverHealthResponse, DiscoverPickEventRequest,
         DiscoverQueuePreview, DiscoverQueueResponse, DiscoverQueueStatusResponse, DiscoverResponse,
-        GenreDetailResponse, HomeResponse, IntegrationStatus, ListenSource,
-        PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, QueueEnrichment,
-        QueueGenerateRequest, QueueGenerateResponse, QueueValidateRequest, QueueValidateResponse,
-        RadioPlanRequest, RadioPlanResponse, RadioRequest, RadioSeedKind, RefreshResponse,
-        StatsRange, TrackPreviewResponse, YouTubeSearchResponse,
+        DiscoverTuningEntry, DiscoverTuningRequest, DiscoverTuningsResponse, GenreDetailResponse,
+        HomeResponse, IntegrationStatus, ListenSource, PickEvidence, PlaylistSuggestionsRequest,
+        PlaylistSuggestionsResponse, QueueEnrichment, QueueGenerateRequest, QueueGenerateResponse,
+        QueueValidateRequest, QueueValidateResponse, RadioPlanRequest, RadioPlanResponse,
+        RadioRequest, RadioSeedKind, RefreshResponse, StatsRange, TrackPreviewResponse,
+        YouTubeSearchResponse,
     },
     ports::{ProviderFailure, QueueTrigger, RadioFailure},
     previews::LivePreviews,
@@ -29,6 +30,7 @@ use crate::discover::{
     radio::LiveRadio,
     record::{EventError, PickRecord},
     scheduler::{ArtistDetail, Feature},
+    tunings::{self, TuningError, Tunings},
     youtube::LiveYouTube,
 };
 
@@ -119,6 +121,10 @@ pub struct DiscoverDeps {
     pub taste: Arc<crate::discover::engine::jobs::TasteJobs>,
     /// The pool job, for the jobs table to run.
     pub pool: Arc<crate::discover::engine::pool::PoolJobs>,
+    /// What "Why this?" opens for a pick.
+    pub evidence: crate::discover::engine::evidence::Evidence,
+    /// How people tuned what Discover offers them.
+    pub tunings: Tunings,
 }
 
 /// Clamp a limit into `1..=max`, defaulting when missing.
@@ -475,6 +481,73 @@ pub async fn list_feedback(
         .await
         .map_err(owned_store_failure)?;
     Ok(DiscoverFeedbackResponse { items })
+}
+
+/// The evidence behind one of the user's picks, from their pool's stored
+/// rows. Not found unless their pool holds the album with a reason that
+/// still holds.
+pub async fn pick_evidence(
+    deps: &DiscoverDeps,
+    user_id: &str,
+    release_group_mbid: &str,
+) -> Result<PickEvidence, ServiceError> {
+    let mbid = release_group_mbid.trim();
+    if !droppedneedle_providers::musicbrainz::is_valid_mbid(mbid) {
+        return Err(ServiceError::InvalidInput(
+            "release_group_mbid must be a MusicBrainz id".to_owned(),
+        ));
+    }
+    deps.evidence
+        .of(user_id, &mbid.to_ascii_lowercase())
+        .await
+        .map_err(|error| ServiceError::Internal(format!("pick evidence: {error}")))?
+        .ok_or(ServiceError::NotFound)
+}
+
+fn tuning_failure(error: TuningError) -> ServiceError {
+    match error {
+        TuningError::Invalid(reason) => ServiceError::InvalidInput(reason),
+        TuningError::Store(error) => ServiceError::Internal(format!("tuning: {error}")),
+    }
+}
+
+/// Keep one way the user tuned Discover; their pool is built again.
+pub async fn save_tuning(
+    deps: &DiscoverDeps,
+    user_id: &str,
+    body: &DiscoverTuningRequest,
+) -> Result<DiscoverTuningEntry, ServiceError> {
+    deps.tunings
+        .save(user_id, body)
+        .await
+        .map_err(tuning_failure)
+}
+
+/// Every way the user tuned Discover, newest first.
+pub async fn list_tunings(
+    deps: &DiscoverDeps,
+    user_id: &str,
+) -> Result<DiscoverTuningsResponse, ServiceError> {
+    let items = deps
+        .tunings
+        .list(user_id)
+        .await
+        .map_err(|error| ServiceError::Internal(format!("tunings read: {error}")))?;
+    Ok(DiscoverTuningsResponse { items })
+}
+
+/// Take back one way the user tuned Discover; their pool is built again.
+pub async fn undo_tuning(
+    deps: &DiscoverDeps,
+    user_id: &str,
+    kind: &str,
+    target: &str,
+) -> Result<(), ServiceError> {
+    let (kind, target) = tunings::checked_path(kind, target).map_err(tuning_failure)?;
+    deps.tunings
+        .undo(user_id, kind, &target)
+        .await
+        .map_err(tuning_failure)
 }
 
 /// The given cards whose albums the library already holds.

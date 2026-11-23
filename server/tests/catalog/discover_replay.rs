@@ -58,6 +58,7 @@ use std::time::Duration;
 
 use droppedneedle_catalog::discover::engine::candidate::{Candidate, PathKind};
 use droppedneedle_catalog::discover::engine::pool_store;
+use droppedneedle_catalog::discover::engine::reason::reason;
 use droppedneedle_catalog::discover::engine::select::{self, Exposure, Floors, Share, Shown};
 use droppedneedle_catalog::discover::listening::{
     AlbumRow, ArtistFacts, ArtistRow, JellyfinList, LastFmAlbum, LastFmChartAlbum, LastFmFacts,
@@ -65,6 +66,7 @@ use droppedneedle_catalog::discover::listening::{
     ReleaseGroupFacts, ScoredArtist, SourceContext, StatsRange, TagAlbum, UserMusic,
     WeeklyPlaylist,
 };
+use droppedneedle_catalog::discover::models::PickEvidence;
 use droppedneedle_catalog::discover::ports::BoxFuture;
 use droppedneedle_catalog::discover::services::DiscoverDeps;
 use droppedneedle_catalog::metadata::artist::ReleaseGroupItem;
@@ -1186,7 +1188,7 @@ fn wanted(db: &impl Probe) -> Vec<String> {
 // -- now --------------------------------------------------------------------
 
 /// One pick's lines in a printed set.
-fn print_pick(number: usize, pick: &Candidate, taste: &Taste) {
+fn print_pick(number: usize, pick: &Candidate, taste: &Taste, evidence: Option<&PickEvidence>) {
     let year = pick
         .first_release_date
         .as_deref()
@@ -1223,6 +1225,50 @@ fn print_pick(number: usize, pick: &Candidate, taste: &Taste) {
     if pick.paths.iter().any(|path| path.kind == PathKind::Source) {
         println!("     named by their ListenBrainz playlist");
     }
+    let seeds: HashSet<String> = taste.seeds.iter().map(|seed| seed.0.clone()).collect();
+    match reason(pick, &seeds) {
+        Some(reason) => println!("     reason: {}", reason.line),
+        None => println!("     reason: none"),
+    }
+    match evidence {
+        Some(why) => print_evidence(why),
+        None => println!("     why: not found"),
+    }
+}
+
+/// What `why` answers for a pick, as lines.
+fn print_evidence(why: &PickEvidence) {
+    println!("     why: {:?}: {}", why.reason.kind, why.reason.line);
+    for seed in &why.seeds {
+        println!(
+            "       {}: {} plays, {} owned albums, #{} of {}{}",
+            seed.name,
+            seed.your_plays,
+            seed.albums_owned,
+            seed.rank,
+            seed.of,
+            if seed.turned_down {
+                ", less from this"
+            } else {
+                ""
+            }
+        );
+    }
+    println!(
+        "       new to you: no plays {}, not in library {}",
+        why.new_to_you.no_plays, why.new_to_you.not_in_library
+    );
+    println!(
+        "       listeners: {} ({}); found by {:?} from {:?}, read {}",
+        why.listeners
+            .map_or_else(|| "-".to_owned(), |n| n.to_string()),
+        why.listeners_source
+            .map_or_else(|| "-".to_owned(), |source| format!("{source:?}")),
+        why.found_by,
+        why.source,
+        why.source_read_at
+            .map_or_else(|| "-".to_owned(), replay::day)
+    );
 }
 
 /// Build the person's set at the copy's own time and print it.
@@ -1277,7 +1323,13 @@ async fn now(dir: &Path, db: &Path, person: &Person, network: Arc<Replay>) {
             .map_or_else(String::new, |short| format!(" (short: {short:?})"))
     );
     for (at, pick) in selection.picks.iter().enumerate() {
-        print_pick(at + 1, pick, &taste);
+        let why = run
+            .deps
+            .evidence
+            .of(&person.id, &pick.release_group_mbid)
+            .await
+            .expect("the evidence reads");
+        print_pick(at + 1, pick, &taste, why.as_ref());
     }
     run.close().await;
 }

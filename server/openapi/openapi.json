@@ -5540,6 +5540,85 @@
         ]
       }
     },
+    "/api/v3/discover/picks/{release_group_mbid}/why": {
+      "get": {
+        "tags": [
+          "discover"
+        ],
+        "summary": "Everything behind one of the caller's picks: its line, the caller's\nartists that led to it, whether it is new to them, how well known it is\nand how it was found. Read from the caller's own pool alone.",
+        "operationId": "pick_why",
+        "parameters": [
+          {
+            "name": "release_group_mbid",
+            "in": "path",
+            "description": "The pick's MusicBrainz release-group id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The pick's evidence",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PickEvidence"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a MusicBrainz id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not a pick of the caller's with a reason that holds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The evidence could not be read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/discover/playlist-suggestions": {
       "post": {
         "tags": [
@@ -6372,6 +6451,191 @@
           },
           "503": {
             "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/discover/tunings": {
+      "get": {
+        "tags": [
+          "discover"
+        ],
+        "summary": "Every way the caller tuned what Discover offers them, newest first.",
+        "operationId": "list_tunings",
+        "responses": {
+          "200": {
+            "description": "The caller's tunings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoverTuningsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The tunings could not be read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "discover"
+        ],
+        "summary": "Keep one way the caller tunes what Discover offers them. Only \"Less\nfrom this\" (`less_from_seed`, about one of their artists) is taken; the\nother kinds are refused. Their pool is built again.",
+        "operationId": "save_tuning",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoverTuningRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The tuning as stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoverTuningEntry"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request body, a kind not taken yet, or not one of the caller's artists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The tuning could not be saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/discover/tunings/{kind}/{target}": {
+      "delete": {
+        "tags": [
+          "discover"
+        ],
+        "summary": "Take back one way the caller tuned Discover. Their pool is built again.\nAnswers the same when there was no such tuning.",
+        "operationId": "undo_tuning",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "description": "What the tuning is",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/TuningKind"
+            }
+          },
+          {
+            "name": "target",
+            "in": "path",
+            "description": "What it is about: an artist's MusicBrainz id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No such tuning is in effect"
+          },
+          "400": {
+            "description": "Not a kind taken yet, or not a MusicBrainz id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The change could not be saved",
             "content": {
               "application/json": {
                 "schema": {
@@ -44611,6 +44875,69 @@
           }
         }
       },
+      "DiscoverTuningEntry": {
+        "type": "object",
+        "description": "One way a person tuned what Discover offers them.",
+        "required": [
+          "kind",
+          "target",
+          "name",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it was said (unix seconds)."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/TuningKind",
+            "description": "What the tuning is."
+          },
+          "name": {
+            "type": "string",
+            "description": "The target's name, as the person's taste rows give it."
+          },
+          "target": {
+            "type": "string",
+            "description": "What it is about, lowercased."
+          }
+        }
+      },
+      "DiscoverTuningRequest": {
+        "type": "object",
+        "description": "One way a person tuned what Discover offers them. Only\n`less_from_seed` is taken today; the other kinds are refused.",
+        "required": [
+          "kind",
+          "target"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/TuningKind",
+            "description": "What the tuning is."
+          },
+          "target": {
+            "type": "string",
+            "description": "What it is about: for `less_from_seed`, the MusicBrainz id of one of\nthe person's own artists."
+          }
+        }
+      },
+      "DiscoverTuningsResponse": {
+        "type": "object",
+        "description": "Every way a person tuned what Discover offers them, newest first.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscoverTuningEntry"
+            },
+            "description": "The tunings, newest first."
+          }
+        }
+      },
       "DiscoveryBatchCreate": {
         "type": "object",
         "description": "Body creating a discovery batch (one request per album).",
@@ -47873,6 +48200,61 @@
           "contradictory"
         ]
       },
+      "EvidenceSeed": {
+        "type": "object",
+        "description": "One of the person's artists that led to a pick.",
+        "required": [
+          "artist_mbid",
+          "name",
+          "your_plays",
+          "albums_owned",
+          "rank",
+          "of",
+          "turned_down"
+        ],
+        "properties": {
+          "albums_owned": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many of its albums the library holds."
+          },
+          "artist_mbid": {
+            "type": "string",
+            "description": "Its MusicBrainz id, lowercased."
+          },
+          "name": {
+            "type": "string",
+            "description": "Its name."
+          },
+          "of": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How long that list is."
+          },
+          "rank": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The pick's artist's place in its list of similar artists, from 1."
+          },
+          "turned_down": {
+            "type": "boolean",
+            "description": "Whether the person already asked for less from it."
+          },
+          "your_plays": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The person's plays and imported listens of it."
+          }
+        }
+      },
+      "EvidenceSource": {
+        "type": "string",
+        "description": "A service a pick's facts came from.",
+        "enum": [
+          "listenbrainz",
+          "lastfm"
+        ]
+      },
       "ExampleAlbum": {
         "type": "string",
         "description": "The built-in example albums a script is shown against: one disc, two\ndiscs with an edition note, and an album artist whose name another\nartist shares, told apart by MusicBrainz's disambiguation.",
@@ -48499,6 +48881,14 @@
         "enum": [
           "with",
           "without"
+        ]
+      },
+      "FoundBy": {
+        "type": "string",
+        "description": "How a pick was found.",
+        "enum": [
+          "co_listening",
+          "source_pick"
         ]
       },
       "GenreAlias": {
@@ -56096,6 +56486,24 @@
           }
         }
       },
+      "NewToYou": {
+        "type": "object",
+        "description": "Whether a pick's artist is new to the person.",
+        "required": [
+          "no_plays",
+          "not_in_library"
+        ],
+        "properties": {
+          "no_plays": {
+            "type": "boolean",
+            "description": "No plays or listens of the artist, or of the album, in their\nhistory."
+          },
+          "not_in_library": {
+            "type": "boolean",
+            "description": "The library holds no album of the artist."
+          }
+        }
+      },
       "NewznabIndexer": {
         "type": "object",
         "description": "One configured Newznab indexer. DroppedNeedle ships none; the user adds\ntheir own.",
@@ -59024,6 +59432,136 @@
           "shown",
           "sampled",
           "opened"
+        ]
+      },
+      "PickEvidence": {
+        "type": "object",
+        "description": "Everything behind one pick: what \"Why this?\" opens.",
+        "required": [
+          "release_group_mbid",
+          "title",
+          "artist_name",
+          "reason",
+          "seeds",
+          "new_to_you",
+          "found_by",
+          "source"
+        ],
+        "properties": {
+          "artist_name": {
+            "type": "string",
+            "description": "The artist it is filed under."
+          },
+          "found_by": {
+            "$ref": "#/components/schemas/FoundBy",
+            "description": "How it was found."
+          },
+          "listeners": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The album's listeners, as last counted; null when not counted."
+          },
+          "listeners_source": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EvidenceSource"
+              }
+            ],
+            "description": "Where that count came from; null when there is none."
+          },
+          "new_to_you": {
+            "$ref": "#/components/schemas/NewToYou",
+            "description": "Whether its artist is new to the person."
+          },
+          "reason": {
+            "$ref": "#/components/schemas/PickReason",
+            "description": "The line shown on the pick."
+          },
+          "release_group_mbid": {
+            "type": "string",
+            "description": "MusicBrainz release-group id, lowercased."
+          },
+          "seeds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvidenceSeed"
+            },
+            "description": "The person's artists that led to it, strongest first."
+          },
+          "source": {
+            "$ref": "#/components/schemas/EvidenceSource",
+            "description": "The service the finding fact came from."
+          },
+          "source_read_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When that fact was read (unix ms); null when not known."
+          },
+          "title": {
+            "type": "string",
+            "description": "Album title."
+          }
+        }
+      },
+      "PickReason": {
+        "type": "object",
+        "description": "Why a pick is offered: one line built from the path that found it, and\nthe person's own artists it names.",
+        "required": [
+          "kind",
+          "line",
+          "artists"
+        ],
+        "properties": {
+          "artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PickReasonArtist"
+            },
+            "description": "Up to three of the person's artists the line names, strongest\nfirst; none for a service's pick."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PickReasonKind",
+            "description": "What it rests on."
+          },
+          "line": {
+            "type": "string",
+            "description": "The line, a sentence or two."
+          }
+        }
+      },
+      "PickReasonArtist": {
+        "type": "object",
+        "description": "One of the person's own artists a reason names.",
+        "required": [
+          "artist_mbid",
+          "name"
+        ],
+        "properties": {
+          "artist_mbid": {
+            "type": "string",
+            "description": "Its MusicBrainz id, lowercased."
+          },
+          "name": {
+            "type": "string",
+            "description": "Its name."
+          }
+        }
+      },
+      "PickReasonKind": {
+        "type": "string",
+        "description": "What a pick's reason rests on.",
+        "enum": [
+          "your_artists",
+          "source"
         ]
       },
       "PickRequest": {
@@ -70274,6 +70812,15 @@
         "enum": [
           "cookie",
           "bearer"
+        ]
+      },
+      "TuningKind": {
+        "type": "string",
+        "description": "What a tuning is.",
+        "enum": [
+          "less_from_seed",
+          "less_of_kind",
+          "not_this_source"
         ]
       },
       "UnicodeNormalization": {

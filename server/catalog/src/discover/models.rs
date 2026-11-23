@@ -13,6 +13,7 @@ pub use super::feedback::{FeedbackKind, FeedbackTarget};
 pub use super::health::{DeckHealth, PageHealth};
 pub use super::record::{MadeFrom, PickEvent};
 pub use super::sections::{SectionKey, SectionZone};
+pub use super::tunings::TuningKind;
 pub use crate::metadata::models::{AlbumRef, ArtistRef};
 pub use droppedneedle_kernel::runtime_config::sections::ListenSource;
 
@@ -947,6 +948,148 @@ pub struct DiscoverFeedbackEntry {
 pub struct DiscoverFeedbackResponse {
     /// The answers, newest first.
     pub items: Vec<DiscoverFeedbackEntry>,
+}
+
+/// One way a person tuned what Discover offers them. Only
+/// `less_from_seed` is taken today; the other kinds are refused.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DiscoverTuningRequest {
+    /// What the tuning is.
+    pub kind: TuningKind,
+    /// What it is about: for `less_from_seed`, the MusicBrainz id of one of
+    /// the person's own artists.
+    pub target: String,
+}
+
+/// One way a person tuned what Discover offers them.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DiscoverTuningEntry {
+    /// What the tuning is.
+    pub kind: TuningKind,
+    /// What it is about, lowercased.
+    pub target: String,
+    /// The target's name, as the person's taste rows give it.
+    pub name: String,
+    /// When it was said (unix seconds).
+    pub created_at: i64,
+}
+
+/// Every way a person tuned what Discover offers them, newest first.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DiscoverTuningsResponse {
+    /// The tunings, newest first.
+    pub items: Vec<DiscoverTuningEntry>,
+}
+
+/// What a pick's reason rests on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PickReasonKind {
+    /// The person's own artists lead to it.
+    YourArtists,
+    /// A service picked it for the person.
+    Source,
+}
+
+/// One of the person's own artists a reason names.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct PickReasonArtist {
+    /// Its MusicBrainz id, lowercased.
+    pub artist_mbid: String,
+    /// Its name.
+    pub name: String,
+}
+
+/// Why a pick is offered: one line built from the path that found it, and
+/// the person's own artists it names.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct PickReason {
+    /// What it rests on.
+    pub kind: PickReasonKind,
+    /// The line, a sentence or two.
+    pub line: String,
+    /// Up to three of the person's artists the line names, strongest
+    /// first; none for a service's pick.
+    pub artists: Vec<PickReasonArtist>,
+}
+
+/// How a pick was found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FoundBy {
+    /// People who play the person's artists also play its artist.
+    CoListening,
+    /// A service named it for the person.
+    SourcePick,
+}
+
+/// A service a pick's facts came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceSource {
+    /// ListenBrainz.
+    Listenbrainz,
+    /// Last.fm.
+    Lastfm,
+}
+
+/// One of the person's artists that led to a pick.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct EvidenceSeed {
+    /// Its MusicBrainz id, lowercased.
+    pub artist_mbid: String,
+    /// Its name.
+    pub name: String,
+    /// The person's plays and imported listens of it.
+    pub your_plays: i64,
+    /// How many of its albums the library holds.
+    pub albums_owned: i64,
+    /// The pick's artist's place in its list of similar artists, from 1.
+    pub rank: i64,
+    /// How long that list is.
+    pub of: i64,
+    /// Whether the person already asked for less from it.
+    pub turned_down: bool,
+}
+
+/// Whether a pick's artist is new to the person.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct NewToYou {
+    /// No plays or listens of the artist, or of the album, in their
+    /// history.
+    pub no_plays: bool,
+    /// The library holds no album of the artist.
+    pub not_in_library: bool,
+}
+
+/// Everything behind one pick: what "Why this?" opens.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct PickEvidence {
+    /// MusicBrainz release-group id, lowercased.
+    pub release_group_mbid: String,
+    /// Album title.
+    pub title: String,
+    /// The artist it is filed under.
+    pub artist_name: String,
+    /// The line shown on the pick.
+    pub reason: PickReason,
+    /// The person's artists that led to it, strongest first.
+    pub seeds: Vec<EvidenceSeed>,
+    /// Whether its artist is new to the person.
+    pub new_to_you: NewToYou,
+    /// The album's listeners, as last counted; null when not counted.
+    #[serde(default)]
+    pub listeners: Option<i64>,
+    /// Where that count came from; null when there is none.
+    #[serde(default)]
+    pub listeners_source: Option<EvidenceSource>,
+    /// How it was found.
+    pub found_by: FoundBy,
+    /// The service the finding fact came from.
+    pub source: EvidenceSource,
+    /// When that fact was read (unix ms); null when not known.
+    #[serde(default)]
+    pub source_read_at: Option<i64>,
 }
 
 /// Body checking which cards already landed in the library.

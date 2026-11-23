@@ -429,6 +429,10 @@ const SHIPPED: &[(&str, &str)] = &[
         "0164_discover_pool.sql",
         "001749c613ff6b85165b3889ad81875e607f1ff26c78b10aec992a80d45d20d8",
     ),
+    (
+        "0165_discover_tunings.sql",
+        "7152b80406102ccecfca548fda7a0a69c2bd3fb0f5c12c546462dd40e3661af2",
+    ),
 ];
 
 /// The files in `server/migrations/`, by name.
@@ -3149,6 +3153,123 @@ fn discover_pool_upgrade_adds_three_empty_tables() {
     );
 }
 
+/// 0165 adds the tunings table, empty, and the closest-new mark on pool
+/// paths, which the paths a database held read as not; nothing else
+/// changes. A kind outside its list, a second row for one person, kind and
+/// target, a mark that is not 0 or 1 or a row for no account is refused,
+/// and an account's tunings go with it.
+#[test]
+fn discover_tunings_upgrade_adds_one_empty_table() {
+    let dir = ScratchDir::new("discover-tunings-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 165)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 164);
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, created_at)
+                 VALUES ('u1', 'One', 1), ('u2', 'Two', 1);
+             INSERT INTO catalog_discover_candidates (user_id, release_group_mbid_lower,
+                 rank, kind, title, artist_mbid, artist_name,
+                 credited_artist_mbids, support, group_no, group_support)
+                 VALUES ('u1', 'rg', 0, 'new_artist', 'T', 'a', 'A', '[]', 1.0, 0, 1.0);
+             INSERT INTO catalog_discover_candidate_paths (user_id, release_group_mbid_lower,
+                 path_no, kind, source, artist_mbid, link_strength, link_rank, link_of,
+                 named_by_labs, named_by_lastfm)
+                 VALUES ('u1', 'rg', 0, 'seed', 'listenbrainz_labs', 's', 0.5, 1, 100, 1, 0);",
+        )
+        .unwrap();
+    let kept = ["auth_users", "catalog_discover_candidates"];
+    let before_schema = schema_rows(&connection);
+    let before: Vec<Vec<String>> = kept
+        .iter()
+        .map(|table| table_rows(&connection, table, "rowid, *"))
+        .collect();
+    let paths_before = table_rows(&connection, "catalog_discover_candidate_paths", "rowid, *");
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 165);
+    for (table, rows) in kept.iter().zip(&before) {
+        assert_eq!(&table_rows(&connection, table, "rowid, *"), rows, "{table}");
+    }
+    let paths_after: Vec<String> =
+        table_rows(&connection, "catalog_discover_candidate_paths", "rowid, *");
+    let marked: Vec<String> = paths_before
+        .iter()
+        .map(|row| format!("{row}|Integer(0)"))
+        .collect();
+    assert_eq!(
+        paths_after, marked,
+        "a path keeps its values and reads as not the closest new"
+    );
+    let mut after_schema = schema_rows(&connection);
+    let added = "catalog_discover_tunings";
+    let table_sql = after_schema
+        .iter()
+        .find(|(_, name, _, _)| name == added)
+        .and_then(|(_, _, _, sql)| sql.clone());
+    assert!(
+        table_sql
+            .as_deref()
+            .is_some_and(|sql| sql.ends_with("STRICT")),
+        "{table_sql:?}"
+    );
+    assert_eq!(
+        scalar(&connection, "SELECT COUNT(*) FROM catalog_discover_tunings"),
+        0,
+        "the tunings start empty"
+    );
+    after_schema
+        .retain(|(_, _, table, _)| table != added && table != "catalog_discover_candidate_paths");
+    let mut before_rest = before_schema;
+    before_rest.retain(|(_, _, table, _)| table != "catalog_discover_candidate_paths");
+    assert_eq!(after_schema, before_rest, "nothing else changes");
+
+    connection
+        .execute_batch(
+            "PRAGMA foreign_keys = ON;
+             INSERT INTO catalog_discover_tunings (user_id, kind, target, target_name,
+                 created_at)
+                 VALUES ('u1', 'less_from_seed', 's', 'S', 1),
+                        ('u1', 'less_of_kind', 'k', '', 1),
+                        ('u2', 'not_this_source', 'listenbrainz', '', 1);
+             UPDATE catalog_discover_candidate_paths SET link_closest_new = 1;",
+        )
+        .expect("tunings are stored");
+    for refused in [
+        "INSERT INTO catalog_discover_tunings (user_id, kind, target, target_name, created_at) \
+         VALUES ('u1', 'more_of_this', 's', 'S', 1)",
+        "INSERT INTO catalog_discover_tunings (user_id, kind, target, target_name, created_at) \
+         VALUES ('u1', 'less_from_seed', 's', 'S', 2)",
+        "INSERT INTO catalog_discover_tunings (user_id, kind, target, target_name, created_at) \
+         VALUES ('nobody', 'less_from_seed', 's', 'S', 1)",
+        "UPDATE catalog_discover_candidate_paths SET link_closest_new = 2",
+    ] {
+        assert!(connection.execute_batch(refused).is_err(), "{refused}");
+    }
+    connection
+        .execute("DELETE FROM auth_users WHERE id = 'u1'", [])
+        .unwrap();
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT user_id FROM catalog_discover_tunings",
+            []
+        ),
+        ["u2"],
+        "an account's tunings go with it, and only its own"
+    );
+}
+
 /// 0146 adds the table of recycle bin paths v2 used, empty, and changes
 /// nothing else: only an upgrade from v2 records a path in it.
 #[test]
@@ -3463,6 +3584,7 @@ const FOREIGN_KEYS: &[(&str, &str, &str, &str)] = &[
     ("catalog_discover_feedback", "user_id", "auth_users", "CASCADE"),
     ("catalog_discover_picks", "user_id", "auth_users", "CASCADE"),
     ("catalog_discover_pool_builds", "user_id", "auth_users", "CASCADE"),
+    ("catalog_discover_tunings", "user_id", "auth_users", "CASCADE"),
     ("catalog_event_cities", "user_id", "auth_users", "CASCADE"),
     ("catalog_event_seen_marks", "user_id", "auth_users", "CASCADE"),
     ("catalog_known_release_groups", "user_id", "auth_users", "CASCADE"),
@@ -4043,6 +4165,7 @@ fn state_columns() -> Vec<StateColumn> {
     use droppedneedle_catalog::discover::feedback::{FeedbackKind, FeedbackTarget};
     use droppedneedle_catalog::discover::facts::{FactKind, FactSource, ListSource, MeteredSource, Outcome};
     use droppedneedle_catalog::discover::record::MadeFrom;
+    use droppedneedle_catalog::discover::tunings::TuningKind;
     use droppedneedle_catalog::discover::scheduler::Feature;
     use droppedneedle_compat::jellyfin::ids::IdKind;
     use droppedneedle_kernel::db::durable::JobState as LoopState;
@@ -4134,6 +4257,7 @@ fn state_columns() -> Vec<StateColumn> {
         state("catalog_discover_picks", "feedback_kind", &FeedbackKind::ALL, FeedbackKind::as_str),
         state("catalog_discover_picks", "first_surface", &MadeFrom::ALL, MadeFrom::as_str),
         state("catalog_discover_picks", "requested_from", &MadeFrom::ALL, MadeFrom::as_str),
+        state("catalog_discover_tunings", "kind", &TuningKind::ALL, TuningKind::as_str),
         state("catalog_fact_fetches", "kind", &FactKind::ALL, FactKind::as_str),
         state("catalog_fact_fetches", "outcome", &Outcome::ALL, Outcome::as_str),
         state("catalog_fact_fetches", "source", &FactSource::ALL, FactSource::as_str),

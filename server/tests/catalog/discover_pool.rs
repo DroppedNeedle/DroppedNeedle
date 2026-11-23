@@ -29,7 +29,7 @@ const DAY: i64 = 86_400_000;
 const MINUTE: i64 = 60_000;
 
 /// A MusicBrainz-shaped id: `n` under `tag`.
-fn id(tag: u16, n: usize) -> String {
+pub(crate) fn id(tag: u16, n: usize) -> String {
     format!("{n:08x}-{tag:04x}-4000-8000-000000000000")
 }
 
@@ -46,7 +46,7 @@ fn fetched(artist: &str, kind: &str, source: &str, outcome: &str, at: i64) -> St
 }
 
 /// `seed`'s kept labs list, `neighbours` best first by their raw score.
-fn list(seed: &str, neighbours: &[(String, f64)], at: i64) -> String {
+pub(crate) fn list(seed: &str, neighbours: &[(String, f64)], at: i64) -> String {
     let mut rows: String = neighbours
         .iter()
         .enumerate()
@@ -64,7 +64,7 @@ fn list(seed: &str, neighbours: &[(String, f64)], at: i64) -> String {
 }
 
 /// `artist`'s kept listener count.
-fn counted(artist: &str, listeners: i64, at: i64) -> String {
+pub(crate) fn counted(artist: &str, listeners: i64, at: i64) -> String {
     format!(
         "INSERT INTO catalog_artist_listeners (artist_mbid, listeners, listens) \
          VALUES ('{artist}', {listeners}, {listeners});"
@@ -73,7 +73,7 @@ fn counted(artist: &str, listeners: i64, at: i64) -> String {
 
 /// One kept album row: its release group, primary type, secondary types
 /// and credited artists (both JSON) and listeners.
-struct Album<'a> {
+pub(crate) struct Album<'a> {
     group: &'a str,
     primary: &'a str,
     secondary: &'a str,
@@ -83,7 +83,7 @@ struct Album<'a> {
 
 /// `artist`'s kept album list, counted; "nothing there" when `albums` is
 /// empty.
-fn albums(artist: &str, albums: &[Album<'_>], at: i64) -> String {
+pub(crate) fn albums(artist: &str, albums: &[Album<'_>], at: i64) -> String {
     let mut rows: String = albums
         .iter()
         .enumerate()
@@ -108,7 +108,12 @@ fn albums(artist: &str, albums: &[Album<'_>], at: i64) -> String {
     rows
 }
 
-fn album<'a>(group: &'a str, primary: &'a str, secondary: &'a str, credited: &[&str]) -> Album<'a> {
+pub(crate) fn album<'a>(
+    group: &'a str,
+    primary: &'a str,
+    secondary: &'a str,
+    credited: &[&str],
+) -> Album<'a> {
     Album {
         group,
         primary,

@@ -9,6 +9,7 @@ mod discover_health;
 mod discover_page;
 mod discover_pool;
 mod discover_queue;
+mod discover_reasons;
 mod discover_record;
 mod discover_replay;
 mod discover_taste;

@@ -12,7 +12,7 @@ use crate::discover::listening::{ListeningData, ListeningNetwork, LiveNetwork};
 use crate::discover::services::DiscoverDeps;
 use crate::discover::{
     cache, charts, content, due, engine, facts, forget, home, page, previews, queue, radio, record,
-    scheduler, youtube,
+    scheduler, tunings, youtube,
 };
 use crate::metadata::library::LocalCatalog;
 use crate::metadata::ports::{NoDetails, NoFollows, NoPurchaseLinks};
@@ -233,7 +233,7 @@ fn deps_with(
             page,
             home,
             genre_art,
-            due,
+            Arc::clone(&due),
         )),
         queues,
         charts: Arc::new(charts),
@@ -252,6 +252,8 @@ fn deps_with(
         facts: fact_jobs,
         taste,
         pool,
+        evidence: engine::evidence::Evidence::new(inputs.db.clone()),
+        tunings: tunings::Tunings::new(inputs.db.clone(), Arc::clone(&inputs.clock), due),
     }
 }
 

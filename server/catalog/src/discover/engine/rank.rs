@@ -7,7 +7,9 @@
 //!    Agreement between seeds is that sum. A link Last.fm's list names as
 //!    well as labs' is [`proposed::AGREEMENT_BOOST`] times as strong; one
 //!    only Last.fm names counts with its match, fame divided out the same
-//!    way ([`fame_divided`]).
+//!    way ([`fame_divided`]). A seed the person asked for less from
+//!    ("Less from this") weighs [`proposed::LESS_FROM_SEED`] of its weight
+//!    ([`tuned_weight`]), so every link of it counts that much less.
 //! 2. Artist gates: not an artist the person knows or the library
 //!    holds, not one they turned down, not Various Artists or another
 //!    special-purpose id.
@@ -64,6 +66,37 @@ pub mod proposed {
     pub const REST_MS: i64 = 12 * 7 * DAY_MS;
     /// How many resting albums rest their artist too.
     pub const REST_ARTIST_ALBUMS: usize = 3;
+    /// What part of its weight a seed keeps once the person asked for less
+    /// from it.
+    pub const LESS_FROM_SEED: f64 = 0.5;
+}
+
+/// A seed's weight in the ranking: `weight`, or [`proposed::LESS_FROM_SEED`]
+/// of it when the person asked for less from it.
+pub fn tuned_weight(weight: f64, less_from: bool) -> f64 {
+    if less_from {
+        weight * proposed::LESS_FROM_SEED
+    } else {
+        weight
+    }
+}
+
+/// The artist each seed's labs list names first among the artists the
+/// person does not know (`known`), one entry a seed; `None` for a seed
+/// whose list names none. A special-purpose id is no artist, and is passed
+/// over.
+fn closest_new<'a>(lists: &'a [Vec<SeedLink>], known: &HashSet<String>) -> Vec<Option<&'a str>> {
+    lists
+        .iter()
+        .map(|links| {
+            links
+                .iter()
+                .filter(|link| link.source == PathSource::ListenbrainzLabs)
+                .filter(|link| !link.mbid.is_empty() && !placeholder(&link.mbid))
+                .find(|link| !known.contains(&link.mbid))
+                .map(|link| link.mbid.as_str())
+        })
+        .collect()
 }
 
 /// One of the person's seeds.
@@ -157,6 +190,7 @@ pub fn links(lists: &SeedLists) -> Vec<SeedLink> {
                 of: of(&lists.labs),
                 labs: true,
                 lastfm: agreed,
+                closest_new: false,
             },
             source: PathSource::ListenbrainzLabs,
             fetched_at: lists.labs_fetched_at,
@@ -175,6 +209,7 @@ pub fn links(lists: &SeedLists) -> Vec<SeedLink> {
                 of: of(&lists.lastfm),
                 labs: false,
                 lastfm: true,
+                closest_new: false,
             },
             source: PathSource::Lastfm,
             fetched_at: lists.lastfm_fetched_at,
@@ -310,7 +345,8 @@ pub fn rank(
         paths: Vec<(Option<i64>, Path)>,
     }
     let mut pointed: HashMap<String, Pointed> = HashMap::new();
-    for (seed, links) in seeds.iter().zip(lists) {
+    let closest = closest_new(lists, gates.known);
+    for ((seed, links), closest) in seeds.iter().zip(lists).zip(closest) {
         for link in links {
             if link.mbid.is_empty() {
                 continue;
@@ -344,7 +380,11 @@ pub fn rank(
                         weight: seed.weight,
                         albums_owned: seed.albums_owned.max(0),
                     }),
-                    link: Some(link.link.clone()),
+                    link: Some(Link {
+                        closest_new: link.source == PathSource::ListenbrainzLabs
+                            && closest == Some(link.mbid.as_str()),
+                        ..link.link.clone()
+                    }),
                     known_credit: None,
                 },
             ));

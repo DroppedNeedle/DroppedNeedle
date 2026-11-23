@@ -3,13 +3,16 @@ import { describe, expect, it } from 'vitest';
 import { toAuthUser } from '$lib/features/auth/queries/types';
 import { queryClient } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { fakeApi, type RouteData } from '$lib/test/api';
+import { apiError, fakeApi, type RouteData } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
 import ToldDiscoverModal from './ToldDiscoverModal.svelte';
 
 const LIST = 'GET /api/v3/discover/feedback';
 const UNDO = 'DELETE /api/v3/discover/feedback/{target}/{mbid}';
+const TUNINGS = 'GET /api/v3/discover/tunings';
+const UNDO_TUNING = 'DELETE /api/v3/discover/tunings/{kind}/{target}';
 type Entry = RouteData<typeof LIST>['items'][number];
+type Tuning = RouteData<typeof TUNINGS>['items'][number];
 
 const TOLD_AT = Date.UTC(2026, 10, 22, 12) / 1000;
 const BACK_AT = Date.UTC(2027, 1, 22, 12) / 1000;
@@ -42,13 +45,22 @@ const ENTRIES: Entry[] = [
 	})
 ];
 
+const TUNED: Tuning[] = [
+	{ kind: 'less_from_seed', target: 'ar-2', name: 'Circa Survive', created_at: TOLD_AT }
+];
+
 describe('ToldDiscoverModal.svelte', () => {
 	it('lists each kind of answer in words, when it lapses, and undoes one', async () => {
 		let items = ENTRIES;
+		let tunings = TUNED;
 		const api = fakeApi({
 			[LIST]: () => ({ items }),
 			[UNDO]: ({ params }) => {
 				items = items.filter((told) => told.target_mbid !== params.mbid);
+			},
+			[TUNINGS]: () => ({ items: tunings }),
+			[UNDO_TUNING]: ({ params }) => {
+				tunings = tunings.filter((tuning) => tuning.target !== params.target);
 			}
 		});
 		authStore.setUser(
@@ -84,5 +96,26 @@ describe('ToldDiscoverModal.svelte', () => {
 			{ target: 'artist', mbid: 'ar-1' }
 		]);
 		await expect.element(page.getByText('Dreamhouse')).toBeVisible();
+
+		await expect
+			.element(page.getByText(`Less from this · ${told} · Until you undo it`))
+			.toBeVisible();
+		await page.getByRole('button', { name: 'Undo less from Circa Survive' }).click();
+		await expect.element(page.getByText('Circa Survive')).not.toBeInTheDocument();
+		expect(api.calls(UNDO_TUNING).map((call) => call.params)).toEqual([
+			{ kind: 'less_from_seed', target: 'ar-2' }
+		]);
+	});
+
+	it('says when one of the two lists did not load, and keeps the other', async () => {
+		fakeApi({
+			[LIST]: () => ({ items: ENTRIES.slice(0, 1) }),
+			[TUNINGS]: () => apiError(500, 'INTERNAL_ERROR')
+		});
+		await renderWithQuery(ToldDiscoverModal, { open: true });
+
+		await expect.element(page.getByText('Dreamhouse')).toBeVisible();
+		await expect.element(page.getByText("how you tuned Discover didn't load")).toBeVisible();
+		await expect.element(page.getByText('Nothing yet.')).not.toBeInTheDocument();
 	});
 });

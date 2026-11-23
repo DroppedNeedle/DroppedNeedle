@@ -1810,6 +1810,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/discover/picks/{release_group_mbid}/why": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Everything behind one of the caller's picks: its line, the caller's
+         *     artists that led to it, whether it is new to them, how well known it is
+         *     and how it was found. Read from the caller's own pool alone.
+         */
+        get: operations["pick_why"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/discover/playlist-suggestions": {
         parameters: {
             query?: never;
@@ -2022,6 +2043,48 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/tunings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every way the caller tuned what Discover offers them, newest first. */
+        get: operations["list_tunings"];
+        put?: never;
+        /**
+         * Keep one way the caller tunes what Discover offers them. Only "Less
+         *     from this" (`less_from_seed`, about one of their artists) is taken; the
+         *     other kinds are refused. Their pool is built again.
+         */
+        post: operations["save_tuning"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/tunings/{kind}/{target}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Take back one way the caller tuned Discover. Their pool is built again.
+         *     Answers the same when there was no such tuning.
+         */
+        delete: operations["undo_tuning"];
         options?: never;
         head?: never;
         patch?: never;
@@ -13638,6 +13701,38 @@ export interface components {
                 [key: string]: components["schemas"]["ServiceState"];
             } | null;
         };
+        /** @description One way a person tuned what Discover offers them. */
+        DiscoverTuningEntry: {
+            /**
+             * Format: int64
+             * @description When it was said (unix seconds).
+             */
+            created_at: number;
+            /** @description What the tuning is. */
+            kind: components["schemas"]["TuningKind"];
+            /** @description The target's name, as the person's taste rows give it. */
+            name: string;
+            /** @description What it is about, lowercased. */
+            target: string;
+        };
+        /**
+         * @description One way a person tuned what Discover offers them. Only
+         *     `less_from_seed` is taken today; the other kinds are refused.
+         */
+        DiscoverTuningRequest: {
+            /** @description What the tuning is. */
+            kind: components["schemas"]["TuningKind"];
+            /**
+             * @description What it is about: for `less_from_seed`, the MusicBrainz id of one of
+             *     the person's own artists.
+             */
+            target: string;
+        };
+        /** @description Every way a person tuned what Discover offers them, newest first. */
+        DiscoverTuningsResponse: {
+            /** @description The tunings, newest first. */
+            items: components["schemas"]["DiscoverTuningEntry"][];
+        };
         /** @description Body creating a discovery batch (one request per album). */
         DiscoveryBatchCreate: {
             /**
@@ -15210,6 +15305,40 @@ export interface components {
          * @enum {string}
          */
         EvidenceClass: "supported" | "unknown" | "contradictory";
+        /** @description One of the person's artists that led to a pick. */
+        EvidenceSeed: {
+            /**
+             * Format: int64
+             * @description How many of its albums the library holds.
+             */
+            albums_owned: number;
+            /** @description Its MusicBrainz id, lowercased. */
+            artist_mbid: string;
+            /** @description Its name. */
+            name: string;
+            /**
+             * Format: int64
+             * @description How long that list is.
+             */
+            of: number;
+            /**
+             * Format: int64
+             * @description The pick's artist's place in its list of similar artists, from 1.
+             */
+            rank: number;
+            /** @description Whether the person already asked for less from it. */
+            turned_down: boolean;
+            /**
+             * Format: int64
+             * @description The person's plays and imported listens of it.
+             */
+            your_plays: number;
+        };
+        /**
+         * @description A service a pick's facts came from.
+         * @enum {string}
+         */
+        EvidenceSource: "listenbrainz" | "lastfm";
         /**
          * @description The built-in example albums a script is shown against: one disc, two
          *     discs with an edition note, and an album artist whose name another
@@ -15464,6 +15593,11 @@ export interface components {
          * @enum {string}
          */
         FormatMode: "with" | "without";
+        /**
+         * @description How a pick was found.
+         * @enum {string}
+         */
+        FoundBy: "co_listening" | "source_pick";
         /** @description One genre alias. */
         GenreAlias: {
             /**
@@ -18971,6 +19105,16 @@ export interface components {
             /** @description Rows the filter matches, beyond this page too. */
             total: number;
         };
+        /** @description Whether a pick's artist is new to the person. */
+        NewToYou: {
+            /**
+             * @description No plays or listens of the artist, or of the album, in their
+             *     history.
+             */
+            no_plays: boolean;
+            /** @description The library holds no album of the artist. */
+            not_in_library: boolean;
+        };
         /**
          * @description One configured Newznab indexer. DroppedNeedle ships none; the user adds
          *     their own.
@@ -20212,6 +20356,64 @@ export interface components {
          * @enum {string}
          */
         PickEvent: "shown" | "sampled" | "opened";
+        /** @description Everything behind one pick: what "Why this?" opens. */
+        PickEvidence: {
+            /** @description The artist it is filed under. */
+            artist_name: string;
+            /** @description How it was found. */
+            found_by: components["schemas"]["FoundBy"];
+            /**
+             * Format: int64
+             * @description The album's listeners, as last counted; null when not counted.
+             */
+            listeners?: number | null;
+            /** @description Where that count came from; null when there is none. */
+            listeners_source?: null | components["schemas"]["EvidenceSource"];
+            /** @description Whether its artist is new to the person. */
+            new_to_you: components["schemas"]["NewToYou"];
+            /** @description The line shown on the pick. */
+            reason: components["schemas"]["PickReason"];
+            /** @description MusicBrainz release-group id, lowercased. */
+            release_group_mbid: string;
+            /** @description The person's artists that led to it, strongest first. */
+            seeds: components["schemas"]["EvidenceSeed"][];
+            /** @description The service the finding fact came from. */
+            source: components["schemas"]["EvidenceSource"];
+            /**
+             * Format: int64
+             * @description When that fact was read (unix ms); null when not known.
+             */
+            source_read_at?: number | null;
+            /** @description Album title. */
+            title: string;
+        };
+        /**
+         * @description Why a pick is offered: one line built from the path that found it, and
+         *     the person's own artists it names.
+         */
+        PickReason: {
+            /**
+             * @description Up to three of the person's artists the line names, strongest
+             *     first; none for a service's pick.
+             */
+            artists: components["schemas"]["PickReasonArtist"][];
+            /** @description What it rests on. */
+            kind: components["schemas"]["PickReasonKind"];
+            /** @description The line, a sentence or two. */
+            line: string;
+        };
+        /** @description One of the person's own artists a reason names. */
+        PickReasonArtist: {
+            /** @description Its MusicBrainz id, lowercased. */
+            artist_mbid: string;
+            /** @description Its name. */
+            name: string;
+        };
+        /**
+         * @description What a pick's reason rests on.
+         * @enum {string}
+         */
+        PickReasonKind: "your_artists" | "source";
         /** @description Pick one candidate. */
         PickRequest: {
             /** @description `candidate_index` of the candidate to download. */
@@ -25220,6 +25422,11 @@ export interface components {
          * @enum {string}
          */
         TransportDto: "cookie" | "bearer";
+        /**
+         * @description What a tuning is.
+         * @enum {string}
+         */
+        TuningKind: "less_from_seed" | "less_of_kind" | "not_this_source";
         /**
          * @description Unicode normalization for paths.
          * @enum {string}
@@ -30300,6 +30507,65 @@ export interface operations {
             };
         };
     };
+    pick_why: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The pick's MusicBrainz release-group id */
+                release_group_mbid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The pick's evidence */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PickEvidence"];
+                };
+            };
+            /** @description Not a MusicBrainz id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not a pick of the caller's with a reason that holds */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The evidence could not be read */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     playlist_suggestions: {
         parameters: {
             query?: never;
@@ -30921,6 +31187,145 @@ export interface operations {
             };
             /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_tunings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's tunings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoverTuningsResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The tunings could not be read */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    save_tuning: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiscoverTuningRequest"];
+            };
+        };
+        responses: {
+            /** @description The tuning as stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoverTuningEntry"];
+                };
+            };
+            /** @description Bad request body, a kind not taken yet, or not one of the caller's artists */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The tuning could not be saved */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    undo_tuning: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description What the tuning is */
+                kind: components["schemas"]["TuningKind"];
+                /** @description What it is about: an artist's MusicBrainz id */
+                target: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No such tuning is in effect */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not a kind taken yet, or not a MusicBrainz id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The change could not be saved */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

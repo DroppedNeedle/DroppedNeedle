@@ -305,6 +305,7 @@ mod tests {
                 of: 100,
                 labs: true,
                 lastfm: false,
+                closest_new: false,
             }),
             known_credit: None,
         }

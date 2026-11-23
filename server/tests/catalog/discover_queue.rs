@@ -113,6 +113,8 @@ pub(crate) struct Script {
     pub release_group: Option<ReleaseGroupFacts>,
     /// The user's ListenBrainz weekly exploration playlist.
     pub weekly: Option<WeeklyPlaylist>,
+    /// Release groups of recordings, by recording MBID.
+    pub recording_groups: HashMap<String, String>,
     /// The user's Last.fm top albums.
     pub lastfm_top_albums: Vec<LastFmChartAlbum>,
     /// When set, MusicBrainz release lookups never answer.
@@ -359,10 +361,16 @@ impl ListeningNetwork for Script {
     fn recording_groups<'a>(
         &'a self,
         _id: &'a str,
-        _r: &'a [String],
+        recordings: &'a [String],
         _p: RequestPriority,
     ) -> Answer<'a, HashMap<String, String>> {
-        ok(HashMap::new())
+        ok(recordings
+            .iter()
+            .filter_map(|recording| {
+                let group = self.recording_groups.get(recording)?;
+                Some((recording.clone(), group.clone()))
+            })
+            .collect())
     }
     fn listen_counts<'a>(
         &'a self,
@@ -806,7 +814,12 @@ async fn seed_user(db: &Db) {
     .expect("user row");
 }
 
-async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+pub(crate) async fn call(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
     let mut builder = Request::builder().method(method).uri(uri);
     let body = match body {
         Some(json) => {

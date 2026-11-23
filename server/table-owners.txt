@@ -170,6 +170,7 @@ catalog_discover_candidates
 catalog_discover_feedback
 catalog_discover_picks
 catalog_discover_pool_builds
+catalog_discover_tunings
 catalog_event_cities
 catalog_event_seen_marks
 catalog_fact_fetches

@@ -153,6 +153,14 @@ export const EFFECTS = {
 		{ key: key(userScope(userId), AlbumQueryKeyFactory.feature, 'similar') },
 		{ key: key(userScope(userId), ArtistQueryKeyFactory.feature) }
 	],
+	/**
+	 * The caller tuned what Discover offers them, or took it back: their
+	 * tunings and everything read from their pool, which is built again.
+	 */
+	tuningsChanged: (userId: UserId): Sweep[] => [
+		{ key: DiscoverQueryKeyFactory.v3.tunings(userId) },
+		{ key: DiscoverQueryKeyFactory.v3.allPickEvidence(userId) }
+	],
 	/** The admin's artist duplicate groups. */
 	artistDuplicatesChanged: (): Sweep[] => [{ everyScope: ['library', 'artist-reconciliation'] }],
 	/**
@@ -547,6 +555,7 @@ export const newReleasesChanged = fact('newReleasesChanged');
 export const concertsChanged = fact('concertsChanged');
 export const wantedChanged = fact('wantedChanged');
 export const recommendationsChanged = fact('recommendationsChanged');
+export const tuningsChanged = fact('tuningsChanged');
 export const artistDuplicatesChanged = fact('artistDuplicatesChanged');
 export const usersChanged = fact('usersChanged');
 export const userImportCandidatesChanged = fact('userImportCandidatesChanged');

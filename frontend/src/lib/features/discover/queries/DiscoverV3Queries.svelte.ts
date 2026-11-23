@@ -76,6 +76,33 @@ export const getDiscoverFeedbackV3Query = (getEnabled: Getter<boolean>) =>
 		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/discover/feedback'), { signal })
 	}));
 
+/** How the caller tuned Discover, read while `getEnabled` holds. */
+export const getTuningsQuery = (getEnabled: Getter<boolean>) =>
+	createQuery(() => ({
+		enabled: getEnabled() && Boolean(authStore.user?.id),
+		queryKey: DiscoverQueryKeyFactory.v3.tunings(authStore.user?.id),
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/discover/tunings'), { signal })
+	}));
+
+export type PickEvidenceV3 = components['schemas']['PickEvidence'];
+
+/** Everything behind one of the caller's picks, read while it has an id. */
+export const getPickEvidenceQuery = (getReleaseGroupMbid: Getter<string | null>) =>
+	createQuery(() => {
+		const releaseGroupMbid = getReleaseGroupMbid() ?? '';
+		return {
+			enabled: Boolean(releaseGroupMbid) && Boolean(authStore.user?.id),
+			queryKey: DiscoverQueryKeyFactory.v3.pickEvidence(authStore.user?.id, releaseGroupMbid),
+			queryFn: ({ signal }) =>
+				api.v3.GET(
+					v3('/api/v3/discover/picks/{release_group_mbid}/why', {
+						path: { release_group_mbid: releaseGroupMbid }
+					}),
+					{ signal }
+				)
+		};
+	});
+
 export interface DiscoverV3RadioInput {
 	seedType: RadioSeedKind;
 	seedId: string;
