@@ -69,6 +69,8 @@ pub(crate) struct Script {
     pub lastfm_user_artists: Vec<ArtistRow>,
     /// Last.fm's similar artists, by the asked artist's MBID.
     pub lastfm_similar: HashMap<String, Vec<ScoredArtist>>,
+    /// Last.fm's top albums of an artist, by the artist's MBID.
+    pub lastfm_albums: HashMap<String, Vec<LastFmAlbum>>,
     pub source: Option<SourceContext>,
     /// The user's ListenBrainz top artists of every range but all time.
     pub user_artists: Vec<ArtistRow>,
@@ -400,11 +402,17 @@ impl ListeningNetwork for Script {
     fn lastfm_artist_albums<'a>(
         &'a self,
         _id: &'a str,
-        _a: &'a ArtistRow,
+        artist: &'a ArtistRow,
         _l: u32,
         _p: RequestPriority,
     ) -> Answer<'a, Vec<LastFmAlbum>> {
-        ok(Vec::new())
+        let rows = artist
+            .mbid
+            .as_ref()
+            .and_then(|mbid| self.lastfm_albums.get(mbid))
+            .cloned()
+            .unwrap_or_default();
+        ok(rows)
     }
     fn lastfm_chart_artists<'a>(
         &'a self,
@@ -909,7 +917,7 @@ async fn queue_builds_honours_ignores_and_survives_restart() {
 }
 
 /// The library holds `groups`: one album with a file for each.
-async fn own(db: &Db, groups: &[String]) {
+pub(crate) async fn own(db: &Db, groups: &[String]) {
     let mut seed = String::from(
         "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
          updated_at) VALUES ('a1', 'Someone', 'someone', 'group', 1, 1);",
@@ -974,6 +982,30 @@ async fn a_seeded_deck_holds_nothing_owned_and_is_never_refilled() {
         .count();
     assert_eq!(charts, 1, "the one wildcard slot: {ids:?}");
     assert_eq!(ids.len(), 3, "two picks and one chart card: {ids:?}");
+}
+
+/// With all but one of the similar artist's albums and the whole chart
+/// owned, the deck holds that one album and nothing the library has.
+#[tokio::test]
+async fn a_deck_never_holds_an_album_the_library_has() {
+    let dir = crate::common::ScratchDir::new("discover-queue-owned-all");
+    let rig = AuthRig::new("discover-queue-owned-all").await;
+    let db = rig.platform.db.clone();
+    seed_user(&db).await;
+    let owned: Vec<String> = (1..=4).chain(11..=15).map(group).collect();
+    own(&db, &owned).await;
+    let app = queue_app(&rig, &dir, queue_script());
+
+    call(
+        &app,
+        "POST",
+        "/api/v3/discover/queue/generate",
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(settled(&app, &db).await["status"], "ready");
+    let (_, deck) = call(&app, "GET", "/api/v3/discover/queue", None).await;
+    assert_eq!(deck_ids(&deck), vec![group(5)], "no owned card");
 }
 
 /// An ignore that lands while a build is running, after that build read

@@ -68884,7 +68884,7 @@
           },
           "personalizing": {
             "type": "boolean",
-            "description": "True while picks are trending-only because personalization has not\nresolved yet (the UI shows a \"still personalising\" hint)."
+            "description": "Whether the picks are still being worked out. Always false: Top\nPicks with nothing personal are left out instead."
           },
           "source": {
             "oneOf": [

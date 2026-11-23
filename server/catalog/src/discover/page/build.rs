@@ -1624,8 +1624,8 @@ impl Builder<'_> {
     }
 
     /// Scored album picks, memoised per user and source for four hours
-    /// (five minutes when ListenBrainz is down and nothing personal came
-    /// back, or when a read they stand on failed, so the next build tries
+    /// (five minutes when the Last.fm route found nothing, or when a read
+    /// they stand on failed or ran out of time, so the next build tries
     /// again).
     async fn top_picks(
         &self,
@@ -1720,9 +1720,12 @@ impl Builder<'_> {
                         }
                     }
                 }
-                Err(_) => tracing::warn!(
-                    "top picks ran out of time matching Last.fm albums; using the chart only"
-                ),
+                // A section that ran out of time failed, so the page keeps
+                // the picks it had.
+                Err(_) => {
+                    tracing::warn!("top picks ran out of time matching Last.fm albums");
+                    self.ask.note_failure();
+                }
             }
         } else {
             let albums = join_all(ranked.iter().map(|(mbid, _)| async move {
@@ -1752,42 +1755,9 @@ impl Builder<'_> {
                         sim: *sim,
                         listen_count: row.listen_count,
                         seed_artist: Some(seed.clone()).filter(|s| !s.is_empty()),
-                        from_trending: false,
                     });
                 }
             }
-        }
-        let trending = match tokio::time::timeout(
-            Duration::from_secs(30),
-            self.listening
-                .sitewide_albums(StatsRange::ThisWeek, 100, 0, &self.ask),
-        )
-        .await
-        {
-            Ok(Ok(rows)) => rows.into_iter().filter_map(ListenedAlbum::ranked).collect(),
-            _ => Vec::new(),
-        };
-        for row in trending {
-            let Some(group) = normalize(Some(&row.album.release_group_mbid)) else {
-                continue;
-            };
-            let artist_mbid = normalize(row.album.artist_mbid.as_deref()).unwrap_or_default();
-            if artist_mbid == VARIOUS_ARTISTS_MBID
-                || exclude.contains(&group)
-                || !seen.insert(group.clone())
-            {
-                continue;
-            }
-            candidates.push(Candidate {
-                release_group_mbid: group,
-                album_name: row.album.title,
-                artist_name: row.album.artist_name,
-                artist_mbid,
-                sim: 0.0,
-                listen_count: row.listen_count,
-                seed_artist: None,
-                from_trending: true,
-            });
         }
         let ids: Vec<String> = candidates
             .iter()
@@ -1797,8 +1767,9 @@ impl Builder<'_> {
             .await
             .unwrap_or_default();
         candidates.retain(|candidate| !owned.contains_key(&candidate.release_group_mbid));
-        let personal = candidates.iter().filter(|c| !c.from_trending).count();
-        let degraded = lastfm_route && personal == 0;
+        // Chart albums never fill Top Picks: with no personal candidate the
+        // section is left out.
+        let degraded = lastfm_route && candidates.is_empty();
         if candidates.is_empty() {
             return (None, degraded);
         }
@@ -1835,12 +1806,7 @@ impl Builder<'_> {
         if picked.is_empty() {
             return (None, degraded);
         }
-        tracing::info!(
-            picks = picked.len(),
-            personalised = picked.iter().filter(|p| !p.candidate.from_trending).count(),
-            degraded,
-            "top picks built"
-        );
+        tracing::info!(picks = picked.len(), degraded, "top picks built");
         let section = TopPicksSection {
             title: "Top Picks for You".to_owned(),
             items: picked
@@ -1917,7 +1883,6 @@ impl Builder<'_> {
                     sim: *sim,
                     listen_count: 0,
                     seed_artist: Some(seed.clone()).filter(|s| !s.is_empty()),
-                    from_trending: false,
                 });
             }
         }

@@ -506,8 +506,8 @@ pub struct TopPicksSection {
     /// Provider behind the picks, when it has one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<ShelfSource>,
-    /// True while picks are trending-only because personalization has not
-    /// resolved yet (the UI shows a "still personalising" hint).
+    /// Whether the picks are still being worked out. Always false: Top
+    /// Picks with nothing personal are left out instead.
     pub personalizing: bool,
 }
 

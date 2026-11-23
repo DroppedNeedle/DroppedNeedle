@@ -24609,8 +24609,8 @@ export interface components {
             /** @description Ranked picks. */
             items: components["schemas"]["TopPickItem"][];
             /**
-             * @description True while picks are trending-only because personalization has not
-             *     resolved yet (the UI shows a "still personalising" hint).
+             * @description Whether the picks are still being worked out. Always false: Top
+             *     Picks with nothing personal are left out instead.
              */
             personalizing: boolean;
             /** @description Provider behind the picks, when it has one. */

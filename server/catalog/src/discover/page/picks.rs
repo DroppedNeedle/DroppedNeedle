@@ -3,7 +3,7 @@
 //! Every signal is between 0 and 1:
 //! - similarity of the album's artist to the user's seed artists
 //!   (ListenBrainz scores are divided by the batch maximum, Last.fm's
-//!   match is used as is; trending candidates score 0);
+//!   match is used as is);
 //! - genre overlap between the artist's genres and the user's top genres
 //!   (`shared / 3`, capped at 1);
 //! - popularity, `min(1, log10(listens + 1) / 6)`.
@@ -33,8 +33,6 @@ pub struct Candidate {
     pub listen_count: i64,
     /// The seed artist this candidate is similar to.
     pub seed_artist: Option<String>,
-    /// True when it came from the worldwide chart, not similarity.
-    pub from_trending: bool,
 }
 
 /// A scored candidate.
@@ -58,9 +56,8 @@ fn daily_jitter(user_id: &str, mbid: &str, date_iso: &str) -> f64 {
     (head % 1000) as f64 / 20_000.0
 }
 
-/// Score the candidates and pick up to `count`: personalised candidates
-/// ahead of trending ones (each tier by score), no album twice and at
-/// most two albums per artist.
+/// Score the candidates and pick up to `count` by score, no album twice
+/// and at most two albums per artist.
 pub fn score(
     candidates: Vec<Candidate>,
     user_id: &str,
@@ -97,9 +94,6 @@ pub fn score(
             {
                 reasons.push(format!("You love {top}"));
             }
-            if candidate.from_trending && reasons.is_empty() {
-                reasons.push("Trending worldwide".to_owned());
-            }
             reasons.truncate(2);
             Pick {
                 match_pct: (40.0 + 58.0 * score).round() as i64,
@@ -109,12 +103,7 @@ pub fn score(
             }
         })
         .collect();
-    scored.sort_by(|left, right| {
-        left.candidate
-            .from_trending
-            .cmp(&right.candidate.from_trending)
-            .then(right.score.total_cmp(&left.score))
-    });
+    scored.sort_by(|left, right| right.score.total_cmp(&left.score));
     let mut picked = Vec::new();
     let mut per_artist: HashMap<String, usize> = HashMap::new();
     let mut seen = HashSet::new();

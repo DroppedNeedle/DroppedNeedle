@@ -6,7 +6,8 @@
 //! both, unless the server turns the blend off. Unreadable settings hold
 //! every build, a page built past a failed read is rebuilt soon and keeps
 //! the sections it had, each section not plainly built says why, and a
-//! background warm that keeps nothing waits before it is tried again.
+//! background warm that keeps nothing waits before it is tried again. Top
+//! Picks never hold an album the library has, nor a chart album.
 
 use crate::common::Probe;
 use std::collections::HashMap;
@@ -22,8 +23,8 @@ use axum::{
 use droppedneedle_catalog::discover::cache::{PageKind, Timing, UserPageCache, Variant, clear_all};
 use droppedneedle_catalog::discover::listening::shared::{self, Lender};
 use droppedneedle_catalog::discover::listening::{
-    AlbumRow, ArtistRow, Ask, ListenedAlbum, ListeningData, PlaylistTrack, RankedAlbum,
-    ScoredArtist, SourceContext, UserMusic, WeeklyPlaylist,
+    AlbumRow, ArtistRow, Ask, LastFmAlbum, ListenedAlbum, ListeningData, PlaylistTrack,
+    RankedAlbum, ScoredArtist, SourceContext, UserMusic, WeeklyPlaylist,
 };
 use droppedneedle_catalog::discover::ports::BoxFuture;
 use droppedneedle_catalog::discover::scheduler::activity::ActivityDb;
@@ -51,7 +52,7 @@ use crate::common::auth::AuthRig;
 use crate::common::platform::TEST_KEY;
 use crate::discover_queue::{
     Script, after_commits, discover_deps, discover_inputs, discover_routes, insert, library_artist,
-    plays,
+    own, plays,
 };
 
 const SEED: &str = "11111111-1111-4111-8111-111111111111";
@@ -927,6 +928,234 @@ async fn top_picks_built_past_a_failed_read_are_built_again_soon() {
     assert_eq!(page["refreshing"], true, "a rebuild started");
     let page = page_after(&app, &first, "the rebuild landed").await;
     assert!(personal(&page) > 0, "{}", content(&page, "top_picks"));
+}
+
+/// The health the user's saved discover page carries.
+fn saved_health(db: &droppedneedle_kernel::db::Db) -> Value {
+    let row: Value = serde_json::from_str(&db.one::<String>(
+        "SELECT CAST(payload AS TEXT) FROM catalog_cached_pages \
+         WHERE user_id = 'user-1' AND page = 'discover'",
+        [],
+    ))
+    .expect("the saved page decodes");
+    row["health"].clone()
+}
+
+/// The album ids of a page's Top Picks.
+fn pick_ids(page: &Value) -> Vec<String> {
+    content(page, "top_picks")["picks"]["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|pick| pick["album"]["musicbrainz_id"].as_str().map(str::to_owned))
+        .collect()
+}
+
+/// Albums of similar artists the library already holds are never picked:
+/// the other candidates are, and the saved health counts no owned pick.
+#[tokio::test]
+async fn top_picks_never_hold_an_album_the_library_has() {
+    let dir = crate::common::ScratchDir::new("discover-picks-owned");
+    let rig = AuthRig::new("discover-picks-owned").await;
+    let db = rig.platform.db.clone();
+    seed_user(&db).await;
+    // The first album of the first similar artist, the second of the third.
+    let owned = [mbid('a', b'1'), mbid('a', b'3' + 20)];
+    own(&db, &owned).await;
+    let app = page_app(&rig, &dir);
+
+    call(&app, "GET", "/api/v3/discover", None).await;
+    let page = settled_page(&rig, &app, "the page was built").await;
+    let ids = pick_ids(&page);
+    assert!(!ids.is_empty(), "{}", content(&page, "top_picks"));
+    assert!(
+        ids.iter().all(|id| !owned.contains(id)),
+        "no owned pick: {ids:?}"
+    );
+    assert_eq!(saved_health(&db)["owned_picks"], 0);
+}
+
+/// Top Picks hold no chart album: a person with three seeds gets only the
+/// picks grown from them, though they are fewer than asked for. A person
+/// with nothing to go on gets no Top Picks, the section saying what to
+/// link, or that it is empty when ListenBrainz is linked. No saved page
+/// counts a chart item under a personal heading.
+#[tokio::test]
+async fn top_picks_hold_no_chart_album_with_seeds_or_without() {
+    let seed_mbid = |n: u8| mbid('e', n);
+    let similar = |n: u8| mbid('b', n);
+    let chart: Vec<ListenedAlbum> = (1..=12)
+        .map(|n| listened(ranked(100 + n, &mbid('d', n), 10_000)))
+        .collect();
+    let seeded = Script {
+        user_artists: (1..=3)
+            .map(|n| ArtistRow {
+                name: format!("Seed {n}"),
+                mbid: Some(seed_mbid(n)),
+                listen_count: Some(50),
+            })
+            .collect(),
+        similar: (1..=3)
+            .map(|n| {
+                let row = ScoredArtist {
+                    artist: ArtistRow {
+                        name: format!("Similar {n}"),
+                        mbid: Some(similar(n)),
+                        listen_count: Some(100),
+                    },
+                    score: 100.0,
+                };
+                (seed_mbid(n), vec![row])
+            })
+            .collect(),
+        artist_albums: (1..=3)
+            .map(|n| {
+                let artist = similar(n);
+                let albums = vec![ranked(n, &artist, 500), ranked(n + 20, &artist, 300)];
+                (artist, albums)
+            })
+            .collect(),
+        sitewide_albums: chart.clone(),
+        ..page_script()
+    };
+    let nothing = Script {
+        user: UserMusic::default(),
+        user_artists: Vec::new(),
+        similar: HashMap::new(),
+        sitewide_albums: chart.clone(),
+        ..page_script()
+    };
+    let linked = Script {
+        user_artists: Vec::new(),
+        similar: HashMap::new(),
+        sitewide_albums: chart,
+        ..page_script()
+    };
+    let needs_link = json!({"key": "top_picks", "state": "needs_link", "source": "listenbrainz"});
+    let empty = json!({"key": "top_picks", "state": "empty"});
+
+    for (name, script, picks, state) in [
+        ("seeded", seeded, 6, Value::Null),
+        ("nothing", nothing, 0, needs_link),
+        ("linked", linked, 0, empty),
+    ] {
+        let dir = crate::common::ScratchDir::new(&format!("discover-picks-{name}"));
+        let rig = AuthRig::new(&format!("discover-picks-{name}")).await;
+        seed_user(&rig.platform.db).await;
+        let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |slot| {
+            *slot = Arc::new(script);
+        }));
+
+        call(&app, "GET", "/api/v3/discover", None).await;
+        let page = settled_page(&rig, &app, "the page was built").await;
+        let items = content(&page, "top_picks")["picks"]["items"].clone();
+        assert_eq!(pick_ids(&page).len(), picks, "{name}: {items}");
+        let items = items.as_array().cloned().unwrap_or_default();
+        assert!(
+            items.iter().all(|pick| pick["seed_artist"].is_string()),
+            "{name}: every pick grew from a seed: {items:?}"
+        );
+        assert_eq!(
+            saved_health(&rig.platform.db)["chart_under_personal"],
+            0,
+            "{name}"
+        );
+        assert_eq!(state_of(&page, "top_picks"), state, "{name}");
+    }
+}
+
+/// A Last.fm person whose seeds' similar artists have one Last.fm album
+/// each, under releases from `first`. Releases from 41 are matched to
+/// release groups already; the lookups of any other never answer.
+fn lastfm_picks_script(first: u8) -> Script {
+    Script {
+        user: UserMusic {
+            lastfm_username: Some("scrobbler".to_owned()),
+            lastfm: true,
+            primary: ListenSource::Lastfm,
+            ..UserMusic::default()
+        },
+        lastfm_user_artists: vec![ArtistRow {
+            name: "Seed".to_owned(),
+            mbid: Some(SEED.to_owned()),
+            listen_count: Some(50),
+        }],
+        lastfm_albums: (1..=3)
+            .map(|n| {
+                let album = LastFmAlbum {
+                    name: format!("Last.fm {n}"),
+                    artist_name: format!("Similar {n}"),
+                    mbid: Some(mbid('e', first + n)),
+                };
+                (mbid('b', n), vec![album])
+            })
+            .collect(),
+        release_lookups_hang: first != 40,
+        ..page_script()
+    }
+}
+
+/// Top Picks that run out of time matching Last.fm albums failed: the page
+/// keeps the picks it had, saying since when, rather than an empty shelf.
+#[tokio::test]
+async fn top_picks_that_run_out_of_time_keep_the_ones_the_page_had() {
+    let dir = crate::common::ScratchDir::new("discover-picks-lastfm-timeout");
+    let rig = AuthRig::new("discover-picks-lastfm-timeout").await;
+    let db = rig.platform.db.clone();
+    seed_user(&db).await;
+    rig.config
+        .save_secret_blocking(LastFmSettings {
+            enabled: true,
+            ..LastFmSettings::default()
+        })
+        .expect("Last.fm settings save");
+    let matched: Vec<String> = (41..=43)
+        .map(|n| {
+            let (release, group) = (mbid('e', n), mbid('d', n));
+            format!(
+                "INSERT INTO catalog_mbid_resolutions (source_mbid_lower, source_mbid, \
+                 release_group_mbid) VALUES ('{release}', '{release}', '{group}');"
+            )
+        })
+        .collect();
+    db.write(Lane::Foreground, "test.resolutions", move |tx| {
+        tx.execute_batch(&matched.concat())?;
+        Ok::<_, droppedneedle_kernel::db::DbError>(())
+    })
+    .await
+    .expect("resolutions");
+    let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |slot| {
+        *slot = Arc::new(lastfm_picks_script(40));
+    }));
+    call(&app, "GET", "/api/v3/discover", None).await;
+    let first = settled_page(&rig, &app, "the first page was built").await;
+    let picks = pick_ids(&first);
+    assert_eq!(picks.len(), 3, "{}", content(&first, "top_picks"));
+
+    // Past the page's and the picks' reuse windows, a restart whose album
+    // lookups never answer.
+    rig.clock().advance(5 * 3_600_000);
+    let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |slot| {
+        *slot = Arc::new(lastfm_picks_script(60));
+    }));
+    // The time bounds then pass at once instead of in real time.
+    tokio::time::pause();
+    let started = std::time::Instant::now();
+    let page = loop {
+        let (_, page) = call(&app, "GET", "/api/v3/discover", None).await;
+        if page["refreshing"] == false && page["generated_at"] != first["generated_at"] {
+            break page;
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(60),
+            "the rebuild never landed"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    };
+    assert_eq!(pick_ids(&page), picks, "{}", content(&page, "top_picks"));
+    let state = state_of(&page, "top_picks");
+    assert_eq!(state["state"], "kept", "{state}");
+    assert_eq!(state["since"], first["generated_at"]);
 }
 
 /// A home warm that keeps nothing, as every warm does while ListenBrainz
