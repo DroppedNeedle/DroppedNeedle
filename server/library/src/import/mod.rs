@@ -1227,6 +1227,7 @@ impl Imports {
             ),
         }
         let bundle = result?;
+        self.core.sweep_soon();
         drop(cell);
 
         // The commit sealed the match on this album and queued it for

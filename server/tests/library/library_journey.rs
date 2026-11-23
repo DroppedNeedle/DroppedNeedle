@@ -10680,7 +10680,9 @@ async fn each_library_worker_recovers_and_wakes() {
 
 /// Art a publish wrote shows once the publish asks for the sweep: the
 /// scan loop looks at the album again without a scan, so the cover's
-/// version moves before the folder watcher (off here) would notice.
+/// version moves before the folder watcher (off here) would notice. An
+/// import asks for the sweep too, so the album it adds gets the art in
+/// its files, here an embedded picture, without a scan.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_scan_loop_sweeps_album_art_when_a_publish_asks() {
     use droppedneedle_kernel::runtime_config::sections::FilesystemWatcher;
@@ -10744,10 +10746,16 @@ async fn the_scan_loop_sweeps_album_art_when_a_publish_asks() {
                 droppedneedle_kernel::db::open_connection(&path)
                     .expect("db")
                     .query_row(
-                        "SELECT content_hash, version FROM local_album_artwork \
+                        "SELECT content_hash, version, source FROM local_album_artwork \
                          WHERE local_album_id = ?1",
                         [&album],
-                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, i64>(1)?,
+                                row.get::<_, String>(2)?,
+                            ))
+                        },
                     )
                     .ok()
             })
@@ -10764,7 +10772,9 @@ async fn the_scan_loop_sweeps_album_art_when_a_publish_asks() {
         async move {
             let wait = async {
                 loop {
-                    if let Some(found) = art(album.clone()).await.filter(|(_, at)| *at == version) {
+                    if let Some(found) =
+                        art(album.clone()).await.filter(|(_, at, _)| *at == version)
+                    {
                         return found.0;
                     }
                     commits.changed().await.expect("database open");
@@ -10788,6 +10798,75 @@ async fn the_scan_loop_sweeps_album_art_when_a_publish_asks() {
         .await
         .expect("the sweep the publish asked for records the new cover");
     assert_ne!(first, second, "the new cover is recorded");
+
+    // An import asks for the same sweep, so the album it adds has its
+    // embedded picture recorded without a scan.
+    let imported = {
+        use droppedneedle_library::import::{DownloadImport, ImportOrigin, ImportSource};
+
+        let release = Release {
+            id: "30000000-0000-4000-8000-000000000001".to_owned(),
+            release_group_id: "30000000-0000-4000-8000-000000000002".to_owned(),
+            title: "Picture Album".to_owned(),
+            artists: vec![CreditedArtist {
+                id: "30000000-0000-4000-8000-000000000003".to_owned(),
+                name: "Picture Band".to_owned(),
+                sort_name: None,
+                join: String::new(),
+                disambiguation: None,
+            }],
+            tracks: vec![ReleaseTrack {
+                id: "30000000-0000-4000-8000-000000000004".to_owned(),
+                recording_id: "30000000-0000-4000-8000-000000000005".to_owned(),
+                title: "Picture Song".to_owned(),
+                disc: 1,
+                position: 1,
+                absolute_position: 1,
+                ..ReleaseTrack::default()
+            }],
+            ..Release::default()
+        };
+        let source = scratch
+            .to_path_buf()
+            .join("incoming/picture-album/management_full.flac");
+        std::fs::create_dir_all(source.parent().expect("parent")).expect("mkdir");
+        std::fs::copy(fixtures_dir().join("management_full.flac"), &source)
+            .expect("download planted");
+        library
+            .imports
+            .import_download(&DownloadImport {
+                task_id: "task-picture".to_owned(),
+                origin: ImportOrigin::Download,
+                staging: None,
+                release,
+                files: vec![ImportSource {
+                    path: source,
+                    track: 0,
+                    replaces: Vec::new(),
+                    set_aside: false,
+                }],
+                extras: Vec::new(),
+                actor: None,
+            })
+            .expect("imported")
+            .album_id
+    };
+    let mut commits = db.commits();
+    let wait = async {
+        loop {
+            if let Some((_, _, source)) = art(imported.clone()).await {
+                return source;
+            }
+            commits.changed().await.expect("database open");
+        }
+    };
+    let recorded = tokio::time::timeout(std::time::Duration::from_secs(20), wait)
+        .await
+        .expect("the sweep the import asked for records the album's art");
+    assert_eq!(
+        recorded, "embedded",
+        "the album's art is its embedded picture"
+    );
 
     platform
         .supervisor
