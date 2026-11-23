@@ -21,6 +21,19 @@
 
 	// The server's limit on listed apps.
 	const MAX_APPS = 8;
+	type Client = AppConnectSettings['clients'][number];
+	const presets: { client: Client; description: string }[] = [
+		{
+			client: {
+				client_id: 'otohari',
+				name: 'OtoHari',
+				redirect_uris: ['app.droppedneedle.mobile://connect'],
+				credential_kind: 'device_session'
+			},
+			description:
+				'Independent mobile player. Requires an OtoHari version that supports App Connect.'
+		}
+	];
 	const accessOptions: { value: AppConnectAccess; label: string }[] = [
 		{ value: 'app_password', label: 'App-password (OpenSubsonic and Jellyfin)' },
 		{ value: 'device_session', label: 'Device session (DroppedNeedle API)' }
@@ -45,6 +58,18 @@
 			})
 		}
 	);
+	const availablePresets = $derived(
+		presets.filter(
+			({ client: preset }) =>
+				!section.draft?.clients.some((client) => client.client_id.trim() === preset.client_id)
+		)
+	);
+
+	function addPreset(draft: AppConnectSettings, preset: Client) {
+		const saveNow = !section.dirty;
+		draft.clients.push(structuredClone(preset));
+		if (saveNow) void section.save();
+	}
 </script>
 
 <Card variant="bordered">
@@ -99,6 +124,23 @@
 									onclick={() => draft.clients.splice(index, 1)}>Remove</Button
 								>
 							</div>
+						</div>
+					</Card>
+				{/each}
+				{#each availablePresets as { client, description } (client.client_id)}
+					<Card variant="raised" padding="sm">
+						<div class="flex flex-col items-start gap-2">
+							<span class="text-sm font-semibold">{client.name}</span>
+							<p class="text-sm text-muted">{description}</p>
+							<p class="text-sm text-muted">
+								{accessHelp[client.credential_kind ?? 'app_password']}
+							</p>
+							<Button
+								size="sm"
+								disabled={section.saving || draft.clients.length >= MAX_APPS}
+								onclick={() => addPreset(draft, client)}
+								>{section.dirty ? 'Add' : 'Enable'} {client.name}</Button
+							>
 						</div>
 					</Card>
 				{/each}

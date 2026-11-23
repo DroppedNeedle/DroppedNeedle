@@ -18,6 +18,8 @@ It is off until you list an app. Under Settings > Connect Apps > Sign-in from ap
 - **Return addresses**: where the browser hands the result back, one per line, matched exactly. Each one is an `https` address or a private scheme named after a domain the app's maker owns, such as `com.example.player:/connect`. The app's maker tells you these too.
 - **Access type**: choose an app password for a Subsonic or Jellyfin app (the default for existing registrations), or a device session for an app that uses the DroppedNeedle API. A device session can act with the signed-in user's permissions, including administrator permissions for an admin. Enable it only for apps you trust with that level of access.
 
+For versions of the independent OtoHari player that support App Connect, choose **Enable OtoHari** to register its client ID and return address. Use **Add app** for other clients.
+
 Registration is per DroppedNeedle instance. Everyone on the instance can then sign in to the registered app using their usual browser login. An instance using OIDC continues to use its existing provider configuration. If a reverse proxy also requires browser sign-in, the app still needs to reach the token endpoint and the API from outside the browser. A browser-only proxy session does not travel with the app.
 
 An instance can register up to eight apps with four return addresses each. Removing every registration turns off new app sign-ins. Each account can have up to 25 active device sessions issued through App Connect.
