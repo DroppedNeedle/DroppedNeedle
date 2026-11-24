@@ -1,6 +1,8 @@
 //! The playlist request routes, and the one mapping of their errors onto
 //! `ApiError`.
 
+use std::sync::Arc;
+
 use axum::{
     Json,
     extract::{Path, State},
@@ -49,7 +51,7 @@ impl From<PlaylistRequestError> for ApiError {
 
 /// The playlist request routes: any signed-in user, answered only for a
 /// playlist they own or may edit.
-pub fn routes() -> Routes<PlaylistRequests> {
+pub fn routes() -> Routes<Arc<PlaylistRequests>> {
     Routes::new()
         .user(routes!(request_missing_handler))
         .user(routes!(request_song_handler))
@@ -78,7 +80,7 @@ pub fn routes() -> Routes<PlaylistRequests> {
     )
 )]
 pub async fn request_missing_handler(
-    State(state): State<PlaylistRequests>,
+    State(state): State<Arc<PlaylistRequests>>,
     User(user): User,
     Path(playlist_id): Path<String>,
     ValidJson(body): ValidJson<PlaylistRequestBody>,
@@ -106,7 +108,7 @@ pub async fn request_missing_handler(
     )
 )]
 pub async fn request_song_handler(
-    State(state): State<PlaylistRequests>,
+    State(state): State<Arc<PlaylistRequests>>,
     User(user): User,
     Path((playlist_id, track_id)): Path<(String, String)>,
 ) -> Result<(StatusCode, Json<TrackIntakeResponse>), ApiError> {
@@ -128,7 +130,7 @@ pub async fn request_song_handler(
     )
 )]
 pub async fn request_state_handler(
-    State(state): State<PlaylistRequests>,
+    State(state): State<Arc<PlaylistRequests>>,
     User(user): User,
     Path(playlist_id): Path<String>,
 ) -> Result<Json<PlaylistRequestState>, ApiError> {

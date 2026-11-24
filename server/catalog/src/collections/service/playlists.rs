@@ -247,7 +247,7 @@ enum Planned<'a> {
     /// It matched a live track, by id.
     Matched(&'a import::ParsedEntry, String),
     /// It names a title and an artist the library lacks, so it is kept.
-    Kept(NewEntry),
+    Kept(&'a import::ParsedEntry),
 }
 
 /// The entry an unmatched row becomes: the names and numbers the file
@@ -677,7 +677,7 @@ impl CollectionsService<'_> {
                 && !entry.title.trim().is_empty()
                 && !entry.artist.trim().is_empty()
             {
-                planned.push(Planned::Kept(kept_entry(entry)));
+                planned.push(Planned::Kept(entry));
                 continue;
             }
             unmatched.push(import::unmatched(entry, Reason::NoMatch));
@@ -709,6 +709,7 @@ impl CollectionsService<'_> {
                     None => unmatched.push(import::unmatched(entry, Reason::NoMatch)),
                 },
                 Planned::Kept(entry) => {
+                    let entry = kept_entry(entry);
                     kept_an_album |= !entry.album_name.is_empty();
                     new_entries.push(entry);
                     kept += 1;

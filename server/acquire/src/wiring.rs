@@ -258,7 +258,7 @@ pub struct AcquireSetup {
     pub deemix: Arc<DeemixChecks>,
     /// A playlist's Request missing, its song requests and what its
     /// missing songs wait for.
-    pub playlist_requests: PlaylistRequests,
+    pub playlist_requests: Arc<PlaylistRequests>,
 }
 
 /// The drop-import service over the landing's library port, a staging
@@ -908,13 +908,13 @@ impl AcquireSetup {
             config_store.live(),
         ));
         let spotify_imports = SpotifyImports::new(platform.db.clone(), queue.clone());
-        let playlist_requests = PlaylistRequests::new(
+        let playlist_requests = Arc::new(PlaylistRequests::new(
             core.requests.clone(),
             collections.playlists.clone(),
             ports.catalog,
             spotify_imports.clone(),
             queue,
-        );
+        ));
         let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
         let imports = ImportsDeps {
             lidarr: LidarrClient::new(http.clone()),

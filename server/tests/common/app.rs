@@ -232,6 +232,9 @@ impl TestApp {
                 Err(error) => panic!("the app builds: {error:?}"),
             }
         };
+        // Boxed before the next await, so the boot future does not carry
+        // the state and neither does every journey future holding it.
+        let state = Box::new(state);
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("loopback binds");
@@ -248,7 +251,7 @@ impl TestApp {
             .with_subscriber(warnings),
         ));
         self.router = Some(router);
-        self.state = Some(Box::new(state));
+        self.state = Some(state);
         self.stop = Some(stop);
     }
 
