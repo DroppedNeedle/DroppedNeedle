@@ -230,6 +230,50 @@ pub fn clear_items(conn: &Connection, job_id: &str) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// The previews never applied that are done with at `now_ms` and still
+/// hold plan items or generated files.
+pub fn dead_previews(conn: &Connection, now_ms: i64) -> rusqlite::Result<Vec<String>> {
+    let mut statement = conn.prepare_cached(crate::management::sql::DEAD_PREVIEWS.text())?;
+    let rows = statement.query_map(params![now_ms], |row| row.get(0))?;
+    rows.collect()
+}
+
+/// What one chunk of a dead preview's cleanup removed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Cleared {
+    pub items: usize,
+    pub refs: usize,
+}
+
+/// Remove up to `limit` plan items of preview `job_id`, and once fewer
+/// are left its hold on its generated files, while it is still done with
+/// at `now_ms`. Its revisions move when anything went.
+pub fn clear_dead_chunk(
+    tx: &Transaction<'_>,
+    job_id: &str,
+    now_ms: i64,
+    limit: usize,
+) -> rusqlite::Result<Cleared> {
+    let items = tx
+        .prepare_cached(crate::management::sql::CLEAR_DEAD_ITEMS.text())?
+        .execute(params![
+            job_id,
+            now_ms,
+            i64::try_from(limit).unwrap_or(i64::MAX)
+        ])?;
+    let refs = if items < limit {
+        tx.prepare_cached(crate::management::sql::DROP_DEAD_PREVIEW_REFS.text())?
+            .execute(params![job_id, now_ms])?
+    } else {
+        0
+    };
+    if items + refs > 0 {
+        tx.prepare_cached(crate::jobs::sql::PLAN_CHANGED.text())?
+            .execute(params![job_id])?;
+    }
+    Ok(Cleared { items, refs })
+}
+
 /// Store one album's planned files.
 pub fn insert_items(
     tx: &Transaction<'_>,

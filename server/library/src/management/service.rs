@@ -124,6 +124,35 @@ pub(super) fn stale(message: &str) -> ManagementError {
     ManagementError::Conflict(message.to_owned())
 }
 
+/// The refusal of an apply that would begin after its preview expired. It
+/// is not a conflict: automatic management reads a conflict as nothing to
+/// write.
+pub(crate) const PREVIEW_EXPIRED: crate::reasons::Reason = crate::reasons::Reason {
+    code: "MANAGEMENT_PREVIEW_EXPIRED",
+    message: "This preview expired.",
+    action: "Make a new preview.",
+};
+
+/// How many plan items of a preview that is done with one write removes.
+const CLEANUP_CHUNK: usize = 200;
+
+/// What one cleanup pass over the previews that are done with removed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PreviewCleanup {
+    pub previews: usize,
+    pub items: usize,
+    pub refs: usize,
+}
+
+/// Whether a job is a preview that was never applied and is past its
+/// expiry at `now` (unix seconds).
+pub(super) fn expired_unapplied(snapshot: &Snapshot, now: f64) -> bool {
+    matches!(
+        snapshot.phase,
+        ManagementPhase::Planning | ManagementPhase::Ready
+    ) && snapshot.preview_expires_at.is_some_and(|at| at <= now)
+}
+
 /// The refusal while the library-wide switch is off: the same answer a
 /// scan gets (409 `CONFLICT`).
 pub(super) const LIBRARY_OFF: &str = crate::removal::LIBRARY_OFF_TEXT;
@@ -535,9 +564,31 @@ impl Management {
         let (profile_id, profile_name) = snapshot.profile_label();
         let worker_stalled = snapshot.job.state == OperationState::Running
             && snapshot.lease_expires_at.is_none_or(|at| at <= now);
+        let summary = snapshot.summary();
+        let plan_cleared = expired_unapplied(&snapshot, now)
+            && !matches!(
+                snapshot.job.state,
+                OperationState::Queued | OperationState::Running | OperationState::Paused
+            )
+            && summary.item_count > 0
+            && self
+                .parts
+                .db
+                .read_blocking("management.plan_cleared", |conn| {
+                    Ok::<_, ManagementError>(store::items_page(
+                        conn,
+                        job_id,
+                        -1,
+                        1,
+                        &ItemFilter::default(),
+                    )?)
+                })?
+                .items
+                .is_empty();
         Ok(JobDetail {
             ready_for_confirmation: ready && !expired && stale_reasons.is_empty(),
-            summary: snapshot.summary(),
+            summary,
+            plan_cleared,
             selection: serde_json::from_str(&snapshot.selection_json).unwrap_or_default(),
             mode: snapshot.mode,
             origin: snapshot.origin,
@@ -656,6 +707,55 @@ impl Management {
             ));
         }
         self.detail(job_id)
+    }
+
+    /// Remove the plan items of every preview that was never applied and
+    /// is done with (a day past its expiry), a chunk per write, and its
+    /// hold on the files it generated. The job, its snapshot and History
+    /// stay. Each write checks again that the preview is still done with,
+    /// so any prefix is a complete change and the next pass goes on from
+    /// it. `go_on` is asked between writes. Blocking.
+    pub fn clear_dead_previews(
+        &self,
+        go_on: &dyn Fn() -> bool,
+    ) -> Result<PreviewCleanup, ManagementError> {
+        let now_ms = self.parts.clock.now_ms();
+        let dead = self
+            .parts
+            .db
+            .read_blocking("management.dead_previews", |conn| {
+                Ok::<_, ManagementError>(store::dead_previews(conn, now_ms)?)
+            })?;
+        let mut cleanup = PreviewCleanup::default();
+        for job_id in &dead {
+            let mut touched = false;
+            loop {
+                if !go_on() {
+                    cleanup.previews += usize::from(touched);
+                    return Ok(cleanup);
+                }
+                let chunk = self.parts.db.write_blocking(
+                    Lane::Background,
+                    "management.clear_dead_preview",
+                    |tx| {
+                        Ok::<_, ManagementError>(store::clear_dead_chunk(
+                            tx,
+                            job_id,
+                            now_ms,
+                            CLEANUP_CHUNK,
+                        )?)
+                    },
+                )?;
+                cleanup.items += chunk.items;
+                cleanup.refs += chunk.refs;
+                touched |= chunk.items + chunk.refs > 0;
+                if chunk.items < CLEANUP_CHUNK {
+                    break;
+                }
+            }
+            cleanup.previews += usize::from(touched);
+        }
+        Ok(cleanup)
     }
 
     /// A new token for a ready preview, for its owner whose browser lost
@@ -832,6 +932,11 @@ impl Management {
             };
             if let Some(snapshot) = store::snapshot(tx, job_id)? {
                 refuse_activation(&snapshot)?;
+                // Past its expiry the preview's plan may be cleared, so no
+                // apply begins on it.
+                if snapshot.preview_expires_at.is_some_and(|at| at <= now) {
+                    return Err(ManagementError::Refused(PREVIEW_EXPIRED));
+                }
             }
             if bundles.is_empty() && mode == JobMode::DuplicateResolution {
                 // Keeping both files: the decision is the whole job.
@@ -1343,19 +1448,31 @@ impl Management {
                     album,
                 );
             }
-        } else if finished
-            && automatic
-            && let Err(error) = self.apply_automatic(job_id, &summary)
-        {
-            // The automatic worker looks at the albums again and applies
-            // the preview then.
-            tracing::warn!(%error, job_id, "automatic management apply waits: the database is busy");
-            for album in &albums {
-                super::automatic::queue_automatic_management(
-                    &self.parts.db,
-                    &*self.parts.clock,
-                    album,
-                );
+        } else if finished && automatic {
+            let again = match self.apply_automatic(job_id, &summary) {
+                // A preview that expired before its apply began is never
+                // applied: the albums get a new one.
+                Ok(applied) => {
+                    !applied
+                        && snapshot
+                            .preview_expires_at
+                            .is_some_and(|at| at <= self.parts.clock.now_secs())
+                }
+                // The automatic worker looks at the albums again and
+                // applies the preview then.
+                Err(error) => {
+                    tracing::warn!(%error, job_id, "automatic management apply waits: the database is busy");
+                    true
+                }
+            };
+            if again {
+                for album in &albums {
+                    super::automatic::queue_automatic_management(
+                        &self.parts.db,
+                        &*self.parts.clock,
+                        album,
+                    );
+                }
             }
         }
         Ok(())
@@ -1448,6 +1565,15 @@ impl Management {
                 Ok(true)
             }
             Err(error @ ManagementError::Busy(_)) => Err(error),
+            // The preview expired before its apply began: it waits, and a
+            // new one is made for the album.
+            Err(ManagementError::Refused(reason)) if reason == PREVIEW_EXPIRED => {
+                tracing::info!(
+                    job_id,
+                    "automatic management preview expired before it applied"
+                );
+                Ok(false)
+            }
             Err(error) => {
                 tracing::warn!(%error, job_id, "automatic management apply refused");
                 Ok(false)

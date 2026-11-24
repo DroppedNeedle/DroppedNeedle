@@ -620,6 +620,9 @@ pub struct JobDetail {
     pub linked_job_id: Option<String>,
     pub selection: serde_json::Value,
     pub summary: Summary,
+    /// A preview never applied whose plan items were cleared a day after
+    /// it expired; its summary still counts them.
+    pub plan_cleared: bool,
     pub preview_created_at: Option<f64>,
     pub expires_at: Option<f64>,
     pub expired: bool,

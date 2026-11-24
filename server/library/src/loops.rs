@@ -66,6 +66,7 @@ pub const LOOPS: &[&str] = &[
     RECYCLE_EXPIRY_JOB,
     LEFTOVERS_JOB,
     RELOOK_JOB,
+    super::management::PREVIEW_CLEANUP_JOB,
     LOUDNESS_JOB,
 ];
 

@@ -55898,6 +55898,7 @@
           "created_at",
           "updated_at",
           "expired",
+          "plan_cleared",
           "stale",
           "stale_reasons",
           "stale_input_count",
@@ -55990,6 +55991,10 @@
           },
           "phase": {
             "$ref": "#/components/schemas/ManagementPhase"
+          },
+          "plan_cleared": {
+            "type": "boolean",
+            "description": "The preview was never applied and its file list was cleared a day\nafter it expired; the summary still counts the files."
           },
           "profile_id": {
             "type": "string"

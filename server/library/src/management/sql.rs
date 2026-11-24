@@ -1,10 +1,14 @@
 //! Management's statements over its applied work: each album's outcome
 //! and the publish bundles a job wrote, for its results and its undo.
 
+// `sql!` needs a macro call in parentheses to take it as one part.
+#![allow(unused_parens, clippy::double_parens)]
+
 use droppedneedle_kernel::db::time::Millis;
 
 use super::models::{Eligibility, OverrideMode, TagScope};
 use super::takeover::Cause;
+use crate::jobs::sql::dead_preview;
 use crate::jobs::{ManagementPhase, OperationState, WorkState};
 use crate::publish::sql::HAS_BYTES_RECORD;
 
@@ -219,6 +223,26 @@ droppedneedle_kernel::sql! {
     pub(super) SET_PHASE = "UPDATE library_management_job_snapshots SET phase = ?2, updated_at = ?3, \
          row_revision = row_revision + 1 WHERE job_id = ?1";
     pub(super) CLEAR_ITEMS = "DELETE FROM library_management_plan_items WHERE job_id = ?1";
+    /// The previews never applied that are done with (`?1` is now) and
+    /// still hold plan items or generated files, oldest first.
+    pub(super) DEAD_PREVIEWS = "SELECT job.id FROM library_operation_jobs job \
+         WHERE job.kind = 'library_management' AND " + (dead_preview!("?1")) + " \
+         AND (EXISTS(SELECT 1 FROM library_management_plan_items p WHERE p.job_id = job.id) \
+         OR EXISTS(SELECT 1 FROM library_publish_blob_refs r \
+         WHERE r.owner_kind = 'preview' AND r.owner_id = job.id)) \
+         ORDER BY job.created_at, job.id";
+    /// The first `?3` plan items of preview `?1`, while it is done with
+    /// (`?2` is now).
+    pub(super) CLEAR_DEAD_ITEMS = "DELETE FROM library_management_plan_items WHERE job_id = ?1 \
+         AND ordinal IN (SELECT ordinal FROM library_management_plan_items WHERE job_id = ?1 \
+         ORDER BY ordinal LIMIT ?3) \
+         AND EXISTS(SELECT 1 FROM library_operation_jobs job WHERE job.id = ?1 AND " + (dead_preview!("?2")) + ")";
+    /// The hold preview `?1` has on its generated files, while it is done
+    /// with (`?2` is now). The publish tick then removes the files nothing
+    /// else holds.
+    pub(super) DROP_DEAD_PREVIEW_REFS = "DELETE FROM library_publish_blob_refs \
+         WHERE owner_kind = 'preview' AND owner_id = ?1 \
+         AND EXISTS(SELECT 1 FROM library_operation_jobs job WHERE job.id = ?1 AND " + (dead_preview!("?2")) + ")";
     pub(super) INSERT_ITEMS = "INSERT INTO library_management_plan_items (job_id, ordinal, bundle_ordinal, \
          local_album_id, local_track_id, expected_album_revision, expected_identity_revision, \
          expected_album_identity_revision, expected_override_revision, expected_catalog_revision, \

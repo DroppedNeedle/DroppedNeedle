@@ -10216,6 +10216,388 @@ async fn a_management_token_confirms_only_for_its_admin_until_the_preview_expire
     assert_eq!(status, StatusCode::OK, "{body}");
 }
 
+/// A preview nobody applied loses its plan items a day after it expires,
+/// and the files it generated go with the next publish tick unless
+/// something else holds them. Its job, snapshot and History stay. Applied
+/// runs, live previews, applies that began before the expiry (stopped or
+/// not), previews less than a day past their expiry, previews with no
+/// expiry, and a preview a live job was made from keep their items. A
+/// dead duplicate resolution no longer holds "Undo match" back.
+#[tokio::test]
+async fn an_expired_preview_never_applied_loses_its_plan_a_day_later() {
+    use droppedneedle_kernel::clock::Clock as _;
+    use droppedneedle_kernel::test_support::ManualClock;
+    use droppedneedle_library::jobs::models::{Control, OperationError};
+    use droppedneedle_library::management::models::{ManagementError, SelectionKind};
+    use droppedneedle_library::management::service::ApplyRequest;
+
+    const DAY: i64 = 86_400_000;
+    let clock = Arc::new(ManualClock::at(
+        droppedneedle_kernel::clock::SystemClock.now_ms(),
+    ));
+    let managed = ManagedLibrary::start_on("lib-dead-previews", |_| {}, None, clock.clone()).await;
+    let management = managed.management();
+    let names = [
+        "ready",
+        "discarded",
+        "applied",
+        "begun",
+        "stopped",
+        "planning",
+        "duplicate",
+        "source",
+        "live",
+        "recent",
+        "no-expiry",
+    ];
+    let mut albums = HashMap::new();
+    for name in names {
+        albums.insert(name, managed.add_album(name, 1).await);
+    }
+    let mut handles = HashMap::new();
+    for name in names {
+        let (handle, items) = managed
+            .preview(SelectionKind::Albums, &[&albums[name].0], name)
+            .await;
+        assert!(!items.is_empty(), "{name} is planned");
+        handles.insert(name, handle);
+    }
+    let job = |name: &str| handles[name].job_id.clone();
+    let revision = |job: &str| management.detail(job).expect("detail").job.row_revision;
+    let items = |job: &str| {
+        management
+            .items(job, -1, 100, &Default::default())
+            .expect("items")
+            .items
+            .len()
+    };
+
+    management_apply(&managed.library, &handles["applied"]).await;
+    let undo = management
+        .undo_preview(
+            &job("applied"),
+            revision(&job("applied")),
+            "undo-1",
+            "admin",
+        )
+        .expect("undo preview");
+    assert!(
+        management_step(&managed.library).await,
+        "undo planning runs"
+    );
+    assert!(items(&undo.job_id) > 0);
+    management
+        .discard(&job("discarded"), revision(&job("discarded")))
+        .expect("discarded");
+    let db = managed.db();
+    db.execute_batch(&format!(
+        "UPDATE library_management_job_snapshots SET phase = 'planning' WHERE job_id = '{planning}'; \
+         UPDATE library_operation_jobs SET state = 'stopped' WHERE id = '{planning}'; \
+         UPDATE library_management_job_snapshots SET mode = 'duplicate_resolution' \
+             WHERE job_id = '{duplicate}'; \
+         UPDATE library_management_job_snapshots SET preview_expires_at = NULL \
+             WHERE job_id = '{no_expiry}';",
+        planning = job("planning"),
+        duplicate = job("duplicate"),
+        no_expiry = job("no-expiry"),
+    ))
+    .expect("previews seeded");
+    // A job made from the source preview, as a duplicate resolution is,
+    // still queued.
+    let queued = management
+        .create_preview(
+            droppedneedle_library::management::service::PreviewRequest {
+                selection: droppedneedle_library::management::models::Selection {
+                    kind: SelectionKind::Albums,
+                    ids: vec![albums["source"].0.clone()],
+                    catalog_filter: None,
+                },
+                profile_id:
+                    droppedneedle_library::management::settings::PICARD_ORGANIZER_PROFILE_ID
+                        .to_owned(),
+                expected_settings_revision: managed.settings_revision(),
+                expected_policy_revision: managed
+                    .library
+                    .core
+                    .policy_revision()
+                    .expect("policy revision"),
+                idempotency_key: Some("queued".to_owned()),
+                target_root_id: None,
+                overrides: None,
+                include_organized: false,
+            },
+            "admin",
+        )
+        .expect("queued preview");
+    db.execute(
+        "UPDATE library_management_job_snapshots SET linked_operation_job_id = ?2 \
+         WHERE job_id = ?1",
+        [&queued.job_id, &job("source")],
+    )
+    .expect("linked to the source");
+    // Two applies that began before the expiry; one is then stopped.
+    let apply = |name: &str| {
+        management
+            .apply(
+                &job(name),
+                ApplyRequest {
+                    preview_token: handles[name].preview_token.clone(),
+                    expected_row_revision: revision(&job(name)),
+                    idempotency_key: format!("apply-{name}"),
+                    confirmation: true,
+                },
+                "admin",
+            )
+            .expect("apply queued")
+    };
+    apply("begun");
+    apply("stopped");
+    crate::common::library::operations(&managed.library)
+        .control(
+            &job("stopped"),
+            Control::Stop,
+            revision(&job("stopped")),
+            None,
+        )
+        .expect("stopped while queued");
+
+    // The duplicate preview's planned file was matched by hand before it.
+    let hand_matched = albums["duplicate"].1[0].clone();
+    db.execute_batch(&format!(
+        "UPDATE local_track_external_identities SET decision_source = 'manual' \
+             WHERE local_track_id = '{hand_matched}'; \
+         INSERT INTO library_track_hand_matches (local_track_id, release_mbid, \
+             release_track_mbid, matched_by_user_id, matched_at) \
+             SELECT local_track_id, release_mbid, release_track_mbid, 'admin', 0 \
+             FROM local_track_external_identities WHERE local_track_id = '{hand_matched}';"
+    ))
+    .expect("hand match seeded");
+    let undo_match = || {
+        let edition: i64 = db
+            .query_row(
+                "SELECT row_revision FROM local_album_external_identities \
+                 WHERE local_album_id = ?1",
+                [&albums["duplicate"].0],
+                |row| row.get(0),
+            )
+            .expect("edition revision");
+        crate::common::library::operations(&managed.library).unmatch_file(
+            &albums["duplicate"].0,
+            &hand_matched,
+            edition,
+            "admin",
+        )
+    };
+
+    // Generated files: one only the ready preview holds, one an applied
+    // run's undo holds too.
+    let (own, shared) = ("a".repeat(64), "b".repeat(64));
+    db.execute_batch(&format!(
+        "INSERT INTO library_publish_blobs (sha256, bytes) VALUES ('{own}', x'01'), ('{shared}', x'02'); \
+         INSERT INTO library_publish_blob_refs (sha256, owner_kind, owner_id) VALUES \
+             ('{own}', 'preview', '{ready}'), ('{shared}', 'preview', '{ready}'), \
+             ('{shared}', 'operation', 'bundle-kept');",
+        ready = job("ready"),
+    ))
+    .expect("blobs seeded");
+
+    clock.advance(2 * DAY + 60_000);
+    let now = clock.now_ms();
+    db.execute_batch(&format!(
+        "UPDATE library_management_job_snapshots SET preview_expires_at = {live} \
+             WHERE job_id = '{live_job}'; \
+         UPDATE library_management_job_snapshots SET preview_expires_at = {recent} \
+             WHERE job_id = '{recent_job}';",
+        live = now + DAY,
+        live_job = job("live"),
+        recent = now - DAY + 3_600_000,
+        recent_job = job("recent"),
+    ))
+    .expect("expiries seeded");
+    let dead = [
+        job("ready"),
+        job("discarded"),
+        job("planning"),
+        job("duplicate"),
+        undo.job_id.clone(),
+    ];
+    let kept = [
+        job("applied"),
+        job("begun"),
+        job("stopped"),
+        job("source"),
+        job("live"),
+        job("recent"),
+        job("no-expiry"),
+    ];
+    let before: HashMap<String, (usize, i64)> = dead
+        .iter()
+        .chain(&kept)
+        .map(|job| (job.clone(), (items(job), revision(job))))
+        .collect();
+    assert!(before.values().all(|(count, _)| *count > 0));
+    assert!(
+        matches!(
+            undo_match(),
+            Err(OperationError::Conflict(reason)) if reason.code == "HAND_MATCH_WRITTEN"
+        ),
+        "the dead duplicate preview still counts as a write"
+    );
+
+    // A pass told to stop at once clears nothing; the next one does.
+    let stopped = management.clear_dead_previews(&|| false).expect("pass");
+    assert_eq!(stopped.items, 0);
+    let cleared = management.clear_dead_previews(&|| true).expect("pass");
+    assert_eq!(cleared.previews, dead.len());
+    assert_eq!(
+        cleared.items,
+        dead.iter().map(|job| before[job].0).sum::<usize>()
+    );
+    managed
+        .library
+        .publishing
+        .publish_tick()
+        .expect("publish tick");
+
+    for job in &dead {
+        assert_eq!(items(job), 0, "{job} lost its plan");
+        assert!(revision(job) > before[job].1, "{job} changed for its page");
+        let detail = management.detail(job).expect("job and snapshot stay");
+        assert!(detail.summary.item_count > 0, "{job} keeps its summary");
+        assert!(detail.plan_cleared, "{job} says its plan was cleared");
+    }
+    for job in &kept {
+        assert_eq!(items(job), before[job].0, "{job} keeps its plan");
+        assert!(!management.detail(job).expect("detail").plan_cleared);
+    }
+    let history: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM library_management_job_snapshots",
+            [],
+            |row| row.get(0),
+        )
+        .expect("history counts");
+    assert_eq!(history, i64::try_from(names.len() + 2).expect("count"));
+    let blob = |sha: &str| -> i64 {
+        db.query_row(
+            "SELECT COUNT(*) FROM library_publish_blobs WHERE sha256 = ?1",
+            [sha],
+            |row| row.get(0),
+        )
+        .expect("blob counts")
+    };
+    let preview_refs: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM library_publish_blob_refs WHERE owner_id = ?1",
+            [&job("ready")],
+            |row| row.get(0),
+        )
+        .expect("refs count");
+    assert_eq!(preview_refs, 0);
+    assert_eq!((blob(&own), blob(&shared)), (0, 1));
+    assert!(clear_nothing(&management));
+
+    assert!(
+        undo_match().is_ok(),
+        "Undo match is allowed once it is cleared"
+    );
+    let refused = management.apply(
+        &job("ready"),
+        ApplyRequest {
+            preview_token: handles["ready"].preview_token.clone(),
+            expected_row_revision: revision(&job("ready")),
+            idempotency_key: "apply-late".to_owned(),
+            confirmation: true,
+        },
+        "admin",
+    );
+    assert!(
+        matches!(refused, Err(ManagementError::Conflict(_))),
+        "{refused:?}"
+    );
+
+    // The applies that began before the expiry still write.
+    while management_step(&managed.library).await {}
+    crate::common::library::operations(&managed.library)
+        .control(
+            &job("stopped"),
+            Control::Resume,
+            revision(&job("stopped")),
+            None,
+        )
+        .expect("resumed");
+    while management_step(&managed.library).await {}
+    for name in ["begun", "stopped"] {
+        let detail = management.detail(&job(name)).expect("detail");
+        assert_eq!(detail.job.state.as_str(), "succeeded", "{name}");
+        assert!(detail.job.succeeded_count > 0, "{name} wrote its files");
+    }
+    // The applied run still plans its undo.
+    let again = management
+        .undo_preview(
+            &job("applied"),
+            revision(&job("applied")),
+            "undo-2",
+            "admin",
+        )
+        .expect("undo preview");
+    assert!(
+        management_step(&managed.library).await,
+        "undo planning runs"
+    );
+    assert!(items(&again.job_id) > 0);
+}
+
+/// An automatic preview that finishes planning after its expiry is never
+/// applied: it writes nothing and records no file as managed, and its
+/// album is queued again, so the next look makes a new run that writes it.
+#[tokio::test]
+async fn an_automatic_preview_planned_after_its_expiry_is_queued_again() {
+    use droppedneedle_kernel::clock::Clock as _;
+    use droppedneedle_kernel::test_support::ManualClock;
+
+    let clock = Arc::new(ManualClock::at(
+        droppedneedle_kernel::clock::SystemClock.now_ms(),
+    ));
+    let managed = ManagedLibrary::start_on("lib-late-automatic", |_| {}, None, clock.clone()).await;
+    let (album, tracks) = managed.add_album("late", 1).await;
+    managed.activate().await;
+    let states = || {
+        managed.count(&format!(
+            "SELECT COUNT(*) FROM library_track_management_state WHERE local_track_id = '{}'",
+            tracks[0]
+        ))
+    };
+    let before = states();
+    managed
+        .library
+        .identification
+        .queue_automatic_management(&album);
+    assert!(automatic_next(&managed.library).await, "a run starts");
+    assert_eq!(managed.queue_row(&album), None, "the run took the album");
+    clock.advance(25 * 3_600_000);
+    while management_step(&managed.library).await {}
+
+    let runs = managed.automatic_runs();
+    assert_eq!(runs.len(), 1);
+    assert_ne!(runs[0].0, "succeeded", "{runs:?}");
+    assert_eq!(states(), before, "no file is recorded as managed");
+    assert!(
+        managed.queue_row(&album).is_some(),
+        "the album is queued again"
+    );
+
+    managed.worker_looks().await;
+    let runs = managed.automatic_runs();
+    assert_eq!(runs.len(), 2);
+    assert_eq!(runs[1].0, "succeeded", "{runs:?}");
+}
+
+/// A cleanup pass that finds nothing more to clear.
+fn clear_nothing(management: &droppedneedle_library::management::service::Management) -> bool {
+    management.clear_dead_previews(&|| true).expect("pass") == Default::default()
+}
+
 async fn management_step(library: &LibrarySetup) -> bool {
     let management = droppedneedle_library::management::service::Management::new(library);
     tokio::task::spawn_blocking(move || management.run_next("test-worker"))

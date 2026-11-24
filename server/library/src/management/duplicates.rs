@@ -15,8 +15,9 @@ use super::planner::{self, PlanContext};
 use super::profile::{self, CompiledScripts};
 use super::reasons::ItemReason;
 use super::selection;
-use super::service::{JobSpec, Management, Refused, stale};
+use super::service::{JobSpec, Management, Refused, expired_unapplied, stale};
 use super::store::{self, Snapshot};
+use crate::clock::LibraryClock as _;
 use crate::publish::planner::PlanKind;
 use crate::removal::{MutationError, NO_RECYCLE_BIN, RECYCLE_BIN_UNKNOWN, REMOVAL_CHANGED};
 use rusqlite::OptionalExtension as _;
@@ -55,6 +56,19 @@ fn album_moves_too() -> ItemReason {
             .to_owned(),
         action: "Keep both files, or move the file in the way yourself, then make a new preview of the whole album."
             .to_owned(),
+    }
+}
+
+/// The preview a clash came from was never applied and is past its
+/// expiry, so its plan may be cleared.
+const SOURCE_EXPIRED: &str = "The preview this file came from expired.";
+const SOURCE_EXPIRED_ACTION: &str = "Make a new preview of the album, then settle the clash again.";
+
+fn source_expired() -> ItemReason {
+    ItemReason {
+        code: "SOURCE_PREVIEW_EXPIRED".to_owned(),
+        message: SOURCE_EXPIRED.to_owned(),
+        action: SOURCE_EXPIRED_ACTION.to_owned(),
     }
 }
 
@@ -135,6 +149,9 @@ impl Management {
             return Err(stale(
                 "The preview this file came from is still running. Wait for it to finish.",
             ));
+        }
+        if expired_unapplied(&source, self.parts.clock.now_secs()) {
+            return Err(stale(&format!("{SOURCE_EXPIRED} {SOURCE_EXPIRED_ACTION}")));
         }
         if source.job.row_revision != request.expected_source_row_revision {
             return Err(stale(
@@ -304,6 +321,30 @@ impl Management {
             ))
     }
 
+    /// Whether the rest of the album of the source preview's item
+    /// `ordinal` moves to a new folder.
+    fn album_moves(&self, source: &Snapshot, ordinal: i64) -> Result<bool, ManagementError> {
+        let blocked_one = self.source_item(source, ordinal)?;
+        let siblings = self
+            .parts
+            .db
+            .read_blocking("management.duplicate_siblings", |conn| {
+                Ok::<_, ManagementError>(store::bundle_items(
+                    conn,
+                    &source.job.id,
+                    blocked_one.bundle_ordinal,
+                )?)
+            })?;
+        Ok(siblings.iter().any(|sibling| {
+            sibling.ordinal != blocked_one.ordinal
+                && (sibling.diff.path_changed
+                    || sibling
+                        .dest_rel
+                        .as_ref()
+                        .is_some_and(|dest| dest != &sibling.source_rel))
+        }))
+    }
+
     /// Plan the settled file: fresh from the profile, then given the
     /// destination the chosen action asks for.
     pub(super) fn plan_duplicate(
@@ -377,26 +418,11 @@ impl Management {
         );
         if item.eligibility.writes() && places_incoming {
             let source = self.snapshot(&intent.source_job_id)?;
-            let blocked_one = self.source_item(&source, intent.source_plan_item_ordinal)?;
-            let siblings =
-                self.parts
-                    .db
-                    .read_blocking("management.duplicate_siblings", |conn| {
-                        Ok::<_, ManagementError>(store::bundle_items(
-                            conn,
-                            &intent.source_job_id,
-                            blocked_one.bundle_ordinal,
-                        )?)
-                    })?;
-            let album_moves = siblings.iter().any(|sibling| {
-                sibling.ordinal != blocked_one.ordinal
-                    && (sibling.diff.path_changed
-                        || sibling
-                            .dest_rel
-                            .as_ref()
-                            .is_some_and(|dest| dest != &sibling.source_rel))
-            });
-            if album_moves {
+            if expired_unapplied(&source, self.parts.clock.now_secs()) {
+                // Its plan may be cleared, so whether the rest of the
+                // album moves can no longer be told.
+                item.block(source_expired());
+            } else if self.album_moves(&source, intent.source_plan_item_ordinal)? {
                 item.block(album_moves_too());
             }
         }

@@ -8,7 +8,7 @@
 /// never be applied, so it holds nothing back; one with no expiry stored
 /// still does. A dry run for turning automatic management on is never
 /// applied either, so it holds nothing back while ready. `$now` is the SQL
-/// parameter holding the current time in seconds.
+/// parameter holding the current time in milliseconds.
 macro_rules! live_job {
     ($now:literal) => {
         concat!(
@@ -21,6 +21,31 @@ macro_rules! live_job {
     };
 }
 pub(crate) use live_job;
+
+/// A condition on `job` (a `library_operation_jobs` row) that holds once a
+/// management preview that was never applied is done with: still planning
+/// or ready, not queued, running or paused, at least a day past its stored
+/// expiry (one with no expiry stored never is), and no live job (as
+/// [`live_job!`] says) was made from it. A duplicate resolution made from a
+/// preview reads that preview's plan while it plans. `$now` is the SQL
+/// parameter holding the current time in milliseconds.
+macro_rules! dead_preview {
+    ($now:literal) => {
+        concat!(
+            "(job.state NOT IN ('queued','running','paused') AND EXISTS(SELECT 1 \
+             FROM library_management_job_snapshots dead WHERE dead.job_id = job.id \
+             AND dead.phase IN ('planning','ready') AND dead.preview_expires_at IS NOT NULL \
+             AND dead.preview_expires_at <= ",
+            $now,
+            " - 86400000 AND NOT EXISTS(SELECT 1 FROM library_management_job_snapshots link \
+             JOIN library_operation_jobs job ON job.id = link.job_id \
+             WHERE link.linked_operation_job_id = dead.job_id AND ",
+            $crate::jobs::sql::live_job!($now),
+            ")))"
+        )
+    };
+}
+pub(crate) use dead_preview;
 
 use super::WorkState;
 use droppedneedle_kernel::db::time::Millis;
@@ -210,6 +235,10 @@ pub(super) DISCARD_PREVIEW = "UPDATE library_operation_jobs SET state = 'cancell
          AND state IN ('ready', 'queued', 'paused', 'stopped', 'failed') \
          AND id IN (SELECT job_id FROM library_management_job_snapshots \
              WHERE phase IN ('planning', 'ready'))";
+/// A job whose plan items changed while nothing ran it (`?1`): its
+/// revisions move, so a page or a request that read the old plan sees it.
+pub(crate) PLAN_CHANGED = "UPDATE library_operation_jobs \
+         SET row_revision = row_revision + 1, event_revision = event_revision + 1 WHERE id = ?1";
 
 /// Ask the running worker to pause or stop.
 pub(super) CONTROL_REQUEST = "UPDATE library_operation_jobs SET control_request = :request, \

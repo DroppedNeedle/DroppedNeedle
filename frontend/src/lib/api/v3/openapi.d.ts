@@ -18689,6 +18689,11 @@ export interface components {
             operation_row_revision: number;
             origin: string;
             phase: components["schemas"]["ManagementPhase"];
+            /**
+             * @description The preview was never applied and its file list was cleared a day
+             *     after it expired; the summary still counts the files.
+             */
+            plan_cleared: boolean;
             profile_id: string;
             profile_name: string;
             profile_revision: string;

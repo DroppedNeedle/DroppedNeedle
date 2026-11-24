@@ -55,7 +55,8 @@ use std::time::Duration;
 use droppedneedle_kernel::jobs::queue::lease::Owner;
 use droppedneedle_kernel::jobs::schedule::SplitMix64;
 use droppedneedle_kernel::jobs::{
-    AlreadyRunning, CancellationToken, Next, Schedule, Supervisor, Tick, TickCtx, TickResult,
+    AlreadyRunning, CancellationToken, Next, Schedule, Supervisor, Tick, TickCtx, TickError,
+    TickResult,
 };
 
 use crate::jobs::MANAGEMENT_WAKEUP;
@@ -82,12 +83,23 @@ enum Step {
 /// The management worker's name on the supervisor.
 pub const JOB_NAME: &str = "library-management";
 
+/// The cleanup of previews that were never applied, on the supervisor.
+pub const PREVIEW_CLEANUP_JOB: &str = "library-management-preview-cleanup";
+/// The cleanup runs hourly, plus up to [`PREVIEW_CLEANUP_JITTER`], the
+/// first time about ten minutes after start.
+const PREVIEW_CLEANUP_EVERY: Duration = Duration::from_secs(3600);
+const PREVIEW_CLEANUP_FIRST: Duration = Duration::from_secs(600);
+const PREVIEW_CLEANUP_JITTER: Duration = Duration::from_secs(300);
+/// Row code of a cleanup pass that failed or found the database busy.
+const PREVIEW_CLEANUP_FAILED: &str = "PREVIEW_CLEANUP_FAILED";
+
 /// Start the management worker: plans and applies jobs and starts
 /// automatic management. It has its own loop so
 /// a long preview never holds up re-identification jobs. Its first turn
 /// runs at once and requeues the jobs an earlier process left running;
 /// after that a queued job wakes it.
 pub fn start(management: Management, supervisor: &Supervisor) -> Result<(), AlreadyRunning> {
+    let cleanup = management.clone();
     let mut wake = management.parts.wakeups.subscribe(MANAGEMENT_WAKEUP);
     wake.mark_changed();
     supervisor.on_wakeup(
@@ -100,6 +112,48 @@ pub fn start(management: Management, supervisor: &Supervisor) -> Result<(), Alre
             recovered: false,
             settle: automatic::Settle::default(),
             rng: SplitMix64::new(SplitMix64::seed_from_time()),
+        },
+    )?;
+    start_preview_cleanup(cleanup, supervisor)
+}
+
+/// Start the hourly cleanup of the plans of previews that were never
+/// applied, a day after they expired. It reads no setting: each preview's
+/// stored expiry carries the retention it was made under. A busy database
+/// fails the pass, so the loop backs off and the next pass carries on.
+fn start_preview_cleanup(
+    management: Management,
+    supervisor: &Supervisor,
+) -> Result<(), AlreadyRunning> {
+    supervisor.periodic_blocking(
+        PREVIEW_CLEANUP_JOB,
+        Schedule::new(PREVIEW_CLEANUP_EVERY)
+            .with_initial_delay(PREVIEW_CLEANUP_FIRST)
+            .with_jitter(PREVIEW_CLEANUP_JITTER)
+            .with_backoff(Duration::from_secs(60), PREVIEW_CLEANUP_EVERY),
+        move |ctx| {
+            let go_on = || {
+                ctx.heartbeat();
+                !ctx.token().is_cancelled()
+            };
+            let pass = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                management.clear_dead_previews(&go_on)
+            }))
+            .map_err(|_| TickError::new(PREVIEW_CLEANUP_FAILED, "preview cleanup panicked"))?;
+            match pass {
+                Ok(cleared) => {
+                    if cleared.items + cleared.refs > 0 {
+                        tracing::info!(
+                            previews = cleared.previews,
+                            items = cleared.items,
+                            generated_files = cleared.refs,
+                            "plans of previews a day past their expiry cleared"
+                        );
+                    }
+                    Ok(Next::Continue)
+                }
+                Err(error) => Err(TickError::new(PREVIEW_CLEANUP_FAILED, error)),
+            }
         },
     )
 }

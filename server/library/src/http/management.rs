@@ -54,6 +54,13 @@ impl From<ManagementError> for ApiError {
             ManagementError::Invalid(message) => ApiError::invalid_input(message),
             ManagementError::Conflict(message) => ApiError::conflict(message),
             ManagementError::Forbidden(message) => ApiError::forbidden(message),
+            // An apply that would begin past the preview's expiry is
+            // refused as the expiry check before it is.
+            ManagementError::Refused(reason)
+                if reason == crate::management::service::PREVIEW_EXPIRED =>
+            {
+                super::error::refused(axum::http::StatusCode::CONFLICT, reason)
+            }
             ManagementError::Refused(reason) => {
                 super::error::refused(axum::http::StatusCode::BAD_REQUEST, reason)
             }
@@ -153,6 +160,9 @@ pub struct ManagementJobView {
     pub updated_at: f64,
     pub expires_at: Option<f64>,
     pub expired: bool,
+    /// The preview was never applied and its file list was cleared a day
+    /// after it expired; the summary still counts the files.
+    pub plan_cleared: bool,
     pub stale: bool,
     /// Why the preview can no longer be applied, in words.
     pub stale_reasons: Vec<String>,
@@ -205,6 +215,7 @@ impl From<JobDetail> for ManagementJobView {
             updated_at: job.updated_at,
             expires_at: detail.expires_at,
             expired: detail.expired,
+            plan_cleared: detail.plan_cleared,
             stale: !detail.stale_reasons.is_empty(),
             stale_reasons: detail.stale_reasons,
             stale_input_count: 0,

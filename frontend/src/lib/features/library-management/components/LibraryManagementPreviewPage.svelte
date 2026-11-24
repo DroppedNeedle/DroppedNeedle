@@ -459,6 +459,12 @@
 					</div>
 				{:else if itemsQuery.isError}
 					<div class="alert alert-error" role="alert">Could not load preview items.</div>
+				{:else if preview.plan_cleared}
+					<div
+						class="rounded-2xl border border-dashed border-base-content/15 p-8 text-center text-muted"
+					>
+						This preview's file list was cleared a day after it expired.
+					</div>
 				{:else if filters.scope === 'changing' && !filters.narrowed()}
 					<div
 						class="rounded-2xl border border-dashed border-base-content/15 p-8 text-center text-muted"
