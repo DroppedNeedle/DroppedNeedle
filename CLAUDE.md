@@ -529,6 +529,8 @@ Run from the repo root. `make help` lists every target.
   rename, copy, link or remove in `library/src` outside `publish/`, except
   the lines it lists with their reasons.
 - Manual Apply uses the exact sealed preview and rejects stale state.
+- A preview that was never applied loses its plan items a day after it
+  expires; its job, snapshot and History stay.
 - A publish is checked against its own rows: each track's root, path,
   availability, stat revision and album, and the album's and track's
   identity (revision and ids), before staging and again inside its commit.
