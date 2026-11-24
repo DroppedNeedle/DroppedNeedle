@@ -56,7 +56,7 @@
 	.home-widget-body {
 		height: 100%;
 		min-height: 0;
-		padding: 10px 12px;
+		padding: 8px 12px;
 	}
 	.home-widget.is-editing {
 		border-color: var(--color-base-content);
