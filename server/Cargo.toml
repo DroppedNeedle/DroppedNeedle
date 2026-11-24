@@ -176,6 +176,18 @@ zip.workspace = true
 [profile.release]
 strip = true
 
+# A quicker optimized build for the image CI boots on every push: our crates
+# at opt-level 1 in many codegen units, third-party crates fully optimized.
+# Shipping builds (the dev image and releases) use the release profile.
+[profile.ci-e2e]
+inherits = "release"
+opt-level = 1
+codegen-units = 256
+lto = false
+
+[profile.ci-e2e.package."*"]
+opt-level = 3
+
 # Debug builds carry line tables for this crate and no debug info for
 # dependencies. Full debug info nearly doubled the time of a clean test
 # build and made the test binary over 1 GB. Panics and backtraces still
