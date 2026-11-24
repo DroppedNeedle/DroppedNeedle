@@ -27,7 +27,9 @@ use droppedneedle_auth::sqlite::UserConnections;
 use droppedneedle_auth::times::{parse_iso, to_iso};
 use droppedneedle_catalog::collections::db::StoreError;
 use droppedneedle_catalog::collections::store::PlaylistStore;
-use droppedneedle_catalog::collections::store::playlists::{CoverImage, NewEntry, Written};
+use droppedneedle_catalog::collections::store::playlists::{
+    CoverImage, NewEntry, SourceEntry, Written,
+};
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
@@ -314,20 +316,20 @@ impl CollectionsPlaylistBridge {
     }
 
     /// Replace every row on one of the user's playlists with `tracks`, in
-    /// order, in one transaction: a failed write keeps the rows the
-    /// playlist had. Then link the rows whose album the library owns.
+    /// order, and keep which Spotify song each row is, in one transaction:
+    /// a failed write keeps the rows the playlist had. Then link the rows
+    /// whose album the library owns.
     pub async fn replace_tracks(
         &self,
         user_id: &str,
         playlist_id: &str,
         tracks: &[ImportedTrack],
     ) -> Result<(), SpotifyError> {
-        let entries = tracks.iter().map(entry_for).collect();
+        let songs = tracks.iter().map(source_entry).collect();
         match self
             .playlists
             .owned_by(user_id)
-            .songs()
-            .replace_entries(playlist_id, entries)
+            .replace_from_source(playlist_id, songs)
             .await
             .map_err(|error| match error {
                 StoreError::Busy(_) => SpotifyError::Busy,
@@ -387,6 +389,15 @@ impl CollectionsPlaylistBridge {
     }
 }
 
+/// One imported track as a playlist entry and the Spotify song it is.
+pub(crate) fn source_entry(track: &ImportedTrack) -> SourceEntry {
+    SourceEntry {
+        song_id: track.song_id.clone(),
+        album: track.album.clone(),
+        entry: entry_for(track),
+    }
+}
+
 /// One imported track as a playlist entry.
 fn entry_for(track: &ImportedTrack) -> NewEntry {
     NewEntry {
@@ -403,6 +414,7 @@ fn entry_for(track: &ImportedTrack) -> NewEntry {
             .disc_number
             .and_then(|number| i32::try_from(number).ok()),
         duration: track.duration.map(|secs| secs as f64),
+        isrc: track.isrc.clone(),
         ..NewEntry::default()
     }
 }

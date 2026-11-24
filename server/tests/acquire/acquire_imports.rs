@@ -1308,6 +1308,26 @@ async fn spotify_import_populates_tracks_from_items() {
     assert_eq!(rows[1].album_id, None);
     assert_eq!(rows[1].duration, Some(201.0));
 
+    // Each row is kept as the Spotify song it is, with what Spotify says
+    // about its album, and carries the song's ISRC.
+    let songs = |playlist_id: &str| {
+        bundle.db.column::<String>(
+            "SELECT s.source_song_id || '|' || e.track_name || '|' || e.isrc || '|' \
+             || COALESCE(s.album_source_id, '') || '|' || s.album_title || '|' \
+             || s.album_artist || '|' || COALESCE(s.album_kind, '') || '|' \
+             || COALESCE(s.album_tracks, '') \
+             FROM catalog_playlist_source_songs s \
+             JOIN catalog_playlist_tracks e ON e.id = s.entry_id \
+             WHERE s.playlist_id = ?1 ORDER BY e.position",
+            [playlist_id],
+        )
+    };
+    let kept = [
+        "sp-track-1|Midnight Drive|USRC17607839|sp-album-1|Neon Meridian|Aurora Current|album|10",
+        "sp-track-2|Glass Tides|USRC17607840|sp-album-2|Glass Tides|Boreal Static||",
+    ];
+    assert_eq!(songs(&playlist_id), kept);
+
     // The cover persisted best-effort.
     let cover = bundle
         .playlists
@@ -1333,6 +1353,15 @@ async fn spotify_import_populates_tracks_from_items() {
             .await
             .len(),
         2
+    );
+    assert_eq!(songs(&playlist_id), kept, "the songs follow the new rows");
+    assert_eq!(
+        bundle.db.one::<i64>(
+            "SELECT COUNT(*) FROM catalog_playlist_source_songs WHERE playlist_id = ?1",
+            [&playlist_id],
+        ),
+        2,
+        "a repeat import replaces the songs it kept"
     );
 
     // Playlists now carry the imported mapping.
@@ -1796,6 +1825,9 @@ async fn spotify_sqlite_stores_persist_and_expire() {
         disc_number: Some(1),
         duration: Some(183),
         cover_url: None,
+        song_id: "sp-track-1".to_owned(),
+        isrc: None,
+        album: Default::default(),
     };
     db.write("test.owned_album", |tx| {
         tx.execute_batch(&format!(

@@ -9,13 +9,15 @@ use std::sync::Arc;
 
 use super::error::ImportsError;
 use super::models::{SpotifyAuthUrlResponse, SpotifyPlaylistItem, SpotifyPlaylistListResponse};
-use super::spotify_albums::{AlbumResolver, SpotifyAlbum};
+use super::spotify_albums::{AlbumResolver, SpotifyAlbum, clean_isrc};
 use super::spotify_client::{
     SpotifyClient, SpotifyError, TokenRefresher, best_image_url, playlist_track_count,
 };
 use super::spotify_oauth::SpotifyConnection;
 use super::spotify_store::{CollectionsPlaylistBridge, SqliteSpotifyLinks};
 use crate::settings::{ConfigSpotifySettings, settings_failed};
+use droppedneedle_catalog::collections::models::SourceAlbumKind;
+use droppedneedle_catalog::collections::store::playlists::SourceAlbum;
 use droppedneedle_kernel::runtime_config::ConfigError;
 use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::spotify::models::{EntryTrack, PlaylistInfo};
@@ -41,6 +43,74 @@ pub struct ImportedTrack {
     pub duration: Option<i64>,
     /// MB cover URL when resolved, else the Spotify image pick.
     pub cover_url: Option<String>,
+    /// Spotify's track id.
+    pub song_id: String,
+    /// The track's ISRC, uppercased, when Spotify gives a well-formed one.
+    pub isrc: Option<String>,
+    /// What Spotify says about the track's album.
+    pub album: SourceAlbum,
+}
+
+impl ImportedTrack {
+    /// One Spotify track as a playlist row, with the release group found
+    /// for its album when one was.
+    pub fn from_spotify(track: &EntryTrack, group: Option<String>) -> Self {
+        let album = track.album.as_ref();
+        let cover_url = match &group {
+            Some(group) => Some(format!("/api/v3/covers/release-group/{group}?size=250")),
+            None => best_image_url(album.and_then(|album| album.images.as_deref()), 250),
+        };
+        Self {
+            track_name: track.name.clone(),
+            artist_name: joined_artists(track),
+            album_name: album
+                .and_then(|album| album.name.clone())
+                .unwrap_or_default(),
+            album_id: group.unwrap_or_default(),
+            source_type: String::new(),
+            track_number: track.track_number,
+            disc_number: track.disc_number,
+            duration: track.duration_ms.map(|ms| ms / 1000),
+            cover_url,
+            song_id: track.id.clone().unwrap_or_default(),
+            isrc: track
+                .external_ids
+                .as_ref()
+                .and_then(|ids| ids.isrc.as_deref())
+                .and_then(clean_isrc),
+            album: source_album(track),
+        }
+    }
+}
+
+/// What Spotify says about a track's album: its id, title, first artist
+/// (else the track's), type and track count.
+pub fn source_album(track: &EntryTrack) -> SourceAlbum {
+    let album = track.album.as_ref();
+    SourceAlbum {
+        source_id: album
+            .and_then(|album| album.id.clone())
+            .filter(|id| (1..=64).contains(&id.len())),
+        title: album
+            .and_then(|album| album.name.clone())
+            .unwrap_or_default(),
+        artist: album
+            .and_then(|album| {
+                album
+                    .artists
+                    .iter()
+                    .filter_map(|artist| artist.name.as_deref())
+                    .find(|name| !name.is_empty())
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| first_artist(track)),
+        kind: album
+            .and_then(|album| album.album_type.as_deref())
+            .and_then(|kind| SourceAlbumKind::parse(&kind.to_ascii_lowercase())),
+        tracks: album
+            .and_then(|album| album.total_tracks)
+            .filter(|count| *count >= 1),
+    }
 }
 
 /// What a Spotify import step fails with.
@@ -258,27 +328,12 @@ impl SpotifyImportService {
         let rows: Vec<ImportedTrack> = tracks
             .iter()
             .map(|track| {
-                let album = track.album.as_ref();
-                let mbid = album
+                let group = track
+                    .album
+                    .as_ref()
                     .and_then(|album| album.id.as_deref())
                     .and_then(|id| album_mbid.get(id).cloned());
-                let cover_url = match &mbid {
-                    Some(mbid) => Some(format!("/api/v3/covers/release-group/{mbid}?size=250")),
-                    None => best_image_url(album.and_then(|album| album.images.as_deref()), 250),
-                };
-                ImportedTrack {
-                    track_name: track.name.clone(),
-                    artist_name: joined_artists(track),
-                    album_name: album
-                        .and_then(|album| album.name.clone())
-                        .unwrap_or_default(),
-                    album_id: mbid.unwrap_or_default(),
-                    source_type: String::new(),
-                    track_number: track.track_number,
-                    disc_number: track.disc_number,
-                    duration: track.duration_ms.map(|ms| ms / 1000),
-                    cover_url,
-                }
+                ImportedTrack::from_spotify(track, group)
             })
             .collect();
         let written = rows.len();

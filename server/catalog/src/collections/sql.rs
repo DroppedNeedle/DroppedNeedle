@@ -232,6 +232,38 @@ droppedneedle_kernel::sql! {
          cover_url = ?4, recording_mbid = COALESCE(?5, recording_mbid) \
          WHERE id = ?2 AND playlist_id = ?1 AND album_id IS NULL AND source_type = '' \
          AND library_file_id IS NULL";
+    /// Every source song playlist `?1` took.
+    pub(super) CLEAR_SOURCE_SONGS = "DELETE FROM catalog_playlist_source_songs \
+         WHERE playlist_id = ?1";
+    /// Playlist `?1` took source song `?2` as entry `?3` at `?4`, with what
+    /// the source said about its album: id `?5`, title `?6`, artist `?7`,
+    /// kind `?8` and track count `?9`. A song the playlist lists twice is
+    /// kept once, with its first entry.
+    pub(super) INSERT_SOURCE_SONG = "INSERT INTO catalog_playlist_source_songs \
+         (playlist_id, source_song_id, entry_id, seen_at, album_source_id, album_title, \
+         album_artist, album_kind, album_tracks) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
+         ON CONFLICT (playlist_id, source_song_id) DO NOTHING";
+    /// Whether playlist `?1` took source song `?2` before.
+    pub(super) SOURCE_SONG_SEEN = "SELECT 1 FROM catalog_playlist_source_songs \
+         WHERE playlist_id = ?1 AND source_song_id = ?2";
+    /// Whether playlist `?1` took any source song.
+    pub(super) HAS_SOURCE_SONGS = "SELECT EXISTS (SELECT 1 FROM catalog_playlist_source_songs \
+         WHERE playlist_id = ?1)";
+    /// The source songs playlist `?1` took.
+    pub(super) SOURCE_SONG_IDS = "SELECT source_song_id FROM catalog_playlist_source_songs \
+         WHERE playlist_id = ?1";
+    /// The entries of playlist `?1` in playlist order, with the names an
+    /// import wrote: what a playlist imported before its songs were kept is
+    /// told apart by.
+    pub(super) ENTRY_NAMES = "SELECT id AS entry_id, track_name, artist_name \
+         FROM catalog_playlist_tracks WHERE playlist_id = ?1 ORDER BY position";
+    /// One entry and the names it carries.
+    pub(super) row EntryNamed for [ENTRY_NAMES] {
+        entry_id: String,
+        track_name: String,
+        artist_name: String,
+    }
     /// What a link pass follows: the library's catalog revision, which
     /// every change to its albums and tracks moves, and the latest change
     /// to any playlist, which adding entries moves.

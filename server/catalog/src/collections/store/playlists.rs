@@ -25,7 +25,7 @@ use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 use super::super::db::{CollectionsDb, StoreError};
 use super::super::entry_cover::entry_cover;
 use super::super::identify_job::{IDENTIFY, IdentifyJob, identify_key};
-use super::super::models::{PlaylistMember, PlaylistTrack};
+use super::super::models::{PlaylistMember, PlaylistTrack, SourceAlbumKind};
 use super::super::sql::{self, PlaylistExportRow};
 use droppedneedle_auth::users::roles::Admin;
 use droppedneedle_kernel::db::{DbError, fold_text};
@@ -131,6 +131,111 @@ pub struct NewEntry {
     /// The ISRC a playlist file gave for an entry the library lacked,
     /// uppercased.
     pub isrc: Option<String>,
+}
+
+/// What a playlist's source said about one song's album, kept with the
+/// song so its album can be looked for again without asking the source.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SourceAlbum {
+    /// The source's album id.
+    pub source_id: Option<String>,
+    /// Album title.
+    pub title: String,
+    /// The album's first artist.
+    pub artist: String,
+    /// What the source files the album as.
+    pub kind: Option<SourceAlbumKind>,
+    /// Tracks on the album, as the source counts them.
+    pub tracks: Option<u32>,
+}
+
+/// One song taken from a playlist's source and the entry it becomes.
+#[derive(Debug, Clone)]
+pub struct SourceEntry {
+    /// The source's id for the song.
+    pub song_id: String,
+    /// What the source said about its album.
+    pub album: SourceAlbum,
+    /// The entry.
+    pub entry: NewEntry,
+}
+
+/// Where a sync puts the songs it adds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourcePlace {
+    /// After every entry, in the source's order.
+    End,
+    /// Before every entry, in the source's order: Liked Songs, newest
+    /// first.
+    Top,
+}
+
+/// What one sync write took from the source.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SourceTaken {
+    /// The new entries, in the order they were given.
+    pub added: Vec<String>,
+    /// Songs found already on the playlist, from an import made before its
+    /// songs were kept.
+    pub seeded: usize,
+}
+
+/// Keep that playlist `playlist_id` took `song` as `entry_id` at `now`.
+fn insert_source_song(
+    tx: &Transaction,
+    playlist_id: &str,
+    song: &SourceEntry,
+    entry_id: &str,
+    now: i64,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        sql::INSERT_SOURCE_SONG.text(),
+        params![
+            playlist_id,
+            song.song_id,
+            entry_id,
+            now,
+            song.album.source_id,
+            song.album.title,
+            song.album.artist,
+            song.album.kind,
+            song.album.tracks,
+        ],
+    )?;
+    Ok(())
+}
+
+/// The entries of a playlist imported before its songs were kept, each
+/// paired with the source song it already is: the first entry in playlist
+/// order with exactly that title and artist text, one to one. Names are
+/// compared only to tell which entry a song already is, never to pick an
+/// album. Answers the songs still to add, in order.
+fn seed_source_songs<'a>(
+    tx: &Transaction,
+    playlist_id: &str,
+    songs: &'a [SourceEntry],
+    now: i64,
+) -> rusqlite::Result<(Vec<&'a SourceEntry>, usize)> {
+    let mut unclaimed: Vec<sql::EntryNamed> = tx
+        .prepare(sql::ENTRY_NAMES.text())?
+        .query_map(params![playlist_id], sql::EntryNamed::read)?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut new = Vec::new();
+    let mut seeded = 0;
+    for song in songs {
+        let same = unclaimed.iter().position(|named| {
+            named.track_name == song.entry.track_name && named.artist_name == song.entry.artist_name
+        });
+        match same {
+            Some(at) => {
+                let named = unclaimed.remove(at);
+                insert_source_song(tx, playlist_id, song, &named.entry_id, now)?;
+                seeded += 1;
+            }
+            None => new.push(song),
+        }
+    }
+    Ok((new, seeded))
 }
 
 /// A song an import kept that still waits for its album: no source, no
@@ -741,6 +846,24 @@ impl PlaylistStore {
                     tx.execute(sql::STAMP.text(), params![now, playlist_id])?;
                 }
                 Ok(changed)
+            })
+            .await
+    }
+
+    /// The source songs `playlist_id` has taken, whether or not their
+    /// entries are still there.
+    pub async fn source_song_ids(
+        &self,
+        playlist_id: &str,
+    ) -> Result<std::collections::HashSet<String>, StoreError> {
+        let playlist_id = playlist_id.to_owned();
+        self.db
+            .read("playlists.source_song_ids", move |conn| {
+                let ids = conn
+                    .prepare(sql::SOURCE_SONG_IDS.text())?
+                    .query_map(params![playlist_id], |row| row.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<_>>()?;
+                Ok(ids)
             })
             .await
     }
@@ -1468,6 +1591,100 @@ impl OwnedPlaylists<'_> {
                     created_at,
                     updated_at: epoch(now / 1000),
                 }))
+            })
+            .await
+    }
+
+    /// Replace every entry with the songs an import took from the
+    /// playlist's source, in order, and keep which source song each entry
+    /// is, in one transaction: a write that fails leaves the old entries
+    /// and songs in place.
+    pub async fn replace_from_source(
+        &self,
+        playlist_id: &str,
+        songs: Vec<SourceEntry>,
+    ) -> Result<Written<()>, StoreError> {
+        let (user_id, playlist_id) = (self.user_id.to_owned(), playlist_id.to_owned());
+        let now = self.store.db.now_ms();
+        self.store
+            .db
+            .write("playlists.replace_from_source", move |tx| {
+                if !touch(tx, &playlist_id, &user_id, now)? {
+                    return Ok(Written::Missing);
+                }
+                tx.execute(sql::CLEAR_SOURCE_SONGS.text(), params![playlist_id])?;
+                tx.execute(sql::CLEAR_ENTRIES.text(), params![playlist_id])?;
+                let entries: Vec<NewEntry> = songs.iter().map(|song| song.entry.clone()).collect();
+                let added = insert_entries(tx, &playlist_id, None, &entries, now)?;
+                for (song, entry_id) in songs.iter().zip(&added) {
+                    insert_source_song(tx, &playlist_id, song, entry_id, now)?;
+                }
+                Ok(Written::Done(()))
+            })
+            .await
+    }
+
+    /// Add the songs of the playlist's source it has not taken before, at
+    /// `place`, and keep that it took them, in one transaction. A song
+    /// taken before is skipped, whether or not its entry is still there, so
+    /// a repeated write adds nothing and a song removed by hand is never
+    /// added back. A playlist that has taken no song yet (one imported
+    /// before its songs were kept) first pairs its entries with the songs
+    /// they already are ([`seed_source_songs`]). The source gives each song
+    /// once.
+    pub async fn append_from_source(
+        &self,
+        playlist_id: &str,
+        songs: Vec<SourceEntry>,
+        place: SourcePlace,
+    ) -> Result<Written<SourceTaken>, StoreError> {
+        let (user_id, playlist_id) = (self.user_id.to_owned(), playlist_id.to_owned());
+        let now = self.store.db.now_ms();
+        self.store
+            .db
+            .write("playlists.append_from_source", move |tx| {
+                if !owns(tx, &playlist_id, &user_id)? {
+                    return Ok(Written::Missing);
+                }
+                let any: bool =
+                    tx.query_row(sql::HAS_SOURCE_SONGS.text(), params![playlist_id], |row| {
+                        row.get(0)
+                    })?;
+                let (candidates, seeded) = if any {
+                    (songs.iter().collect(), 0)
+                } else {
+                    seed_source_songs(tx, &playlist_id, &songs, now)?
+                };
+                let mut new = Vec::with_capacity(candidates.len());
+                for song in candidates {
+                    let seen = tx
+                        .query_row(
+                            sql::SOURCE_SONG_SEEN.text(),
+                            params![playlist_id, song.song_id],
+                            |_| Ok(()),
+                        )
+                        .optional()?;
+                    if seen.is_none() {
+                        new.push(song);
+                    }
+                }
+                if new.is_empty() {
+                    return Ok(Written::Done(SourceTaken {
+                        added: Vec::new(),
+                        seeded,
+                    }));
+                }
+                let entries: Vec<NewEntry> = new.iter().map(|song| song.entry.clone()).collect();
+                let position = match place {
+                    SourcePlace::End => None,
+                    SourcePlace::Top => Some(0),
+                };
+                let added = insert_entries(tx, &playlist_id, position, &entries, now)?;
+                for (song, entry_id) in new.iter().zip(&added) {
+                    insert_source_song(tx, &playlist_id, song, entry_id, now)?;
+                }
+                touch(tx, &playlist_id, &user_id, now)?;
+                Ok(Written::Done(SourceTaken { added, seeded }))
             })
             .await
     }

@@ -10,6 +10,56 @@ use super::store::ratings::RatedKind;
 
 // Playlists.
 
+/// What a playlist's source files a song's album as: the values of
+/// `catalog_playlist_source_songs.album_kind`. Any other value the source
+/// sends is stored as none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SourceAlbumKind {
+    /// An album.
+    Album,
+    /// A single or an EP.
+    Single,
+    /// A compilation: a greatest hits, a soundtrack, a various-artists set.
+    Compilation,
+}
+
+droppedneedle_kernel::spelled!(SourceAlbumKind {
+    Album => "album",
+    Single => "single",
+    Compilation => "compilation",
+});
+
+/// How a synced song's album was chosen when it is not the source's own
+/// filing: the values of `catalog_playlist_source_songs.album_pick`. No
+/// value is as the source files it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AlbumPick {
+    /// Moved to the artist's own album, where the same recording is.
+    OwnAlbum,
+    /// A person kept the source's album over the artist's own.
+    KeptSpotify,
+}
+
+droppedneedle_kernel::spelled!(AlbumPick {
+    OwnAlbum => "own_album",
+    KeptSpotify => "kept_spotify",
+});
+
+/// What a sync filed for a song: the values of
+/// `catalog_playlist_source_songs.filed_kind`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FiledKind {
+    /// The song's album.
+    Album,
+    /// The song alone.
+    Track,
+}
+
+droppedneedle_kernel::spelled!(FiledKind {
+    Album => "album",
+    Track => "track",
+});
+
 /// One track inside a playlist.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PlaylistTrack {

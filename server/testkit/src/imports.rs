@@ -449,7 +449,11 @@ async fn spotify_items(
             {"track": {
                 "id": "sp-track-1", "type": "track", "name": "Midnight Drive",
                 "artists": [{"name": "Aurora Current"}],
-                "album": {"id": "sp-album-1", "name": "Neon Meridian", "images": []},
+                "album": {
+                    "id": "sp-album-1", "name": "Neon Meridian", "images": [],
+                    "artists": [{"name": "Aurora Current"}],
+                    "album_type": "album", "total_tracks": 10,
+                },
                 "external_ids": {"isrc": "USRC17607839"},
                 "track_number": 1, "disc_number": 1, "duration_ms": 183000,
             }},

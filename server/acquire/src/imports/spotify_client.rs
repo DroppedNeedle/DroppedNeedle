@@ -289,7 +289,9 @@ impl SpotifyClient {
                 let Some(track) = entry.track.or(entry.item) else {
                     continue;
                 };
-                if track.id.as_deref().unwrap_or("").is_empty() {
+                // Spotify's ids are 22 characters; one past 64 is not a
+                // track id a later read can name again.
+                if !(1..=64).contains(&track.id.as_deref().unwrap_or("").len()) {
                     continue;
                 }
                 if track.kind.as_deref().unwrap_or("track") != "track" {

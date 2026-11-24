@@ -183,6 +183,7 @@ catalog_new_release_seen_marks
 catalog_page_generations
 catalog_playlist_covers
 catalog_playlist_members
+catalog_playlist_source_songs
 catalog_playlist_tracks
 catalog_playlists
 catalog_taste_artists

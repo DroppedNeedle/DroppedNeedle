@@ -72,7 +72,7 @@ fn schema_rows(connection: &Connection) -> Vec<(String, String, String, Option<S
 fn fresh_migrate_marks_version_and_seeds() {
     let connection = migrated();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), latest_version());
-    assert_eq!(table_names(&connection).len(), 200);
+    assert_eq!(table_names(&connection).len(), 201);
     assert_eq!(
         scalar(
             &connection,
@@ -444,6 +444,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0168_later_albums.sql",
         "4f9aa6692cc7024c8fc2a0ae39b485de626cb4297844c77a26d0b43cc567f80e",
+    ),
+    (
+        "0169_playlist_source_songs.sql",
+        "b8cf02e4357a3c34d3041f2824dc89bd98ae21d5a4666e4a37ec48bf8e6836f3",
     ),
 ];
 
@@ -3524,6 +3528,106 @@ fn later_albums_upgrade_adds_one_empty_table() {
     );
 }
 
+/// 0169 adds the songs a playlist took from its source, empty: a playlist
+/// imported before has none, and nothing else changes. A song's row
+/// outlives its entry, goes with its playlist, and holds only the album
+/// kinds and picks its enums spell.
+#[test]
+fn playlist_source_songs_upgrade_adds_an_empty_table() {
+    let dir = ScratchDir::new("playlist-source-songs-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 169)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 168);
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, created_at) VALUES ('u1', 'One', 1);
+             INSERT INTO catalog_playlists (id, name, created_at, updated_at, user_id, is_public,
+                 source_ref) VALUES ('p1', 'Road Trip', 1, 1, 'u1', 0, 'spotify:sp1');
+             INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name,
+                 artist_name, album_name, source_type, created_at)
+                 VALUES ('e1', 'p1', 0, 'Song', 'Someone', 'Album', '', 1),
+                        ('e2', 'p1', 1, 'Other', 'Someone', 'Album', '', 1);",
+        )
+        .unwrap();
+    let kept = ["auth_users", "catalog_playlists", "catalog_playlist_tracks"];
+    let before_schema = schema_rows(&connection);
+    let before: Vec<Vec<String>> = kept
+        .iter()
+        .map(|table| table_rows(&connection, table, "rowid, *"))
+        .collect();
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON")
+        .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 169);
+    for (table, rows) in kept.iter().zip(&before) {
+        assert_eq!(&table_rows(&connection, table, "rowid, *"), rows, "{table}");
+    }
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT COUNT(*) FROM catalog_playlist_source_songs"
+        ),
+        0,
+        "a playlist imported before has no songs kept"
+    );
+    let mut after_schema = schema_rows(&connection);
+    after_schema.retain(|(_, _, table, _)| table != "catalog_playlist_source_songs");
+    assert_eq!(after_schema, before_schema, "nothing else changes");
+
+    connection
+        .execute_batch(
+            "INSERT INTO catalog_playlist_source_songs (playlist_id, source_song_id, entry_id,
+                 seen_at, album_source_id, album_title, album_artist, album_kind, album_tracks,
+                 album_pick)
+                 VALUES ('p1', 'sp-t1', 'e1', 1, 'sp-a1', 'Album', 'Someone', 'compilation', 12,
+                     'own_album'),
+                        ('p1', 'sp-t2', 'e2', 1, NULL, '', '', NULL, NULL, NULL);
+             DELETE FROM catalog_playlist_tracks WHERE id = 'e1';",
+        )
+        .expect("songs are kept");
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT source_song_id || ':' || COALESCE(entry_id, '-') \
+             FROM catalog_playlist_source_songs ORDER BY source_song_id",
+            []
+        ),
+        ["sp-t1:-", "sp-t2:e2"],
+        "a song removed by hand stays kept"
+    );
+    for refused in [
+        "UPDATE catalog_playlist_source_songs SET album_kind = 'ep' WHERE source_song_id = 'sp-t2'",
+        "UPDATE catalog_playlist_source_songs SET album_pick = 'mine' WHERE source_song_id = 'sp-t2'",
+        "UPDATE catalog_playlist_source_songs SET album_tracks = 0 WHERE source_song_id = 'sp-t2'",
+        "UPDATE catalog_playlist_source_songs SET source_song_id = '' WHERE source_song_id = 'sp-t2'",
+    ] {
+        assert!(connection.execute_batch(refused).is_err(), "{refused}");
+    }
+    connection
+        .execute_batch("DELETE FROM catalog_playlists WHERE id = 'p1'")
+        .unwrap();
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT COUNT(*) FROM catalog_playlist_source_songs"
+        ),
+        0,
+        "the songs go with their playlist"
+    );
+}
+
 /// 0146 adds the table of recycle bin paths v2 used, empty, and changes
 /// nothing else: only an upgrade from v2 records a path in it.
 #[test]
@@ -3847,6 +3951,8 @@ const FOREIGN_KEYS: &[(&str, &str, &str, &str)] = &[
     ("catalog_playlist_covers", "playlist_id", "catalog_playlists", "CASCADE"),
     ("catalog_playlist_members", "playlist_id", "catalog_playlists", "CASCADE"),
     ("catalog_playlist_members", "user_id", "auth_users", "CASCADE"),
+    ("catalog_playlist_source_songs", "entry_id", "catalog_playlist_tracks", "SET NULL"),
+    ("catalog_playlist_source_songs", "playlist_id", "catalog_playlists", "CASCADE"),
     ("catalog_playlist_tracks", "playlist_id", "catalog_playlists", "CASCADE"),
     ("catalog_playlists", "user_id", "auth_users", "CASCADE"),
     ("catalog_taste_artists", "user_id", "auth_users", "CASCADE"),
@@ -4409,6 +4515,7 @@ fn state_columns() -> Vec<StateColumn> {
     use droppedneedle_auth::federated::password_import::HashScheme;
     use droppedneedle_auth::session::store::SessionKind;
     use droppedneedle_auth::users::roles::Role;
+    use droppedneedle_catalog::collections::models::{AlbumPick, FiledKind, SourceAlbumKind};
     use droppedneedle_catalog::collections::store::favorites::FavoriteKind;
     use droppedneedle_catalog::collections::store::ratings::RatedKind;
     use droppedneedle_catalog::concerts::matching::{Confidence, TmBasis};
@@ -4520,6 +4627,9 @@ fn state_columns() -> Vec<StateColumn> {
         state("catalog_live_event_feed", "match_confidence", &Confidence::ALL, Confidence::as_str),
         state("catalog_live_event_feed", "source", &EventSource::ALL, EventSource::as_str),
         state("catalog_live_event_feed", "status", &ConcertStatus::ALL, ConcertStatus::as_str),
+        state("catalog_playlist_source_songs", "album_kind", &SourceAlbumKind::ALL, SourceAlbumKind::as_str),
+        state("catalog_playlist_source_songs", "album_pick", &AlbumPick::ALL, AlbumPick::as_str),
+        state("catalog_playlist_source_songs", "filed_kind", &FiledKind::ALL, FiledKind::as_str),
         state("catalog_taste_groups", "trend", &Trend::ALL, Trend::as_str),
         state("catalog_user_favorites", "item_kind", &FavoriteKind::ALL, FavoriteKind::as_str),
         state("catalog_user_ratings", "item_kind", &RatedKind::ALL, RatedKind::as_str),

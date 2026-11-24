@@ -841,6 +841,12 @@ fn title_forms(title: &str) -> Vec<String> {
     forms
 }
 
+/// `raw` uppercased when it is a well-formed ISRC.
+pub(crate) fn clean_isrc(raw: &str) -> Option<String> {
+    let isrc = raw.trim().to_ascii_uppercase();
+    is_isrc(&isrc).then_some(isrc)
+}
+
 /// `CC XXX YY NNNNN`: two letters, three letters or digits, then seven
 /// digits.
 fn is_isrc(value: &str) -> bool {
