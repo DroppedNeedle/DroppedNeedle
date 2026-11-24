@@ -6498,6 +6498,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/me/year-in-review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The years the caller can look back on: the current one, then each
+         *     earlier year with a play, newest first.
+         */
+        get: operations["me_list_year_reviews"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/me/year-in-review/{year}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's review of one year. */
+        get: operations["me_get_year_review"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/now-playing": {
         parameters: {
             query?: never;
@@ -27341,6 +27378,241 @@ export interface components {
              */
             year: number;
         };
+        /** @description A person's year of plays made here. */
+        YearReview: {
+            /**
+             * Format: int64
+             * @description Distinct artists played.
+             */
+            artists: number;
+            /** @description The day with most plays; null under too few plays. */
+            busiest_day?: null | components["schemas"]["YearReviewDay"];
+            /** @description The month with most plays; null under too few plays. */
+            busiest_month?: null | components["schemas"]["YearReviewMonth"];
+            /**
+             * Format: int64
+             * @description Days with at least one play.
+             */
+            days_played: number;
+            /** @description 1 January, as an ISO date. */
+            first_day: string;
+            /** @description The year's first play; null under too few plays. */
+            first_play?: null | components["schemas"]["YearReviewFirstPlay"];
+            /** @description 31 December, or today while the year is in progress, as an ISO date. */
+            last_day: string;
+            /**
+             * Format: int64
+             * @description The lengths of the songs played, in milliseconds.
+             */
+            listened_ms: number;
+            /** @description The most days in a row with a play; null under too few plays. */
+            longest_streak?: null | components["schemas"]["YearReviewStreak"];
+            /** @description Plays in each month, January first. */
+            months: number[];
+            /**
+             * @description Artists first played this year. Null in a person's first year (no
+             *     play here and no imported listen before it), and under too few plays.
+             */
+            new_artists?: null | components["schemas"]["YearReviewNewArtists"];
+            /**
+             * Format: int64
+             * @description Plays made here that year.
+             */
+            plays: number;
+            /**
+             * Format: int64
+             * @description Plays with no known length, left out of `listened_ms`.
+             */
+            plays_without_length: number;
+            /** @description How far the review has come. */
+            state: components["schemas"]["YearReviewState"];
+            /** @description Up to ten albums, most played first. */
+            top_albums: components["schemas"]["YearReviewAlbum"][];
+            /** @description Up to ten artists, most played first. */
+            top_artists: components["schemas"]["YearReviewArtist"][];
+            /** @description Up to ten songs, most played first. */
+            top_songs: components["schemas"]["YearReviewSong"][];
+            /**
+             * Format: int32
+             * @description The calendar year.
+             */
+            year: number;
+            /** @description The IANA name of the time zone the year was counted in. */
+            zone: string;
+        };
+        /** @description An album in a list. */
+        YearReviewAlbum: {
+            /** @description True when the library has no cover to show for it. */
+            art_missing: boolean;
+            /** @description Its album artist. */
+            artist_name: string;
+            /**
+             * @description True when the album has art of its own (a folder or embedded
+             *     image), which the library cover route serves.
+             */
+            cover_available: boolean;
+            /** @description The library album. */
+            id: string;
+            /** @description Its title. */
+            name: string;
+            /**
+             * Format: int64
+             * @description Plays that year (or that month, for the busiest month's album).
+             */
+            plays: number;
+            /**
+             * @description Its release group, when it is matched: the cover the web UI falls
+             *     back to when the album has no art of its own.
+             */
+            release_group_mbid?: string | null;
+        };
+        /** @description An artist in a list. */
+        YearReviewArtist: {
+            /** @description True when the library has no picture to show for it. */
+            art_missing: boolean;
+            /** @description The library artist; null for plays filed by name alone. */
+            id?: string | null;
+            /**
+             * @description Its MusicBrainz id, for the artist's photo; null when it has none
+             *     or for plays filed by name alone.
+             */
+            mbid?: string | null;
+            /** @description Its name. */
+            name: string;
+            /**
+             * Format: int64
+             * @description Plays that year.
+             */
+            plays: number;
+        };
+        /** @description The day with most plays. */
+        YearReviewDay: {
+            /** @description The day, as an ISO date. */
+            date: string;
+            /**
+             * Format: int64
+             * @description Plays that day.
+             */
+            plays: number;
+        };
+        /** @description The first new artist met. */
+        YearReviewFirstArtist: {
+            /** @description The artist. */
+            artist: components["schemas"]["YearReviewArtist"];
+            /** @description The day of its first play, as an ISO date. */
+            date: string;
+        };
+        /** @description The year's first play. */
+        YearReviewFirstPlay: {
+            /** @description Its artist. */
+            artist: string;
+            /**
+             * Format: int64
+             * @description When it was played, unix milliseconds.
+             */
+            played_at_ms: number;
+            /** @description The song's title. */
+            song: string;
+        };
+        /** @description The month with most plays. */
+        YearReviewMonth: {
+            /**
+             * @description The album played most that month, with its plays that month; null
+             *     when no album has 5.
+             */
+            album?: null | components["schemas"]["YearReviewAlbum"];
+            /**
+             * Format: int32
+             * @description The month, 1 for January.
+             */
+            month: number;
+            /**
+             * Format: int64
+             * @description Plays that month.
+             */
+            plays: number;
+        };
+        /** @description Artists first played this year. */
+        YearReviewNewArtists: {
+            /** @description Up to eight of them, most played first. */
+            artists: components["schemas"]["YearReviewArtist"][];
+            /**
+             * Format: int64
+             * @description How many.
+             */
+            count: number;
+            /** @description The first of them met; null when there is none. */
+            first?: null | components["schemas"]["YearReviewFirstArtist"];
+        };
+        /** @description A song in a list: one recording, however many copies of it were played. */
+        YearReviewSong: {
+            /** @description That track's album; null when it has none. */
+            album_id?: string | null;
+            /** @description That album's title; null when `album_id` is. */
+            album_name?: string | null;
+            /** @description True when the library has no cover to show for its album. */
+            art_missing: boolean;
+            /** @description Its artist. */
+            artist_name: string;
+            /**
+             * @description True when that album has art of its own (a folder or embedded
+             *     image), which the library cover route serves.
+             */
+            cover_available: boolean;
+            /** @description The library track played most for it; null when none was. */
+            id?: string | null;
+            /** @description The song's title. */
+            name: string;
+            /**
+             * Format: int64
+             * @description Plays that year.
+             */
+            plays: number;
+            /**
+             * @description That album's release group, when it is matched: the cover the web
+             *     UI falls back to when the album has no art of its own.
+             */
+            release_group_mbid?: string | null;
+        };
+        /**
+         * @description How far a year's review has come.
+         * @enum {string}
+         */
+        YearReviewState: "in_progress" | "complete" | "too_few_plays";
+        /** @description The most days in a row with a play. */
+        YearReviewStreak: {
+            /**
+             * Format: int64
+             * @description How many days.
+             */
+            days: number;
+            /** @description Its first day, as an ISO date. */
+            first_day: string;
+            /** @description Its last day, as an ISO date. */
+            last_day: string;
+        };
+        /** @description One year in the list. */
+        YearReviewYear: {
+            /**
+             * Format: int64
+             * @description Plays made here that year.
+             */
+            plays: number;
+            /** @description How far its review has come. */
+            state: components["schemas"]["YearReviewState"];
+            /**
+             * Format: int32
+             * @description The calendar year.
+             */
+            year: number;
+        };
+        /** @description The years a person can look back on, newest first. */
+        YearReviewYears: {
+            /** @description The current year, then each earlier year with a play. */
+            years: components["schemas"]["YearReviewYear"][];
+            /** @description The IANA name of the time zone the years were counted in. */
+            zone: string;
+        };
         /** @description YouTube connection. */
         YouTubeConnection: {
             /**
@@ -44976,6 +45248,118 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+        };
+    };
+    me_list_year_reviews: {
+        parameters: {
+            query?: {
+                /** @description IANA time zone to count in; the server's when missing or unknown */
+                zone?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's years */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["YearReviewYears"];
+                };
+            };
+            /** @description The zone is not a time zone name */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The server is busy; try again */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    me_get_year_review: {
+        parameters: {
+            query?: {
+                /** @description IANA time zone to count in; the server's when missing or unknown */
+                zone?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Calendar year, 1 to 9999; anything else answers 404 */
+                year: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's year */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["YearReview"];
+                };
+            };
+            /** @description The zone is not a time zone name */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No review for that year (YEAR_NOT_FOUND) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The server is busy; try again */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

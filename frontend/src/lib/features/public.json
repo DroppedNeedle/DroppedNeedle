@@ -182,5 +182,6 @@
 		"queries/plugins/PluginSourceQueries.svelte.ts"
 	],
 	"upgrade": [],
+	"year": [],
 	"youtube": ["components/AlbumYouTubeBar.svelte", "queries/types.ts", "queries/youtube.svelte.ts"]
 }

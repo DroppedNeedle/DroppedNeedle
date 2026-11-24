@@ -24961,6 +24961,163 @@
         ]
       }
     },
+    "/api/v3/me/year-in-review": {
+      "get": {
+        "tags": [
+          "year"
+        ],
+        "summary": "The years the caller can look back on: the current one, then each\nearlier year with a play, newest first.",
+        "operationId": "me_list_year_reviews",
+        "parameters": [
+          {
+            "name": "zone",
+            "in": "query",
+            "description": "IANA time zone to count in; the server's when missing or unknown",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The caller's years",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YearReviewYears"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The zone is not a time zone name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server is busy; try again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/me/year-in-review/{year}": {
+      "get": {
+        "tags": [
+          "year"
+        ],
+        "summary": "The caller's review of one year.",
+        "operationId": "me_get_year_review",
+        "parameters": [
+          {
+            "name": "year",
+            "in": "path",
+            "description": "Calendar year, 1 to 9999; anything else answers 404",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "zone",
+            "in": "query",
+            "description": "IANA time zone to count in; the server's when missing or unknown",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The caller's year",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YearReview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The zone is not a time zone name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No review for that year (YEAR_NOT_FOUND)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server is busy; try again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/now-playing": {
       "get": {
         "tags": [
@@ -75685,6 +75842,523 @@
             "type": "integer",
             "format": "int32",
             "description": "Year the stats cover."
+          }
+        }
+      },
+      "YearReview": {
+        "type": "object",
+        "description": "A person's year of plays made here.",
+        "required": [
+          "year",
+          "zone",
+          "state",
+          "first_day",
+          "last_day",
+          "plays",
+          "artists",
+          "days_played",
+          "listened_ms",
+          "plays_without_length",
+          "top_albums",
+          "top_artists",
+          "top_songs",
+          "months"
+        ],
+        "properties": {
+          "artists": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Distinct artists played.",
+            "minimum": 0
+          },
+          "busiest_day": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/YearReviewDay"
+              }
+            ],
+            "description": "The day with most plays; null under too few plays."
+          },
+          "busiest_month": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/YearReviewMonth"
+              }
+            ],
+            "description": "The month with most plays; null under too few plays."
+          },
+          "days_played": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Days with at least one play.",
+            "minimum": 0
+          },
+          "first_day": {
+            "type": "string",
+            "description": "1 January, as an ISO date."
+          },
+          "first_play": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/YearReviewFirstPlay"
+              }
+            ],
+            "description": "The year's first play; null under too few plays."
+          },
+          "last_day": {
+            "type": "string",
+            "description": "31 December, or today while the year is in progress, as an ISO date."
+          },
+          "listened_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The lengths of the songs played, in milliseconds.",
+            "minimum": 0
+          },
+          "longest_streak": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/YearReviewStreak"
+              }
+            ],
+            "description": "The most days in a row with a play; null under too few plays."
+          },
+          "months": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            },
+            "description": "Plays in each month, January first."
+          },
+          "new_artists": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/YearReviewNewArtists"
+              }
+            ],
+            "description": "Artists first played this year. Null in a person's first year (no\nplay here and no imported listen before it), and under too few plays."
+          },
+          "plays": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Plays made here that year.",
+            "minimum": 0
+          },
+          "plays_without_length": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Plays with no known length, left out of `listened_ms`.",
+            "minimum": 0
+          },
+          "state": {
+            "$ref": "#/components/schemas/YearReviewState",
+            "description": "How far the review has come."
+          },
+          "top_albums": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/YearReviewAlbum"
+            },
+            "description": "Up to ten albums, most played first."
+          },
+          "top_artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/YearReviewArtist"
+            },
+            "description": "Up to ten artists, most played first."
+          },
+          "top_songs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/YearReviewSong"
+            },
+            "description": "Up to ten songs, most played first."
+          },
+          "year": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The calendar year."
+          },
+          "zone": {
+            "type": "string",
+            "description": "The IANA name of the time zone the year was counted in."
+          }
+        }
+      },
+      "YearReviewAlbum": {
+        "type": "object",
+        "description": "An album in a list.",
+        "required": [
+          "id",
+          "name",
+          "artist_name",
+          "plays",
+          "cover_available",
+          "art_missing"
+        ],
+        "properties": {
+          "art_missing": {
+            "type": "boolean",
+            "description": "True when the library has no cover to show for it."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Its album artist."
+          },
+          "cover_available": {
+            "type": "boolean",
+            "description": "True when the album has art of its own (a folder or embedded\nimage), which the library cover route serves."
+          },
+          "id": {
+            "type": "string",
+            "description": "The library album."
+          },
+          "name": {
+            "type": "string",
+            "description": "Its title."
+          },
+          "plays": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Plays that year (or that month, for the busiest month's album).",
+            "minimum": 0
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its release group, when it is matched: the cover the web UI falls\nback to when the album has no art of its own."
+          }
+        }
+      },
+      "YearReviewArtist": {
+        "type": "object",
+        "description": "An artist in a list.",
+        "required": [
+          "name",
+          "plays",
+          "art_missing"
+        ],
+        "properties": {
+          "art_missing": {
+            "type": "boolean",
+            "description": "True when the library has no picture to show for it."
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The library artist; null for plays filed by name alone."
+          },
+          "mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its MusicBrainz id, for the artist's photo; null when it has none\nor for plays filed by name alone."
+          },
+          "name": {
+            "type": "string",
+            "description": "Its name."
+          },
+          "plays": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Plays that year.",
+            "minimum": 0
+          }
+        }
+      },
+      "YearReviewDay": {
+        "type": "object",
+        "description": "The day with most plays.",
+        "required": [
+          "date",
+          "plays"
+        ],
+        "properties": {
+          "date": {
+            "type": "string",
+            "description": "The day, as an ISO date."
+          },
+          "plays": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Plays that day.",
+            "minimum": 0
+          }
+        }
+      },
+      "YearReviewFirstArtist": {
+        "type": "object",
+        "description": "The first new artist met.",
+        "required": [
+          "artist",
+          "date"
+        ],
+        "properties": {
+          "artist": {
+            "$ref": "#/components/schemas/YearReviewArtist",
+            "description": "The artist."
+          },
+          "date": {
+            "type": "string",
+            "description": "The day of its first play, as an ISO date."
+          }
+        }
+      },
+      "YearReviewFirstPlay": {
+        "type": "object",
+        "description": "The year's first play.",
+        "required": [
+          "played_at_ms",
+          "song",
+          "artist"
+        ],
+        "properties": {
+          "artist": {
+            "type": "string",
+            "description": "Its artist."
+          },
+          "played_at_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it was played, unix milliseconds."
+          },
+          "song": {
+            "type": "string",
+            "description": "The song's title."
+          }
+        }
+      },
+      "YearReviewMonth": {
+        "type": "object",
+        "description": "The month with most plays.",
+        "required": [
+          "month",
+          "plays"
+        ],
+        "properties": {
+          "album": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/YearReviewAlbum"
+              }
+            ],
+            "description": "The album played most that month, with its plays that month; null\nwhen no album has 5."
+          },
+          "month": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The month, 1 for January.",
+            "minimum": 0
+          },
+          "plays": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Plays that month.",
+            "minimum": 0
+          }
+        }
+      },
+      "YearReviewNewArtists": {
+        "type": "object",
+        "description": "Artists first played this year.",
+        "required": [
+          "count",
+          "artists"
+        ],
+        "properties": {
+          "artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/YearReviewArtist"
+            },
+            "description": "Up to eight of them, most played first."
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many.",
+            "minimum": 0
+          },
+          "first": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/YearReviewFirstArtist"
+              }
+            ],
+            "description": "The first of them met; null when there is none."
+          }
+        }
+      },
+      "YearReviewSong": {
+        "type": "object",
+        "description": "A song in a list: one recording, however many copies of it were played.",
+        "required": [
+          "cover_available",
+          "name",
+          "artist_name",
+          "plays",
+          "art_missing"
+        ],
+        "properties": {
+          "album_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "That track's album; null when it has none."
+          },
+          "album_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "That album's title; null when `album_id` is."
+          },
+          "art_missing": {
+            "type": "boolean",
+            "description": "True when the library has no cover to show for its album."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Its artist."
+          },
+          "cover_available": {
+            "type": "boolean",
+            "description": "True when that album has art of its own (a folder or embedded\nimage), which the library cover route serves."
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The library track played most for it; null when none was."
+          },
+          "name": {
+            "type": "string",
+            "description": "The song's title."
+          },
+          "plays": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Plays that year.",
+            "minimum": 0
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "That album's release group, when it is matched: the cover the web\nUI falls back to when the album has no art of its own."
+          }
+        }
+      },
+      "YearReviewState": {
+        "type": "string",
+        "description": "How far a year's review has come.",
+        "enum": [
+          "in_progress",
+          "complete",
+          "too_few_plays"
+        ]
+      },
+      "YearReviewStreak": {
+        "type": "object",
+        "description": "The most days in a row with a play.",
+        "required": [
+          "days",
+          "first_day",
+          "last_day"
+        ],
+        "properties": {
+          "days": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many days.",
+            "minimum": 0
+          },
+          "first_day": {
+            "type": "string",
+            "description": "Its first day, as an ISO date."
+          },
+          "last_day": {
+            "type": "string",
+            "description": "Its last day, as an ISO date."
+          }
+        }
+      },
+      "YearReviewYear": {
+        "type": "object",
+        "description": "One year in the list.",
+        "required": [
+          "year",
+          "plays",
+          "state"
+        ],
+        "properties": {
+          "plays": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Plays made here that year.",
+            "minimum": 0
+          },
+          "state": {
+            "$ref": "#/components/schemas/YearReviewState",
+            "description": "How far its review has come."
+          },
+          "year": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The calendar year."
+          }
+        }
+      },
+      "YearReviewYears": {
+        "type": "object",
+        "description": "The years a person can look back on, newest first.",
+        "required": [
+          "zone",
+          "years"
+        ],
+        "properties": {
+          "years": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/YearReviewYear"
+            },
+            "description": "The current year, then each earlier year with a play."
+          },
+          "zone": {
+            "type": "string",
+            "description": "The IANA name of the time zone the years were counted in."
           }
         }
       },

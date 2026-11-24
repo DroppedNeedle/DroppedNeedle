@@ -75,6 +75,7 @@ pub fn statement_files() -> Vec<StatementFile> {
         crate::discover::sql::registered(),
         crate::local::sql::registered(),
         crate::search::sql::registered(),
+        crate::year::sql::registered(),
         crate::youtube::sql::registered(),
     ]
 }

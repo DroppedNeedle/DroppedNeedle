@@ -242,6 +242,9 @@ fn mount(m: Mount<'_>) -> Mount<'_> {
         .area(version::routes(), |state| state.catalog.version.clone())
         .area(wrapped::routes(), |state| state.catalog.wrapped.clone())
         .area(youtube::routes(), |state| state.catalog.youtube.clone())
+        .area(droppedneedle_catalog::year::routes(), |state| {
+            state.catalog.year.clone()
+        })
         .area(search::routes(), |state| state.catalog.search.clone())
         .area(metadata::routes(), |state| state.catalog.metadata.clone())
         .area(

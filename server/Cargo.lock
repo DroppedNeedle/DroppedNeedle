@@ -678,6 +678,7 @@ dependencies = [
  "droppedneedle-providers",
  "futures-util",
  "image",
+ "jiff",
  "md5",
  "reqwest",
  "rusqlite",

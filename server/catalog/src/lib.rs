@@ -22,4 +22,5 @@ pub mod test_support;
 pub mod version;
 pub mod wiring;
 pub mod wrapped;
+pub mod year;
 pub mod youtube;

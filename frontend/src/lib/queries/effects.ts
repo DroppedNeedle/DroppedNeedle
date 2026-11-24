@@ -45,6 +45,7 @@ import { SourcePlaylistQueryKeyFactory } from '$lib/queries/featureKeys';
 import { SpotifyQueryKeyFactory } from '$lib/queries/featureKeys';
 import { PlaylistSyncApprovalsQueryKeyFactory } from '$lib/queries/featureKeys';
 import { SystemQueryKeyFactory } from '$lib/queries/featureKeys';
+import { YearReviewQueryKeyFactory } from '$lib/queries/featureKeys';
 import { PlaylistQueryKeyFactory } from '$lib/features/playlists/queries/PlaylistQueryKeyFactory';
 import type { RemoteSource } from '$lib/features/remote-library/queries/types';
 
@@ -279,16 +280,22 @@ export const EFFECTS = {
 	/**
 	 * The caller forgot their history: everything Discover answered them and
 	 * the home page, saved copies included, since they were built from it,
-	 * and where their imported listening history stands.
+	 * where their imported listening history stands, and their year in
+	 * review, whose new artists read that history.
 	 */
 	discoverHistoryForgotten: (userId: UserId): Sweep[] => [
 		{ key: DiscoverQueryKeyFactory.v3.root(userId), dropSaved: true },
 		{ key: HomeQueryKeyFactory.home(userId), dropSaved: true },
-		{ key: ListeningHistoryQueryKeyFactory.get(userId) }
+		{ key: ListeningHistoryQueryKeyFactory.get(userId) },
+		{ key: YearReviewQueryKeyFactory.all(userId) }
 	],
-	/** The caller uploaded a ListenBrainz export: where their history stands. */
+	/**
+	 * The caller uploaded or asked for a ListenBrainz export: where their
+	 * history stands, and their year in review, whose new artists read it.
+	 */
 	listeningHistoryChanged: (userId: UserId): Sweep[] => [
-		{ key: ListeningHistoryQueryKeyFactory.get(userId) }
+		{ key: ListeningHistoryQueryKeyFactory.get(userId) },
+		{ key: YearReviewQueryKeyFactory.all(userId) }
 	],
 	/**
 	 * Where recommendations come from changed (the ListenBrainz switch or the

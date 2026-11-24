@@ -15,7 +15,7 @@ use droppedneedle_auth::users::UsersDeps;
 
 use crate::{
     artwork as art, collections, discover, enrichment, local, lyrics, metadata, search, version,
-    wrapped, youtube,
+    wrapped, year, youtube,
 };
 
 /// Everything `create_app` needs to mount the catalog routes, built once.
@@ -42,6 +42,8 @@ pub struct CatalogSetup {
     pub artwork: art::ArtworkService,
     /// Saved YouTube links.
     pub youtube: youtube::YouTubeLinks,
+    /// Each person's year in review.
+    pub year: year::YearReviews,
 }
 
 /// What the catalog takes from the other areas, built before it.
@@ -172,6 +174,11 @@ impl CatalogSetup {
             ids,
             clock,
         );
+        let year = year::YearReviews::new(
+            Arc::clone(&platform.clock),
+            server_zone(platform.config.timezone.as_deref()),
+            local.clone(),
+        );
         let search = search::SearchDeps::new(
             search::service::SearchService::new(db.clone(), catalog.clone()),
             enrichment.search,
@@ -187,6 +194,7 @@ impl CatalogSetup {
             version,
             wrapped,
             youtube,
+            year,
         }
     }
 
@@ -217,6 +225,31 @@ fn library_deps(
         upgrade_policy: settings.live(),
         covers,
         releases,
+    }
+}
+
+/// The server's time zone for the year in review, resolved once from `TZ`
+/// (else the host's zone), UTC when it does not resolve. It answers under
+/// its IANA name, else the `TZ` text. A host zone with neither (a copied
+/// `/etc/localtime`) has no name to give, so the review counts in UTC.
+fn server_zone(configured: Option<&str>) -> year::ServerZone {
+    use jiff::tz::TimeZone;
+
+    let zone = droppedneedle_library::settings::resolve_zone(configured).unwrap_or_else(|error| {
+        tracing::warn!(
+            timezone = configured.unwrap_or("system"),
+            %error,
+            "time zone not found; the year in review counts in UTC"
+        );
+        TimeZone::UTC
+    });
+    let name = zone.iana_name().or(configured).map(str::to_owned);
+    match name {
+        Some(name) => year::ServerZone::new(zone, name),
+        None => {
+            tracing::warn!("the host's time zone has no name; the year in review counts in UTC");
+            year::ServerZone::new(TimeZone::UTC, "UTC".to_owned())
+        }
     }
 }
 

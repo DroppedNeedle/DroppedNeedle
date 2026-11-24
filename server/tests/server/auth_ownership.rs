@@ -630,6 +630,7 @@ const CALLER_KEYED_OPERATIONS: &[(&str, &str)] = &[
     ("PUT", "/api/v3/discover/later/{release_group_mbid}"),
     ("DELETE", "/api/v3/discover/later/{release_group_mbid}"),
     ("PUT", "/api/v3/library/albums/{album_id}/looks-wrong"),
+    ("GET", "/api/v3/me/year-in-review/{year}"),
 ];
 
 /// Operations that take a user-owned id in the body, each driven by
@@ -2186,6 +2187,42 @@ async fn caller_keyed_state_stays_with_its_caller() {
     assert_eq!(status, StatusCode::NO_CONTENT, "A forgets: {answer}");
     assert_eq!(a_pick(), 0, "A's forget takes A's pick");
     assert_eq!(a_listens(), 0, "A's forget takes A's listens");
+
+    // A's year in review: B and an admin read only their own year, which
+    // has none of A's plays.
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the clock is after 1970")
+        .as_millis();
+    app.seed(format!(
+        "INSERT INTO library_play_history (id, user_id, track_name, artist_name, played_at) \
+         VALUES ('ada-year-1', '{id}', 'One', 'Someone', {at}), \
+         ('ada-year-2', '{id}', 'Two', 'Someone', {at})",
+        id = ada.id,
+        at = now_ms - 1000
+    ))
+    .await;
+    let years = "/api/v3/me/year-in-review?zone=UTC";
+    let (status, body) = call(&app, &ada, "GET", years, None).await;
+    ok(status, &body, "A lists their years");
+    assert_eq!(body["years"][0]["plays"], 2, "{body}");
+    let year = body["years"][0]["year"].clone();
+    let review = format!("/api/v3/me/year-in-review/{year}?zone=UTC");
+    let (status, body) = call(&app, &ada, "GET", &review, None).await;
+    ok(status, &body, "A reads their year");
+    assert_eq!(body["plays"], 2, "{body}");
+    for (who, what) in [(&bob, "B"), (&admin, "an admin")] {
+        let (status, body) = call(&app, who, "GET", years, None).await;
+        ok(status, &body, &format!("{what} lists their years"));
+        assert_eq!(
+            body["years"],
+            json!([{"year": year, "plays": 0, "state": "too_few_plays"}]),
+            "{what} sees A's plays: {body}"
+        );
+        let (status, body) = call(&app, who, "GET", &review, None).await;
+        ok(status, &body, &format!("{what} reads their year"));
+        assert_eq!(body["plays"], 0, "{what} sees A's plays: {body}");
+    }
 
     // Remote-server links and folder choices, against the mock Navidrome.
     let navidrome = droppedneedle_testkit::remotes::serve_navidrome()

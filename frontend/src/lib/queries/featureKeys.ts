@@ -195,3 +195,12 @@ export const SystemQueryKeyFactory = {
 	backups: () => key(ADMIN, 'system', 'backups'),
 	restoreReport: (name: string) => key(ADMIN, 'system', 'backups', name, 'restore-report')
 };
+
+// The caller's year in review, counted in the time zone in its key.
+export const YearReviewQueryKeyFactory = {
+	feature: 'year',
+	all: (userId: UserId) => key(userScope(userId), 'year'),
+	years: (userId: UserId, zone: string) => key(userScope(userId), 'year', 'list', zone),
+	year: (userId: UserId, year: number, zone: string) =>
+		key(userScope(userId), 'year', 'review', year, zone)
+};
