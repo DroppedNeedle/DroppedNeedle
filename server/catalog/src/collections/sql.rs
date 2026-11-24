@@ -264,6 +264,22 @@ droppedneedle_kernel::sql! {
         track_name: String,
         artist_name: String,
     }
+    /// Playlist `?1`'s owner and where it came from, when it has an owner.
+    pub(super) PLAYLIST_SOURCE = "SELECT user_id, source_ref FROM catalog_playlists \
+         WHERE id = ?1 AND user_id IS NOT NULL";
+    /// A playlist's owner and where it came from.
+    pub(super) row PlaylistSource for [PLAYLIST_SOURCE] {
+        user_id: String,
+        source_ref: Option<String>,
+    }
+    /// The songs playlist `?1` took from its source that a sync has not
+    /// followed up: entries still there that do not play yet, with an
+    /// album or a look for one due by `?2`.
+    pub(super) OPEN_SOURCE_SONG_COUNT = "SELECT COUNT(*) FROM catalog_playlist_source_songs s \
+         JOIN catalog_playlist_tracks e ON e.id = s.entry_id \
+         WHERE s.playlist_id = ?1 AND s.followed_up_at IS NULL \
+         AND e.library_file_id IS NULL AND e.source_type = '' \
+         AND (e.album_id IS NOT NULL OR s.look_again_at IS NULL OR s.look_again_at <= ?2)";
     /// What a link pass follows: the library's catalog revision, which
     /// every change to its albums and tracks moves, and the latest change
     /// to any playlist, which adding entries moves.

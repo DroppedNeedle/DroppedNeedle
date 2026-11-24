@@ -24,3 +24,4 @@ mod acquire_track_album;
 mod acquire_usenet;
 mod discover_batches;
 mod playlist_requests;
+mod spotify_sync;

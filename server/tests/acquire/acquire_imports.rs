@@ -216,6 +216,11 @@ fn rig_with(
         spotify_playlists,
         resolver,
         spotify_imports,
+        syncs: droppedneedle_acquire::spotify_sync::store::SyncStore::new(
+            platform.db.clone(),
+            platform.clock.clone(),
+            queue.clone(),
+        ),
         probes: Arc::new(LiveProbes::bundle(&probes)),
         ids: Arc::new(FixedIdGenerator),
         base_path: String::new(),

@@ -173,6 +173,20 @@ const PATH_ID_ROWS: &[(Owned, &str, &str, u16, u16)] = &[
     ),
     (
         Owned::Playlist,
+        "GET",
+        "/api/v3/playlists/{playlist_id}/sync",
+        404,
+        404,
+    ),
+    (
+        Owned::Playlist,
+        "PUT",
+        "/api/v3/playlists/{playlist_id}/sync",
+        404,
+        404,
+    ),
+    (
+        Owned::Playlist,
         "POST",
         "/api/v3/playlists/{playlist_id}/request-missing",
         404,
@@ -996,6 +1010,7 @@ fn body(method: &str, template: &str, ids: &Ids) -> Option<Value> {
             Some(json!({"source_type": "local"}))
         }
         ("PUT", "/api/v3/playlists/{playlist_id}/members") => Some(json!({"user_ids": []})),
+        ("PUT", "/api/v3/playlists/{playlist_id}/sync") => Some(json!({"enabled": true})),
         ("PATCH", "/api/v3/playlists/{playlist_id}/visibility") => {
             Some(json!({"is_public": id("visibility") != "public"}))
         }

@@ -653,6 +653,10 @@ pub(crate) async fn build_on(
             acquire.spotify_import_jobs.clone(),
         )
         .with(
+            droppedneedle_acquire::spotify_sync::SPEC,
+            acquire.spotify_sync_jobs.clone(),
+        )
+        .with(
             droppedneedle_catalog::collections::identify_job::SPEC,
             acquire.playlist_identify_jobs.clone(),
         )

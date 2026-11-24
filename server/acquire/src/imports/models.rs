@@ -138,6 +138,8 @@ pub struct SpotifyPlaylistItem {
     pub owner: String,
     /// Internal playlist id when already imported, else null.
     pub imported_playlist_id: Option<String>,
+    /// The imported playlist is kept in sync.
+    pub synced: bool,
 }
 
 /// Owned playlists.
@@ -179,6 +181,8 @@ pub struct SpotifyLikedSongs {
     pub track_count: Option<i64>,
     /// Internal playlist id when already imported, else null.
     pub imported_playlist_id: Option<String>,
+    /// The imported playlist is kept in sync.
+    pub synced: bool,
 }
 
 /// The caller's own Spotify link.

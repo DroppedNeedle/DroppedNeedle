@@ -6753,6 +6753,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/playlists/{playlist_id}/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A playlist's Spotify sync: whether it is on, whether its songs are
+         *     requested by themselves, and how far it has got.
+         */
+        get: operations["get_sync_handler"];
+        /**
+         * Turn a playlist's Spotify sync on or off, for its owner. Turning it on
+         *     as a plain user asks an admin to approve its requests.
+         */
+        put: operations["put_sync_handler"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/playlists/{playlist_id}/tracks": {
         parameters: {
             query?: never;
@@ -21193,6 +21217,63 @@ export interface components {
              */
             updated_at: number;
         };
+        /** @description A playlist's sync, as its owner or an editor sees it. */
+        PlaylistSync: {
+            /**
+             * Format: int64
+             * @description When the last pass finished, epoch seconds.
+             */
+            checked_at?: number | null;
+            /** @description Sync is on. */
+            enabled: boolean;
+            /** @description Why the last pass failed, when it did. */
+            failure?: null | components["schemas"]["SyncFailure"];
+            /** @description Whether the songs are requested by themselves. */
+            grant: components["schemas"]["SyncGrant"];
+            /** @description Why requests wait, when they do. */
+            hold?: null | components["schemas"]["SyncHold"];
+            /** @description How far the sync has got. */
+            progress: components["schemas"]["SyncProgress"];
+            /**
+             * Format: int32
+             * @description Songs the sync still has to request or look an album up for.
+             */
+            songs_left: number;
+            /** @description Spotify is turned off on this server. */
+            spotify_off: boolean;
+            /** @description The playlist came from Spotify (a playlist or Liked Songs). */
+            syncable: boolean;
+            /** @description New songs are asked for as whole albums. */
+            whole_albums: boolean;
+        };
+        /** @description Turn a playlist's sync on or off. */
+        PlaylistSyncBody: {
+            /** @description Sync on. */
+            enabled: boolean;
+            /** @description Ask for new songs' whole albums. */
+            whole_albums?: boolean;
+        };
+        /**
+         * @description `playlist_sync_changed`: a synced playlist took new songs from Spotify
+         *     or requested some.
+         */
+        PlaylistSyncChanged: {
+            /**
+             * Format: int32
+             * @description Songs added this pass.
+             */
+            added: number;
+            /** @description Id for de-duplication. */
+            event_id: string;
+            /** @description The synced playlist. */
+            playlist_id: string;
+            /**
+             * Format: int32
+             * @description Songs requested this pass, counting each song an album request
+             *     carries.
+             */
+            requested: number;
+        };
         /** @description Sync report, field for field with the v2 result shape. */
         PlaylistSyncResult: {
             /** @description Human summary of the run. */
@@ -25058,6 +25139,8 @@ export interface components {
             access: components["schemas"]["LikedSongsAccess"];
             /** @description Internal playlist id when already imported, else null. */
             imported_playlist_id?: string | null;
+            /** @description The imported playlist is kept in sync. */
+            synced: boolean;
             /**
              * Format: int64
              * @description How many there are, when the link may read them.
@@ -25087,6 +25170,8 @@ export interface components {
             name: string;
             /** @description Owner display name. */
             owner: string;
+            /** @description The imported playlist is kept in sync. */
+            synced: boolean;
             /**
              * Format: int64
              * @description Track total from the `items`/`tracks` dict quirk.
@@ -25279,6 +25364,11 @@ export interface components {
             /** @enum {string} */
             event: "playlist_imported";
         } | {
+            /** @description To one user: a synced playlist took new songs or requested some. */
+            data: components["schemas"]["PlaylistSyncChanged"];
+            /** @enum {string} */
+            event: "playlist_sync_changed";
+        } | {
             /** @description To one user: their drop-import job moved. */
             data: components["schemas"]["DropImportUpdated"];
             /** @enum {string} */
@@ -25407,6 +25497,28 @@ export interface components {
             /** @description Reason-tagged tracks, pools interleaved. */
             items: components["schemas"]["SuggestionTrack"][];
         };
+        /**
+         * @description Why the last pass did not reach Spotify or could not save: the values
+         *     of `acquire_playlist_syncs.failure`. The web UI words each one; the
+         *     cause goes to the log only.
+         * @enum {string}
+         */
+        SyncFailure: "not_linked" | "needs_reconnect" | "playlist_gone" | "unavailable" | "rate_limited" | "save_failed";
+        /**
+         * @description Whether a synced playlist's songs are requested by themselves.
+         * @enum {string}
+         */
+        SyncGrant: "not_needed" | "waiting" | "approved" | "rejected" | "revoked";
+        /**
+         * @description Why a sync's requests wait: the values of `acquire_playlist_syncs.hold`.
+         * @enum {string}
+         */
+        SyncHold: "quota" | "storage";
+        /**
+         * @description How far a sync has got.
+         * @enum {string}
+         */
+        SyncProgress: "off" | "starting" | "catching_up" | "caught_up";
         /**
          * @description Degraded services, empty when everything is healthy (v2
          *     `SystemHealthResponse`).
@@ -45449,6 +45561,101 @@ export interface operations {
             };
             /** @description Unknown playlist id */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_sync_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The playlist's sync */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaylistSync"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No such playlist the caller may edit */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    put_sync_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlaylistSyncBody"];
+            };
+        };
+        responses: {
+            /** @description The playlist's sync */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaylistSync"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No such playlist the caller owns */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not a Spotify playlist (PLAYLIST_NOT_SYNCABLE), Spotify not connected (SPOTIFY_NOT_LINKED), Liked Songs needs a reconnect (SPOTIFY_RECONNECT_NEEDED) or Spotify is off (SPOTIFY_OFF) */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -67,6 +67,8 @@ pub mod names {
     pub const REQUEST_IMPORTED: &str = "request_imported";
     /// A playlist import finished filling its tracks.
     pub const PLAYLIST_IMPORTED: &str = "playlist_imported";
+    /// A synced playlist took new songs or requested some.
+    pub const PLAYLIST_SYNC_CHANGED: &str = "playlist_sync_changed";
     /// The user's drop-import job moved.
     pub const DROP_IMPORT_UPDATED: &str = "drop_import_updated";
     /// The user's weekly mix was rebuilt (or could not be).
@@ -86,7 +88,7 @@ pub mod names {
     pub const CACHE_SYNC: &str = "cache.sync";
 
     /// Every event name the stream sends.
-    pub const ALL: [&str; 16] = [
+    pub const ALL: [&str; 17] = [
         ACTIVITY_CHANGED,
         NOW_PLAYING,
         WANTED_NEW_CANDIDATES,
@@ -95,6 +97,7 @@ pub mod names {
         AUTO_DOWNLOAD_ENQUEUED,
         REQUEST_IMPORTED,
         PLAYLIST_IMPORTED,
+        PLAYLIST_SYNC_CHANGED,
         DROP_IMPORT_UPDATED,
         PERSONAL_MIX_REFRESHED,
         CONCERTS_NEW,
@@ -143,6 +146,9 @@ pub enum StreamEvent {
     /// To one user: an imported playlist has its tracks.
     #[serde(rename = "playlist_imported")]
     PlaylistImported(PlaylistImported),
+    /// To one user: a synced playlist took new songs or requested some.
+    #[serde(rename = "playlist_sync_changed")]
+    PlaylistSyncChanged(PlaylistSyncChanged),
     /// To one user: their drop-import job moved.
     #[serde(rename = "drop_import_updated")]
     DropImportUpdated(DropImportUpdated),
@@ -270,6 +276,21 @@ pub struct RequestsDecided {
 pub struct PlaylistImported {
     /// The filled playlist.
     pub playlist_id: String,
+    /// Id for de-duplication.
+    pub event_id: String,
+}
+
+/// `playlist_sync_changed`: a synced playlist took new songs from Spotify
+/// or requested some.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct PlaylistSyncChanged {
+    /// The synced playlist.
+    pub playlist_id: String,
+    /// Songs added this pass.
+    pub added: u32,
+    /// Songs requested this pass, counting each song an album request
+    /// carries.
+    pub requested: u32,
     /// Id for de-duplication.
     pub event_id: String,
 }
@@ -423,6 +444,8 @@ pub enum UserNotice {
     RequestImported(RequestImported),
     /// `playlist_imported`.
     PlaylistImported(PlaylistImported),
+    /// `playlist_sync_changed`.
+    PlaylistSyncChanged(PlaylistSyncChanged),
     /// `drop_import_updated`.
     DropImportUpdated(DropImportUpdated),
     /// `personal_mix_refreshed`.
@@ -447,6 +470,7 @@ impl UserNotice {
             Self::AutoDownloadEnqueued(_) => names::AUTO_DOWNLOAD_ENQUEUED,
             Self::RequestImported(_) => names::REQUEST_IMPORTED,
             Self::PlaylistImported(_) => names::PLAYLIST_IMPORTED,
+            Self::PlaylistSyncChanged(_) => names::PLAYLIST_SYNC_CHANGED,
             Self::DropImportUpdated(_) => names::DROP_IMPORT_UPDATED,
             Self::PersonalMixRefreshed(_) => names::PERSONAL_MIX_REFRESHED,
             Self::ConcertsNew(_) => names::CONCERTS_NEW,
@@ -464,6 +488,7 @@ impl UserNotice {
             Self::AutoDownloadEnqueued(payload) => serde_json::to_string(payload),
             Self::RequestImported(payload) => serde_json::to_string(payload),
             Self::PlaylistImported(payload) => serde_json::to_string(payload),
+            Self::PlaylistSyncChanged(payload) => serde_json::to_string(payload),
             Self::DropImportUpdated(payload) => serde_json::to_string(payload),
             Self::PersonalMixRefreshed(payload) => serde_json::to_string(payload),
             Self::ConcertsNew(payload) => serde_json::to_string(payload),

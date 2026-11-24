@@ -26301,6 +26301,142 @@
         ]
       }
     },
+    "/api/v3/playlists/{playlist_id}/sync": {
+      "get": {
+        "tags": [
+          "playlists"
+        ],
+        "summary": "A playlist's Spotify sync: whether it is on, whether its songs are\nrequested by themselves, and how far it has got.",
+        "operationId": "get_sync_handler",
+        "parameters": [
+          {
+            "name": "playlist_id",
+            "in": "path",
+            "description": "Playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The playlist's sync",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaylistSync"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such playlist the caller may edit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "playlists"
+        ],
+        "summary": "Turn a playlist's Spotify sync on or off, for its owner. Turning it on\nas a plain user asks an admin to approve its requests.",
+        "operationId": "put_sync_handler",
+        "parameters": [
+          {
+            "name": "playlist_id",
+            "in": "path",
+            "description": "Playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaylistSyncBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The playlist's sync",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaylistSync"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such playlist the caller owns",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not a Spotify playlist (PLAYLIST_NOT_SYNCABLE), Spotify not connected (SPOTIFY_NOT_LINKED), Liked Songs needs a reconnect (SPOTIFY_RECONNECT_NEEDED) or Spotify is off (SPOTIFY_OFF)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/playlists/{playlist_id}/tracks": {
       "post": {
         "tags": [
@@ -61442,6 +61578,130 @@
           }
         }
       },
+      "PlaylistSync": {
+        "type": "object",
+        "description": "A playlist's sync, as its owner or an editor sees it.",
+        "required": [
+          "syncable",
+          "enabled",
+          "whole_albums",
+          "grant",
+          "progress",
+          "songs_left",
+          "spotify_off"
+        ],
+        "properties": {
+          "checked_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the last pass finished, epoch seconds."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Sync is on."
+          },
+          "failure": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SyncFailure"
+              }
+            ],
+            "description": "Why the last pass failed, when it did."
+          },
+          "grant": {
+            "$ref": "#/components/schemas/SyncGrant",
+            "description": "Whether the songs are requested by themselves."
+          },
+          "hold": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SyncHold"
+              }
+            ],
+            "description": "Why requests wait, when they do."
+          },
+          "progress": {
+            "$ref": "#/components/schemas/SyncProgress",
+            "description": "How far the sync has got."
+          },
+          "songs_left": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Songs the sync still has to request or look an album up for.",
+            "minimum": 0
+          },
+          "spotify_off": {
+            "type": "boolean",
+            "description": "Spotify is turned off on this server."
+          },
+          "syncable": {
+            "type": "boolean",
+            "description": "The playlist came from Spotify (a playlist or Liked Songs)."
+          },
+          "whole_albums": {
+            "type": "boolean",
+            "description": "New songs are asked for as whole albums."
+          }
+        }
+      },
+      "PlaylistSyncBody": {
+        "type": "object",
+        "description": "Turn a playlist's sync on or off.",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Sync on."
+          },
+          "whole_albums": {
+            "type": "boolean",
+            "description": "Ask for new songs' whole albums."
+          }
+        }
+      },
+      "PlaylistSyncChanged": {
+        "type": "object",
+        "description": "`playlist_sync_changed`: a synced playlist took new songs from Spotify\nor requested some.",
+        "required": [
+          "playlist_id",
+          "added",
+          "requested",
+          "event_id"
+        ],
+        "properties": {
+          "added": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Songs added this pass.",
+            "minimum": 0
+          },
+          "event_id": {
+            "type": "string",
+            "description": "Id for de-duplication."
+          },
+          "playlist_id": {
+            "type": "string",
+            "description": "The synced playlist."
+          },
+          "requested": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Songs requested this pass, counting each song an album request\ncarries.",
+            "minimum": 0
+          }
+        }
+      },
       "PlaylistSyncResult": {
         "type": "object",
         "description": "Sync report, field for field with the v2 result shape.",
@@ -70119,7 +70379,8 @@
         "type": "object",
         "description": "The caller's Liked Songs, as the Import page lists them.",
         "required": [
-          "access"
+          "access",
+          "synced"
         ],
         "properties": {
           "access": {
@@ -70132,6 +70393,10 @@
               "null"
             ],
             "description": "Internal playlist id when already imported, else null."
+          },
+          "synced": {
+            "type": "boolean",
+            "description": "The imported playlist is kept in sync."
           },
           "track_count": {
             "type": [
@@ -70182,7 +70447,8 @@
           "name",
           "description",
           "track_count",
-          "owner"
+          "owner",
+          "synced"
         ],
         "properties": {
           "cover_url": {
@@ -70214,6 +70480,10 @@
           "owner": {
             "type": "string",
             "description": "Owner display name."
+          },
+          "synced": {
+            "type": "boolean",
+            "description": "The imported playlist is kept in sync."
           },
           "track_count": {
             "type": "integer",
@@ -70667,6 +70937,26 @@
           },
           {
             "type": "object",
+            "description": "To one user: a synced playlist took new songs or requested some.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/PlaylistSyncChanged",
+                "description": "To one user: a synced playlist took new songs or requested some."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "playlist_sync_changed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "To one user: their drop-import job moved.",
             "required": [
               "data",
@@ -71033,6 +71323,47 @@
             "description": "Reason-tagged tracks, pools interleaved."
           }
         }
+      },
+      "SyncFailure": {
+        "type": "string",
+        "description": "Why the last pass did not reach Spotify or could not save: the values\nof `acquire_playlist_syncs.failure`. The web UI words each one; the\ncause goes to the log only.",
+        "enum": [
+          "not_linked",
+          "needs_reconnect",
+          "playlist_gone",
+          "unavailable",
+          "rate_limited",
+          "save_failed"
+        ]
+      },
+      "SyncGrant": {
+        "type": "string",
+        "description": "Whether a synced playlist's songs are requested by themselves.",
+        "enum": [
+          "not_needed",
+          "waiting",
+          "approved",
+          "rejected",
+          "revoked"
+        ]
+      },
+      "SyncHold": {
+        "type": "string",
+        "description": "Why a sync's requests wait: the values of `acquire_playlist_syncs.hold`.",
+        "enum": [
+          "quota",
+          "storage"
+        ]
+      },
+      "SyncProgress": {
+        "type": "string",
+        "description": "How far a sync has got.",
+        "enum": [
+          "off",
+          "starting",
+          "catching_up",
+          "caught_up"
+        ]
       },
       "SystemHealthResponse": {
         "type": "object",

@@ -132,6 +132,7 @@ acquire_followed_artists
 acquire_held_entries
 acquire_held_files
 acquire_new_release_feed
+acquire_playlist_syncs
 artist_known_releases
 auto_download_approvals
 download_activity_global_revision

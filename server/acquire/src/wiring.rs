@@ -56,6 +56,9 @@ use crate::requests::state::{AcquireReadiness, MixRoutes, RequestsPorts, Request
 use crate::search_jobs::SearchJobs;
 use crate::search_jobs::store::JobStore;
 use crate::settings::{ConfigLidarrSettings, ConfigSpotifySettings};
+use crate::spotify_sync::SpotifySync;
+use crate::spotify_sync::job::SpotifySyncJobs;
+use crate::spotify_sync::store::SyncStore;
 use crate::target::Targets;
 use crate::target::lookup::AlbumLookup;
 use crate::usenet::indexer::{Indexer, PluginIndexers};
@@ -99,6 +102,7 @@ pub const ACQUIRE_LOOPS: &[&str] = &[
     crate::downloads::worker::DOWNLOAD_WORKER_JOB,
     crate::probes::PROBE_JOB,
     crate::readiness::SOURCE_WATCH_JOB,
+    crate::spotify_sync::due::DUE_JOB,
 ];
 
 /// The sections the acquisition clients are built from.
@@ -259,6 +263,10 @@ pub struct AcquireSetup {
     /// A playlist's Request missing, its song requests and what its
     /// missing songs wait for.
     pub playlist_requests: Arc<PlaylistRequests>,
+    /// Spotify sync: its switch, its state and its passes.
+    pub spotify_sync: Arc<SpotifySync>,
+    /// Runs the sync passes; registered on the jobs table.
+    pub spotify_sync_jobs: Arc<SpotifySyncJobs>,
 }
 
 /// The drop-import service over the landing's library port, a staging
@@ -908,6 +916,16 @@ impl AcquireSetup {
             config_store.live(),
         ));
         let spotify_imports = SpotifyImports::new(platform.db.clone(), queue.clone());
+        let sync_store = SyncStore::new(platform.db.clone(), platform.clock.clone(), queue.clone());
+        let spotify_sync = Arc::new(SpotifySync::new(
+            spotify_client.clone(),
+            spotify_settings.clone(),
+            spotify_links.clone(),
+            collections.playlists.clone(),
+            sync_store.clone(),
+            events.clone(),
+        ));
+        let spotify_sync_jobs = Arc::new(SpotifySyncJobs::new(spotify_sync.clone()));
         let playlist_requests = Arc::new(PlaylistRequests::new(
             core.requests.clone(),
             collections.playlists.clone(),
@@ -927,6 +945,7 @@ impl AcquireSetup {
             spotify_playlists,
             resolver,
             spotify_imports,
+            syncs: sync_store,
             probes: Arc::new(LiveProbes::bundle(&probes)),
             ids: ids.clone(),
             base_path: config.base_path.clone(),
@@ -1024,6 +1043,8 @@ impl AcquireSetup {
             spotify_import_jobs,
             playlist_identify_jobs,
             deemix: deemix_checks,
+            spotify_sync,
+            spotify_sync_jobs,
         })
     }
 
@@ -1102,6 +1123,7 @@ impl AcquireSetup {
         crate::downloads::worker::spawn_download_worker(self.worker.clone(), supervisor)?;
         crate::held::spawn_held_prune(supervisor, self.held.clone())?;
         crate::import_folder::spawn_import_folder(supervisor, self.import_folder.clone())?;
+        crate::spotify_sync::due::spawn_due(supervisor, self.spotify_sync.clone())?;
         crate::probes::spawn_probe_loop(
             supervisor,
             self.probe_cache.clone(),

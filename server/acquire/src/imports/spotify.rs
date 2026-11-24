@@ -276,6 +276,7 @@ impl SpotifyImportService {
             access: liked_access,
             track_count: liked_count,
             imported_playlist_id: imported.get(LIKED_SONGS_REF).cloned(),
+            synced: false,
         };
         let playlists = listed
             .into_iter()
@@ -284,6 +285,7 @@ impl SpotifyImportService {
                 track_count: playlist_track_count(&playlist),
                 cover_url: best_image_url(playlist.images.as_deref(), 250),
                 imported_playlist_id: imported.get(&playlist.id).cloned(),
+                synced: false,
                 owner: playlist.owner.display_name.unwrap_or_default(),
                 description: playlist.description.unwrap_or_default(),
                 name: playlist.name,

@@ -72,7 +72,7 @@ fn schema_rows(connection: &Connection) -> Vec<(String, String, String, Option<S
 fn fresh_migrate_marks_version_and_seeds() {
     let connection = migrated();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), latest_version());
-    assert_eq!(table_names(&connection).len(), 201);
+    assert_eq!(table_names(&connection).len(), 202);
     assert_eq!(
         scalar(
             &connection,
@@ -448,6 +448,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0169_playlist_source_songs.sql",
         "b8cf02e4357a3c34d3041f2824dc89bd98ae21d5a4666e4a37ec48bf8e6836f3",
+    ),
+    (
+        "0170_playlist_syncs.sql",
+        "b20ac5bcccd90548022449d986bf89a8d9f28fe740f5e2a295e8fb474edfb509",
     ),
 ];
 
@@ -3628,6 +3632,96 @@ fn playlist_source_songs_upgrade_adds_an_empty_table() {
     );
 }
 
+/// 0170 adds the synced playlists, empty: no playlist imported before is
+/// synced, and nothing else changes. A sync goes with its playlist, keeps
+/// its grant when the reviewer's account goes, and holds only the reasons
+/// and grant states its enums spell.
+#[test]
+fn playlist_syncs_upgrade_adds_an_empty_table() {
+    let dir = ScratchDir::new("playlist-syncs-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 170)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 169);
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, created_at) VALUES ('u1', 'One', 1),
+                 ('a1', 'Admin', 1);
+             INSERT INTO catalog_playlists (id, name, created_at, updated_at, user_id, is_public,
+                 source_ref) VALUES ('p1', 'Road Trip', 1, 1, 'u1', 0, 'spotify:sp1');",
+        )
+        .unwrap();
+    let kept = ["auth_users", "catalog_playlists"];
+    let before_schema = schema_rows(&connection);
+    let before: Vec<Vec<String>> = kept
+        .iter()
+        .map(|table| table_rows(&connection, table, "rowid, *"))
+        .collect();
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON")
+        .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 170);
+    for (table, rows) in kept.iter().zip(&before) {
+        assert_eq!(&table_rows(&connection, table, "rowid, *"), rows, "{table}");
+    }
+    assert_eq!(
+        scalar(&connection, "SELECT COUNT(*) FROM acquire_playlist_syncs"),
+        0,
+        "no playlist is synced"
+    );
+    let mut after_schema = schema_rows(&connection);
+    after_schema.retain(|(_, _, table, _)| table != "acquire_playlist_syncs");
+    assert_eq!(after_schema, before_schema, "nothing else changes");
+
+    connection
+        .execute_batch(
+            "INSERT INTO acquire_playlist_syncs (playlist_id, enabled, enabled_at, next_check_at,
+                 failure, hold, grant_state, grant_reviewed_by_id, grant_reviewed_by_name,
+                 grant_reviewed_at)
+                 VALUES ('p1', 1, 1, 1, 'rate_limited', 'quota', 'approved', 'a1', 'Admin', 1);
+             DELETE FROM auth_users WHERE id = 'a1';",
+        )
+        .expect("a sync is kept");
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT grant_state || ':' || COALESCE(grant_reviewed_by_id, '-') \
+             FROM acquire_playlist_syncs",
+            []
+        ),
+        ["approved:-"],
+        "the grant outlives its reviewer's account"
+    );
+    for refused in [
+        "UPDATE acquire_playlist_syncs SET failure = 'boom'",
+        "UPDATE acquire_playlist_syncs SET hold = 'disk'",
+        "UPDATE acquire_playlist_syncs SET grant_state = 'maybe'",
+        "UPDATE acquire_playlist_syncs SET enabled = 2",
+        "UPDATE acquire_playlist_syncs SET snapshot_id = ''",
+    ] {
+        assert!(connection.execute_batch(refused).is_err(), "{refused}");
+    }
+    connection
+        .execute_batch("DELETE FROM catalog_playlists WHERE id = 'p1'")
+        .unwrap();
+    assert_eq!(
+        scalar(&connection, "SELECT COUNT(*) FROM acquire_playlist_syncs"),
+        0,
+        "a sync goes with its playlist"
+    );
+}
+
 /// 0146 adds the table of recycle bin paths v2 used, empty, and changes
 /// nothing else: only an upgrade from v2 records a path in it.
 #[test]
@@ -3920,6 +4014,8 @@ const FOREIGN_KEYS: &[(&str, &str, &str, &str)] = &[
     ("acquire_held_entries", "drop_item_id", "drop_import_items", "CASCADE"),
     ("acquire_held_entries", "user_id", "auth_users", "CASCADE"),
     ("acquire_held_files", "entry_id", "acquire_held_entries", "CASCADE"),
+    ("acquire_playlist_syncs", "grant_reviewed_by_id", "auth_users", "SET NULL"),
+    ("acquire_playlist_syncs", "playlist_id", "catalog_playlists", "CASCADE"),
     ("app_custom_css_saves", "user_id", "auth_users", "CASCADE"),
     ("app_section_prefs", "user_id", "auth_users", "CASCADE"),
     ("app_user_appearances", "user_id", "auth_users", "CASCADE"),
@@ -4512,6 +4608,7 @@ fn state_columns() -> Vec<StateColumn> {
     use droppedneedle_acquire::requests::ledger::{ApprovalState, RequestStatus, WatchKind, WatchState};
     use droppedneedle_acquire::requests::models::RequestKind;
     use droppedneedle_acquire::search_jobs::store::JobStatus;
+    use droppedneedle_acquire::spotify_sync::models::{SyncFailure, SyncHold};
     use droppedneedle_auth::federated::password_import::HashScheme;
     use droppedneedle_auth::session::store::SessionKind;
     use droppedneedle_auth::users::roles::Role;
@@ -4586,6 +4683,9 @@ fn state_columns() -> Vec<StateColumn> {
         state("acquire_held_files", "reason", &Reason::HELD, Reason::code),
         state("acquire_held_files", "root", &HeldRoot::ALL, HeldRoot::as_str),
         state("acquire_held_files", "state", &FileState::ALL, FileState::as_str),
+        state("acquire_playlist_syncs", "failure", &SyncFailure::ALL, SyncFailure::as_str),
+        state("acquire_playlist_syncs", "grant_state", &ApprovalState::ALL, ApprovalState::as_str),
+        state("acquire_playlist_syncs", "hold", &SyncHold::ALL, SyncHold::as_str),
         state("auto_download_approvals", "state", &ApprovalState::ALL, ApprovalState::as_str),
         state("download_attempts", "disposition", &AttemptDisposition::ALL, AttemptDisposition::as_str),
         state("download_attempts", "state", &AttemptState::ALL, AttemptState::as_str),

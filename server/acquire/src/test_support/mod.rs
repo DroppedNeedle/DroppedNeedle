@@ -30,6 +30,7 @@ pub fn statement_files() -> Vec<StatementFile> {
         crate::landing::sql::registered(),
         crate::requests::sql::registered(),
         crate::search_jobs::sql::registered(),
+        crate::spotify_sync::sql::registered(),
         crate::test_support::sql::registered(),
     ]
 }

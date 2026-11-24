@@ -67,6 +67,7 @@ pub mod search_jobs;
 pub mod settings;
 pub mod slskd;
 pub mod sources;
+pub mod spotify_sync;
 pub mod target;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;

@@ -1,0 +1,538 @@
+//! Spotify sync: a playlist imported from Spotify, or Liked Songs, takes
+//! Spotify's new songs by itself. A pass asks Spotify for the playlist's
+//! version first and reads its songs only when it changed; new songs are
+//! added once, at the end (Liked Songs at the top), and nothing is ever
+//! removed, moved or added back.
+
+use axum::http::StatusCode;
+use droppedneedle_acquire::imports::spotify_oauth::SpotifyConnection;
+use droppedneedle_testkit::imports::{
+    MockRecorder, MockServer, SPOTIFY_LIKED_DEFAULT, SPOTIFY_REFRESH, SPOTIFY_SCOPES,
+    SPOTIFY_TOKEN, SPOTIFY_USER_ID, serve_spotify, spotify_track,
+};
+use serde_json::{Value, json};
+
+use crate::common::{Login, TestApp, closed_outbound};
+
+/// The app with the Spotify mocks as Spotify, its app turned on.
+struct Rig {
+    app: TestApp,
+    spotify: MockRecorder,
+    _servers: (MockServer, MockServer, MockServer),
+}
+
+async fn rig(tag: &str) -> Rig {
+    let (api, accounts, covers, spotify) = serve_spotify().await.expect("the mock serves");
+    let app = TestApp::start_with(
+        tag,
+        droppedneedle::bootstrap::Outbound {
+            spotify_api: api.base_url.clone(),
+            spotify_accounts: accounts.base_url.clone(),
+            spotify_cover_cdn: Some(covers.base_url.clone()),
+            ..closed_outbound()
+        },
+    )
+    .await;
+    let admin = app.login_admin().await;
+    let (status, body) = app
+        .call(
+            "PUT",
+            "/api/v3/acquire/spotify/settings",
+            &[("authorization", admin.as_str())],
+            Some(json!({
+                "client_id": "test-client",
+                "client_secret": "test-secret",
+                "enabled": true,
+                "spotify_redirect_origin": "",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    Rig {
+        app,
+        spotify,
+        _servers: (api, accounts, covers),
+    }
+}
+
+impl Rig {
+    /// `who`'s Spotify link, granted `scopes`, with `access_token` good
+    /// for a long while.
+    async fn link(&self, who: &Login, scopes: &str, access_token: &str) {
+        self.app
+            .state()
+            .acquire
+            .imports
+            .spotify_links
+            .upsert(
+                &who.user_id,
+                &SpotifyConnection {
+                    access_token: access_token.to_owned(),
+                    refresh_token: SPOTIFY_REFRESH.to_owned(),
+                    expires_at_unix: 4_000_000_000,
+                    username: "Mock Listener".to_owned(),
+                    spotify_user_id: SPOTIFY_USER_ID.to_owned(),
+                    scopes: scopes.to_owned(),
+                },
+            )
+            .await
+            .expect("the link saves");
+    }
+
+    async fn call(
+        &self,
+        who: &Login,
+        method: &str,
+        uri: &str,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
+        self.app
+            .call(
+                method,
+                uri,
+                &[("authorization", who.authorization.as_str())],
+                body,
+            )
+            .await
+    }
+
+    /// Import Spotify playlist `spotify_id` as `who` and wait for its
+    /// `rows` rows.
+    async fn import(&self, who: &Login, spotify_id: &str, rows: usize) -> String {
+        let path = if spotify_id == "liked" {
+            "/api/v3/acquire/spotify/liked-songs/import".to_owned()
+        } else {
+            format!("/api/v3/acquire/spotify/playlists/{spotify_id}/import")
+        };
+        let (status, body) = self
+            .call(who, "POST", &path, Some(json!({"name": "Road Trip"})))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let playlist_id = body["playlist_id"]
+            .as_str()
+            .expect("playlist id")
+            .to_owned();
+        self.app
+            .until("the imported rows", || async {
+                (titles(&self.app, &playlist_id).len() == rows).then_some(())
+            })
+            .await;
+        playlist_id
+    }
+
+    /// Turn the sync of `playlist_id` on or off as `who`.
+    async fn switch(&self, who: &Login, playlist_id: &str, enabled: bool) -> (StatusCode, Value) {
+        self.call(
+            who,
+            "PUT",
+            &format!("/api/v3/playlists/{playlist_id}/sync"),
+            Some(json!({"enabled": enabled})),
+        )
+        .await
+    }
+
+    /// When the last pass of `playlist_id` finished, unix ms.
+    fn checked_at(&self, playlist_id: &str) -> Option<i64> {
+        self.app
+            .db()
+            .query_row(
+                "SELECT checked_at FROM acquire_playlist_syncs WHERE playlist_id = ?1",
+                [playlist_id],
+                |row| row.get(0),
+            )
+            .ok()
+            .flatten()
+    }
+
+    /// The sync row's failure and kept version.
+    fn failure_and_version(&self, playlist_id: &str) -> (Option<String>, Option<String>) {
+        self.app
+            .db()
+            .query_row(
+                "SELECT failure, snapshot_id FROM acquire_playlist_syncs WHERE playlist_id = ?1",
+                [playlist_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("the sync row reads")
+    }
+
+    /// Queue a pass of `spotify_id`'s synced playlist the way a person
+    /// does, through the import route, and wait until the pass has run:
+    /// it finished, or it recorded a failure.
+    async fn pass(&self, who: &Login, spotify_id: &str, playlist_id: &str) {
+        let before = (self.checked_at(playlist_id), self.failures(playlist_id));
+        let path = if spotify_id == "liked" {
+            "/api/v3/acquire/spotify/liked-songs/import".to_owned()
+        } else {
+            format!("/api/v3/acquire/spotify/playlists/{spotify_id}/import")
+        };
+        let (status, body) = self
+            .call(who, "POST", &path, Some(json!({"name": "Road Trip"})))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        self.app
+            .until("a sync pass", || async {
+                let now = (self.checked_at(playlist_id), self.failures(playlist_id));
+                (now != before).then_some(())
+            })
+            .await;
+    }
+
+    fn failures(&self, playlist_id: &str) -> i64 {
+        self.app
+            .db()
+            .query_row(
+                "SELECT failures FROM acquire_playlist_syncs WHERE playlist_id = ?1",
+                [playlist_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0)
+    }
+
+    /// The Spotify paths called from call number `mark` on.
+    fn calls_since(&self, mark: usize) -> Vec<String> {
+        self.spotify.snapshot().spotify_paths[mark..].to_vec()
+    }
+
+    fn mark(&self) -> usize {
+        self.spotify.snapshot().spotify_paths.len()
+    }
+}
+
+fn titles(app: &TestApp, playlist_id: &str) -> Vec<String> {
+    app.db()
+        .prepare(
+            "SELECT track_name FROM catalog_playlist_tracks WHERE playlist_id = ?1 \
+             ORDER BY position",
+        )
+        .unwrap()
+        .query_map([playlist_id], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+}
+
+/// Spotify track number `n`, on an album of its own.
+fn song(n: u32) -> Value {
+    spotify_track(
+        &format!("sp-song-{n}"),
+        &format!("Song {n}"),
+        "Aurora Current",
+        (&format!("sp-album-{n}"), &format!("Album {n}")),
+        &format!("QZSYN26{n:05}"),
+    )
+}
+
+/// Turning sync on reads the playlist once. A pass at the same version
+/// asks Spotify one question and reads no songs; a new version adds the
+/// new song at the end, once. A song removed here is not added back, and
+/// one removed on Spotify stays. A save that fails keeps the old version,
+/// so the next pass adds the song once. An editor may read the sync but
+/// not change it.
+#[tokio::test]
+async fn a_synced_playlist_takes_new_songs_once_and_keeps_the_rest() {
+    let rig = rig("spotify-sync-playlist").await;
+    let ada = rig.app.login_user("ada").await;
+    rig.link(&ada, SPOTIFY_SCOPES, SPOTIFY_TOKEN).await;
+    rig.spotify
+        .set_playlist("sp-sync", "v1", vec![song(1), song(2)]);
+    let playlist_id = rig.import(&ada, "sp-sync", 2).await;
+
+    let mark = rig.mark();
+    let (status, body) = rig.switch(&ada, &playlist_id, true).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["enabled"], true, "{body}");
+    rig.app
+        .until("the first pass", || async {
+            rig.checked_at(&playlist_id).map(|_| ())
+        })
+        .await;
+    assert_eq!(
+        rig.calls_since(mark),
+        ["/playlists/sp-sync", "/playlists/sp-sync/items"],
+        "the first pass reads the songs once"
+    );
+    assert_eq!(titles(&rig.app, &playlist_id), ["Song 1", "Song 2"]);
+
+    let mark = rig.mark();
+    rig.pass(&ada, "sp-sync", &playlist_id).await;
+    assert_eq!(
+        rig.calls_since(mark),
+        ["/playlists/sp-sync"],
+        "unchanged: one question, and the import route queued a pass, not an import"
+    );
+
+    rig.spotify
+        .set_playlist("sp-sync", "", vec![song(1), song(2)]);
+    let mark = rig.mark();
+    rig.pass(&ada, "sp-sync", &playlist_id).await;
+    assert_eq!(
+        rig.calls_since(mark),
+        ["/playlists/sp-sync", "/playlists/sp-sync/items"],
+        "no version reads as changed"
+    );
+
+    rig.spotify
+        .set_playlist("sp-sync", "v2", vec![song(1), song(2), song(3)]);
+    rig.pass(&ada, "sp-sync", &playlist_id).await;
+    assert_eq!(
+        titles(&rig.app, &playlist_id),
+        ["Song 1", "Song 2", "Song 3"]
+    );
+
+    let entry: String = rig
+        .app
+        .db()
+        .query_row(
+            "SELECT id FROM catalog_playlist_tracks WHERE playlist_id = ?1 \
+             AND track_name = 'Song 2'",
+            [&playlist_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let (status, body) = rig
+        .call(
+            &ada,
+            "DELETE",
+            &format!("/api/v3/playlists/{playlist_id}/tracks/{entry}"),
+            None,
+        )
+        .await;
+    assert!(status.is_success(), "{status} {body}");
+    rig.spotify
+        .set_playlist("sp-sync", "v3", vec![song(2), song(3), song(4)]);
+    rig.pass(&ada, "sp-sync", &playlist_id).await;
+    assert_eq!(
+        titles(&rig.app, &playlist_id),
+        ["Song 1", "Song 3", "Song 4"],
+        "a song removed here stays removed, and one removed on Spotify stays"
+    );
+
+    rig.app
+        .seed(
+            "CREATE TRIGGER test_refuse_songs BEFORE INSERT ON catalog_playlist_source_songs \
+             BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+        )
+        .await;
+    rig.spotify
+        .set_playlist("sp-sync", "v4", vec![song(3), song(4), song(5)]);
+    rig.pass(&ada, "sp-sync", &playlist_id).await;
+    assert_eq!(
+        rig.failure_and_version(&playlist_id),
+        (Some("save_failed".to_owned()), Some("v3".to_owned())),
+        "a failed save keeps the version before it"
+    );
+    rig.app.seed("DROP TRIGGER test_refuse_songs").await;
+    rig.pass(&ada, "sp-sync", &playlist_id).await;
+    assert_eq!(
+        titles(&rig.app, &playlist_id),
+        ["Song 1", "Song 3", "Song 4", "Song 5"]
+    );
+    assert_eq!(
+        rig.failure_and_version(&playlist_id),
+        (None, Some("v4".to_owned()))
+    );
+
+    let bo = rig.app.login_user("bobby").await;
+    rig.app
+        .seed(format!(
+            "INSERT INTO catalog_playlist_members (playlist_id, user_id, added_at, can_edit) \
+             VALUES ('{playlist_id}', '{}', 0, 1)",
+            bo.user_id
+        ))
+        .await;
+    let (status, body) = rig
+        .call(
+            &bo,
+            "GET",
+            &format!("/api/v3/playlists/{playlist_id}/sync"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["enabled"], true);
+    let (status, _) = rig.switch(&bo, &playlist_id, false).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "only the owner switches it");
+
+    rig.app.stop().await;
+}
+
+/// A playlist imported before its songs were kept takes its first pass's
+/// songs once: the rows already there are paired with the songs they are,
+/// and only the new one is added.
+#[tokio::test]
+async fn a_playlist_imported_before_is_seeded_without_duplicates() {
+    let rig = rig("spotify-sync-seed").await;
+    let ada = rig.app.login_user("ada").await;
+    rig.link(&ada, SPOTIFY_SCOPES, SPOTIFY_TOKEN).await;
+    rig.spotify
+        .set_playlist("sp-old", "v1", vec![song(1), song(2)]);
+    let playlist_id = rig.import(&ada, "sp-old", 2).await;
+    rig.app
+        .seed(format!(
+            "DELETE FROM catalog_playlist_source_songs WHERE playlist_id = '{playlist_id}'"
+        ))
+        .await;
+    rig.spotify
+        .set_playlist("sp-old", "v2", vec![song(1), song(2), song(3)]);
+
+    let (status, body) = rig.switch(&ada, &playlist_id, true).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    rig.app
+        .until("the first pass", || async {
+            rig.checked_at(&playlist_id).map(|_| ())
+        })
+        .await;
+    assert_eq!(
+        titles(&rig.app, &playlist_id),
+        ["Song 1", "Song 2", "Song 3"]
+    );
+    let kept: i64 = rig
+        .app
+        .db()
+        .query_row(
+            "SELECT COUNT(*) FROM catalog_playlist_source_songs s \
+             JOIN catalog_playlist_tracks e ON e.id = s.entry_id WHERE s.playlist_id = ?1",
+            [&playlist_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(kept, 3, "each row is kept as the song it is");
+
+    rig.app.stop().await;
+}
+
+/// Liked Songs is read newest first, only to the first page holding a
+/// song already taken, and its new likes go at the top in Spotify's order.
+/// Its sync needs the scope that reads it.
+#[tokio::test]
+async fn liked_songs_take_new_likes_at_the_top_from_the_first_page() {
+    let rig = rig("spotify-sync-liked").await;
+    let ada = rig.app.login_user("ada").await;
+    rig.link(&ada, "playlist-read-private", SPOTIFY_TOKEN).await;
+    let (status, body) = rig
+        .call(
+            &ada,
+            "POST",
+            "/api/v3/acquire/spotify/liked-songs/import",
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    rig.link(&ada, SPOTIFY_SCOPES, SPOTIFY_TOKEN).await;
+    let playlist_id = rig.import(&ada, "liked", SPOTIFY_LIKED_DEFAULT).await;
+    let (status, body) = rig.switch(&ada, &playlist_id, true).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    rig.app
+        .until("the first pass", || async {
+            rig.checked_at(&playlist_id).map(|_| ())
+        })
+        .await;
+    assert_eq!(titles(&rig.app, &playlist_id).len(), SPOTIFY_LIKED_DEFAULT);
+
+    let mut liked = vec![song(7), song(8)];
+    liked.extend((0..SPOTIFY_LIKED_DEFAULT).map(|n| {
+        spotify_track(
+            &format!("sp-liked-{n}"),
+            &format!("Liked {n}"),
+            "Aurora Current",
+            ("sp-album-liked", "Liked Album"),
+            &format!("QZLIK26{n:05}"),
+        )
+    }));
+    rig.spotify.set_liked(liked);
+    let mark = rig.mark();
+    rig.pass(&ada, "liked", &playlist_id).await;
+    assert_eq!(
+        rig.calls_since(mark),
+        ["/me/tracks"],
+        "one page holds a song already taken"
+    );
+    let titles = titles(&rig.app, &playlist_id);
+    assert_eq!(titles.len(), SPOTIFY_LIKED_DEFAULT + 2);
+    assert_eq!(
+        titles[..3],
+        ["Song 7", "Song 8", "Liked 0"],
+        "new likes on top"
+    );
+
+    rig.link(&ada, "playlist-read-private", SPOTIFY_TOKEN).await;
+    rig.switch(&ada, &playlist_id, false).await;
+    let (status, body) = rig.switch(&ada, &playlist_id, true).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "SPOTIFY_RECONNECT_NEEDED");
+
+    rig.app.stop().await;
+}
+
+/// Turning sync off cancels its queued pass. A link Spotify no longer
+/// honours (the token refused, then the refresh refused) is recorded as
+/// one closed reason, never Spotify's own words.
+#[tokio::test]
+async fn sync_off_cancels_and_a_refused_link_reads_not_linked() {
+    let rig = rig("spotify-sync-refused").await;
+    let ada = rig.app.login_user("ada").await;
+    rig.link(&ada, SPOTIFY_SCOPES, SPOTIFY_TOKEN).await;
+    rig.spotify.set_playlist("sp-gone", "v1", vec![song(1)]);
+    let playlist_id = rig.import(&ada, "sp-gone", 1).await;
+
+    let (status, body) = rig.switch(&ada, &playlist_id, true).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    rig.app
+        .until("the first pass", || async {
+            rig.checked_at(&playlist_id).map(|_| ())
+        })
+        .await;
+    rig.link(&ada, SPOTIFY_SCOPES, "a-token-spotify-refuses")
+        .await;
+    rig.spotify.refuse_refresh();
+    rig.pass(&ada, "sp-gone", &playlist_id).await;
+    assert_eq!(
+        rig.failure_and_version(&playlist_id).0.as_deref(),
+        Some("not_linked")
+    );
+    let (status, body) = rig
+        .call(
+            &ada,
+            "GET",
+            &format!("/api/v3/playlists/{playlist_id}/sync"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["failure"], "not_linked", "{body}");
+    assert!(
+        !body.to_string().contains("invalid_grant"),
+        "no words of Spotify's: {body}"
+    );
+
+    rig.app
+        .seed(format!(
+            "UPDATE acquire_playlist_syncs SET next_check_at = 0 WHERE playlist_id = '{playlist_id}'"
+        ))
+        .await;
+    rig.app
+        .state()
+        .acquire
+        .spotify_sync
+        .store()
+        .enqueue_all(vec![playlist_id.clone()])
+        .await
+        .expect("the pass queues");
+    let (status, body) = rig.switch(&ada, &playlist_id, false).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["enabled"], false);
+    let live: i64 = rig
+        .app
+        .db()
+        .query_row(
+            "SELECT COUNT(*) FROM durable_jobs WHERE kind = 'spotify.sync' AND idempotency_key = ?1 \
+             AND state IN ('queued', 'running')",
+            [format!("spotify:sync:{playlist_id}")],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(live, 0, "turning sync off cancels its pass");
+
+    rig.app.stop().await;
+}

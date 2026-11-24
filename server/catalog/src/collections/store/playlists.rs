@@ -850,6 +850,48 @@ impl PlaylistStore {
             .await
     }
 
+    /// The owner of `playlist_id` and where it came from, when it has an
+    /// owner.
+    pub async fn source_of(
+        &self,
+        playlist_id: &str,
+    ) -> Result<Option<(String, Option<String>)>, StoreError> {
+        let playlist_id = playlist_id.to_owned();
+        self.db
+            .read("playlists.source_of", move |conn| {
+                Ok(conn
+                    .query_row(
+                        sql::PLAYLIST_SOURCE.text(),
+                        params![playlist_id],
+                        sql::PlaylistSource::read,
+                    )
+                    .optional()?
+                    .map(|row| (row.user_id, row.source_ref)))
+            })
+            .await
+    }
+
+    /// How many songs `playlist_id` took from its source still wait for a
+    /// sync: not followed up, not playable, and with an album or a look for
+    /// one due by `now` (unix ms).
+    pub async fn open_source_song_count(
+        &self,
+        playlist_id: &str,
+        now: i64,
+    ) -> Result<u32, StoreError> {
+        let playlist_id = playlist_id.to_owned();
+        self.db
+            .read("playlists.open_source_song_count", move |conn| {
+                let count: i64 = conn.query_row(
+                    sql::OPEN_SOURCE_SONG_COUNT.text(),
+                    params![playlist_id, now],
+                    |row| row.get(0),
+                )?;
+                Ok(u32::try_from(count).unwrap_or(u32::MAX))
+            })
+            .await
+    }
+
     /// The source songs `playlist_id` has taken, whether or not their
     /// entries are still there.
     pub async fn source_song_ids(

@@ -258,6 +258,10 @@ fn mount(m: Mount<'_>) -> Mount<'_> {
             droppedneedle_acquire::playlist_requests::http::routes(),
             |state| state.acquire.playlist_requests.clone(),
         )
+        .area(
+            droppedneedle_acquire::spotify_sync::http::routes(),
+            |state| state.acquire.spotify_sync.clone(),
+        )
         .area(droppedneedle_acquire::follows::routes(), |state| {
             state.acquire.requests.follows.clone()
         })

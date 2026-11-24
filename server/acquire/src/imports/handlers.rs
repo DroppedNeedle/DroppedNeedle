@@ -54,6 +54,7 @@ use super::{LIKED_SONGS_NAME, LIKED_SONGS_REF};
 use crate::follows::Follows;
 use crate::requests::error::RequestsError;
 use crate::settings::{ConfigLidarrSettings, ConfigSpotifySettings, settings_failed};
+use crate::spotify_sync::store::SyncStore;
 
 /// Every dependency the imports routes need, injected by constructor.
 #[derive(Clone)]
@@ -78,6 +79,9 @@ pub struct ImportsDeps {
     pub resolver: Arc<AlbumResolver>,
     /// Queues Spotify imports on the jobs table and reads their state.
     pub spotify_imports: SpotifyImports,
+    /// The sync rows: an import of a synced playlist queues its sync pass
+    /// instead, and a reconnect wakes the syncs a missing link held.
+    pub syncs: SyncStore,
     /// Probes behind the download client status reads.
     pub probes: Arc<HealthProbes>,
     /// Fresh ids, the OAuth state fallback when the OS RNG fails.
@@ -456,6 +460,11 @@ async fn finish_spotify_link(deps: &ImportsDeps, query: SpotifyCallbackQuery) ->
         tracing::error!(%cause, "spotify link write failed");
         return Redirect::temporary(&profile("/profile?spotify=error")).into_response();
     }
+    // Best effort: a sync held for want of a link runs at its next due
+    // check anyway.
+    if let Err(error) = deps.syncs.wake_unlinked(&pending.user_id).await {
+        tracing::warn!(%error, "spotify syncs not woken after a reconnect");
+    }
     Redirect::temporary(&profile("/profile?spotify=connected")).into_response()
 }
 
@@ -492,7 +501,7 @@ pub async fn list_spotify_playlists(
     State(deps): State<ImportsDeps>,
     User(principal): User,
 ) -> Result<Json<SpotifyPlaylistListResponse>, ApiError> {
-    let playlists = deps
+    let mut playlists = deps
         .spotify_service()
         .list_playlists(principal.user_id())
         .await
@@ -500,6 +509,15 @@ pub async fn list_spotify_playlists(
             ImportFailure::Settings(error) => settings_failed(error),
             ImportFailure::Spotify(error) => spotify_failed(error),
         })?;
+    let synced = deps
+        .syncs
+        .synced_sources(principal.user_id())
+        .await
+        .map_err(|error| ImportsError::internal(&error))?;
+    for playlist in &mut playlists.playlists {
+        playlist.synced = synced.contains(&format!("spotify:{}", playlist.id));
+    }
+    playlists.liked_songs.synced = synced.contains(&format!("spotify:{LIKED_SONGS_REF}"));
     Ok(Json(playlists))
 }
 
@@ -570,6 +588,11 @@ pub async fn import_spotify_playlist(
         .ensure_playlist_record(principal.user_id(), &id, &body.name)
         .await
         .map_err(spotify_failed)?;
+    // A synced playlist is never replaced: importing it again queues its
+    // sync pass, which adds what is new.
+    if deps.syncs.wake(&playlist_id).await.map_err(job_failed)? {
+        return Ok(Json(SpotifyImportResponse { playlist_id }));
+    }
     deps.spotify_imports
         .start(principal.user_id(), &id, &playlist_id)
         .await
@@ -607,6 +630,9 @@ pub async fn import_liked_songs(
         .ensure_playlist_record(principal.user_id(), LIKED_SONGS_REF, LIKED_SONGS_NAME)
         .await
         .map_err(spotify_failed)?;
+    if deps.syncs.wake(&playlist_id).await.map_err(job_failed)? {
+        return Ok(Json(SpotifyImportResponse { playlist_id }));
+    }
     deps.spotify_imports
         .start(principal.user_id(), LIKED_SONGS_REF, &playlist_id)
         .await

@@ -530,6 +530,8 @@ async fn spotify_playlist(
         .is_some_and(|fields| fields == "snapshot_id")
     {
         return match state.recorder.playlist(&id) {
+            // An empty version stands for one Spotify left out.
+            Some((snapshot, _)) if snapshot.is_empty() => Json(json!({})).into_response(),
             Some((snapshot, _)) => Json(json!({"snapshot_id": snapshot})).into_response(),
             None if id == "sp-playlist-1" => Json(json!({"snapshot_id": "snap-1"})).into_response(),
             None => StatusCode::NOT_FOUND.into_response(),
