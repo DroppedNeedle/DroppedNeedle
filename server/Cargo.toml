@@ -176,12 +176,13 @@ zip.workspace = true
 [profile.release]
 strip = true
 
-# A quicker optimized build for the image CI boots on every push: our crates
-# at opt-level 1 in many codegen units, third-party crates fully optimized.
-# Shipping builds (the dev image and releases) use the release profile.
+# A quicker build for the image CI boots on every push. Our crates build
+# unoptimized, like a debug build but without debug info, debug assertions
+# or overflow checks; third-party crates stay at opt-level 3. Shipping
+# builds (the dev image and releases) use the release profile.
 [profile.ci-e2e]
 inherits = "release"
-opt-level = 1
+opt-level = 0
 codegen-units = 256
 lto = false
 
