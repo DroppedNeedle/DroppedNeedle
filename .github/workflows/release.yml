@@ -267,6 +267,76 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
           provenance: false
 
+      # CI boots a quicker build of the same code on every push. Before
+      # anything is published, the amd64 image built above goes through the
+      # same boot test and journeys, dry runs included.
+      - name: Load the image for the boot test
+        if: matrix.arch == 'amd64'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          load: true
+          tags: droppedneedle-v3:release-e2e
+          build-args: |
+            COMMIT_TAG=${{ needs.checks.outputs.version }}
+            BUILD_DATE=${{ steps.date.outputs.timestamp }}
+            VCS_REF=${{ steps.date.outputs.revision }}
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          provenance: false
+
+      - name: Build the mocks image
+        if: matrix.arch == 'amd64'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: server/scripts/e2e-mocks.Dockerfile
+          load: true
+          tags: droppedneedle-v3:e2e-mocks
+          cache-from: type=gha,scope=e2e-mocks
+          provenance: false
+
+      - name: Setup pnpm
+        if: matrix.arch == 'amd64'
+        uses: pnpm/action-setup@v6
+        with:
+          # The pinned pnpm version is declared in the frontend package.
+          package_json_file: frontend/package.json
+
+      - name: Setup Node.js
+        if: matrix.arch == 'amd64'
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .github/node-version
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        if: matrix.arch == 'amd64'
+        working-directory: ./frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright chromium
+        if: matrix.arch == 'amd64'
+        working-directory: ./frontend
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Boot, probe, stop, then the browser journeys
+        if: matrix.arch == 'amd64'
+        env:
+          DN_E2E_IMAGE: droppedneedle-v3:release-e2e
+          DN_E2E_MOCKS_IMAGE: droppedneedle-v3:e2e-mocks
+        run: ./server/scripts/e2e-container.sh
+
+      - name: Upload journey traces
+        if: failure() && matrix.arch == 'amd64'
+        uses: actions/upload-artifact@v7
+        with:
+          name: journey-traces
+          path: frontend/test-results/journeys/
+          if-no-files-found: ignore
+          retention-days: 7
+
       # The same build cut at the release-files stage, so every layer comes
       # from the cache the step above filled and the binaries are the ones
       # the image ships. They are built on Debian 12, so they need glibc 2.36
