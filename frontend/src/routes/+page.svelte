@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Download, Music, CircleAlert, Lock, Pencil, Plus } from 'lucide-svelte';
+	import { Download, Music, Lock, Pencil, Plus } from 'lucide-svelte';
 	import HomeSection from '$lib/features/discover/components/HomeSection.svelte';
 	import ServiceErrorState from '$lib/ui/ServiceErrorState.svelte';
 	import WeeklyExploration from '$lib/features/discover/components/WeeklyExploration.svelte';
@@ -34,8 +34,13 @@
 	import HomeWidget from '$lib/features/home/components/HomeWidget.svelte';
 	import { defaultLayout } from '$lib/features/home/layout/defaultLayout';
 	import { LAYOUT_VERSION, applySavedLayout } from '$lib/features/home/layout/apply';
-	import { getHomeLayoutQuery, saveHomeLayout } from '$lib/features/home/queries/layout.svelte';
+	import {
+		getHomeLayoutQuery,
+		refreshHomeLayouts,
+		saveHomeLayout
+	} from '$lib/features/home/queries/layout.svelte';
 	import { toastStore } from '$lib/stores/toast';
+	import { ApiError } from '$lib/api/errors';
 	import type { WidgetPlacement, WidgetSpec } from '$lib/features/home/layout/contract';
 
 	useDiscoverActivity(() => ({ feature: 'home' }));
@@ -171,11 +176,24 @@
 	// the saved layout fills in once both the page data and the layout land;
 	// nothing saved, or an unreachable endpoint, means the built-in order
 	let seeded = false;
+	let seededWithError = false;
+	let seededRevision = 0;
+	let seededSource: string | null = null;
 	$effect(() => {
-		if (seeded || !homeData) return;
-		if (!layoutQuery.data && !layoutQuery.isError) return;
-		seeded = true;
+		if (!homeData) return;
+		const hasData = Boolean(layoutQuery.data);
+		const hasError = layoutQuery.isError;
+		if (!hasData && !hasError) return;
 		const stored = layoutQuery.data;
+		const nextRevision = stored?.revision ?? 0;
+		const nextSource = stored?.source ?? null;
+		const identityChanged = seededRevision !== nextRevision || seededSource !== nextSource;
+		if (seeded && !(seededWithError && hasData) && !identityChanged) return;
+		if (editing) return;
+		seeded = true;
+		seededWithError = !hasData;
+		seededRevision = nextRevision;
+		seededSource = nextSource;
 		layout =
 			stored && stored.widgets.length > 0
 				? applySavedLayout(stored.widgets, widgetSpecs, stored.source !== 'admin')
@@ -186,11 +204,28 @@
 
 	// a section that appears or vanishes on a refetch joins or leaves the layout
 	$effect(() => {
-		if (!seeded || serverLayout?.source === 'admin') return;
+		if (!seeded) return;
+		const isAdmin = serverLayout?.source === 'admin';
 		const ids = new Set(widgetSpecs.map((spec) => spec.id));
 		const known = new Set(layout.map((place) => place.id));
 		const missing = widgetSpecs.filter((spec) => !known.has(spec.id));
 		const stale = [...known].some((id) => !ids.has(id));
+		if (isAdmin) {
+			if (missing.length === 0 && !stale) return;
+			if (stale) {
+				layout = layout.filter((place) => ids.has(place.id));
+				hidden = hidden.filter((id) => ids.has(id));
+			}
+			if (missing.length > 0) {
+				const bottom = layout.reduce((low, place) => Math.max(low, place.y + place.h), 0);
+				const added = defaultLayout(missing).map((place) => ({
+					...place,
+					y: bottom + place.y
+				}));
+				layout = [...layout, ...added];
+			}
+			return;
+		}
 		if (missing.length === 0 && !stale) return;
 		const kept = layout.filter((place) => ids.has(place.id));
 		const bottom = kept.reduce((low, place) => Math.max(low, place.y + place.h), 0);
@@ -215,17 +250,39 @@
 	}
 
 	async function lock() {
+		const previousSaved = { layout: copy(saved.layout), hidden: [...saved.hidden] };
 		editing = false;
 		confirming = null;
-		saved = { layout: copy(layout), hidden: [...hidden] };
 		try {
-			await saveHomeLayout({
-				version: LAYOUT_VERSION,
-				widgets: layout.map(({ id, kind, x, y, w, h }) => ({ id, kind, x, y, w, h })),
-				hidden: [...hidden]
-			});
-		} catch {
-			toastStore.notify('Could not save the home layout.', 'error');
+			await saveHomeLayout(
+				{
+					version: LAYOUT_VERSION,
+					widgets: layout.map(({ id, kind, x, y, w, h }) => ({ id, kind, x, y, w, h })),
+					hidden: [...hidden]
+				},
+				layoutQuery.data?.revision ?? 0
+			);
+			saved = { layout: copy(layout), hidden: [...hidden] };
+		} catch (error) {
+			saved = previousSaved;
+			if (error instanceof ApiError && error.status === 409 && error.code === 'STALE_REVISION') {
+				layout = copy(previousSaved.layout);
+				hidden = [...previousSaved.hidden];
+				if (!editing) seeded = false;
+				await refreshHomeLayouts().catch(() => undefined);
+				toastStore.notify('The board changed in another tab.', 'error');
+			} else if (error instanceof ApiError && error.status === 403) {
+				editing = true;
+				await refreshHomeLayouts().catch(() => undefined);
+				toastStore.notify("Editing is admin-only while everyone uses the admin's layout.", 'error');
+			} else if (error instanceof ApiError && error.status === 409) {
+				seeded = false;
+				await refreshHomeLayouts().catch(() => undefined);
+				toastStore.notify(error.message || 'Could not save the home layout.', 'error');
+			} else {
+				editing = true;
+				toastStore.notify('Could not save the home layout.', 'error');
+			}
 		}
 	}
 
@@ -246,7 +303,9 @@
 	}
 
 	function showWidget(id: string) {
-		const bottom = layout.reduce((low, place) => Math.max(low, place.y + place.h), 0);
+		const bottom = layout
+			.filter((place) => place.id !== id)
+			.reduce((low, place) => Math.max(low, place.y + place.h), 0);
 		layout = layout.map((place) => (place.id === id ? { ...place, y: bottom } : place));
 		hidden = hidden.filter((each) => each !== id);
 	}
@@ -343,139 +402,122 @@
 			</section>
 		</div>
 	{:else}
-		<!-- a render error in any widget degrades to the failed card below instead
-		     of crashing the whole SPA (the #147 freeze) -->
-		<svelte:boundary>
-			<div class="relative px-4 sm:px-6 lg:px-8">
-				{#if editing}
-					<p class="edit-hint">
-						Drag a widget by its grip, resize from the corner, hide what you do not need.
-					</p>
-				{/if}
-				<HomeGrid widgets={visibleWidgets} {editing} onchange={handleLayoutChange}>
-					{#snippet children(widget)}
-						<HomeWidget
-							id={widget.id}
-							label={labels[widget.id] ?? widget.kind}
-							{editing}
-							onhide={hideWidget}
-						>
-							{#if widget.kind === 'entry_cards'}
-								<HomeEntryCards />
-							{:else if widget.kind === 'prompts'}
-								<div class="space-y-3">
-									{#if welcome && downloadClientPrompt}
-										<Card
-											class="relative overflow-hidden border-2 border-accent/40 bg-linear-to-br from-accent/20 via-accent/10 to-base-200 shadow-xl"
-										>
-											<div
-												class="flex flex-col items-center gap-2 py-6 text-center stagger-fade-in"
-											>
-												<Music class="h-16 w-16 mb-4 animate-float text-accent" />
-												<CardTitle class="block text-2xl sm:text-4xl lg:text-5xl font-bold mb-2">
-													Welcome to <span class="text-primary">DroppedNeedle</span>!
-												</CardTitle>
-												<p class="text-muted max-w-lg mb-6">
-													Connect a download source to fetch your requests. Until then, requests
-													wait.
-												</p>
-												<div class="flex flex-wrap justify-center gap-2 mb-6">
-													{#each downloadClientPrompt.features as feature (feature)}
-														<span class="badge badge-accent badge-lg">{feature}</span>
-													{/each}
-												</div>
-												<Button
-													variant="accent"
-													size="lg"
-													icon={Download}
-													href={withBasePath('/settings?tab=download-client')}
-												>
-													Configure Download Client
-												</Button>
+		<!-- a render error in any widget degrades to that widget's own failed card -->
+		<div class="relative px-4 sm:px-6 lg:px-8">
+			{#if editing}
+				<p class="edit-hint">
+					Drag a widget by its grip, resize from the corner, hide what you do not need.
+				</p>
+			{/if}
+			<HomeGrid widgets={visibleWidgets} {editing} onchange={handleLayoutChange}>
+				{#snippet children(widget)}
+					<HomeWidget
+						id={widget.id}
+						label={labels[widget.id] ?? widget.kind}
+						{editing}
+						onhide={hideWidget}
+					>
+						{#if widget.kind === 'entry_cards'}
+							<HomeEntryCards />
+						{:else if widget.kind === 'prompts'}
+							<div class="space-y-3">
+								{#if welcome && downloadClientPrompt}
+									<Card
+										class="relative overflow-hidden border-2 border-accent/40 bg-linear-to-br from-accent/20 via-accent/10 to-base-200 shadow-xl"
+									>
+										<div class="flex flex-col items-center gap-2 py-6 text-center stagger-fade-in">
+											<Music class="h-16 w-16 mb-4 animate-float text-accent" />
+											<CardTitle class="block text-2xl sm:text-4xl lg:text-5xl font-bold mb-2">
+												Welcome to <span class="text-primary">DroppedNeedle</span>!
+											</CardTitle>
+											<p class="text-muted max-w-lg mb-6">
+												Connect a download source to fetch your requests. Until then, requests wait.
+											</p>
+											<div class="flex flex-wrap justify-center gap-2 mb-6">
+												{#each downloadClientPrompt.features as feature (feature)}
+													<span class="badge badge-accent badge-lg">{feature}</span>
+												{/each}
 											</div>
-										</Card>
-									{/if}
-									{#if otherPrompts.length > 0 && !welcome}
-										{#each otherPrompts as prompt, i (`prompt-${i}`)}
-											<ServicePromptCard {prompt} ondismiss={handlePromptDismiss} />
-										{/each}
-									{/if}
-								</div>
-							{:else if widget.kind === 'now_playing'}
-								<HomeSectionNowPlaying />
-							{:else if widget.kind === 'discover_teaser'}
-								<div class="grid h-full items-center">
-									<DiscoverTeaserBand preview={homeData?.discover_preview ?? null} />
-								</div>
-							{:else if widget.kind === 'genre_grid' && genreList}
-								<GenreGrid title={genreList.title} genres={genreRows(genreList)} />
-							{:else}
-								{@const block = blocksById[widget.id]}
-								{#if block?.kind === 'section'}
-									<HomeSection
-										section={block.section}
-										headerLink={block.link}
-										showPreview={block.showPreview}
-										eager={EAGER_KEYS.includes(block.key)}
-										madeFrom="home_shelf"
-									/>
-								{:else if block?.kind === 'weekly'}
-									<WeeklyExploration section={block.section} madeFrom="home_shelf" />
+											<Button
+												variant="accent"
+												size="lg"
+												icon={Download}
+												href={withBasePath('/settings?tab=download-client')}
+											>
+												Configure Download Client
+											</Button>
+										</div>
+									</Card>
 								{/if}
+								{#if otherPrompts.length > 0 && !welcome}
+									{#each otherPrompts as prompt, i (`prompt-${i}`)}
+										<ServicePromptCard {prompt} ondismiss={handlePromptDismiss} />
+									{/each}
+								{/if}
+							</div>
+						{:else if widget.kind === 'now_playing'}
+							<HomeSectionNowPlaying />
+						{:else if widget.kind === 'discover_teaser'}
+							<div class="grid h-full items-center">
+								<DiscoverTeaserBand preview={homeData?.discover_preview ?? null} />
+							</div>
+						{:else if widget.kind === 'genre_grid' && genreList}
+							<GenreGrid title={genreList.title} genres={genreRows(genreList)} />
+						{:else}
+							{@const block = blocksById[widget.id]}
+							{#if block?.kind === 'section'}
+								<HomeSection
+									section={block.section}
+									headerLink={block.link}
+									showPreview={block.showPreview}
+									eager={EAGER_KEYS.includes(block.key)}
+									madeFrom="home_shelf"
+								/>
+							{:else if block?.kind === 'weekly'}
+								<WeeklyExploration section={block.section} madeFrom="home_shelf" />
 							{/if}
-						</HomeWidget>
-					{/snippet}
-				</HomeGrid>
+						{/if}
+					</HomeWidget>
+				{/snippet}
+			</HomeGrid>
 
-				{#if editing && hiddenSpecs.length > 0}
-					<div class="home-tray">
-						<span class="home-tray-label">Hidden</span>
-						{#each hiddenSpecs as spec (spec.id)}
-							<button type="button" class="home-tray-add" onclick={() => showWidget(spec.id)}>
-								<Plus class="size-3.5" aria-hidden="true" />
-								{labels[spec.id] ?? spec.kind}
-							</button>
-						{/each}
-					</div>
-				{/if}
-			</div>
-
-			{#if !hasContent && servicePrompts.length === 0}
-				<div class="flex flex-col items-center justify-center py-12 sm:py-16">
-					<Music class="h-12 w-12 sm:h-16 sm:w-16 mb-4 sm:mb-6" />
-					<h2 class="mb-2 text-center text-3xl font-bold sm:text-4xl lg:text-5xl">
-						Welcome to <span class="text-primary">DroppedNeedle</span>
-					</h2>
-					{#if authStore.isAdmin}
-						<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
-							Your library is empty. Add a library path and start a scan to fill it.
-						</p>
-						<div class="flex flex-wrap justify-center gap-2">
-							<Button variant="primary" href={withBasePath('/settings?tab=library')}>
-								Start scan
-							</Button>
-							<Button variant="ghost" href={withBasePath('/library')}>Go to Library</Button>
-						</div>
-					{:else}
-						<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
-							Your library is being prepared. An admin is setting things up - check back soon.
-						</p>
-						<Button variant="ghost" href={withBasePath('/library')}>Go to Library</Button>
-					{/if}
+			{#if editing && hiddenSpecs.length > 0}
+				<div class="home-tray">
+					<span class="home-tray-label">Hidden</span>
+					{#each hiddenSpecs as spec (spec.id)}
+						<button type="button" class="home-tray-add" onclick={() => showWidget(spec.id)}>
+							<Plus class="size-3.5" aria-hidden="true" />
+							{labels[spec.id] ?? spec.kind}
+						</button>
+					{/each}
 				</div>
 			{/if}
+		</div>
 
-			{#snippet failed(_error, reset)}
-				<div class="flex flex-col items-center justify-center py-12 sm:py-16">
-					<CircleAlert class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-muted" />
-					<h2 class="mb-2 text-center text-xl font-bold sm:text-2xl">Something Went Wrong</h2>
+		{#if !hasContent && servicePrompts.length === 0}
+			<div class="flex flex-col items-center justify-center py-12 sm:py-16">
+				<Music class="h-12 w-12 sm:h-16 sm:w-16 mb-4 sm:mb-6" />
+				<h2 class="mb-2 text-center text-3xl font-bold sm:text-4xl lg:text-5xl">
+					Welcome to <span class="text-primary">DroppedNeedle</span>
+				</h2>
+				{#if authStore.isAdmin}
 					<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
-						Part of the Home page failed to render. The rest of the app still works.
+						Your library is empty. Add a library path and start a scan to fill it.
 					</p>
-					<Button variant="primary" onclick={() => reset()}>Try Again</Button>
-				</div>
-			{/snippet}
-		</svelte:boundary>
+					<div class="flex flex-wrap justify-center gap-2">
+						<Button variant="primary" href={withBasePath('/settings?tab=library')}>
+							Start scan
+						</Button>
+						<Button variant="ghost" href={withBasePath('/library')}>Go to Library</Button>
+					</div>
+				{:else}
+					<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
+						Your library is being prepared. An admin is setting things up - check back soon.
+					</p>
+					<Button variant="ghost" href={withBasePath('/library')}>Go to Library</Button>
+				{/if}
+			</div>
+		{/if}
 	{/if}
 </div>
 

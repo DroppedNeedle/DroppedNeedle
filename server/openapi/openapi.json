@@ -23606,7 +23606,7 @@
         "tags": [
           "settings"
         ],
-        "summary": "Replace the caller's own layout. Refused while personalization is forced,\nunless the caller is an admin: theirs is the row everyone is served.",
+        "summary": "Replace the caller's own layout. Refused while personalization is forced,\nunless the caller is the first admin: theirs is the row everyone is served.",
         "operationId": "put_home_layout",
         "requestBody": {
           "content": {
@@ -23629,8 +23629,18 @@
               }
             }
           },
-          "409": {
+          "403": {
             "description": "Personalization is forced",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale revision",
             "content": {
               "application/json": {
                 "schema": {
@@ -49787,6 +49797,7 @@
         "description": "The caller's home layout and who decides it.",
         "required": [
           "version",
+          "revision",
           "widgets",
           "hidden",
           "posture",
@@ -49808,6 +49819,11 @@
           "posture": {
             "$ref": "#/components/schemas/PersonalizationMode",
             "description": "Whether layouts are each person's or the admin's."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Stored revision (updated_at); `0` when nothing is saved."
           },
           "source": {
             "$ref": "#/components/schemas/HomeLayoutSource",
@@ -49841,6 +49857,7 @@
         "description": "A layout to save.",
         "required": [
           "version",
+          "revision",
           "widgets",
           "hidden"
         ],
@@ -49851,6 +49868,11 @@
               "type": "string"
             },
             "description": "Widgets the caller hides."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Stored revision the client is saving against; ignored on a first save."
           },
           "version": {
             "type": "integer",

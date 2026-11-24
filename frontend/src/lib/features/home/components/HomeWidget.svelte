@@ -32,7 +32,15 @@
 		</div>
 	{/if}
 	<div class="home-widget-body">
-		{@render children()}
+		<svelte:boundary>
+			{@render children()}
+			{#snippet failed(_error, reset)}
+				<div class="home-widget-failed">
+					<p>Something went wrong in this widget.</p>
+					<button type="button" class="home-widget-retry" onclick={() => reset()}>Try again</button>
+				</div>
+			{/snippet}
+		</svelte:boundary>
 	</div>
 </div>
 
@@ -48,6 +56,7 @@
 	.home-widget-body {
 		height: 100%;
 		min-height: 0;
+		padding-inline: 1rem;
 	}
 	.home-widget.is-editing {
 		border-color: color-mix(in srgb, var(--color-base-content) 40%, transparent);
@@ -113,6 +122,32 @@
 		color: var(--color-base-content);
 	}
 	.home-widget-hide:hover {
+		background: var(--dn-action);
+		color: var(--dn-action-content);
+	}
+
+	.home-widget-failed {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 0.5rem;
+		height: 100%;
+		min-height: 0;
+		padding: 1rem;
+		text-align: center;
+	}
+	.home-widget-retry {
+		min-height: 2rem;
+		padding: 0 0.75rem;
+		border: 1px solid var(--dn-edge);
+		border-radius: 0.25rem;
+		font-size: 0.75rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+	}
+	.home-widget-retry:hover {
 		background: var(--dn-action);
 		color: var(--dn-action-content);
 	}

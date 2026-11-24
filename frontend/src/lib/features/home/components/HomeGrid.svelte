@@ -2,7 +2,8 @@
 	import 'gridstack/dist/gridstack.min.css';
 	import { GridStack, type GridStackNode } from 'gridstack';
 	import type { Snippet } from 'svelte';
-	import { REFERENCE_COLUMNS, UNIT, type WidgetPlacement } from '../layout/contract';
+	import { untrack } from 'svelte';
+	import { REFERENCE_COLUMNS, type WidgetPlacement } from '../layout/contract';
 
 	interface Props {
 		widgets: WidgetPlacement[];
@@ -16,12 +17,6 @@
 
 	let host: HTMLDivElement | undefined = $state();
 	let grid = $state.raw<GridStack | null>(null);
-
-	// square cells: the column count follows the window, the cell is the column width
-	function metrics(width: number) {
-		const columns = Math.max(6, Math.floor(width / UNIT));
-		return { columns, cellHeight: width / columns };
-	}
 
 	// gridstack reads these off the element; Svelte types reject them as attributes
 	function cellAttrs(widget: WidgetPlacement) {
@@ -59,15 +54,18 @@
 		// gridstack also emits change when it re-columns the grid or a layout is
 		// replaced; a save is taken only from a drag or a resize by the editor
 		if (!onchange || !grid || !editing) return;
-		const scale = REFERENCE_COLUMNS / grid.getColumn();
 		const moved = nodes.flatMap((node) => {
 			if (node.id == null || node.x == null || node.y == null || node.w == null) return [];
+			let x = Math.max(0, Math.round(node.x));
+			let y = Math.max(0, node.y);
+			let w = Math.max(1, Math.min(REFERENCE_COLUMNS, Math.round(node.w)));
+			if (x + w > REFERENCE_COLUMNS) x = Math.max(0, REFERENCE_COLUMNS - w);
 			return [
 				{
 					id: String(node.id),
-					x: Math.round(node.x * scale),
-					y: node.y,
-					w: Math.max(1, Math.round(node.w * scale)),
+					x,
+					y,
+					w,
 					h: node.h ?? 1
 				}
 			];
@@ -80,7 +78,9 @@
 	$effect(() => {
 		const key = structure;
 		if (!host || key === '') return;
-		const { columns, cellHeight } = metrics(host.clientWidth);
+		if (host.clientWidth === 0) return;
+		const editingNow = untrack(() => editing);
+		const cellHeight = host.clientWidth / REFERENCE_COLUMNS;
 		const instance = GridStack.init(
 			{
 				column: REFERENCE_COLUMNS,
@@ -88,7 +88,7 @@
 				margin: 0,
 				mode: 'top',
 				animate: true,
-				staticGrid: !editing,
+				staticGrid: !editingNow,
 				alwaysShowResizeHandle: true,
 				draggable: { handle: '.home-drag' },
 				resizable: { handles: 'se' }
@@ -97,7 +97,6 @@
 		);
 		if (!instance) return;
 		grid = instance;
-		if (columns !== REFERENCE_COLUMNS) instance.column(columns, 'moveScale');
 		// a gesture is the only thing that may write back, and it writes the whole
 		// board: dragging one widget in top mode moves its neighbours too
 		const save = () => report(grid?.engine.nodes ?? []);
@@ -115,8 +114,8 @@
 		};
 	});
 
-	// setStatic re-reads the elements and drops the bounds parsed at init, so the
-	// cells are re-applied after every unlock and whenever the layout is replaced
+	// setStatic toggles editability; apply() re-applies the stored bounds after
+	// every unlock and whenever the layout is replaced
 	function apply(wanted: WidgetPlacement[]) {
 		const instance = grid;
 		if (!instance) return;
@@ -163,10 +162,10 @@
 		if (!host) return;
 		const observer = new ResizeObserver(() => {
 			if (!host || !grid) return;
-			const { columns, cellHeight } = metrics(host.clientWidth);
-			grid.column(columns, 'moveScale');
+			if (host.clientWidth === 0) return;
+			const cellHeight = host.clientWidth / REFERENCE_COLUMNS;
 			grid.cellHeight(cellHeight);
-			host.style.setProperty('--home-columns', String(columns));
+			host.style.setProperty('--home-columns', String(REFERENCE_COLUMNS));
 			host.style.setProperty('--home-cell', `${cellHeight}px`);
 		});
 		observer.observe(host);
@@ -185,9 +184,9 @@
 </div>
 
 <style>
-	/* the cell clips: a widget that outgrows its rows must not add a scrollbar */
+	/* the cell scrolls when a widget outgrows its rows */
 	.home-grid :global(.grid-stack-item-content) {
-		overflow: hidden;
+		overflow: auto;
 	}
 
 	/* the cell lattice, drawn only while the layout is unlocked */
@@ -198,7 +197,7 @@
 			repeating-linear-gradient(to bottom, var(--home-line) 0 1px, transparent 1px 100%);
 		background-size:
 			calc(100% / var(--home-columns, 18)) 100%,
-			100% var(--home-cell, 96px);
+			100% var(--home-cell, 106px);
 	}
 
 	.home-grid:not(.is-editing) :global(.ui-resizable-handle) {

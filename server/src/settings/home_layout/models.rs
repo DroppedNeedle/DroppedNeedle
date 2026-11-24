@@ -40,6 +40,8 @@ pub enum HomeLayoutSource {
 pub struct HomeLayoutResponse {
     /// Layout schema version; `0` when nothing is saved.
     pub version: i64,
+    /// Stored revision (updated_at); `0` when nothing is saved.
+    pub revision: i64,
     /// Widgets, empty when the built-in order applies.
     pub widgets: Vec<HomeLayoutWidget>,
     /// Widgets the person hid.
@@ -57,6 +59,8 @@ pub struct HomeLayoutResponse {
 pub struct HomeLayoutUpdate {
     /// Layout schema version the client writes.
     pub version: i64,
+    /// Stored revision the client is saving against; ignored on a first save.
+    pub revision: i64,
     /// Widgets in the caller's order.
     pub widgets: Vec<HomeLayoutWidget>,
     /// Widgets the caller hides.

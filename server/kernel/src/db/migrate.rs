@@ -324,6 +324,9 @@ impl<'a> Chain<'a> {
 /// Bring the database on `connection` to the chain's latest stamp, and hand
 /// the connection back. Any failure closes it.
 pub fn migrate(mut connection: Connection, chain: &Chain<'_>) -> Result<Connection, SchemaError> {
+    if Stamp::read(&connection)?.version < 165 {
+        normalize_fork_home_layout(&connection)?;
+    }
     let plan = chain.plan(Stamp::read(&connection)?)?;
     let migrations = chain.migrations();
     if plan.baseline
@@ -443,6 +446,59 @@ fn user_version(connection: &Connection) -> rusqlite::Result<i64> {
 
 fn foreign_keys(connection: &Connection) -> rusqlite::Result<i64> {
     connection.query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+}
+
+pub fn normalize_fork_home_layout(connection: &Connection) -> Result<(), SchemaError> {
+    let exists: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'app_home_layouts'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(SchemaError::Sqlite)?;
+    if exists == 0 {
+        return Ok(());
+    }
+    let mut stmt = connection
+        .prepare("PRAGMA table_info(app_home_layouts)")
+        .map_err(SchemaError::Sqlite)?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(SchemaError::Sqlite)?;
+    let mut cols: Vec<String> = Vec::new();
+    for col in rows {
+        cols.push(col.map_err(SchemaError::Sqlite)?);
+    }
+    let expected = ["user_id", "version", "widgets", "hidden", "updated_at"];
+    let right =
+        cols.len() == expected.len() && expected.iter().all(|c| cols.iter().any(|x| x == c));
+    if right {
+        return Ok(());
+    }
+    let base = "app_home_layouts_fork0144";
+    let mut target = base.to_owned();
+    let mut counter = 2;
+    loop {
+        let taken: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                [&target],
+                |row| row.get(0),
+            )
+            .map_err(SchemaError::Sqlite)?;
+        if taken == 0 {
+            break;
+        }
+        target = format!("{base}_{counter}");
+        counter += 1;
+    }
+    connection
+        .execute(
+            &format!("ALTER TABLE app_home_layouts RENAME TO {target}"),
+            [],
+        )
+        .map_err(SchemaError::Sqlite)?;
+    Ok(())
 }
 
 #[cfg(test)]

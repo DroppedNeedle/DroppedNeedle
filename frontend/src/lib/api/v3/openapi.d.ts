@@ -6118,7 +6118,7 @@ export interface paths {
         get: operations["get_home_layout"];
         /**
          * Replace the caller's own layout. Refused while personalization is forced,
-         *     unless the caller is an admin: theirs is the row everyone is served.
+         *     unless the caller is the first admin: theirs is the row everyone is served.
          */
         put: operations["put_home_layout"];
         post?: never;
@@ -16035,6 +16035,11 @@ export interface components {
             hidden: string[];
             /** @description Whether layouts are each person's or the admin's. */
             posture: components["schemas"]["PersonalizationMode"];
+            /**
+             * Format: int64
+             * @description Stored revision (updated_at); `0` when nothing is saved.
+             */
+            revision: number;
             /** @description Where the layout came from. */
             source: components["schemas"]["HomeLayoutSource"];
             /**
@@ -16054,6 +16059,11 @@ export interface components {
         HomeLayoutUpdate: {
             /** @description Widgets the caller hides. */
             hidden: string[];
+            /**
+             * Format: int64
+             * @description Stored revision the client is saving against; ignored on a first save.
+             */
+            revision: number;
             /**
              * Format: int64
              * @description Layout schema version the client writes.
@@ -42948,6 +42958,15 @@ export interface operations {
                 };
             };
             /** @description Personalization is forced */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Stale revision */
             409: {
                 headers: {
                     [name: string]: unknown;

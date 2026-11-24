@@ -22,9 +22,11 @@ SELECT p.user_id,
                WHEN 'genre_list' THEN 'genre_grid'
                ELSE 'shelf:' || p.section_key
            END
+           ORDER BY p.section_key
        ),
        CAST(strftime('%s', 'now') AS INTEGER) * 1000
 FROM app_section_prefs p
+JOIN auth_users u ON u.id = p.user_id
 WHERE p.page = 'home' AND p.enabled = 0
 GROUP BY p.user_id;
 

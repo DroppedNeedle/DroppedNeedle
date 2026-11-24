@@ -431,7 +431,7 @@ const SHIPPED: &[(&str, &str)] = &[
     ),
     (
         "0165_home_layout.sql",
-        "9e5b5be11b0f8e9d7c493504da0ed460aa856dd8d1ba241e00399da24cff3414",
+        "63f12923c5dc2178610d9b31ea5793aa3530fdea66916d764e3f4422c114802d",
     ),
 ];
 
@@ -5082,6 +5082,24 @@ const ALLOWED_LITERALS: &[AllowedLiteral] = &[
         whole: true,
         why: "checkpoints the upgrade's private recovered copy of a v2 database, a file no \
               server opens; v2's own files are never written",
+    },
+    AllowedLiteral {
+        path: "kernel/src/db/migrate.rs",
+        starts_with: "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'app_home_layouts'",
+        whole: true,
+        why: "fork-era table shape check before migration planning; the table name is fixed",
+    },
+    AllowedLiteral {
+        path: "kernel/src/db/migrate.rs",
+        starts_with: "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        whole: true,
+        why: "counter loop for a taken fork-table rename target",
+    },
+    AllowedLiteral {
+        path: "kernel/src/db/migrate.rs",
+        starts_with: "ALTER TABLE app_home_layouts RENAME TO {target}",
+        whole: false,
+        why: "rename of a fork-era table; the target name is computed at run time",
     },
 ];
 
