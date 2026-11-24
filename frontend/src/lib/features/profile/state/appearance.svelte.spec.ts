@@ -205,7 +205,7 @@ describe('account appearance', () => {
 		expect(api.calls('POST /api/v3/me/appearance/import').map((call) => call.body)).toEqual([
 			{ theme: 'light', custom_css: { text: ':root { --dn-spec-d: 1px; }' } }
 		]);
-		expect(localStorage.getItem('droppedneedle_custom_css:user-d')).toBeNull();
+		await expect.poll(() => localStorage.getItem('droppedneedle_custom_css:user-d')).toBeNull();
 		expect(localStorage.getItem('droppedneedle_custom_css:user-d2')).not.toBeNull();
 		expect(localStorage.getItem('droppedneedle_theme')).toBe('light');
 		await expect
