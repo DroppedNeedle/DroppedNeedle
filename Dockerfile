@@ -2,6 +2,11 @@
 # binary is one tokio runtime and compose must never scale it past 1, because
 # durable-operation ownership lives in-process.
 
+# The Cargo profile the binaries are built with. Shipping images use release;
+# CI's container boot test passes ci-e2e (server/Cargo.toml) for a quicker
+# build of the same code.
+ARG CARGO_PROFILE=release
+
 # Base images name the exact versions in .github/node-version and
 # rust-toolchain.toml; CI fails when they drift apart.
 FROM node:22.23.4-bookworm-slim AS frontend
@@ -58,18 +63,16 @@ FROM chef AS about
 RUN cargo install cargo-about --version 0.9.3 --locked --features cli
 
 FROM chef AS dependencies
+ARG CARGO_PROFILE
 COPY --from=planner /app/recipe.json ./recipe.json
 RUN mkdir -p server \
     && cd server \
-    && cargo chef cook --release --locked --recipe-path /app/recipe.json --bins -p droppedneedle -p droppedneedle-tool
+    && cargo chef cook --profile "$CARGO_PROFILE" --locked --recipe-path /app/recipe.json --bins -p droppedneedle -p droppedneedle-tool
 
-FROM dependencies AS builder
+# The licence notices are written beside the compile, from the crates the
+# dependencies stage fetched.
+FROM dependencies AS notices
 COPY server/ ./server/
-# The Python plugin helper is compiled into the binary.
-COPY sdk/ ./sdk/
-# The custom CSS rules, which the server's check shares with the web UI's.
-COPY frontend/src/lib/stores/customCssRules.json ./frontend/src/lib/stores/customCssRules.json
-
 COPY --from=about /usr/local/cargo/bin/cargo-about /usr/local/cargo/bin/cargo-about
 # The tool links the server, so its graph holds every crate of both binaries.
 # A clarification in about.toml that cannot be fetched or checked only warns,
@@ -81,10 +84,19 @@ RUN mkdir /notices \
     && ! grep -q clarification /notices/log \
     || { cat /notices/log >&2; exit 1; }
 
-# Only the binaries stay in this layer, which keeps the build cache small.
-RUN cargo build --release --locked --manifest-path server/Cargo.toml --bins -p droppedneedle -p droppedneedle-tool \
+FROM dependencies AS builder
+ARG CARGO_PROFILE
+COPY server/ ./server/
+# The Python plugin helper is compiled into the binary.
+COPY sdk/ ./sdk/
+# The custom CSS rules, which the server's check shares with the web UI's.
+COPY frontend/src/lib/stores/customCssRules.json ./frontend/src/lib/stores/customCssRules.json
+
+# Only the binaries stay in this layer, which keeps the build cache small. A
+# profile's output folder is target/<profile name>.
+RUN cargo build --profile "$CARGO_PROFILE" --locked --manifest-path server/Cargo.toml --bins -p droppedneedle -p droppedneedle-tool \
     && mkdir /out \
-    && cp server/target/release/droppedneedle server/target/release/droppedneedle-tool /out/ \
+    && cp "server/target/$CARGO_PROFILE/droppedneedle" "server/target/$CARGO_PROFILE/droppedneedle-tool" /out/ \
     && rm -rf server/target
 
 # A slim audio-only ffmpeg for transcoding, LGPL only: never --enable-gpl or
@@ -148,7 +160,7 @@ RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.s
 # workflow builds this stage alone; the image is the stage below.
 FROM scratch AS release-files
 COPY --from=builder /out/ /server/
-COPY --from=builder /notices/NOTICES-server.txt /server/NOTICES-server.txt
+COPY --from=notices /notices/NOTICES-server.txt /server/NOTICES-server.txt
 COPY LICENSE /server/LICENSE
 COPY --from=frontend /app/frontend/build /web-ui/static
 COPY --from=frontend /app/NOTICES-web-ui.txt /web-ui/NOTICES-web-ui.txt
@@ -195,7 +207,7 @@ COPY --from=frontend /app/frontend/build /app/static
 # DroppedNeedle's licence, and the notices for the crates and the web UI
 # packages it is built from.
 COPY LICENSE /usr/share/doc/droppedneedle/LICENSE
-COPY --from=builder /notices/NOTICES-server.txt /usr/share/doc/droppedneedle/NOTICES-server.txt
+COPY --from=notices /notices/NOTICES-server.txt /usr/share/doc/droppedneedle/NOTICES-server.txt
 COPY --from=frontend /app/NOTICES-web-ui.txt /usr/share/doc/droppedneedle/NOTICES-web-ui.txt
 COPY entrypoint.sh /app/entrypoint.sh
 
