@@ -9,9 +9,9 @@ use utoipa::ToSchema;
 
 use super::revision::{naming_script_revision, profile_revision};
 use droppedneedle_kernel::runtime_config::sections::{
-    DEFAULT_NAMING_TEMPLATE, FieldMode, GenreSource, LibraryManagement, LibraryManagementProfile,
-    ManagedField, MetadataManagementSettings, NamingScript, OrganizationManagementSettings,
-    RelationshipCreditSettings, RelationshipType, ReplayGainMode,
+    ArtworkManagementSettings, DEFAULT_NAMING_TEMPLATE, FieldMode, GenreSource, LibraryManagement,
+    LibraryManagementProfile, ManagedField, MetadataManagementSettings, NamingScript,
+    OrganizationManagementSettings, RelationshipCreditSettings, RelationshipType, ReplayGainMode,
 };
 
 /// Management settings schema version.
@@ -362,7 +362,7 @@ pub fn picard_style_organizer_profile() -> LibraryManagementProfile {
     let mut profile = LibraryManagementProfile {
         id: PICARD_ORGANIZER_PROFILE_ID.to_owned(),
         name: "Picard-style Organizer".to_owned(),
-        description: "Canonical MusicBrainz tags and artwork with same-root organization, sidecars, and custom-tag preservation.".to_owned(),
+        description: "Canonical MusicBrainz tags with same-root organization, sidecars, and custom-tag preservation.".to_owned(),
         preset_origin: Some("picard_style_organizer".to_owned()),
         preset_version: Some(PICARD_ORGANIZER_PRESET_VERSION),
         metadata: MetadataManagementSettings {
@@ -399,6 +399,12 @@ pub fn complete_library_organizer_profile() -> LibraryManagementProfile {
             .to_owned();
     profile.preset_origin = Some("complete_library_organizer".to_owned());
     profile.preset_version = Some(3);
+    // The preset promises artwork, so it turns the opt-in write on.
+    profile.artwork = ArtworkManagementSettings {
+        embedded_enabled: true,
+        external_enabled: true,
+        ..ArtworkManagementSettings::default()
+    };
     profile.genres.sources = vec![
         GenreSource::Musicbrainz,
         GenreSource::Listenbrainz,
@@ -1066,6 +1072,16 @@ mod tests {
     use crate::matching::{Release, ReleaseTrack};
     use crate::tags::read::HeaderInfo;
     use droppedneedle_kernel::runtime_config::secret_sections::DEFAULT_NAMING_SCRIPT;
+
+    #[test]
+    fn artwork_writes_are_off_by_default() {
+        let picard = picard_style_organizer_profile();
+        assert!(!picard.artwork.embedded_enabled);
+        assert!(!picard.artwork.external_enabled);
+        let complete = complete_library_organizer_profile();
+        assert!(complete.artwork.embedded_enabled);
+        assert!(complete.artwork.external_enabled);
+    }
 
     fn credit(id: &str, name: &str) -> CreditedArtist {
         CreditedArtist {

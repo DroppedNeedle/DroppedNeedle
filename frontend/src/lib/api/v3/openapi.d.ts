@@ -12273,7 +12273,7 @@ export interface components {
         ArtworkManagementSettings: {
             /**
              * @description Embed art in files.
-             * @default true
+             * @default false
              */
             embedded_enabled: boolean;
             /**
@@ -12289,7 +12289,7 @@ export interface components {
             embedded_maximum_size: number;
             /**
              * @description Write external art files.
-             * @default true
+             * @default false
              */
             external_enabled: boolean;
             /**
@@ -17277,10 +17277,10 @@ export interface components {
             /**
              * @description Artwork block.
              * @default {
-             *       "embedded_enabled": true,
+             *       "embedded_enabled": false,
              *       "embedded_format": "jpeg",
              *       "embedded_maximum_size": 1200,
-             *       "external_enabled": true,
+             *       "external_enabled": false,
              *       "external_format": "original",
              *       "external_maximum_size": 0,
              *       "local_file_patterns": [

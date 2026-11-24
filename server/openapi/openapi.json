@@ -42273,7 +42273,7 @@
           "embedded_enabled": {
             "type": "boolean",
             "description": "Embed art in files.",
-            "default": true
+            "default": false
           },
           "embedded_format": {
             "oneOf": [
@@ -42293,7 +42293,7 @@
           "external_enabled": {
             "type": "boolean",
             "description": "Write external art files.",
-            "default": true
+            "default": false
           },
           "external_format": {
             "oneOf": [
@@ -53199,10 +53199,10 @@
             ],
             "description": "Artwork block.",
             "default": {
-              "embedded_enabled": true,
+              "embedded_enabled": false,
               "embedded_format": "jpeg",
               "embedded_maximum_size": 1200,
-              "external_enabled": true,
+              "external_enabled": false,
               "external_format": "original",
               "external_maximum_size": 0,
               "local_file_patterns": [

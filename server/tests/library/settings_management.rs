@@ -51,7 +51,7 @@ fn golden_profile_input() -> serde_json::Value {
             "naming_script_id": "33333333-3333-4333-8333-333333333333",
             "multi_disc_naming_script_id": null
         },
-        "artwork": {"external_enabled": true},
+        "artwork": {"embedded_enabled": true, "external_enabled": true},
         "enrichment": {"lyrics": {"enabled": true, "preserve_existing": false}}
     })
 }

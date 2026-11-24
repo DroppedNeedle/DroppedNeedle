@@ -397,8 +397,10 @@ pub struct ArtworkManagementSettings {
 impl Default for ArtworkManagementSettings {
     fn default() -> Self {
         Self {
-            embedded_enabled: true,
-            external_enabled: true,
+            // The organizer writes no art unless someone turns it on,
+            // so the first scan leaves the library as it is (issue #830).
+            embedded_enabled: false,
+            external_enabled: false,
             local_file_patterns: [
                 "cover.jpg",
                 "cover.jpeg",
