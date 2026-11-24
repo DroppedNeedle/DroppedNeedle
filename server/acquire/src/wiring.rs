@@ -902,12 +902,14 @@ impl AcquireSetup {
             collections.playlists.clone(),
             db.clone(),
         ));
+        let sync_store = SyncStore::new(platform.db.clone(), platform.clock.clone(), queue.clone());
         let spotify_service = Arc::new(SpotifyImportService::new(
             spotify_client.clone(),
             spotify_settings.clone(),
             spotify_links.clone(),
             spotify_playlists.clone(),
             resolver.clone(),
+            sync_store.clone(),
         ));
         let spotify_import_jobs = Arc::new(SpotifyImportJobs::new(spotify_service, events.clone()));
         let playlist_identify_jobs = Arc::new(PlaylistIdentifyJobs::new(
@@ -916,7 +918,6 @@ impl AcquireSetup {
             config_store.live(),
         ));
         let spotify_imports = SpotifyImports::new(platform.db.clone(), queue.clone());
-        let sync_store = SyncStore::new(platform.db.clone(), platform.clock.clone(), queue.clone());
         let spotify_sync = Arc::new(SpotifySync::new(
             spotify_client.clone(),
             spotify_settings.clone(),

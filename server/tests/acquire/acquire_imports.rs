@@ -161,6 +161,12 @@ fn rig_with(
     let providers = providers_at(platform, api_base, accounts_base, cover_cdn);
     let resolver = Arc::new(AlbumResolver::new(&providers, platform.settings.live()));
     let spotify_client = SpotifyClient::new(&providers);
+    let queue = JobQueue::new(platform.db.clone(), platform.clock.clone());
+    let syncs = droppedneedle_acquire::spotify_sync::store::SyncStore::new(
+        platform.db.clone(),
+        platform.clock.clone(),
+        queue.clone(),
+    );
     let service = Arc::new(SpotifyImportService::new(
         spotify_client.clone(),
         job_settings.map_or_else(
@@ -170,9 +176,9 @@ fn rig_with(
         spotify_links.clone(),
         spotify_playlists.clone(),
         resolver.clone(),
+        syncs.clone(),
     ));
     let import_jobs = SpotifyImportJobs::new(service, platform.events.clone());
-    let queue = JobQueue::new(platform.db.clone(), platform.clock.clone());
     let spotify_imports = SpotifyImports::new(platform.db.clone(), queue.clone());
     let journal = Arc::new(Journal::new(db, quiet_ticks()));
     let plugins = plugins.unwrap_or_else(|| {
@@ -216,11 +222,7 @@ fn rig_with(
         spotify_playlists,
         resolver,
         spotify_imports,
-        syncs: droppedneedle_acquire::spotify_sync::store::SyncStore::new(
-            platform.db.clone(),
-            platform.clock.clone(),
-            queue.clone(),
-        ),
+        syncs,
         probes: Arc::new(LiveProbes::bundle(&probes)),
         ids: Arc::new(FixedIdGenerator),
         base_path: String::new(),
@@ -989,7 +991,12 @@ async fn spotify_albums_are_proven_by_their_isrcs() {
             };
             album.add_isrc(isrc);
             let resolver = resolver.clone();
-            async move { resolver.resolve(&album).await.expect("musicbrainz answers") }
+            async move {
+                resolver
+                    .resolve(&album, RequestPriority::BackgroundSync)
+                    .await
+                    .expect("musicbrainz answers")
+            }
         };
 
     let soundtrack = resolve(
@@ -1043,7 +1050,12 @@ async fn spotify_albums_without_isrcs_in_musicbrainz_are_proven_by_their_listing
         };
         album.add_isrc("QZAAA2600003");
         let resolver = resolver.clone();
-        async move { resolver.resolve(&album).await.expect("musicbrainz answers") }
+        async move {
+            resolver
+                .resolve(&album, RequestPriority::BackgroundSync)
+                .await
+                .expect("musicbrainz answers")
+        }
     };
 
     let found = resolve("Quiet Harbor", 3, &["Low Tide", "Lantern Light - Acoustic"]).await;
@@ -1724,10 +1736,12 @@ async fn spotify_liked_songs_import_needs_the_scope_and_reads_every_page() {
     assert_eq!(body["error"]["code"], "SPOTIFY_RECONNECT_NEEDED");
 }
 
-/// A refresh token Spotify no longer honours reads as no link, not as
-/// Spotify being down.
+/// Only a refresh token Spotify no longer honours (`invalid_grant`) reads
+/// as no link. Spotify refusing the app itself (`invalid_client`, a wrong
+/// app id or secret) reads as Spotify out of reach, so no user is told to
+/// connect again.
 #[tokio::test]
-async fn spotify_refused_refresh_reads_as_not_linked() {
+async fn only_a_refused_grant_reads_as_not_linked() {
     let (auth, admin_id, user_id) = seed_rig().await;
     let (api, accounts, covers, recorder) = serve_spotify().await.expect("mock serves");
     let bundle = rig_for(
@@ -1745,13 +1759,21 @@ async fn spotify_refused_refresh_reads_as_not_linked() {
         .upsert(&user_id, &link)
         .await
         .expect("store writes");
-    recorder.refuse_refresh();
+    let listing = || {
+        get_json(
+            authed_app(bundle.deps.clone(), &user_id, Role::User),
+            "/api/v3/acquire/spotify/playlists",
+        )
+    };
 
-    let (status, body) = get_json(
-        authed_app(bundle.deps.clone(), &user_id, Role::User),
-        "/api/v3/acquire/spotify/playlists",
-    )
-    .await;
+    for status in [400, 401] {
+        recorder.refuse_refresh(status, "invalid_client");
+        let (answer, body) = listing().await;
+        assert_eq!(answer, StatusCode::BAD_GATEWAY, "{status}: {body}");
+    }
+
+    recorder.refuse_refresh(400, "invalid_grant");
+    let (status, body) = listing().await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["error"]["code"], "IMPORT_NOT_CONFIGURED");
 }

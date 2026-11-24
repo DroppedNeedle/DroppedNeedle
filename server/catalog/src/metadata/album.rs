@@ -598,15 +598,24 @@ impl Catalog {
     /// `GET /albums/{album_id}/tracks`: the shown edition's tracklist. A
     /// dead MusicBrainz falls back to the library's tracks.
     pub async fn album_tracks(&self, raw_id: &str) -> Result<AlbumTracksInfo, CatalogError> {
+        self.album_tracks_at(raw_id, RequestPriority::UserInitiated)
+            .await
+    }
+
+    /// [`Catalog::album_tracks`] with MusicBrainz asked at `priority`.
+    pub async fn album_tracks_at(
+        &self,
+        raw_id: &str,
+        priority: RequestPriority,
+    ) -> Result<AlbumTracksInfo, CatalogError> {
         let id = self.album_id(raw_id).await?;
         let answer = self
-            .musicbrainz_or_library(self.group_detail(&id).await, || self.local_album(&id))
+            .musicbrainz_or_library(self.group_detail_at(&id, priority).await, || {
+                self.local_album(&id)
+            })
             .await?;
         match answer {
-            Answer::MusicBrainz(group) => {
-                self.tracks_for_group(&group, RequestPriority::UserInitiated)
-                    .await
-            }
+            Answer::MusicBrainz(group) => self.tracks_for_group(&group, priority).await,
             Answer::Library(local) => Ok(local_tracks(local.tracks)),
         }
     }

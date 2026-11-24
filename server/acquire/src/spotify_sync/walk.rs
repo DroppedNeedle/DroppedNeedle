@@ -34,8 +34,8 @@ use droppedneedle_catalog::collections::models::{AlbumPick, FiledKind};
 use droppedneedle_catalog::collections::store::playlists::OpenSourceSong;
 use droppedneedle_catalog::local::stores::StoreError as LibraryStoreError;
 use droppedneedle_kernel::jobs::queue::JobCtx;
-use droppedneedle_providers::ProviderError;
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
+use droppedneedle_providers::{ProviderError, RequestPriority};
 
 use super::SpotifySync;
 use super::models::SyncHold;
@@ -497,14 +497,20 @@ impl SpotifySync {
                 album.add_isrc(&isrc);
             }
         }
-        Ok(match self.resolver.resolve(&album).await {
-            Ok(Some(group)) => Look::Found(group.to_ascii_lowercase()),
-            Ok(None) => Look::Nothing,
-            Err(error) => {
-                tracing::warn!(%error, "spotify sync stopped looking albums up this pass");
-                Look::Down
-            }
-        })
+        Ok(
+            match self
+                .resolver
+                .resolve(&album, RequestPriority::BackgroundSync)
+                .await
+            {
+                Ok(Some(group)) => Look::Found(group.to_ascii_lowercase()),
+                Ok(None) => Look::Nothing,
+                Err(error) => {
+                    tracing::warn!(%error, "spotify sync stopped looking albums up this pass");
+                    Look::Down
+                }
+            },
+        )
     }
 
     /// Whether `key` was asked for before, however that request ended: the
@@ -605,7 +611,11 @@ impl SpotifySync {
     /// group's tracklist.
     async fn recording_of(&self, group: &str, song: &OpenSourceSong) -> Option<String> {
         if let Some(isrc) = &song.isrc {
-            match self.resolver.recording_on_group(isrc, group).await {
+            match self
+                .resolver
+                .recording_on_group(isrc, group, RequestPriority::BackgroundSync)
+                .await
+            {
                 Ok(Some(recording)) => return Some(recording),
                 Ok(None) => {}
                 Err(error) => tracing::warn!(%error, "spotify sync isrc read failed"),
@@ -619,7 +629,14 @@ impl SpotifySync {
         {
             return Some(recording);
         }
-        match crate::playlist_requests::recording_on(&self.catalog, group, &song.track_name).await {
+        match crate::playlist_requests::recording_on(
+            &self.catalog,
+            group,
+            &song.track_name,
+            RequestPriority::BackgroundSync,
+        )
+        .await
+        {
             Ok(recording) => Some(recording),
             Err(error) => {
                 tracing::debug!(?error, "spotify sync song not on its album's tracklist");

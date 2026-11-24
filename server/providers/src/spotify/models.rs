@@ -38,6 +38,19 @@ pub struct TokenAnswer {
     pub scope: Option<String>,
 }
 
+/// A refused token grant, `POST /api/token` answered 400: the OAuth error
+/// code of RFC 6749 section 5.2 (`invalid_grant`, `invalid_client` and the
+/// rest). Its `error_description` is free text and is not read.
+///
+/// The shape is the RFC's, which Spotify's authorization guides follow
+/// (read 2026-11-23); no live refusal is on record, as one needs a real
+/// app and grant.
+#[derive(Debug, Deserialize)]
+pub struct TokenRefusal {
+    /// The error code.
+    pub error: String,
+}
+
 /// The current user, `GET /me`.
 ///
 /// Checked against the Spotify mock's `spotify_me`.

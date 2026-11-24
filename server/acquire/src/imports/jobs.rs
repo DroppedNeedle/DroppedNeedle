@@ -4,7 +4,8 @@
 //! unless that key already has one queued or running, so one import per
 //! user and playlist runs at a time. The route answers at once; the job
 //! fetches the playlist, resolves its albums and replaces the playlist's
-//! rows in one transaction.
+//! rows in one transaction, unless the playlist's sync is on by then: its
+//! songs are the sync's, so the job queues the sync's pass instead.
 //!
 //! A run is safe to repeat: it reads the playlist from Spotify again and
 //! replaces the rows wholesale, so a run cut short by a restart is simply

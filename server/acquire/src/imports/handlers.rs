@@ -110,6 +110,7 @@ impl ImportsDeps {
             self.spotify_links.clone(),
             self.spotify_playlists.clone(),
             self.resolver.clone(),
+            self.syncs.clone(),
         )
     }
 }

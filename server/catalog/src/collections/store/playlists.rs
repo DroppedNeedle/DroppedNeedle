@@ -1067,17 +1067,20 @@ impl PlaylistStore {
             .await
     }
 
-    /// The entries of `playlist_id` whose songs a sync has not followed up.
+    /// The entries of `playlist_id` whose songs a sync asks for at its next
+    /// pass: not followed up, and with no look put off past `now` (unix
+    /// ms) after the sync could not ask for them.
     pub async fn open_source_entries(
         &self,
         playlist_id: &str,
+        now: i64,
     ) -> Result<std::collections::HashSet<String>, StoreError> {
         let playlist_id = playlist_id.to_owned();
         self.db
             .read("playlists.open_source_entries", move |conn| {
                 let rows = conn
                     .prepare(sql::OPEN_SOURCE_ENTRIES.text())?
-                    .query_map(params![playlist_id], |row| row.get::<_, String>(0))?
+                    .query_map(params![playlist_id, now], |row| row.get::<_, String>(0))?
                     .collect::<rusqlite::Result<_>>()?;
                 Ok(rows)
             })

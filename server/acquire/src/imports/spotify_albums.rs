@@ -148,6 +148,7 @@ struct IsrcReads {
     view: MusicBrainzView,
     cache: ProviderCacheStore,
     namespace: String,
+    priority: RequestPriority,
 }
 
 impl IsrcReads {
@@ -162,25 +163,20 @@ impl IsrcReads {
         let (view, query) = (self.view.clone(), format!("isrc:{isrc}"));
         let found = self
             .cache
-            .get_or_fetch(
-                &key,
-                ISRC_POLICY,
-                RequestPriority::BackgroundSync,
-                move |_| async move {
-                    let page = view
-                        .search_recordings_query(
-                            &query,
-                            RECORDING_SEARCH_LIMIT,
-                            Criticality::IdentityCritical,
-                        )
-                        .await?;
-                    Ok(if page.items.is_empty() {
-                        Fetched::Missing
-                    } else {
-                        Fetched::Found(page.items)
-                    })
-                },
-            )
+            .get_or_fetch(&key, ISRC_POLICY, self.priority, move |_| async move {
+                let page = view
+                    .search_recordings_query(
+                        &query,
+                        RECORDING_SEARCH_LIMIT,
+                        Criticality::IdentityCritical,
+                    )
+                    .await?;
+                Ok(if page.items.is_empty() {
+                    Fetched::Missing
+                } else {
+                    Fetched::Found(page.items)
+                })
+            })
             .await?;
         Ok(found.unwrap_or_default())
     }
@@ -205,18 +201,23 @@ impl AlbumResolver {
         }
     }
 
-    /// The album's release group id, `None` when nothing proves one.
+    /// The album's release group id, `None` when nothing proves one, with
+    /// MusicBrainz asked at `priority`.
     ///
     /// # Errors
     ///
     /// A MusicBrainz failure, so the caller can stop asking while the
     /// service is down. Nothing is cached for it.
-    pub async fn resolve(&self, album: &SpotifyAlbum) -> Result<Option<String>, ProviderError> {
+    pub async fn resolve(
+        &self,
+        album: &SpotifyAlbum,
+        priority: RequestPriority,
+    ) -> Result<Option<String>, ProviderError> {
         let can_list = !album.songs.is_empty() && album.total_tracks.is_some_and(|n| n >= 2);
         if album.title.trim().is_empty() || (album.isrcs.is_empty() && !can_list) {
             return Ok(None);
         }
-        let reads = self.isrc_reads()?;
+        let reads = self.isrc_reads(priority)?;
         let namespace = reads.namespace.clone();
         let isrcs: Vec<&str> = album.isrcs.iter().map(String::as_str).collect();
         let joined = isrcs.join(",");
@@ -243,23 +244,18 @@ impl AlbumResolver {
         );
         let album = album.clone();
         self.cache
-            .get_or_fetch(
-                &key,
-                RESOLVE_POLICY,
-                RequestPriority::BackgroundSync,
-                move |_| async move {
-                    Ok(match prove(&reads, &album).await? {
-                        Some(group) => Fetched::Found(group),
-                        None => Fetched::Missing,
-                    })
-                },
-            )
+            .get_or_fetch(&key, RESOLVE_POLICY, priority, move |_| async move {
+                Ok(match prove(&reads, &album).await? {
+                    Some(group) => Fetched::Found(group),
+                    None => Fetched::Missing,
+                })
+            })
             .await
     }
 
     /// The cached ISRC reads over the MusicBrainz source the settings name
-    /// now.
-    fn isrc_reads(&self) -> Result<IsrcReads, ProviderError> {
+    /// now, at `priority`.
+    fn isrc_reads(&self, priority: RequestPriority) -> Result<IsrcReads, ProviderError> {
         let Some(settings) = self.settings.read() else {
             return Err(ProviderError::NotConfigured {
                 provider: SOURCE,
@@ -268,11 +264,11 @@ impl AlbumResolver {
         };
         Ok(IsrcReads {
             namespace: format!("{}:g{}", settings.source_id, settings.generation),
-            view: self.musicbrainz.fixed(
-                self.musicbrainz.source_from(&settings),
-                RequestPriority::BackgroundSync,
-            ),
+            view: self
+                .musicbrainz
+                .fixed(self.musicbrainz.source_from(&settings), priority),
             cache: self.cache.clone(),
+            priority,
         })
     }
 
@@ -291,12 +287,15 @@ impl AlbumResolver {
         let Some(isrc) = clean_isrc(isrc) else {
             return Ok(None);
         };
-        let hits = self.isrc_reads()?.hits(&isrc).await?;
+        let hits = self
+            .isrc_reads(RequestPriority::BackgroundSync)?
+            .hits(&isrc)
+            .await?;
         Ok(pick_own_group(album, &hits))
     }
 
     /// The one recording an ISRC names on release group `group`, when
-    /// exactly one is there.
+    /// exactly one is there, with MusicBrainz asked at `priority`.
     ///
     /// # Errors
     ///
@@ -305,11 +304,12 @@ impl AlbumResolver {
         &self,
         isrc: &str,
         group: &str,
+        priority: RequestPriority,
     ) -> Result<Option<String>, ProviderError> {
         let Some(isrc) = clean_isrc(isrc) else {
             return Ok(None);
         };
-        let hits = self.isrc_reads()?.hits(&isrc).await?;
+        let hits = self.isrc_reads(priority)?.hits(&isrc).await?;
         let on_group: BTreeSet<String> = hits
             .iter()
             .filter(|hit| {
@@ -348,7 +348,7 @@ impl AlbumResolver {
         {
             return Ok(None);
         }
-        let reads = self.isrc_reads()?;
+        let reads = self.isrc_reads(RequestPriority::BackgroundSync)?;
         let namespace = reads.namespace.clone();
         // The unit separator survives CacheKey::hashed's whitespace
         // collapse, as in `resolve`.
@@ -1185,6 +1185,7 @@ mod tests {
             view: view.clone(),
             cache: Providers::unpaced(Arc::new(ScriptedWire::new())).cache,
             namespace: "test".to_owned(),
+            priority: RequestPriority::BackgroundSync,
         }
     }
 
@@ -1783,7 +1784,7 @@ mod tests {
         };
         assert_eq!(
             resolver
-                .resolve(&first)
+                .resolve(&first, RequestPriority::BackgroundSync)
                 .await
                 .expect("mb answers")
                 .as_deref(),
@@ -1795,7 +1796,10 @@ mod tests {
             ..first
         };
         assert_eq!(
-            resolver.resolve(&second).await.expect("mb answers"),
+            resolver
+                .resolve(&second, RequestPriority::BackgroundSync)
+                .await
+                .expect("mb answers"),
             None,
             "songs {{\"A B\", \"C\"}} and {{\"A\", \"B C\"}} must not share a cache key"
         );

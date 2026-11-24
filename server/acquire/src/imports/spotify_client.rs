@@ -167,15 +167,22 @@ impl SpotifyClient {
         if refresh_token.is_empty() {
             return Err(SpotifyError::NotLinked);
         }
-        // Spotify answers a refresh token it no longer honours (revoked,
-        // or the app's access removed) with 400 `invalid_grant`, as RFC
-        // 6749 section 5.2 has it (Spotify's refreshing tokens guide, read
-        // 2026-11-23; to be checked live): the link is gone, not Spotify.
+        // Only a grant Spotify no longer honours (`invalid_grant`) means the
+        // user's link is gone. Any other refusal is the app's: a wrong id
+        // or secret, or a request Spotify will not take. No user can fix
+        // that by connecting again, so it reads as Spotify out of reach.
         self.api
             .refresh(client_id, client_secret, refresh_token, priority)
             .await
             .map_err(|error| match error {
-                ProviderError::BadRequest { status: 400, .. } => SpotifyError::NotLinked,
+                ProviderError::Unauthorized { .. } => SpotifyError::NotLinked,
+                ProviderError::BadRequest { status, .. } => {
+                    tracing::warn!(
+                        status,
+                        "Spotify refused the app's credentials or token request; check the Spotify app settings"
+                    );
+                    SpotifyError::Unavailable(format!("token refresh refused ({status})"))
+                }
                 error => unavailable("token refresh", &error),
             })
     }

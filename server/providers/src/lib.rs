@@ -355,6 +355,7 @@ impl Providers {
         );
         let spotify = spotify::SpotifyClient::new(
             executor(&spotify::SPEC, spotify::SOURCE),
+            executor(&spotify::ACCOUNTS_SPEC, spotify::SOURCE),
             &endpoints.spotify_api,
             &endpoints.spotify_accounts,
         );

@@ -6,7 +6,8 @@
 //!
 //! Only a song with no library file and no source it plays from, whose
 //! album was found (its `album_id`), is asked for; the album is never
-//! guessed from names. Albums the library holds, or someone already asked
+//! guessed from names. Songs a Spotify sync is about to ask for are left
+//! to it. Albums the library holds, or someone already asked
 //! for, are skipped, and so are albums whose last request was rejected. A
 //! cancelled one is asked for again: the cancel was a person's own. One
 //! press files at most [`PRESS_MAX_ALBUMS`]; a plain user's press files
@@ -34,6 +35,7 @@ use droppedneedle_catalog::metadata::Catalog;
 use droppedneedle_catalog::metadata::error::CatalogError;
 use droppedneedle_catalog::metadata::library::LocalCatalog;
 use droppedneedle_kernel::jobs::queue::{JobQueue, State};
+use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
 use self::models::{
@@ -160,14 +162,15 @@ fn count(n: usize) -> u32 {
 }
 
 /// The one recording titled `title` on the tracklist the album page shows
-/// for `group`.
+/// for `group`, with MusicBrainz asked at `priority`.
 pub(crate) async fn recording_on(
     catalog: &Catalog,
     group: &str,
     title: &str,
+    priority: RequestPriority,
 ) -> Result<String, PlaylistRequestError> {
     let tracklist = catalog
-        .album_tracks(group)
+        .album_tracks_at(group, priority)
         .await
         .map_err(PlaylistRequestError::Catalog)?;
     let found: HashSet<String> = tracklist
@@ -222,8 +225,9 @@ impl PlaylistRequests {
         }
     }
 
-    /// The entries a Spotify sync of the playlist will ask for by itself:
-    /// its songs not followed up yet, while sync is on and its requests are
+    /// The entries a Spotify sync of the playlist asks for by itself at its
+    /// next pass: its songs not followed up yet and not put off after the
+    /// sync could not ask for them, while sync is on and its requests are
     /// granted (by the owner's role or an admin's approval). Empty
     /// otherwise.
     async fn sync_queue(&self, row: &PlaylistRow) -> Result<HashSet<String>, PlaylistRequestError> {
@@ -249,7 +253,10 @@ impl PlaylistRequests {
         if !sync.enabled || !granted {
             return Ok(HashSet::new());
         }
-        Ok(self.playlists.open_source_entries(&row.id).await?)
+        Ok(self
+            .playlists
+            .open_source_entries(&row.id, self.syncs.now_ms())
+            .await?)
     }
 
     /// The playlist and its entries, when the caller owns it or may edit
@@ -323,7 +330,8 @@ impl PlaylistRequests {
         })
     }
 
-    /// Ask for the playlist's missing albums, or with `entry_id` for that
+    /// Ask for the playlist's missing albums, leaving out the songs a
+    /// Spotify sync will ask for by itself, or with `entry_id` for that
     /// entry's album only.
     pub async fn request_missing(
         &self,
@@ -355,6 +363,10 @@ impl PlaylistRequests {
                 return Err(PlaylistRequestError::NoAlbumYet);
             }
             tracks = vec![entry];
+        } else {
+            // Songs a Spotify sync will ask for by itself are left to it.
+            let queued = self.sync_queue(&row).await?;
+            tracks.retain(|track| !queued.contains(&track.id));
         }
         let wanted = wanted_albums(&tracks);
         let groups: Vec<String> = wanted.iter().map(|album| album.group.clone()).collect();
@@ -489,9 +501,9 @@ impl PlaylistRequests {
     }
 
     /// The one recording titled `title` on the tracklist the album page
-    /// shows for `group`.
+    /// shows for `group`, for a person waiting.
     async fn recording_on(&self, group: &str, title: &str) -> Result<String, PlaylistRequestError> {
-        recording_on(&self.catalog, group, title).await
+        recording_on(&self.catalog, group, title, RequestPriority::UserInitiated).await
     }
 
     /// What each of the playlist's missing songs waits for.
@@ -554,13 +566,12 @@ impl PlaylistRequests {
                     {
                         Some(wait) => wait,
                         None if owned.contains(&group) => PlaylistEntryState::AlbumInLibrary,
+                        // The sync asks for it by itself, so the press
+                        // leaves it out and the count does too.
+                        None if queued.contains(&track.id) => PlaylistEntryState::Queued,
                         None => {
                             requestable.insert(group);
-                            if queued.contains(&track.id) {
-                                PlaylistEntryState::Queued
-                            } else {
-                                PlaylistEntryState::Requestable
-                            }
+                            PlaylistEntryState::Requestable
                         }
                     }
                 }

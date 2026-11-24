@@ -119,16 +119,24 @@ pub fn spotify_track(id: &str, name: &str, artist: &str, album: (&str, &str), is
 pub struct MockRecorder {
     inner: Arc<Mutex<RecordedCalls>>,
     limit_playlists: Arc<std::sync::atomic::AtomicBool>,
-    refuse_refresh: Arc<std::sync::atomic::AtomicBool>,
+    refuse_refresh: Arc<Mutex<Option<(u16, &'static str)>>>,
     library: Arc<Mutex<MockLibrary>>,
 }
 
 impl MockRecorder {
-    /// Answer every refresh with 400 `invalid_grant`, as Spotify answers a
-    /// refresh token it no longer honours.
-    pub fn refuse_refresh(&self) {
-        self.refuse_refresh
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+    /// Answer every refresh with `status` and the OAuth error `error`:
+    /// 400 `invalid_grant` is how Spotify answers a refresh token it no
+    /// longer honours, `invalid_client` a wrong app id or secret (with 401
+    /// where the server follows RFC 6749 for a client that failed Basic
+    /// authentication).
+    pub fn refuse_refresh(&self, status: u16, error: &'static str) {
+        if let Ok(mut refusal) = self.refuse_refresh.lock() {
+            *refusal = Some((status, error));
+        }
+    }
+
+    fn refresh_refusal(&self) -> Option<(u16, &'static str)> {
+        self.refuse_refresh.lock().ok().and_then(|refusal| *refusal)
     }
 
     /// List `tracks` as the Liked Songs, newest first.
@@ -662,17 +670,11 @@ async fn spotify_token(
             }))
             .into_response()
         }
-        "refresh_token"
-            if state
-                .recorder
-                .refuse_refresh
-                .load(std::sync::atomic::Ordering::SeqCst) =>
-        {
+        "refresh_token" if state.recorder.refresh_refusal().is_some() => {
+            let (status, error) = state.recorder.refresh_refusal().unwrap_or_default();
             (
-                StatusCode::BAD_REQUEST,
-                Json(
-                    json!({"error": "invalid_grant", "error_description": "Refresh token revoked"}),
-                ),
+                StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_REQUEST),
+                Json(json!({"error": error, "error_description": "Refused by the mock"})),
             )
                 .into_response()
         }

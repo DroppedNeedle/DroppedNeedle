@@ -20,13 +20,13 @@ use crate::RequestPriority;
 use crate::cache::CacheKey;
 use crate::client::{decode, parse_base, unusable_base};
 use crate::error::ProviderError;
-use crate::executor::{Backoff, Executor, Request, Spec, Url, standard_classify};
+use crate::executor::{Answer, Backoff, Executor, Request, Spec, Url, standard_classify};
 
 pub mod models;
 
 use models::{
     EntryPage, EntryTrack, PlaylistInfo, PlaylistPage, PlaylistVersion, Profile, SavedTrackPage,
-    TokenAnswer,
+    TokenAnswer, TokenRefusal,
 };
 
 /// The provider name errors carry, and its rate row.
@@ -72,6 +72,46 @@ pub static SPEC: Spec = Spec {
     retry_after_cap: Duration::from_secs(3600),
     classify: standard_classify,
 };
+
+/// The accounts host's token grants: as [`SPEC`], on the same row, with the
+/// refusals read by [`accounts_classify`].
+pub static ACCOUNTS_SPEC: Spec = Spec {
+    source: SOURCE,
+    health_key: SOURCE,
+    timeout: Duration::from_secs(15),
+    max_body: MAX_BODY_BYTES,
+    retry_after_default: Backoff::Exponential {
+        base: Duration::from_secs(2),
+        max: Duration::from_secs(60),
+    },
+    retry_after_cap: Duration::from_secs(3600),
+    classify: accounts_classify,
+};
+
+/// The token grant's refusals (RFC 6749 section 5.2). A grant Spotify no
+/// longer honours (`invalid_grant`: a refresh token revoked, or the app's
+/// access removed) is [`ProviderError::Unauthorized`]. Any other refusal,
+/// such as `invalid_client` for a wrong app id or secret, is
+/// [`ProviderError::BadRequest`], a 401 included: the RFC answers a client
+/// that failed Basic authentication with one, and it says nothing about
+/// the user's grant.
+fn accounts_classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
+    let reply = answer.reply;
+    let status = reply.status();
+    if !matches!(status, 400 | 401) {
+        return standard_classify(answer);
+    }
+    let refusal = serde_json::from_slice::<TokenRefusal>(reply.bytes()).ok();
+    Err(match refusal {
+        Some(refusal) if refusal.error == "invalid_grant" => {
+            ProviderError::Unauthorized { provider: SOURCE }
+        }
+        _ => ProviderError::BadRequest {
+            provider: SOURCE,
+            status,
+        },
+    })
+}
 
 /// A token grant from the accounts host. Debug is hand-written: the tokens
 /// never appear in debug output.
@@ -127,6 +167,7 @@ struct AppToken {
 #[derive(Clone)]
 pub struct SpotifyClient {
     executor: Executor,
+    accounts: Executor,
     api_base: Option<Url>,
     accounts_base: Option<Url>,
     app_token: Arc<Mutex<Option<AppToken>>>,
@@ -142,12 +183,18 @@ impl std::fmt::Debug for SpotifyClient {
 }
 
 impl SpotifyClient {
-    /// Calls through `executor` to the Web API at `api_base` and the
-    /// accounts host at `accounts_base`.
+    /// Calls through `executor` to the Web API at `api_base`, and through
+    /// `accounts` to the accounts host at `accounts_base`.
     #[must_use]
-    pub fn new(executor: Executor, api_base: &str, accounts_base: &str) -> Self {
+    pub fn new(
+        executor: Executor,
+        accounts: Executor,
+        api_base: &str,
+        accounts_base: &str,
+    ) -> Self {
         Self {
             executor,
+            accounts,
             api_base: parse_base(api_base, SOURCE),
             accounts_base: parse_base(accounts_base, SOURCE),
             app_token: Arc::new(Mutex::new(None)),
@@ -209,7 +256,8 @@ impl SpotifyClient {
     ///
     /// # Errors
     ///
-    /// As [`SpotifyClient::exchange_code`].
+    /// As [`SpotifyClient::exchange_code`]; a refresh token Spotify no
+    /// longer honours is [`ProviderError::Unauthorized`].
     pub async fn refresh(
         &self,
         client_id: &str,
@@ -318,7 +366,7 @@ impl SpotifyClient {
         let request = Request::post_form(base, &["api", "token"], form)
             .map_err(|_| unusable_base(SOURCE))?
             .header("authorization", format!("Basic {credentials}"));
-        let reply = self.executor.send(request, priority).await?;
+        let reply = self.accounts.send(request, priority).await?;
         let answer: TokenAnswer = decode(&reply)?;
         Ok(TokenGrant::from(answer))
     }

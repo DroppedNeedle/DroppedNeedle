@@ -37,6 +37,9 @@ const PERSON_WAIT: Duration = Duration::from_secs(24 * 3600);
 const BACKOFF_CAP: Duration = Duration::from_secs(24 * 3600);
 /// Liked Songs read per page (Spotify's maximum).
 const LIKED_PAGE: i64 = 50;
+/// How often a pass looks again while an import of its playlist is queued
+/// or running.
+const IMPORT_RECHECK: Duration = Duration::from_secs(15);
 /// The longest a pass waits for the Spotify app settings to be saved
 /// before it reads them again. A save wakes it at once.
 const SETTINGS_RECHECK: Duration = Duration::from_secs(300);
@@ -50,8 +53,8 @@ enum Ended {
         failure: SyncFailure,
         retry_after: Option<u64>,
     },
-    /// Nothing to do: the sync is off, the playlist is gone, or Spotify is
-    /// turned off on this server.
+    /// Nothing to do: the sync is off, the playlist is gone, Spotify is
+    /// turned off on this server, or an import of the playlist is waiting.
     Idle,
     /// The database was busy, or the pass was stopped: put the job back.
     Busy,
@@ -162,21 +165,45 @@ impl SpotifySync {
                 return Ended::Idle;
             }
         };
-        let next = self
-            .store
-            .now_ms()
-            .saturating_add(ms(PASS_INTERVAL))
-            .saturating_add(jitter(PASS_SPREAD));
-        match self.store.set_next_check(playlist_id, next).await {
-            Ok(()) => {}
-            Err(DbError::Busy { .. }) => return Ended::Busy,
-            Err(error) => {
-                tracing::error!(%error, "spotify sync schedule write failed");
-                return Ended::Failed {
-                    failure: SyncFailure::SaveFailed,
-                    retry_after: None,
+        let (owner, source) = match self.playlists.source_of(playlist_id).await {
+            Ok(Some(found)) => found,
+            Ok(None) => return self.idle_until_next(playlist_id).await,
+            Err(StoreError::Busy(_)) => return Ended::Busy,
+            Err(StoreError::Internal(cause)) => {
+                tracing::error!(%cause, "spotify sync playlist read failed");
+                return self.idle_until_next(playlist_id).await;
+            }
+        };
+        let Some(spotify_id) = source
+            .as_deref()
+            .and_then(|source| source.strip_prefix("spotify:"))
+        else {
+            return self.idle_until_next(playlist_id).await;
+        };
+        // An import queued before sync was turned on would replace what
+        // this pass records, so the pass waits for it to end. The sync
+        // stays due, so the due tick also queues it if this put-back fails.
+        match self.store.import_waiting(&owner, spotify_id).await {
+            Ok(false) => {}
+            Ok(true) => {
+                let at = self.store.now_ms().saturating_add(ms(IMPORT_RECHECK));
+                return match self.store.queue_at(playlist_id, at).await {
+                    Ok(()) => Ended::Idle,
+                    Err(error) if error.is_busy() => Ended::Busy,
+                    Err(error) => {
+                        tracing::error!(%error, "spotify sync pass not put back behind its import");
+                        Ended::Idle
+                    }
                 };
             }
+            Err(DbError::Busy { .. }) => return Ended::Busy,
+            Err(error) => {
+                tracing::error!(%error, "spotify sync import read failed");
+                return Ended::Idle;
+            }
+        }
+        if let Err(ended) = self.move_next_check(playlist_id).await {
+            return ended;
         }
         let mut changes = self.settings.subscribe();
         let raw = match self.settings.get_raw() {
@@ -194,21 +221,6 @@ impl SpotifySync {
         if !super::app_ready(&raw) {
             return Ended::Idle;
         }
-        let (owner, source) = match self.playlists.source_of(playlist_id).await {
-            Ok(Some(found)) => found,
-            Ok(None) => return Ended::Idle,
-            Err(StoreError::Busy(_)) => return Ended::Busy,
-            Err(StoreError::Internal(cause)) => {
-                tracing::error!(%cause, "spotify sync playlist read failed");
-                return Ended::Idle;
-            }
-        };
-        let Some(spotify_id) = source
-            .as_deref()
-            .and_then(|source| source.strip_prefix("spotify:"))
-        else {
-            return Ended::Idle;
-        };
         let liked = spotify_id == LIKED_SONGS_REF;
         let link: SpotifyConnection = match self.links.get(&owner).await {
             Ok(Some(link)) => link,
@@ -322,6 +334,35 @@ impl SpotifySync {
                 tracing::error!(%error, "spotify sync pass not recorded");
                 Ended::Done { added, requested }
             }
+        }
+    }
+
+    /// Move the next pass an interval on, so the due tick does not queue
+    /// it again while this one runs: a pass's first write.
+    async fn move_next_check(&self, playlist_id: &str) -> Result<(), Ended> {
+        let next = self
+            .store
+            .now_ms()
+            .saturating_add(ms(PASS_INTERVAL))
+            .saturating_add(jitter(PASS_SPREAD));
+        match self.store.set_next_check(playlist_id, next).await {
+            Ok(()) => Ok(()),
+            Err(DbError::Busy { .. }) => Err(Ended::Busy),
+            Err(error) => {
+                tracing::error!(%error, "spotify sync schedule write failed");
+                Err(Ended::Failed {
+                    failure: SyncFailure::SaveFailed,
+                    retry_after: None,
+                })
+            }
+        }
+    }
+
+    /// Nothing to do this pass; the next one is due an interval on.
+    async fn idle_until_next(&self, playlist_id: &str) -> Ended {
+        match self.move_next_check(playlist_id).await {
+            Ok(()) => Ended::Idle,
+            Err(ended) => ended,
         }
     }
 

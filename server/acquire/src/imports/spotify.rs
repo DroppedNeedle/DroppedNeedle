@@ -20,6 +20,7 @@ use super::spotify_client::{
 use super::spotify_oauth::SpotifyConnection;
 use super::spotify_store::{CollectionsPlaylistBridge, SqliteSpotifyLinks};
 use crate::settings::{ConfigSpotifySettings, settings_failed};
+use crate::spotify_sync::store::SyncStore;
 use droppedneedle_catalog::collections::models::SourceAlbumKind;
 use droppedneedle_catalog::collections::store::playlists::SourceAlbum;
 use droppedneedle_kernel::runtime_config::ConfigError;
@@ -141,6 +142,7 @@ pub struct SpotifyImportService {
     connections: Arc<SqliteSpotifyLinks>,
     playlists: Arc<CollectionsPlaylistBridge>,
     resolver: Arc<AlbumResolver>,
+    syncs: SyncStore,
 }
 
 /// Cover outcome the populate degrades on, never fails on.
@@ -160,13 +162,15 @@ impl SpotifyImportService {
         self.connections.clock().now_ms()
     }
 
-    /// Wire the service from its parts.
+    /// Wire the service from its parts. `syncs` is read before an import
+    /// writes: a synced playlist's songs are the sync's to keep.
     pub fn new(
         client: SpotifyClient,
         settings: Arc<ConfigSpotifySettings>,
         connections: Arc<SqliteSpotifyLinks>,
         playlists: Arc<CollectionsPlaylistBridge>,
         resolver: Arc<AlbumResolver>,
+        syncs: SyncStore,
     ) -> Self {
         Self {
             client,
@@ -174,6 +178,7 @@ impl SpotifyImportService {
             connections,
             playlists,
             resolver,
+            syncs,
         }
     }
 
@@ -332,12 +337,21 @@ impl SpotifyImportService {
     /// best-effort. Liked Songs ([`LIKED_SONGS_REF`]) reads every page of
     /// the user's liked songs, newest first, and has no cover. Returns the
     /// tracks written.
+    ///
+    /// A playlist whose sync was turned on after this import was queued is
+    /// left to the sync: the replace would wipe what the sync recorded, so
+    /// its pass is queued instead and nothing is written, the cover
+    /// included. That is checked first, to spare the reads, and again
+    /// right before the replace, which closes the window.
     pub async fn populate_playlist(
         &self,
         user_id: &str,
         spotify_playlist_id: &str,
         playlist_id: &str,
     ) -> Result<usize, ImportFailure> {
+        if self.left_to_sync(playlist_id).await? {
+            return Ok(0);
+        }
         // The import runs as a queued job after the route has answered, so
         // it waits its turn on the rate row instead of failing when Spotify
         // asks for a pause.
@@ -370,6 +384,9 @@ impl SpotifyImportService {
             })
             .collect();
         let written = rows.len();
+        if self.left_to_sync(playlist_id).await? {
+            return Ok(0);
+        }
         self.playlists
             .replace_tracks(user_id, playlist_id, &rows)
             .await?;
@@ -381,6 +398,17 @@ impl SpotifyImportService {
             tracing::debug!(%reason, "spotify playlist imported without a cover");
         }
         Ok(written)
+    }
+
+    /// Whether the playlist's sync is on, queueing its pass when it is.
+    async fn left_to_sync(&self, playlist_id: &str) -> Result<bool, SpotifyError> {
+        self.syncs.wake(playlist_id).await.map_err(|error| {
+            if error.is_busy() {
+                SpotifyError::Busy
+            } else {
+                SpotifyError::Store(error.to_string())
+            }
+        })
     }
 
     /// The release group of each Spotify album on the playlist, keyed by
@@ -431,7 +459,11 @@ impl SpotifyImportService {
         }
         let mut resolved = HashMap::new();
         for (index, (album_id, album)) in albums.iter().enumerate() {
-            match self.resolver.resolve(album).await {
+            match self
+                .resolver
+                .resolve(album, RequestPriority::BackgroundSync)
+                .await
+            {
                 Ok(Some(group)) => {
                     resolved.insert(album_id.clone(), group);
                 }

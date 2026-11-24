@@ -1,6 +1,11 @@
 //! Spotify sync: a playlist imported from Spotify, or Liked Songs, kept in
 //! step with it.
 //!
+//! An import of the playlist that is still queued or running when sync is
+//! turned on would replace what the sync records, so a pass puts itself
+//! back while one is, spending nothing, and the import, finding sync on,
+//! queues the pass and writes nothing.
+//!
 //! Each synced playlist has one row in `acquire_playlist_syncs` and one job
 //! key, `spotify:sync:{playlist_id}`, of kind [`KIND`]. A pass is queued only
 //! by the due tick ([`due`]), the playlist's switch, a grant decision, a

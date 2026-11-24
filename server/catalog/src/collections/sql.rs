@@ -343,9 +343,12 @@ droppedneedle_kernel::sql! {
         track_name: String,
         isrc: Option<String>,
     }
-    /// The entries of playlist `?1` a sync has not followed up.
+    /// The entries of playlist `?1` a sync asks for at its next pass: not
+    /// followed up, with no look put off past `?2` (one put off is a song
+    /// the sync tried and could not ask for).
     pub(super) OPEN_SOURCE_ENTRIES = "SELECT entry_id FROM catalog_playlist_source_songs \
-         WHERE playlist_id = ?1 AND followed_up_at IS NULL AND entry_id IS NOT NULL";
+         WHERE playlist_id = ?1 AND followed_up_at IS NULL AND entry_id IS NOT NULL \
+         AND (look_again_at IS NULL OR look_again_at <= ?2)";
     /// Give entry `?2` of playlist `?1`, still on release group `?3` with
     /// no file and no source, the artist's own album `?4`: its cover `?5`,
     /// its title `?6` and, when known, the recording `?7` on it.

@@ -8,11 +8,12 @@ use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::models::{SyncFailure, SyncHold};
 use super::{KIND, SyncJob, sql, sync_key};
+use crate::imports::jobs as imports;
 use crate::requests::ledger::ApprovalState;
 use droppedneedle_auth::users::roles::Role;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
-use droppedneedle_kernel::jobs::queue::{JobCtx, JobError, JobQueue};
+use droppedneedle_kernel::jobs::queue::{JobCtx, JobError, JobQueue, State};
 
 /// One playlist's sync, as stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,6 +103,20 @@ impl SyncStore {
         &self.queue
     }
 
+    /// Whether user `owner`'s import of Spotify playlist `spotify_id` is
+    /// queued or running.
+    pub(super) async fn import_waiting(
+        &self,
+        owner: &str,
+        spotify_id: &str,
+    ) -> Result<bool, DbError> {
+        Ok(self
+            .queue
+            .latest(imports::KIND, &imports::import_job_key(owner, spotify_id))
+            .await?
+            .is_some_and(|job| matches!(job.state, State::Queued | State::Running)))
+    }
+
     /// Playlist `playlist_id`'s sync, or none when it never had one.
     pub async fn get(&self, playlist_id: &str) -> Result<Option<SyncRow>, DbError> {
         let playlist_id = playlist_id.to_owned();
@@ -165,6 +180,20 @@ impl SyncStore {
                     tx.execute(sql::ASK_GRANT.text(), params![playlist_id, now])?;
                 }
                 enqueue(&queue, tx, &playlist_id)
+            })
+            .await
+    }
+
+    /// Queue playlist `playlist_id`'s pass again at `due_at`, unix ms.
+    pub(super) async fn queue_at(&self, playlist_id: &str, due_at: i64) -> Result<(), JobError> {
+        let (playlist_id, queue) = (playlist_id.to_owned(), self.queue.clone());
+        self.db
+            .write(Lane::Background, "spotify_sync.queue_at", move |tx| {
+                let job = SyncJob {
+                    playlist_id: playlist_id.clone(),
+                };
+                queue.enqueue_at(tx, KIND, &sync_key(&playlist_id), &job, due_at)?;
+                Ok(())
             })
             .await
     }

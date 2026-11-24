@@ -16,6 +16,7 @@ use utoipa::ToSchema;
 
 use droppedneedle_auth::Principal;
 use droppedneedle_catalog::collections::models::FiledKind;
+use droppedneedle_providers::RequestPriority;
 
 use super::{PlaylistSyncError, SpotifySync};
 use crate::imports::spotify_albums::SpotifyAlbum;
@@ -70,7 +71,11 @@ impl SpotifySync {
             }
         }
         // MusicBrainz down leaves the album for the walk's next look.
-        let group = match self.resolver.resolve(&album).await {
+        let group = match self
+            .resolver
+            .resolve(&album, RequestPriority::UserInitiated)
+            .await
+        {
             Ok(group) => group,
             Err(error) => {
                 tracing::warn!(%error, "spotify album not looked up for a kept song");

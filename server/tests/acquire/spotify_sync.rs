@@ -122,10 +122,39 @@ impl Rig {
             .to_owned();
         self.app
             .until("the imported rows", || async {
-                (titles(&self.app, &playlist_id).len() == rows).then_some(())
+                (titles(&self.app, &playlist_id).len() == rows
+                    && !self.import_waiting(who, spotify_id))
+                .then_some(())
             })
             .await;
         playlist_id
+    }
+
+    /// Whether `who`'s import of `spotify_id` is queued or running.
+    fn import_waiting(&self, who: &Login, spotify_id: &str) -> bool {
+        self.app
+            .db()
+            .query_row(
+                "SELECT COUNT(*) FROM durable_jobs WHERE kind = 'spotify.import' \
+                 AND idempotency_key = ?1 AND state IN ('queued', 'running')",
+                [format!("spotify:import:{}:{spotify_id}", who.user_id)],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+            > 0
+    }
+
+    /// How many passes of `playlist_id` are in `state`.
+    fn passes(&self, playlist_id: &str, state: &str) -> i64 {
+        self.app
+            .db()
+            .query_row(
+                "SELECT COUNT(*) FROM durable_jobs WHERE kind = 'spotify.sync' \
+                 AND idempotency_key = ?1 AND state = ?2",
+                [format!("spotify:sync:{playlist_id}"), state.to_owned()],
+                |row| row.get(0),
+            )
+            .unwrap()
     }
 
     /// Turn the sync of `playlist_id` on or off as `who`.
@@ -410,6 +439,82 @@ async fn a_playlist_imported_before_is_seeded_without_duplicates() {
     rig.app.stop().await;
 }
 
+/// An import queued before its playlist's sync was turned on never
+/// replaces what the sync keeps: the pass waits for it, and the import,
+/// finding sync on, writes nothing and leaves the playlist to the pass. A
+/// song taken before and since removed on Spotify stays.
+#[tokio::test]
+async fn an_import_queued_before_sync_leaves_the_playlist_to_it() {
+    let rig = rig("spotify-sync-import-race").await;
+    let ada = rig.app.login_user("ada").await;
+    rig.link(&ada, SPOTIFY_SCOPES, SPOTIFY_TOKEN).await;
+    rig.spotify
+        .set_playlist("sp-race", "v1", vec![song(1), song(2)]);
+    let playlist_id = rig.import(&ada, "sp-race", 2).await;
+    let payload = json!({
+        "user_id": ada.user_id,
+        "spotify_playlist_id": "sp-race",
+        "playlist_id": playlist_id,
+    });
+    rig.app
+        .seed(format!(
+            "INSERT INTO durable_jobs (kind, idempotency_key, state, attempts, not_before_at, \
+             payload_json, created_at, updated_at) VALUES ('spotify.import', \
+             'spotify:import:{}:sp-race', 'queued', 0, 9000000000000, '{payload}', 0, 0)",
+            ada.user_id
+        ))
+        .await;
+    rig.spotify
+        .set_playlist("sp-race", "v2", vec![song(1), song(2), song(3)]);
+
+    let (status, body) = rig.switch(&ada, &playlist_id, true).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    rig.app
+        .until("the first pass", || async {
+            (rig.passes(&playlist_id, "done") > 0).then_some(())
+        })
+        .await;
+    rig.spotify
+        .set_playlist("sp-race", "v3", vec![song(2), song(3)]);
+    rig.app
+        .seed(
+            "UPDATE durable_jobs SET not_before_at = 0 \
+             WHERE kind = 'spotify.import' AND state = 'queued'",
+        )
+        .await;
+    rig.app
+        .until("the import", || async {
+            (!rig.import_waiting(&ada, "sp-race") && rig.passes(&playlist_id, "running") == 0)
+                .then_some(())
+        })
+        .await;
+    rig.app
+        .seed(
+            "UPDATE durable_jobs SET not_before_at = 0 \
+             WHERE kind = 'spotify.sync' AND state = 'queued'",
+        )
+        .await;
+    rig.pass(&ada, "sp-race", &playlist_id).await;
+
+    assert_eq!(
+        titles(&rig.app, &playlist_id),
+        ["Song 1", "Song 2", "Song 3"],
+        "the import replaced nothing"
+    );
+    let kept: i64 = rig
+        .app
+        .db()
+        .query_row(
+            "SELECT COUNT(*) FROM catalog_playlist_source_songs WHERE playlist_id = ?1",
+            [&playlist_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(kept, 3, "every song the playlist took is still kept");
+
+    rig.app.stop().await;
+}
+
 /// Liked Songs is read newest first, only to the first page holding a
 /// song already taken, and its new likes go at the top in Spotify's order.
 /// Its sync needs the scope that reads it.
@@ -493,7 +598,7 @@ async fn sync_off_cancels_and_a_refused_link_reads_not_linked() {
         .await;
     rig.link(&ada, SPOTIFY_SCOPES, "a-token-spotify-refuses")
         .await;
-    rig.spotify.refuse_refresh();
+    rig.spotify.refuse_refresh(400, "invalid_grant");
     rig.pass(&ada, "sp-gone", &playlist_id).await;
     assert_eq!(
         rig.failure_and_version(&playlist_id).0.as_deref(),
@@ -792,6 +897,89 @@ async fn a_trusted_sync_asks_for_each_album_once() {
         (asked, 0),
         "and requests nothing"
     );
+
+    rig.app.stop().await;
+}
+
+/// Songs a sync is about to ask for are not offered by Request missing:
+/// the count leaves their albums out and the whole-playlist press leaves
+/// them to the sync. A song the sync tried and could not ask for (its next
+/// look put off) is offered again, and a press on one entry still asks
+/// for it.
+#[tokio::test]
+async fn request_missing_leaves_the_syncs_songs_to_it() {
+    let rig = rig("spotify-sync-banner").await;
+    let admin = admin(&rig).await;
+    let tess = rig.app.login_user("tess").await;
+    set_role(&rig, &admin, &tess, "trusted").await;
+    rig.link(&tess, SPOTIFY_SCOPES, SPOTIFY_TOKEN).await;
+    rig.spotify
+        .set_playlist("sp-banner", "v1", (1..=30).map(song).collect());
+    let playlist_id = rig.import(&tess, "sp-banner", 30).await;
+    let (status, body) = rig
+        .call(
+            &tess,
+            "PUT",
+            &format!("/api/v3/playlists/{playlist_id}/sync"),
+            Some(json!({"enabled": true, "whole_albums": true})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    rig.app
+        .until("the first pass", || async {
+            rig.checked_at(&playlist_id).map(|_| ())
+        })
+        .await;
+    assert_eq!(requests_of(&rig.app, &tess).0.len(), 25, "25 a pass");
+
+    let state_path = format!("/api/v3/playlists/{playlist_id}/request-state");
+    let state_of = || async {
+        let (status, state) = rig.call(&tess, "GET", &state_path, None).await;
+        assert_eq!(status, StatusCode::OK, "{state}");
+        let queued: Vec<String> = state["entries"]
+            .as_array()
+            .expect("entries")
+            .iter()
+            .filter(|entry| entry["state"] == "queued")
+            .filter_map(|entry| entry["entry_id"].as_str().map(str::to_owned))
+            .collect();
+        (state["requestable_albums"].clone(), queued)
+    };
+    let (requestable, queued) = state_of().await;
+    assert_eq!((requestable, queued.len()), (json!(0), 5));
+
+    rig.app
+        .seed(format!(
+            "UPDATE catalog_playlist_source_songs SET looks = 1, look_again_at = 9000000000000 \
+             WHERE playlist_id = '{playlist_id}' AND entry_id = '{}'",
+            queued[4]
+        ))
+        .await;
+    let (requestable, queued) = state_of().await;
+    assert_eq!(
+        (requestable, queued.len()),
+        (json!(1), 4),
+        "a song put off is offered again"
+    );
+
+    let press_path = format!("/api/v3/playlists/{playlist_id}/request-missing");
+    let press = |entry_id: Option<&str>| {
+        rig.call(
+            &tess,
+            "POST",
+            &press_path,
+            Some(json!({
+                "idempotency_key": uuid::Uuid::new_v4().to_string(),
+                "entry_id": entry_id,
+            })),
+        )
+    };
+    let (status, pressed) = press(None).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{pressed}");
+    assert_eq!(pressed["requested"], 1, "only the song put off: {pressed}");
+    let (status, pressed) = press(Some(&queued[0])).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{pressed}");
+    assert_eq!(pressed["requested"], 1, "{pressed}");
 
     rig.app.stop().await;
 }
