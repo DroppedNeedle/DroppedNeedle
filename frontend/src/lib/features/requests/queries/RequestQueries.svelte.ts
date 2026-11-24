@@ -9,6 +9,16 @@ import { authStore } from '$lib/stores/authStore.svelte';
 import { type HistoryParams } from './historyQuery';
 import { RequestQueryKeyFactory } from './RequestQueryKeyFactory';
 import { STALE_LIVE } from '$lib/queries/staleTime';
+import { PlaylistSyncApprovalsQueryKeyFactory } from '$lib/queries/featureKeys';
+
+// Synced playlists of plain users asking an admin to approve their
+// requests, and the approvals that stand.
+export const getPlaylistSyncApprovalsQuery = (getEnabled: Getter<boolean>) =>
+	createQuery(() => ({
+		queryKey: PlaylistSyncApprovalsQueryKeyFactory.list(),
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/requests/playlist-sync-approvals'), { signal }),
+		enabled: getEnabled()
+	}));
 
 // Live progress list: `downloads.changed` refreshes it as download states move;
 // the interval is a safety net for a missed event and for changes no download

@@ -44,6 +44,7 @@ describe('requests Auto-downloads tab', () => {
 				count: 0,
 				granted: [{ user_id: 'user-2', user_name: 'Bob', requested_at: 1700000000 }]
 			},
+			'GET /api/v3/requests/playlist-sync-approvals': { items: [], count: 0, granted: [] },
 			'POST /api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/revoke': {
 				success: true,
 				message: 'Auto-download revoked'
@@ -73,5 +74,50 @@ describe('requests Auto-downloads tab', () => {
 		await expect
 			.poll(() => api.calls('POST /api/v3/requests/personal-mix-approvals/{user_id}/revoke').length)
 			.toBe(1);
+	});
+
+	it('lists a synced playlist asking for its requests, counts it and approves it', async () => {
+		const counts: number[] = [];
+		const api = fakeApi({
+			'GET /api/v3/requests/auto-download-approvals': { items: [], count: 0, granted: [] },
+			'GET /api/v3/requests/auto-download-approval-batches': { batches: [], count: 0 },
+			'GET /api/v3/requests/personal-mix-approvals': { items: [], count: 0, granted: [] },
+			'GET /api/v3/requests/playlist-sync-approvals': {
+				count: 1,
+				items: [
+					{
+						playlist_id: 'pl-road',
+						playlist_name: 'Road Trip',
+						user_id: 'user-3',
+						user_name: 'Plain',
+						requested_at: 1700000000,
+						song_count: 142,
+						whole_albums: true
+					}
+				],
+				granted: []
+			},
+			'POST /api/v3/requests/playlist-sync-approvals/{playlist_id}/approve': {
+				success: true,
+				message: 'Playlist sync approved'
+			}
+		});
+		await renderWithQuery(AutoDownloadTab, {
+			active: true,
+			oncount: (n: number) => counts.push(n)
+		});
+
+		await expect.element(page.getByText('Keep in sync: Road Trip')).toBeVisible();
+		await expect.element(page.getByText('142 songs')).toBeVisible();
+		await expect.element(page.getByText('whole albums')).toBeVisible();
+		await expect.poll(() => counts.at(-1)).toBe(1);
+		await page.getByRole('button', { name: 'Approve' }).click();
+		await expect
+			.poll(
+				() =>
+					api.calls('POST /api/v3/requests/playlist-sync-approvals/{playlist_id}/approve')[0]
+						?.params
+			)
+			.toEqual({ playlist_id: 'pl-road' });
 	});
 });

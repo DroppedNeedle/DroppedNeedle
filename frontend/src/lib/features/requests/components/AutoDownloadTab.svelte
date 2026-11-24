@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { fade, fly } from '$lib/ui/motion';
-	import { Check, CloudDownload, Heart, Sparkles, Undo2, X } from 'lucide-svelte';
+	import { Check, CloudDownload, Heart, RefreshCw, Sparkles, Undo2, X } from 'lucide-svelte';
 	import ArtistImage from '$lib/media/ArtistImage.svelte';
 	import {
 		getAutoDownloadApprovalBatchesQuery,
@@ -19,6 +19,12 @@
 		createRejectPersonalMixMutation,
 		createRevokePersonalMixMutation
 	} from '$lib/features/profile/queries/scrobble-preferences.svelte';
+	import { getPlaylistSyncApprovalsQuery } from '$lib/features/requests/queries/RequestQueries.svelte';
+	import {
+		createApprovePlaylistSyncMutation,
+		createRejectPlaylistSyncMutation,
+		createRevokePlaylistSyncMutation
+	} from '$lib/features/requests/queries/RequestMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -58,23 +64,36 @@
 	const rejectMix = createRejectPersonalMixMutation();
 	const revokeMix = createRevokePersonalMixMutation();
 
+	// Synced playlists asking for their requests to be approved.
+	const syncApprovalsQuery = getPlaylistSyncApprovalsQuery(() => authStore.isAdmin);
+	const syncApprovals = $derived(syncApprovalsQuery.data?.items ?? []);
+	const grantedSync = $derived(syncApprovalsQuery.data?.granted ?? []);
+	const approveSync = createApprovePlaylistSyncMutation();
+	const rejectSync = createRejectPlaylistSyncMutation();
+	const revokeSync = createRevokePlaylistSyncMutation();
+
 	$effect(() =>
 		oncount?.(
 			(autoApprovalsQuery.data?.count ?? 0) +
 				(batchApprovalsQuery.data?.count ?? 0) +
-				(mixApprovalsQuery.data?.count ?? 0)
+				(mixApprovalsQuery.data?.count ?? 0) +
+				(syncApprovalsQuery.data?.count ?? 0)
 		)
 	);
+
+	const songs = (n: number) => `${n} ${n === 1 ? 'song' : 'songs'}`;
 </script>
 
 {#snippet artistPicture(mbid: string, name: string)}
 	<ArtistImage {mbid} alt={name} className="w-full h-full object-cover" />
 {/snippet}
 
-{#snippet iconTile(kind: 'batch' | 'mix')}
+{#snippet iconTile(kind: 'batch' | 'mix' | 'sync')}
 	<span class="rq-tile">
 		{#if kind === 'batch'}
 			<CloudDownload class="size-8" aria-hidden="true" />
+		{:else if kind === 'sync'}
+			<RefreshCw class="size-8" aria-hidden="true" />
 		{:else}
 			<Sparkles class="size-8" aria-hidden="true" />
 		{/if}
@@ -98,20 +117,21 @@
 
 {#if active}
 	<div in:fade={{ duration: 150 }}>
-		{#if autoApprovalsQuery.isError || mixApprovalsQuery.isError || batchApprovalsQuery.isError}
+		{#if autoApprovalsQuery.isError || mixApprovalsQuery.isError || batchApprovalsQuery.isError || syncApprovalsQuery.isError}
 			<RequestsAlert
 				message="Could not load auto-download approvals."
 				onretry={() => {
 					void autoApprovalsQuery.refetch();
 					void batchApprovalsQuery.refetch();
 					void mixApprovalsQuery.refetch();
+					void syncApprovalsQuery.refetch();
 				}}
 			/>
-		{:else if autoApprovalsQuery.isPending || mixApprovalsQuery.isPending || batchApprovalsQuery.isPending}
+		{:else if autoApprovalsQuery.isPending || mixApprovalsQuery.isPending || batchApprovalsQuery.isPending || syncApprovalsQuery.isPending}
 			<RequestSkeleton count={3} buttons={2} />
-		{:else if autoApprovals.length === 0 && batchApprovals.length === 0 && mixApprovals.length === 0 && grantedAuto.length === 0 && grantedMix.length === 0}
+		{:else if autoApprovals.length === 0 && batchApprovals.length === 0 && mixApprovals.length === 0 && syncApprovals.length === 0 && grantedAuto.length === 0 && grantedMix.length === 0 && grantedSync.length === 0}
 			<RequestsEmpty icon={Heart} tone="success" title="No pending approvals">
-				When a user turns on artist auto-download or Weekly Mix auto-requests, it appears here for
+				When a user turns on artist auto-download, Weekly Mix or playlist sync, it appears here for
 				your review.
 			</RequestsEmpty>
 		{:else}
@@ -198,7 +218,28 @@
 						</RequestRow>
 					</div>
 				{/each}
-				{#if grantedAuto.length > 0 || grantedMix.length > 0}
+				{#each syncApprovals as item (item.playlist_id)}
+					{@const busy = approveSync.isPending || rejectSync.isPending}
+					{@const args = { playlistId: item.playlist_id, playlistName: item.playlist_name }}
+					<div in:fly={{ y: 12, duration: 200 }}>
+						<RequestRow>
+							{#snippet cover()}{@render iconTile('sync')}{/snippet}
+							{#snippet aside()}{@render decide(
+									() => approveSync.mutate(args),
+									() => rejectSync.mutate(args),
+									busy
+								)}{/snippet}
+							<p class="rq-title rq-title--sm">Keep in sync: {item.playlist_name}</p>
+							<p class="rq-meta mt-1.5">
+								<span>{item.user_name || 'A user'}</span>
+								<span>{songs(item.song_count)}</span>
+								{#if item.whole_albums}<span>whole albums</span>{/if}
+								<span>requested {timeAgo(item.requested_at)}</span>
+							</p>
+						</RequestRow>
+					</div>
+				{/each}
+				{#if grantedAuto.length > 0 || grantedMix.length > 0 || grantedSync.length > 0}
 					<h3 class="rq-approved">Approved</h3>
 				{/if}
 				{#each grantedAuto as item (item.user_id + item.artist_mbid)}
@@ -230,6 +271,24 @@
 							)}{/snippet}
 						<p class="rq-title">Weekly Mix auto-requests</p>
 						<p class="rq-meta mt-1.5"><span>{item.user_name}</span></p>
+					</RequestRow>
+				{/each}
+				{#each grantedSync as item (item.playlist_id)}
+					<RequestRow>
+						{#snippet cover()}{@render iconTile('sync')}{/snippet}
+						{#snippet aside()}{@render revoke(
+								() =>
+									revokeSync.mutate({
+										playlistId: item.playlist_id,
+										playlistName: item.playlist_name
+									}),
+								revokeSync.isPending
+							)}{/snippet}
+						<p class="rq-title rq-title--sm">Keep in sync: {item.playlist_name}</p>
+						<p class="rq-meta mt-1.5">
+							<span>{item.user_name || 'A user'}</span>
+							<span>{songs(item.song_count)}</span>
+						</p>
 					</RequestRow>
 				{/each}
 			</div>

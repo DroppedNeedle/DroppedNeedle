@@ -13,7 +13,8 @@ import {
 	createAppMutation,
 	type Effect,
 	pendingApprovalsChanged,
-	playlistRequestStatesChanged
+	playlistRequestStatesChanged,
+	playlistSyncApprovalsChanged
 } from '$lib/queries/effects';
 
 export interface RequestActionVars {
@@ -267,4 +268,64 @@ export const createClearHistoryMutation = () =>
 		},
 		onError: (err) =>
 			toastStore.show({ message: errorMessage(err, 'Could not remove that item'), type: 'error' })
+	}));
+
+interface PlaylistSyncDecisionVars {
+	playlistId: string;
+	playlistName: string;
+}
+
+type SyncVerb = 'approve' | 'reject' | 'revoke';
+
+const SYNC_DONE: Record<SyncVerb, string> = {
+	approve: 'Requests approved for',
+	reject: 'Requests turned down for',
+	revoke: 'Approval taken back for'
+};
+
+/** What every decision on a synced playlist's requests does after it. */
+const syncDecision = (verb: SyncVerb) => ({
+	onSuccess: (data: { success: boolean; message: string }, vars: PlaylistSyncDecisionVars) => {
+		toastStore.show(
+			data.success
+				? { message: `${SYNC_DONE[verb]} ${vars.playlistName}`, type: 'success' }
+				: { message: data.message, type: 'error' }
+		);
+	},
+	effects: () => [playlistSyncApprovalsChanged(), pendingApprovalsChanged(authStore.user?.id)],
+	onError: (err: unknown) =>
+		toastStore.show({ message: errorMessage(err, "Couldn't save that decision"), type: 'error' })
+});
+
+export const createApprovePlaylistSyncMutation = () =>
+	createAppMutation(() => ({
+		mutationFn: (vars: PlaylistSyncDecisionVars) =>
+			api.v3.POST(
+				v3('/api/v3/requests/playlist-sync-approvals/{playlist_id}/approve', {
+					path: { playlist_id: vars.playlistId }
+				})
+			),
+		...syncDecision('approve')
+	}));
+
+export const createRejectPlaylistSyncMutation = () =>
+	createAppMutation(() => ({
+		mutationFn: (vars: PlaylistSyncDecisionVars) =>
+			api.v3.POST(
+				v3('/api/v3/requests/playlist-sync-approvals/{playlist_id}/reject', {
+					path: { playlist_id: vars.playlistId }
+				})
+			),
+		...syncDecision('reject')
+	}));
+
+export const createRevokePlaylistSyncMutation = () =>
+	createAppMutation(() => ({
+		mutationFn: (vars: PlaylistSyncDecisionVars) =>
+			api.v3.POST(
+				v3('/api/v3/requests/playlist-sync-approvals/{playlist_id}/revoke', {
+					path: { playlist_id: vars.playlistId }
+				})
+			),
+		...syncDecision('revoke')
 	}));
