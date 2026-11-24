@@ -823,7 +823,10 @@ async fn a_full_quota_holds_and_an_ended_request_is_never_asked_again() {
     let playlist_id = synced(&rig, &quin, "sp-quota", vec![song(4), song(5)]).await;
     decide(&rig, &admin, &playlist_id, "approve").await;
     let song_4 = format!("track:{}", sync_recording(4));
-    assert_eq!(requests_of(&rig.app, &quin).0, [song_4.clone()]);
+    assert_eq!(
+        requests_of(&rig.app, &quin).0,
+        std::slice::from_ref(&song_4)
+    );
     assert_eq!(sync_of(&rig, &quin, &playlist_id).await["hold"], "quota");
 
     rig.app
@@ -1182,7 +1185,7 @@ async fn a_moved_song_can_be_kept_on_spotifys_album() {
         "asked for on the artist's own album"
     );
     let song = format!("track:{ON_THE_ALBUM}");
-    assert_eq!(requests_of(&rig.app, &tess).0, [song.clone()]);
+    assert_eq!(requests_of(&rig.app, &tess).0, std::slice::from_ref(&song));
     let (status, state) = rig
         .call(
             &tess,
@@ -1408,7 +1411,7 @@ async fn keeping_spotifys_album_takes_back_what_was_filed() {
     rig.link(&tess, SPOTIFY_SCOPES, SPOTIFY_TOKEN).await;
     let playlist_id = synced(&rig, &tess, "sp-filed", vec![on_a_compilation()]).await;
     let song = format!("track:{ON_THE_ALBUM}");
-    assert_eq!(requests_of(&rig.app, &tess).0, [song.clone()]);
+    assert_eq!(requests_of(&rig.app, &tess).0, std::slice::from_ref(&song));
     let (status, body) = rig
         .call(
             &tess,
