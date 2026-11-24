@@ -485,18 +485,13 @@ pub struct BecauseYouListenTo {
     pub fanart_url: Option<String>,
 }
 
-/// One personalized top pick.
+/// One personalized top pick: an album from the top of the person's pool.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct TopPickItem {
     /// Picked album.
     pub album: AlbumRef,
-    /// Match score, 0-100.
-    pub match_pct: i64,
-    /// Human reasons behind the pick.
-    pub reasons: Vec<String>,
-    /// Seed artist name, when there is one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed_artist: Option<String>,
+    /// Why it is offered.
+    pub reason: PickReason,
 }
 
 /// The personalized top-picks shelf.
@@ -718,13 +713,11 @@ pub struct QueueItemLight {
     pub artist_name: String,
     /// The artist's MusicBrainz id.
     pub artist_id: String,
-    /// Human reason behind the pick.
-    pub recommendation_reason: String,
+    /// Why it is offered.
+    pub reason: PickReason,
     /// Cover URL, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cover_url: Option<String>,
-    /// True for wildcard (out-of-profile) picks.
-    pub is_wildcard: bool,
     /// True when already owned.
     pub in_library: bool,
 }
@@ -992,7 +985,7 @@ pub enum PickReasonKind {
 }
 
 /// One of the person's own artists a reason names.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct PickReasonArtist {
     /// Its MusicBrainz id, lowercased.
     pub artist_mbid: String,
@@ -1002,7 +995,7 @@ pub struct PickReasonArtist {
 
 /// Why a pick is offered: one line built from the path that found it, and
 /// the person's own artists it names.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct PickReason {
     /// What it rests on.
     pub kind: PickReasonKind,

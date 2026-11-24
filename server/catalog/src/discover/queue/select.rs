@@ -1,17 +1,15 @@
-//! Pure deck assembly: shuffling, round-robin selection across candidate
-//! pools, and wildcard placement.
+//! Pure dealing from pools of similar artists' albums, for radio, the
+//! Radio shelves, Daily Mixes and playlist suggestions: shuffling and
+//! round-robin selection across the pools.
 
 use std::collections::{HashMap, HashSet};
 
-use crate::discover::models::QueueItemLight;
+use super::build::AlbumCard;
 
-/// Most cards one artist may hold in the personalised part of a deck.
+/// Most cards one artist may hold in one deal.
 pub const MAX_PER_ARTIST: usize = 2;
-/// Where wildcards land in the deck (third and eighth card), so the
-/// out-of-profile picks are spread instead of bunched at the end.
-pub const WILDCARD_POSITIONS: [usize; 2] = [2, 7];
 
-/// A small xorshift generator. Decks only need to vary between builds, so
+/// A small xorshift generator. Deals only need to vary between builds, so
 /// a seed from a fresh UUID is plenty; tests pass a fixed seed.
 #[derive(Debug, Clone)]
 pub struct Shuffler {
@@ -59,16 +57,16 @@ impl Shuffler {
 /// pass, skipping release groups already taken and artists already at
 /// `max_per_artist`.
 pub fn round_robin(
-    mut pools: Vec<Vec<QueueItemLight>>,
+    mut pools: Vec<Vec<AlbumCard>>,
     count: usize,
     max_per_artist: usize,
     shuffler: &mut Shuffler,
-) -> Vec<QueueItemLight> {
+) -> Vec<AlbumCard> {
     for pool in &mut pools {
         shuffler.shuffle(pool);
     }
     let mut cursors = vec![0usize; pools.len()];
-    let mut picked: Vec<QueueItemLight> = Vec::new();
+    let mut picked: Vec<AlbumCard> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     let mut per_artist: HashMap<String, usize> = HashMap::new();
     for _ in 0..count.saturating_mul(3) {
@@ -101,23 +99,4 @@ pub fn round_robin(
         }
     }
     picked
-}
-
-/// Insert `wildcards` into `base` at `positions`, each position counted in
-/// the growing deck; extras go to the end.
-pub fn interleave(
-    base: Vec<QueueItemLight>,
-    wildcards: Vec<QueueItemLight>,
-    positions: &[usize],
-) -> Vec<QueueItemLight> {
-    let mut deck = base;
-    for (index, wildcard) in wildcards.into_iter().enumerate() {
-        let at = positions
-            .get(index)
-            .copied()
-            .unwrap_or(deck.len())
-            .min(deck.len());
-        deck.insert(at, wildcard);
-    }
-    deck
 }

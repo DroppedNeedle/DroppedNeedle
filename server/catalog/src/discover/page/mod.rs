@@ -37,7 +37,6 @@
 pub mod build;
 pub mod library;
 pub mod memo;
-pub mod picks;
 pub mod shelves;
 
 use std::collections::{HashMap, HashSet};
@@ -174,13 +173,6 @@ impl DiscoverPages {
                 MEMO_TIMING,
                 inputs.forgets.clone(),
             ),
-            picks: UserPageCache::new(
-                inputs.db.clone(),
-                inputs.clock.clone(),
-                PageKind::TopPicks,
-                MEMO_TIMING,
-                inputs.forgets.clone(),
-            ),
         };
         Self {
             inner: Arc::new(Inner {
@@ -251,10 +243,6 @@ impl DiscoverPages {
         let advanced = self.inner.advanced.read()?;
         Some(PageSettings {
             picks_count: advanced.discover_picks_count.clamp(4, 30) as usize,
-            genre_weight: advanced
-                .discover_picks_genre_affinity_weight
-                .clamp(0.0, 1.0)
-                / 2.0,
             queue: QueueSettings::from_advanced(&advanced),
             download_client: self.inner.integrations.download_client_ready(),
             lastfm_on: self.inner.integrations.status().lastfm,

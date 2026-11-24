@@ -23,7 +23,6 @@
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
-	import StatusChip from '$lib/ui/StatusChip.svelte';
 
 	interface Props {
 		section: TopPicksSection;
@@ -111,9 +110,6 @@
 			}
 		});
 	}
-
-	const RING_R = 26;
-	const RING_C = 2 * Math.PI * RING_R;
 </script>
 
 {#if picks.length > 0 && featured}
@@ -186,37 +182,6 @@
 				<div
 					class="flex min-w-0 flex-1 flex-col items-center gap-3 text-center sm:flex-row sm:gap-5 sm:text-left"
 				>
-					<!-- match ring -->
-					<div class="relative h-22 w-22 shrink-0" title="{featured.match_pct}% match">
-						<svg viewBox="0 0 64 64" class="h-full w-full -rotate-90">
-							<circle
-								cx="32"
-								cy="32"
-								r={RING_R}
-								fill="none"
-								class="stroke-base-content/10"
-								stroke-width="5"
-							/>
-							<circle
-								cx="32"
-								cy="32"
-								r={RING_R}
-								fill="none"
-								class="match-ring-arc stroke-primary"
-								stroke-width="5"
-								stroke-linecap="round"
-								stroke-dasharray={RING_C}
-								stroke-dashoffset={RING_C * (1 - featured.match_pct / 100)}
-							/>
-						</svg>
-						<div class="absolute inset-0 flex flex-col items-center justify-center">
-							<span class="font-mono text-lg font-bold leading-none">{featured.match_pct}%</span>
-							<span class="mt-0.5 font-mono text-[0.6rem] uppercase tracking-widest text-muted"
-								>match</span
-							>
-						</div>
-					</div>
-
 					<div class="min-w-0 flex-1">
 						<svelte:element
 							this={featuredHref ? 'a' : 'span'}
@@ -239,13 +204,7 @@
 							{featured.album.artist_name}
 						</svelte:element>
 
-						{#if featured.reasons.length > 0}
-							<div class="mt-2 flex flex-wrap justify-center gap-1.5 sm:justify-start">
-								{#each featured.reasons as reason (reason)}
-									<StatusChip tone="success" size="xs" wrap>{reason}</StatusChip>
-								{/each}
-							</div>
-						{/if}
+						<p class="mt-2 text-sm text-muted">{featured.reason.line}</p>
 
 						<div class="mt-3 flex flex-wrap items-center justify-center gap-2 sm:justify-start">
 							{#if featured.album.musicbrainz_id && !featured.album.in_library && !isFeaturedRequested}
@@ -304,7 +263,7 @@
 								: 'opacity-60 hover:opacity-100'}"
 							onclick={() => promote(i)}
 							aria-label="Feature {pick.album.title}"
-							title="{pick.album.title} - {pick.match_pct}% match"
+							title={pick.album.title}
 						>
 							<AlbumImage
 								mbid={pick.album.musicbrainz_id || ''}
@@ -316,11 +275,6 @@
 								className="block aspect-square w-full object-cover"
 								customUrl={pick.album.cover_url || null}
 							/>
-							<span
-								class="absolute bottom-1 right-1 rounded-sm bg-base-100/90 px-1 py-px font-mono text-[0.6rem] font-bold text-title"
-							>
-								{pick.match_pct}%
-							</span>
 						</button>
 					{/each}
 				</HorizontalCarousel>
@@ -328,15 +282,3 @@
 		{/if}
 	</Card>
 {/if}
-
-<style>
-	.match-ring-arc {
-		transition: stroke-dashoffset 0.6s var(--ease-spring, ease-out);
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.match-ring-arc {
-			transition: none;
-		}
-	}
-</style>

@@ -17,8 +17,7 @@ function card(n: number): Card {
 		title: `Album ${n}`,
 		artist_name: `Artist ${n}`,
 		artist_id: `ar-${n}`,
-		recommendation_reason: 'Similar to Seed',
-		is_wildcard: false,
+		reason: { kind: 'your_artists', line: 'Close to Seed.', artists: [] },
 		in_library: false
 	};
 }

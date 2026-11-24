@@ -81,6 +81,10 @@ pub(in crate::discover) const MIN_WEIGHT: f64 = 1.0;
 pub(in crate::discover) const SEED_PLAYS: i64 = 2;
 /// The most seeds one list holds.
 pub(in crate::discover) const MAX_SEEDS: usize = 30;
+/// The seeds a page build grows from. A list with fewer reads the person's
+/// ListenBrainz artists of all time as well and is topped up from the
+/// library.
+pub(in crate::discover) const SEEDS: usize = 3;
 /// The ListenBrainz range read for top artists...
 const LINKED_RANGE: StatsRange = StatsRange::ThisYear;
 /// ...and the one read as well when it gives too few seeds, as early in a
@@ -99,7 +103,7 @@ const DAY_MS: f64 = 86_400_000.0;
 
 /// What spoke for a seed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(in crate::discover) enum SeedInput {
+pub(crate) enum SeedInput {
     /// The person's plays in the app and their imported listens.
     Plays,
     /// Their hearts.
@@ -120,7 +124,7 @@ pub(in crate::discover) enum SeedInput {
 
 /// One seed artist.
 #[derive(Debug, Clone, PartialEq)]
-pub(in crate::discover) struct Seed {
+pub(crate) struct Seed {
     /// The artist: lowercased MusicBrainz id, name, and the person's own
     /// plays in the app, when they have some.
     pub artist: ArtistRow,
@@ -280,7 +284,7 @@ where
 /// built they come from it; until then they are weighed here. `source` is
 /// the service their listening follows; with both linked, both feed while
 /// the server blends them. A list too short is topped up from the library.
-pub(in crate::discover) async fn weighted_seeds(
+pub(crate) async fn weighted_seeds(
     ctx: &BuildContext<'_>,
     user_id: &str,
     user: &UserMusic,
@@ -304,7 +308,7 @@ pub(in crate::discover) async fn weighted_seeds(
     };
     let read_listenbrainz = !history.import_current;
     let mut tallies = weigh(ctx, user_id, user, source, &history, read_listenbrainz).await;
-    if tallies.seeds() < ctx.settings.seed_artists.max(1) {
+    if tallies.seeds() < SEEDS {
         top_up(ctx, &mut tallies).await;
     }
     tallies.into_seeds()
@@ -313,7 +317,7 @@ pub(in crate::discover) async fn weighted_seeds(
 /// `seeds` from the taste build, with the library's artists after them
 /// when there are too few.
 async fn topped_up(ctx: &BuildContext<'_>, mut seeds: Vec<Seed>) -> Vec<Seed> {
-    if seeds.len() >= ctx.settings.seed_artists.max(1) {
+    if seeds.len() >= SEEDS {
         return seeds;
     }
     let mut library = Tallies::default();
@@ -487,11 +491,10 @@ pub(in crate::discover) async fn weigh(
             weight,
         );
     }
-    let wanted = ctx.settings.seed_artists.max(1);
     // One more read, only when this year's listening gives too few seeds:
     // artists it already named keep this year's weight.
     if let Some(username) = linked.username
-        && tallies.seeds() < wanted
+        && tallies.seeds() < SEEDS
     {
         let rows = or_empty(
             "listenbrainz top artists of all time",

@@ -1,13 +1,10 @@
-//! The health numbers of a discover build, on a hand-built page and deck:
-//! a chart pick under a personal heading, an owned pick, an album in two
-//! sections and one the page before showed are each counted, and so are
-//! a deck's chart cards.
+//! The health numbers of a discover build, on a hand-built page: an owned
+//! pick, an album in two sections and one the page before showed are each
+//! counted.
 
-use droppedneedle_catalog::discover::health::{
-    BuildFacts, DeckHealth, PageHealth, deck_health, page_health,
-};
+use droppedneedle_catalog::discover::health::{BuildFacts, PageHealth, page_health};
 use droppedneedle_catalog::discover::models::{
-    AlbumRef, ArtistRef, ChartSection, DiscoverResponse, PageSection, QueueItemLight,
+    AlbumRef, ArtistRef, ChartSection, DiscoverResponse, PageSection, PickReason, PickReasonKind,
     SectionContent, SectionItem, SectionKey, SectionKind, SectionZone, TopPickItem,
     TopPicksSection,
 };
@@ -22,12 +19,14 @@ fn album(id: &str, artist: &str) -> AlbumRef {
     }
 }
 
-fn pick(album: AlbumRef, seed: Option<&str>) -> TopPickItem {
+fn pick(album: AlbumRef) -> TopPickItem {
     TopPickItem {
         album,
-        match_pct: 50,
-        reasons: Vec::new(),
-        seed_artist: seed.map(str::to_owned),
+        reason: PickReason {
+            kind: PickReasonKind::YourArtists,
+            line: "Close to Seed.".to_owned(),
+            artists: Vec::new(),
+        },
     }
 }
 
@@ -58,7 +57,7 @@ fn page(sections: Vec<PageSection>) -> DiscoverResponse {
 }
 
 #[test]
-fn a_page_counts_chart_fill_owned_picks_duplicates_and_repeats() {
+fn a_page_counts_owned_picks_duplicates_and_repeats() {
     let owned = AlbumRef {
         in_library: true,
         ..album("a3", "x")
@@ -70,11 +69,7 @@ fn a_page_counts_chart_fill_owned_picks_duplicates_and_repeats() {
             content: SectionContent::Picks {
                 picks: TopPicksSection {
                     title: String::new(),
-                    items: vec![
-                        pick(album("a1", "x"), Some("Seed")),
-                        pick(album("a2", "y"), None),
-                        pick(owned, Some("Seed")),
-                    ],
+                    items: vec![pick(album("a1", "x")), pick(album("a2", "y")), pick(owned)],
                     source: None,
                     personalizing: false,
                 },
@@ -136,7 +131,6 @@ fn a_page_counts_chart_fill_owned_picks_duplicates_and_repeats() {
             distinct_albums: 3,
             distinct_artists: 2,
             personal_cards: 4,
-            chart_under_personal: 1,
             owned_picks: 1,
             duplicates: 1,
             repeats: 1,
@@ -144,34 +138,6 @@ fn a_page_counts_chart_fill_owned_picks_duplicates_and_repeats() {
             seeds_found: 5,
             max_cards_one_artist: 3,
             incomplete: false,
-        }
-    );
-}
-
-#[test]
-fn a_deck_counts_its_chart_cards() {
-    let card = |id: &str, artist: &str, wildcard: bool| QueueItemLight {
-        musicbrainz_id: id.to_owned(),
-        title: id.to_owned(),
-        artist_name: artist.to_owned(),
-        artist_id: artist.to_owned(),
-        recommendation_reason: String::new(),
-        cover_url: None,
-        is_wildcard: wildcard,
-        in_library: false,
-    };
-    let deck = [
-        card("a1", "x", false),
-        card("a2", "x", false),
-        card("a3", "y", true),
-    ];
-    assert_eq!(
-        deck_health(&deck),
-        DeckHealth {
-            cards: 3,
-            chart_cards: 1,
-            distinct_artists: 2,
-            max_cards_one_artist: 2,
         }
     );
 }

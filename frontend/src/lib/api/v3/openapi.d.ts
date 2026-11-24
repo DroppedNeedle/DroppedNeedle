@@ -10587,18 +10587,6 @@ export interface components {
              */
             discover_picks_count: number;
             /**
-             * Format: double
-             * @description Discover genre-affinity weight.
-             * @default 0.7
-             */
-            discover_picks_genre_affinity_weight: number;
-            /**
-             * Format: int64
-             * @description Albums taken per similar artist.
-             * @default 5
-             */
-            discover_queue_albums_per_similar: number;
-            /**
              * @description Discover queue auto-generate.
              * @default true
              */
@@ -10611,18 +10599,6 @@ export interface components {
             discover_queue_lastfm_mbid_max_lookups: number;
             /**
              * Format: int64
-             * @description Discover seed artists.
-             * @default 3
-             */
-            discover_queue_seed_artists: number;
-            /**
-             * Format: int64
-             * @description Similar artists fetched per seed artist.
-             * @default 15
-             */
-            discover_queue_similar_artists_limit: number;
-            /**
-             * Format: int64
              * @description Discover queue size.
              * @default 10
              */
@@ -10632,12 +10608,6 @@ export interface components {
              * @default true
              */
             discover_queue_warm_cycle_build: boolean;
-            /**
-             * Format: int64
-             * @description Discover wildcard slots.
-             * @default 2
-             */
-            discover_queue_wildcard_slots: number;
             /**
              * Format: int64
              * @description Ignored-releases retention days.
@@ -13472,8 +13442,6 @@ export interface components {
         DeckHealth: {
             /** @description Cards in the deck. */
             cards: number;
-            /** @description Trending wildcards among them. */
-            chart_cards: number;
             /** @description Distinct artists among them. */
             distinct_artists: number;
             /** @description The most cards any one artist has. */
@@ -19825,8 +19793,6 @@ export interface components {
         PageHealth: {
             /** @description Rows with a MusicBrainz id. */
             cards: number;
-            /** @description Chart items inside those sections. */
-            chart_under_personal: number;
             /** @description Distinct albums among them. */
             distinct_albums: number;
             /** @description Distinct artists among them. */
@@ -22036,12 +22002,10 @@ export interface components {
             cover_url?: string | null;
             /** @description True when already owned. */
             in_library: boolean;
-            /** @description True for wildcard (out-of-profile) picks. */
-            is_wildcard: boolean;
             /** @description MusicBrainz release-group id. */
             musicbrainz_id: string;
-            /** @description Human reason behind the pick. */
-            recommendation_reason: string;
+            /** @description Why it is offered. */
+            reason: components["schemas"]["PickReason"];
             /** @description Album title. */
             title: string;
         };
@@ -25359,19 +25323,12 @@ export interface components {
             /** @description Services that failed, or are switched off, while the list was built. */
             unavailable_sources: components["schemas"]["ListenSource"][];
         };
-        /** @description One personalized top pick. */
+        /** @description One personalized top pick: an album from the top of the person's pool. */
         TopPickItem: {
             /** @description Picked album. */
             album: components["schemas"]["AlbumRef"];
-            /**
-             * Format: int64
-             * @description Match score, 0-100.
-             */
-            match_pct: number;
-            /** @description Human reasons behind the pick. */
-            reasons: string[];
-            /** @description Seed artist name, when there is one. */
-            seed_artist?: string | null;
+            /** @description Why it is offered. */
+            reason: components["schemas"]["PickReason"];
         };
         /** @description The personalized top-picks shelf. */
         TopPicksSection: {

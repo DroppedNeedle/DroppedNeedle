@@ -80,8 +80,7 @@ function makeItem(mbid: string) {
 		artist_name: 'Artist',
 		artist_id: 'a-1',
 		cover_url: null,
-		recommendation_reason: 'reason',
-		is_wildcard: false,
+		reason: { kind: 'your_artists', line: 'Close to Seed.', artists: [] },
 		in_library: false,
 		enrichment: {
 			artist_mbid: 'a-1',

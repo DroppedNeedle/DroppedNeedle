@@ -1,5 +1,7 @@
 //! Health numbers for each discover build: how much of a page or deck is
-//! about the person, how much is chart fill, how much repeats.
+//! about the person, how much leaks what the library holds, how much
+//! repeats. Top Picks and the deck are dealt from the person's pool, whose
+//! every pick carries a reason, so a chart album has no way onto either.
 //!
 //! Each build counts its page or deck with [`page_health`] or
 //! [`deck_health`], logs the numbers and keeps them with the saved row;
@@ -35,8 +37,6 @@ pub struct PageHealth {
     pub distinct_artists: usize,
     /// Cards in sections that claim to be about the person.
     pub personal_cards: usize,
-    /// Chart items inside those sections.
-    pub chart_under_personal: usize,
     /// Top Picks the library already holds.
     pub owned_picks: usize,
     /// Ids shown in more than one section.
@@ -61,8 +61,6 @@ pub struct PageHealth {
 pub struct DeckHealth {
     /// Cards in the deck.
     pub cards: usize,
-    /// Trending wildcards among them.
-    pub chart_cards: usize,
     /// Distinct artists among them.
     pub distinct_artists: usize,
     /// The most cards any one artist has.
@@ -196,8 +194,7 @@ fn max_per_artist<'a>(artists: impl Iterator<Item = &'a str>) -> usize {
 }
 
 /// Count a built page, with ownership marked, against the page it
-/// replaces. A chart item is read from the payload: a Top Pick with no
-/// seed artist.
+/// replaces.
 pub fn page_health(
     page: &DiscoverResponse,
     previous: Option<&DiscoverResponse>,
@@ -239,13 +236,6 @@ pub fn page_health(
             artist_cards.extend(card.artist);
         }
         if let SectionContent::Picks { picks } = &section.content {
-            if personal {
-                health.chart_under_personal += picks
-                    .items
-                    .iter()
-                    .filter(|pick| pick.seed_artist.is_none())
-                    .count();
-            }
             health.owned_picks += picks
                 .items
                 .iter()
@@ -279,7 +269,6 @@ pub fn deck_health(items: &[QueueItemLight]) -> DeckHealth {
     };
     DeckHealth {
         cards: items.len(),
-        chart_cards: items.iter().filter(|item| item.is_wildcard).count(),
         distinct_artists: artists().collect::<HashSet<_>>().len(),
         max_cards_one_artist: max_per_artist(artists()),
     }
@@ -296,7 +285,6 @@ pub fn log_page_health(user_id: &str, seconds: f64, health: &PageHealth) {
         distinct_albums = health.distinct_albums,
         distinct_artists = health.distinct_artists,
         personal_cards = health.personal_cards,
-        chart_under_personal = health.chart_under_personal,
         owned_picks = health.owned_picks,
         duplicates = health.duplicates,
         repeats = health.repeats,
@@ -314,7 +302,6 @@ pub fn log_deck_health(user_id: &str, seconds: f64, health: &DeckHealth) {
         user = %user_id,
         seconds,
         cards = health.cards,
-        chart_cards = health.chart_cards,
         distinct_artists = health.distinct_artists,
         max_cards_one_artist = health.max_cards_one_artist,
         "discover deck built"

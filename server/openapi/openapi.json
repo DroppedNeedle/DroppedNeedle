@@ -38040,18 +38040,6 @@
             "description": "Discover picks count.",
             "default": 12
           },
-          "discover_picks_genre_affinity_weight": {
-            "type": "number",
-            "format": "double",
-            "description": "Discover genre-affinity weight.",
-            "default": 0.7
-          },
-          "discover_queue_albums_per_similar": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Albums taken per similar artist.",
-            "default": 5
-          },
           "discover_queue_auto_generate": {
             "type": "boolean",
             "description": "Discover queue auto-generate.",
@@ -38063,18 +38051,6 @@
             "description": "MusicBrainz lookups one Last.fm album batch may spend.",
             "default": 10
           },
-          "discover_queue_seed_artists": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Discover seed artists.",
-            "default": 3
-          },
-          "discover_queue_similar_artists_limit": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Similar artists fetched per seed artist.",
-            "default": 15
-          },
           "discover_queue_size": {
             "type": "integer",
             "format": "int64",
@@ -38085,12 +38061,6 @@
             "type": "boolean",
             "description": "Whether the background warm cycle may build queue decks.",
             "default": true
-          },
-          "discover_queue_wildcard_slots": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Discover wildcard slots.",
-            "default": 2
           },
           "ignored_releases_retention_days": {
             "type": "integer",
@@ -44204,7 +44174,6 @@
         "description": "The numbers of one queue deck build.",
         "required": [
           "cards",
-          "chart_cards",
           "distinct_artists",
           "max_cards_one_artist"
         ],
@@ -44212,11 +44181,6 @@
           "cards": {
             "type": "integer",
             "description": "Cards in the deck.",
-            "minimum": 0
-          },
-          "chart_cards": {
-            "type": "integer",
-            "description": "Trending wildcards among them.",
             "minimum": 0
           },
           "distinct_artists": {
@@ -58033,7 +57997,6 @@
           "distinct_albums",
           "distinct_artists",
           "personal_cards",
-          "chart_under_personal",
           "owned_picks",
           "duplicates",
           "repeats",
@@ -58046,11 +58009,6 @@
           "cards": {
             "type": "integer",
             "description": "Rows with a MusicBrainz id.",
-            "minimum": 0
-          },
-          "chart_under_personal": {
-            "type": "integer",
-            "description": "Chart items inside those sections.",
             "minimum": 0
           },
           "distinct_albums": {
@@ -63038,8 +62996,7 @@
           "title",
           "artist_name",
           "artist_id",
-          "recommendation_reason",
-          "is_wildcard",
+          "reason",
           "in_library"
         ],
         "properties": {
@@ -63062,17 +63019,13 @@
             "type": "boolean",
             "description": "True when already owned."
           },
-          "is_wildcard": {
-            "type": "boolean",
-            "description": "True for wildcard (out-of-profile) picks."
-          },
           "musicbrainz_id": {
             "type": "string",
             "description": "MusicBrainz release-group id."
           },
-          "recommendation_reason": {
-            "type": "string",
-            "description": "Human reason behind the pick."
+          "reason": {
+            "$ref": "#/components/schemas/PickReason",
+            "description": "Why it is offered."
           },
           "title": {
             "type": "string",
@@ -70756,35 +70709,19 @@
       },
       "TopPickItem": {
         "type": "object",
-        "description": "One personalized top pick.",
+        "description": "One personalized top pick: an album from the top of the person's pool.",
         "required": [
           "album",
-          "match_pct",
-          "reasons"
+          "reason"
         ],
         "properties": {
           "album": {
             "$ref": "#/components/schemas/AlbumRef",
             "description": "Picked album."
           },
-          "match_pct": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Match score, 0-100."
-          },
-          "reasons": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Human reasons behind the pick."
-          },
-          "seed_artist": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Seed artist name, when there is one."
+          "reason": {
+            "$ref": "#/components/schemas/PickReason",
+            "description": "Why it is offered."
           }
         }
       },

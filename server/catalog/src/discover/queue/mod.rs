@@ -13,9 +13,9 @@
 //! the deck it would replace keeps that deck, and the next build may start
 //! five minutes later. The status says why a deck is short (`reason`).
 //!
-//! The pieces: [`build`] assembles a deck from the listening reads,
-//! [`select`] holds the pure picking logic, [`cards`] the per-card
-//! details and [`store`] the tables.
+//! The pieces: [`build`] deals a deck from the top of the person's pool,
+//! [`select`] holds the pure dealing the radio surfaces share, [`cards`]
+//! the per-card details and [`store`] the tables.
 
 pub mod build;
 pub mod cards;
@@ -37,10 +37,10 @@ use crate::discover::listening::{Ask, ListeningData};
 use crate::discover::models::{
     DiscoverFeedbackEntry, DiscoverFeedbackRequest, DiscoverQueuePreview,
     DiscoverQueueStatusResponse, QueueAction, QueueBuildStatus, QueueEnrichment,
-    QueueGenerateResponse, QueueItemLight, SectionCondition, ShelfSource,
+    QueueGenerateResponse, QueueItemLight, SectionCondition,
 };
 use crate::discover::ports::{BoxFuture, ProviderFailure, QueueDeck, QueueTrigger};
-use crate::discover::record::{self, MadeFrom, Offer};
+use crate::discover::record::{self, MadeFrom};
 use crate::discover::scheduler::{Feature, Warm};
 use crate::discover::youtube::LiveYouTube;
 use droppedneedle_kernel::clock::Clock;
@@ -51,7 +51,7 @@ use droppedneedle_providers::{CacheKey, Fetched, Policy, ProviderCacheStore, Sou
 
 use crate::cache_hold::CacheHold;
 
-use build::{BuildContext, build_deck};
+use build::{BuildContext, Pick, build_deck};
 use store::QueueDb;
 
 /// The queue settings one call works with, read fresh each time.
@@ -59,14 +59,6 @@ use store::QueueDb;
 pub struct QueueSettings {
     /// Cards per deck.
     pub queue_size: usize,
-    /// Seed artists per deck.
-    pub seed_artists: usize,
-    /// Trending wildcards per deck.
-    pub wildcard_slots: usize,
-    /// Similar artists read per seed.
-    pub similar_artists_limit: usize,
-    /// Albums read per similar artist.
-    pub albums_per_similar: usize,
     /// MusicBrainz lookups one Last.fm album batch may spend.
     pub lastfm_mbid_max_lookups: usize,
     /// Whether the warm cycle may build decks.
@@ -106,10 +98,6 @@ impl QueueSettings {
     pub fn from_advanced(advanced: &AdvancedSettings) -> Self {
         Self {
             queue_size: bounded(advanced.discover_queue_size, 1, 20),
-            seed_artists: bounded(advanced.discover_queue_seed_artists, 1, 10),
-            wildcard_slots: bounded(advanced.discover_queue_wildcard_slots, 0, 10),
-            similar_artists_limit: bounded(advanced.discover_queue_similar_artists_limit, 5, 50),
-            albums_per_similar: bounded(advanced.discover_queue_albums_per_similar, 1, 20),
             lastfm_mbid_max_lookups: bounded(
                 advanced.discover_queue_lastfm_mbid_max_lookups,
                 1,
@@ -227,11 +215,6 @@ fn short_reason(items: &[QueueItemLight], count: usize, failed: bool) -> Option<
     } else {
         None
     }
-}
-
-/// The cards of a deck that are not trending wildcards.
-fn own_cards(items: &[QueueItemLight]) -> usize {
-    items.iter().filter(|item| !item.is_wildcard).count()
 }
 
 fn status_of(
@@ -526,6 +509,7 @@ impl Inner {
         };
         let started = tokio::time::Instant::now();
         let outcome = build_deck(&ctx, &user_id, settings.queue_size).await;
+        let offers: Vec<record::Offer>;
         // The deck this build would replace, read before the state is
         // locked.
         let replaced = match &outcome {
@@ -550,20 +534,22 @@ impl Inner {
                 return;
             }
             match outcome {
-                Ok(items)
-                    if replaced.as_ref().is_some_and(|before| {
-                        own_cards(&items) < own_cards(&before.value.items)
-                    }) =>
+                Ok(picks)
+                    if replaced
+                        .as_ref()
+                        .is_some_and(|before| picks.len() < before.value.items.len()) =>
                 {
                     tracing::warn!(
-                        cards = items.len(),
+                        cards = picks.len(),
                         "discover queue build met a failed read; keeping the deck before it"
                     );
                     state.kept_until = Some(self.decks.now_ms() + KEPT_RETRY_MS);
                     state.settled();
                     return;
                 }
-                Ok(items) => {
+                Ok(picks) => {
+                    let items: Vec<QueueItemLight> = picks.iter().map(Pick::card).collect();
+                    offers = picks.iter().map(Pick::offer).collect();
                     let deck = Saved {
                         value: Deck {
                             health: Some(deck_health(&items)),
@@ -601,18 +587,6 @@ impl Inner {
         if let Some(generation) = generation
             && outcome.kept()
         {
-            let policy = self.listening.policy(&user_id).await;
-            let service = if seeds::links_listening(policy.user()) {
-                ShelfSource::from(policy.listening())
-            } else {
-                ShelfSource::Local
-            };
-            let offers = built
-                .value
-                .items
-                .iter()
-                .map(|card| Offer::from_card(card, Some(service)))
-                .collect();
             record::offered(
                 self.db.db(),
                 &user_id,
@@ -715,12 +689,12 @@ impl Inner {
             ask: Ask::build(RequestPriority::UserInitiated),
             now_ms: self.decks.now_ms(),
         };
-        let items = build_deck(&ctx, user_id, count.unwrap_or(settings.queue_size))
+        let picks = build_deck(&ctx, user_id, count.unwrap_or(settings.queue_size))
             .await
             .map_err(ProviderFailure::failed)?;
         Ok(QueueDeck {
             queue_id: uuid::Uuid::new_v4().to_string(),
-            items,
+            items: picks.iter().map(Pick::card).collect(),
         })
     }
 

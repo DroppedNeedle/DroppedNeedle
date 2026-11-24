@@ -6,8 +6,6 @@
 //! play the person also scrobbled to ListenBrainz comes back as a listen;
 //! it counts once, as the play ([`SAME_PLAY_MS`]).
 
-use std::collections::HashSet;
-
 use droppedneedle_kernel::db::{Db, DbError};
 use droppedneedle_media::history::HistoryImportState;
 use rusqlite::params;
@@ -217,23 +215,6 @@ pub(crate) async fn top_albums(
             })
             .collect();
         Ok((rows, albums))
-    })
-    .await
-}
-
-/// The release groups `user_id` is known to have played, from their last
-/// taste build.
-///
-/// # Errors
-///
-/// The read's failure.
-pub(crate) async fn known_groups(db: &Db, user_id: &str) -> Result<HashSet<String>, DbError> {
-    let user = user_id.to_owned();
-    db.read("discover.taste.known_groups", move |conn| {
-        conn.prepare_cached(sql::KNOWN_GROUPS.text())?
-            .query_map([&user], |row| row.get(0))?
-            .collect::<rusqlite::Result<HashSet<String>>>()
-            .map_err(DbError::from)
     })
     .await
 }

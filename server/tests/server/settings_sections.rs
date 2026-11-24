@@ -334,6 +334,24 @@ async fn section_saves_mask_and_check_revisions() {
 
     assert!(!stored.discover_queue_auto_generate);
 
+    // A row saved while the old deck's tuning was still a setting reads,
+    // the fields nothing reads any more left out.
+    service
+        .store
+        .replace_stored_for_test(
+            AdvancedSettings::KEY,
+            r#"{"discover_queue_size": 9, "discover_queue_seed_artists": 3,
+                "discover_queue_wildcard_slots": 2, "discover_queue_similar_artists_limit": 15,
+                "discover_queue_albums_per_similar": 5,
+                "discover_picks_genre_affinity_weight": 0.7}"#,
+        )
+        .expect("an old row is stored");
+    let stored = service
+        .store
+        .get_raw::<AdvancedSettings>()
+        .expect("an old row reads");
+    assert_eq!(stored.discover_queue_size, 9);
+
     // Library settings: the advanced saves above recorded no effect, so the
     // library save's effects are all the recorder holds.
     let view = service.get_library().await.expect("reads default");

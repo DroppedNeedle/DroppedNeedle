@@ -39,7 +39,7 @@ use super::page::build::daily_shuffler;
 use super::page::library::{LibraryReads, fold};
 use super::page::shelves;
 use super::queue::build::{
-    BuildContext, VARIOUS_ARTISTS_MBID, cover_url, is_various_artists, lastfm_pools, normalize,
+    AlbumCard, BuildContext, VARIOUS_ARTISTS_MBID, is_various_artists, lastfm_pools, normalize,
     similar_artist_pools, similar_to, timed,
 };
 use super::queue::select::{MAX_PER_ARTIST, Shuffler, round_robin};
@@ -47,8 +47,8 @@ use super::queue::store::QueueDb;
 use super::queue::{QueueSettings, SETTINGS_UNREADABLE};
 use crate::discover::models::{
     ChartSection, PlaylistProfile, PlaylistSuggestionsRequest, PlaylistSuggestionsResponse,
-    QueueItemLight, RadioMode, RadioPlanRequest, RadioPlanResponse, RadioPlanTrack, RadioRequest,
-    RadioSeedItem, RadioSeedKind, SectionItem, SectionKind,
+    RadioMode, RadioPlanRequest, RadioPlanResponse, RadioPlanTrack, RadioRequest, RadioSeedItem,
+    RadioSeedKind, SectionItem, SectionKind,
 };
 use crate::discover::ports::{BoxFuture, ProviderFailure, RadioFailure};
 use crate::metadata::Catalog;
@@ -233,12 +233,8 @@ impl LiveRadio {
         similar_limit: usize,
         albums_per: usize,
         use_lastfm: bool,
-    ) -> Result<Vec<Vec<QueueItemLight>>, RadioFailure> {
-        let settings = QueueSettings {
-            similar_artists_limit: similar_limit,
-            albums_per_similar: albums_per,
-            ..self.queue_settings()?
-        };
+    ) -> Result<Vec<Vec<AlbumCard>>, RadioFailure> {
+        let settings = self.queue_settings()?;
         // A radio plan is built while the listener waits.
         let ctx = BuildContext {
             listening: &self.listening,
@@ -249,14 +245,23 @@ impl LiveRadio {
         };
         let excluded = HashSet::new();
         Ok(if use_lastfm && user.lastfm {
-            lastfm_pools(&ctx, user_id, seeds, &excluded, similar_limit * albums_per).await
+            lastfm_pools(
+                &ctx,
+                user_id,
+                seeds,
+                &excluded,
+                similar_limit,
+                albums_per,
+                similar_limit * albums_per,
+            )
+            .await
         } else {
-            similar_artist_pools(&ctx, user_id, seeds, &excluded).await
+            similar_artist_pools(&ctx, user_id, seeds, &excluded, similar_limit, albums_per).await
         })
     }
 
     /// Cards as album rows, marked owned or requested.
-    async fn album_rows(&self, cards: Vec<QueueItemLight>) -> Vec<SectionItem> {
+    async fn album_rows(&self, cards: Vec<AlbumCard>) -> Vec<SectionItem> {
         let ids: Vec<String> = cards
             .iter()
             .map(|card| card.musicbrainz_id.to_ascii_lowercase())
@@ -929,7 +934,7 @@ impl LiveRadio {
         for pool in &mut pools {
             pool.retain(|card| {
                 !own.contains(card.artist_id.to_ascii_lowercase().as_str())
-                    && !feedback.hides_card(card)
+                    && !feedback.hides_album(Some(&card.musicbrainz_id), Some(&card.artist_id))
             });
         }
         let count = usize::try_from(request.count).unwrap_or(10);
@@ -950,7 +955,7 @@ impl LiveRadio {
     }
 
     /// Albums tagged with up to four of the playlist artists' genres.
-    async fn genre_albums(&self, profile: &PlaylistProfile) -> Vec<QueueItemLight> {
+    async fn genre_albums(&self, profile: &PlaylistProfile) -> Vec<AlbumCard> {
         let mut genres: Vec<String> = Vec::new();
         let mut seen = HashSet::new();
         'artists: for artist in &profile.artist_mbids {
@@ -974,7 +979,7 @@ impl LiveRadio {
         .await;
         let mut taken = HashSet::new();
         let mut cards = Vec::new();
-        for (genre, albums) in genres.iter().zip(found) {
+        for albums in found {
             for album in albums {
                 let Some(group) = normalize(Some(&album.release_group_mbid)) else {
                     continue;
@@ -982,15 +987,11 @@ impl LiveRadio {
                 if !taken.insert(group.clone()) {
                     continue;
                 }
-                cards.push(QueueItemLight {
-                    cover_url: Some(cover_url(&group)),
+                cards.push(AlbumCard {
                     musicbrainz_id: group,
                     title: album.title,
                     artist_name: album.artist_name,
                     artist_id: album.artist_mbid.unwrap_or_default(),
-                    recommendation_reason: format!("Because the playlist has {genre}"),
-                    is_wildcard: false,
-                    in_library: false,
                 });
             }
         }

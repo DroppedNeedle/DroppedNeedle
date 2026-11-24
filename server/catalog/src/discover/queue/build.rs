@@ -1,42 +1,38 @@
-//! Building one deck.
+//! Dealing one deck, and the album pools other surfaces share.
 //!
-//! A user with seed artists, from their own use of the app or an account
-//! they linked ([`weighted_seeds`]), gets a personalised deck: candidate
-//! pools (similar artists, their genres, fresh releases, artists they love,
-//! deep cuts from their top artists) picked round-robin, with the set
-//! number of trending wildcards mixed in at fixed slots. Albums the library
-//! holds are dropped before the deal, and a deck short of picks stays
-//! short. Without seed artists, or when their pools come back empty, the
-//! deck is trending albums, topped up from the charts. Nothing the person
-//! hid ([`Feedback`]) appears.
+//! A deck is the top of the person's ranked pool ([`top_of_pool`]), which
+//! Top Picks read too. The pool's live gates leave out what the library
+//! holds or is fetching, what the person told Discover and any pick whose
+//! reason no longer holds; the engine's selection deals from what is left.
+//! A deck short of picks stays short: nothing tops it up, and no chart
+//! album ever fills it.
 //!
-//! Every provider read is allowed to fail: the failure is logged and that
-//! pool is simply empty.
+//! The pools of similar artists' albums ([`similar_artist_pools`],
+//! [`lastfm_pools`]) are what radio, the Radio shelves, Daily Mixes and
+//! playlist suggestions deal from. Every provider read there may fail: the
+//! failure is logged and that pool is simply empty.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
+use droppedneedle_kernel::db::{Db, DbError};
 use futures_util::future::join_all;
 
 use super::QueueSettings;
-use super::seeds::weighted_seeds;
-use super::select::{self, Shuffler};
 use super::store::QueueDb;
-use crate::discover::engine::history;
-use crate::discover::feedback::Feedback;
-use crate::discover::listening::{
-    AlbumRow, ArtistRow, Ask, LastFmAlbum, ListenSource, ListenedAlbum, ListeningData,
-    ScoredArtist, StatsRange, TagAlbum, UserMusic,
-};
-use crate::discover::models::QueueItemLight;
+use crate::discover::engine::candidate::Candidate;
+use crate::discover::engine::rank::proposed;
+use crate::discover::engine::select::{self, Exposure, Floors, Share};
+use crate::discover::engine::{pool_store, reason};
+use crate::discover::listening::{ArtistRow, Ask, LastFmAlbum, ListeningData, ScoredArtist};
+use crate::discover::models::{PickReason, QueueItemLight};
+use crate::discover::record::Offer;
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
 /// The "Various Artists" placeholder; never a real recommendation.
 pub const VARIOUS_ARTISTS_MBID: &str = "89ad4ac3-39f7-470e-963a-56509c546377";
 /// How long one ListenBrainz similar-artist or album read may take.
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
-/// Decade tags searched when no trending source answers.
-const DECADE_TAGS: [&str; 6] = ["2020s", "2010s", "2000s", "1990s", "1980s", "1970s"];
 
 /// What one build reads from.
 pub struct BuildContext<'a> {
@@ -58,23 +54,30 @@ pub fn cover_url(release_group_mbid: &str) -> String {
     format!("/api/v3/covers/release-group/{release_group_mbid}?size=500")
 }
 
-fn card(
+/// One album of a pool of similar artists' albums.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlbumCard {
+    /// MusicBrainz release-group id, lowercased.
+    pub musicbrainz_id: String,
+    /// Album title.
+    pub title: String,
+    /// Artist name.
+    pub artist_name: String,
+    /// The artist's MusicBrainz id, lowercased, or empty.
+    pub artist_id: String,
+}
+
+fn album_card(
     release_group_mbid: &str,
     album_name: &str,
     artist_name: &str,
     artist_mbid: &str,
-    reason: &str,
-    is_wildcard: bool,
-) -> QueueItemLight {
-    QueueItemLight {
+) -> AlbumCard {
+    AlbumCard {
         musicbrainz_id: release_group_mbid.to_owned(),
         title: album_name.to_owned(),
         artist_name: artist_name.to_owned(),
         artist_id: artist_mbid.to_owned(),
-        recommendation_reason: reason.to_owned(),
-        cover_url: Some(cover_url(release_group_mbid)),
-        is_wildcard,
-        in_library: false,
     }
 }
 
@@ -113,235 +116,93 @@ pub(in crate::discover) async fn timed<T: Default, E: std::fmt::Display>(
     }
 }
 
-/// Build one deck of up to `count` cards for the user. Fails only when
-/// the library check fails, because a deck full of albums the user
-/// already owns would be wrong.
+/// One pick from the top of a person's pool, with the reason it is
+/// offered.
+#[derive(Debug, Clone)]
+pub struct Pick {
+    /// The candidate, with every path that found it.
+    pub candidate: Candidate,
+    /// Its reason, built from those paths.
+    pub reason: PickReason,
+}
+
+impl Pick {
+    /// The pick as a deck card.
+    pub fn card(&self) -> QueueItemLight {
+        let candidate = &self.candidate;
+        QueueItemLight {
+            musicbrainz_id: candidate.release_group_mbid.clone(),
+            title: candidate.title.clone(),
+            artist_name: candidate.artist_name.clone(),
+            artist_id: candidate.artist_mbid.clone(),
+            reason: self.reason.clone(),
+            cover_url: Some(cover_url(&candidate.release_group_mbid)),
+            in_library: false,
+        }
+    }
+
+    /// What the pick record keeps of it.
+    pub fn offer(&self) -> Offer {
+        Offer::from_pick(&self.candidate, &self.reason)
+    }
+}
+
+/// Up to `n` picks from the top of `user_id`'s ranked pool at `now_ms`, as
+/// the engine selects them: slots shared by their taste groups, one album
+/// an artist, and what they were shown and passed over resting. The pool's
+/// live gates have already left out what the library holds or is fetching,
+/// what the person told Discover and picks whose reason no longer holds.
+/// Nothing refills a short answer, and a person with no taste build yet
+/// has no picks.
+///
+/// # Errors
+///
+/// A read's failure.
+pub(in crate::discover) async fn top_of_pool(
+    db: &Db,
+    user_id: &str,
+    now_ms: i64,
+    n: usize,
+) -> Result<Vec<Pick>, DbError> {
+    let pool = pool_store::ranked(db, user_id, now_ms).await?;
+    if pool.is_empty() || n == 0 {
+        return Ok(Vec::new());
+    }
+    let Some(taste) = pool_store::taste(db, user_id).await? else {
+        return Ok(Vec::new());
+    };
+    let shares: Vec<Share> = taste
+        .groups
+        .iter()
+        .map(|&(group, share)| Share { group, share })
+        .collect();
+    let shown = pool_store::shown(db, user_id, now_ms - proposed::REST_MS).await?;
+    let exposure = Exposure::from_shown(&shown, now_ms);
+    let seeds = pool_store::seed_ids(db, user_id).await?;
+    let selection = select::select(&pool, n, &shares, &exposure, Floors::PROPOSED);
+    Ok(selection
+        .picks
+        .into_iter()
+        .filter_map(|candidate| {
+            Some(Pick {
+                reason: reason::reason(candidate, &seeds)?,
+                candidate: candidate.clone(),
+            })
+        })
+        .collect())
+}
+
+/// Deal one deck of up to `count` picks for the user from the top of their
+/// pool ([`top_of_pool`]). Fails when a read fails: a deck that skipped the
+/// library or what the person told Discover would be wrong.
 pub async fn build_deck(
     ctx: &BuildContext<'_>,
     user_id: &str,
     count: usize,
-) -> Result<Vec<QueueItemLight>, String> {
-    let policy = ctx.listening.policy(user_id).await;
-    let source = policy.listening();
-    let user = policy.user().clone();
-    let feedback = Feedback::load_or_none(ctx.db.db(), user_id, ctx.now_ms, "deck build").await;
-    let ignored = feedback.albums();
-    let mut shuffler = Shuffler::random();
-    let personal =
-        personalized(ctx, user_id, &user, source, count, &feedback, &mut shuffler).await?;
-    let charts_only = personal.is_none();
-    let mut items = match personal {
-        Some(deck) => deck,
-        None => anonymous(ctx, user_id, &user, count, ignored, &mut shuffler).await,
-    };
-    // A guard: the personal deck dropped owned and hidden albums before
-    // its deal.
-    let mut owned = owned_of(ctx, &items).await?;
-    items.retain(|item| {
-        !owned.contains(&item.musicbrainz_id.to_ascii_lowercase()) && !feedback.hides_card(item)
-    });
-    // Only the chart deck is topped up: one more trending pass fills the
-    // gap, skipping everything seen so far.
-    if charts_only && items.len() < count {
-        let mut skip = ignored.clone();
-        skip.extend(owned.iter().cloned());
-        let seen = lower_ids(&items);
-        let more = trending_filler(
-            ctx,
-            user_id,
-            &user,
-            count - items.len(),
-            &skip,
-            &seen,
-            &mut shuffler,
-        )
-        .await;
-        owned = owned_of(ctx, &more).await?;
-        items.extend(more.into_iter().filter(|item| {
-            !owned.contains(&item.musicbrainz_id.to_ascii_lowercase()) && !feedback.hides_card(item)
-        }));
-    }
-    items.truncate(count);
-    Ok(items)
-}
-
-async fn owned_of<'i>(
-    ctx: &BuildContext<'_>,
-    items: impl IntoIterator<Item = &'i QueueItemLight>,
-) -> Result<HashSet<String>, String> {
-    let ids: Vec<String> = items
-        .into_iter()
-        .map(|item| item.musicbrainz_id.clone())
-        .collect();
-    if ids.is_empty() {
-        return Ok(HashSet::new());
-    }
-    ctx.db.owned(&ids).await
-}
-
-fn lower_ids(items: &[QueueItemLight]) -> HashSet<String> {
-    items
-        .iter()
-        .map(|item| item.musicbrainz_id.to_ascii_lowercase())
-        .collect()
-}
-
-/// The heaviest of the user's seed artists, as many as the settings ask
-/// for (see [`weighted_seeds`]).
-pub(in crate::discover) async fn seed_artists(
-    ctx: &BuildContext<'_>,
-    user_id: &str,
-    user: &UserMusic,
-    source: ListenSource,
-) -> Vec<ArtistRow> {
-    weighted_seeds(ctx, user_id, user, source)
+) -> Result<Vec<Pick>, String> {
+    top_of_pool(ctx.db.db(), user_id, ctx.now_ms, count)
         .await
-        .into_iter()
-        .take(ctx.settings.seed_artists.max(1))
-        .map(|seed| seed.artist)
-        .collect()
-}
-
-/// Release groups the user has played, so deep cuts skip them: while their
-/// imported ListenBrainz history is current, the ones their taste build
-/// knows, else ListenBrainz's top albums of all time.
-pub(in crate::discover) async fn listened_albums(
-    ctx: &BuildContext<'_>,
-    user_id: &str,
-    user: &UserMusic,
-    source: ListenSource,
-) -> HashSet<String> {
-    let Some(username) = user.listenbrainz.as_deref() else {
-        return HashSet::new();
-    };
-    if source != ListenSource::Listenbrainz {
-        return HashSet::new();
-    }
-    let db = ctx.db.db();
-    let known = match history::import_current(db, user_id).await {
-        Ok(true) => Some(history::known_groups(db, user_id).await),
-        Ok(false) => None,
-        Err(cause) => Some(Err(cause)),
-    };
-    match known {
-        Some(Ok(groups)) => return groups,
-        Some(Err(cause)) => {
-            tracing::warn!(%cause, "the albums a person played are unreadable");
-            ctx.ask.note_failure();
-            return HashSet::new();
-        }
-        None => {}
-    }
-    let rows = or_empty(
-        "listenbrainz listened albums",
-        ctx.listening
-            .user_albums(username, StatsRange::AllTime, 100, 0, &ctx.ask)
-            .await,
-    );
-    rows.into_iter()
-        .filter_map(ListenedAlbum::row)
-        .map(|row| row.release_group_mbid.to_ascii_lowercase())
-        .collect()
-}
-
-/// The personal deck, `None` when the user has no seed artists or every
-/// pool came back empty with no read failing. Owned
-/// albums are dropped from every candidate before the deal, and the deck
-/// holds at most `wildcard_slots` chart cards: one short of picks stays
-/// short. Fails when the library check fails.
-#[allow(clippy::too_many_arguments)]
-async fn personalized(
-    ctx: &BuildContext<'_>,
-    user_id: &str,
-    user: &UserMusic,
-    source: ListenSource,
-    count: usize,
-    feedback: &Feedback,
-    shuffler: &mut Shuffler,
-) -> Result<Option<Vec<QueueItemLight>>, String> {
-    let ignored = feedback.albums();
-    let seeds = seed_artists(ctx, user_id, user, source).await;
-    if seeds.is_empty() {
-        return Ok(None);
-    }
-    let settings = ctx.settings;
-    // During a ListenBrainz popularity outage, Last.fm stands in for the
-    // album reads even for a ListenBrainz-first user.
-    let use_lastfm = ctx.listening.policy_for(user).popularity() == ListenSource::Lastfm;
-    let wildcard_slots = settings.wildcard_slots;
-    let target = count.saturating_sub(wildcard_slots);
-    let per_seed = (target / seeds.len().max(1) + 3).max(4);
-    let mut pools = if use_lastfm {
-        lastfm_pools(ctx, user_id, &seeds, ignored, per_seed).await
-    } else {
-        let listened = listened_albums(ctx, user_id, user, source).await;
-        listenbrainz_pools(ctx, user_id, user, &seeds, ignored, &listened).await
-    };
-    // Nothing like the seeds turned up, and nothing failed to say so: the
-    // person gets the deck of someone with no seeds, not two chart cards.
-    if pools.iter().all(Vec::is_empty) && !ctx.ask.met_failure() {
-        return Ok(None);
-    }
-    let pooled: HashSet<String> = pools
-        .iter()
-        .flatten()
-        .map(|item| item.musicbrainz_id.to_ascii_lowercase())
-        .collect();
-    // Twice the slots, so owned chart albums leave spares; the chart read
-    // is the same size either way.
-    let mut wildcards = trending_filler(
-        ctx,
-        user_id,
-        user,
-        wildcard_slots * 2,
-        ignored,
-        &pooled,
-        shuffler,
-    )
-    .await;
-    let owned = owned_of(ctx, pools.iter().flatten().chain(&wildcards)).await?;
-    let unowned = |item: &QueueItemLight| {
-        !owned.contains(&item.musicbrainz_id.to_ascii_lowercase()) && !feedback.hides_card(item)
-    };
-    for pool in &mut pools {
-        pool.retain(unowned);
-    }
-    wildcards.retain(unowned);
-    wildcards.truncate(wildcard_slots);
-    let picked = select::round_robin(pools, target, select::MAX_PER_ARTIST, shuffler);
-    let mut deck = select::interleave(picked, wildcards, &select::WILDCARD_POSITIONS);
-    deck.truncate(count);
-    Ok(Some(deck))
-}
-
-/// The ListenBrainz candidate pools: one per seed of similar artists'
-/// albums, then genres, fresh releases, loved artists and deep cuts.
-async fn listenbrainz_pools(
-    ctx: &BuildContext<'_>,
-    user_id: &str,
-    user: &UserMusic,
-    seeds: &[ArtistRow],
-    excluded: &HashSet<String>,
-    listened: &HashSet<String>,
-) -> Vec<Vec<QueueItemLight>> {
-    let username = user.listenbrainz.as_deref().unwrap_or("");
-    let per_artist = ctx.settings.albums_per_similar;
-    let mut deep_excluded = excluded.clone();
-    deep_excluded.extend(listened.iter().cloned());
-    let (similar, genres, fresh, loved, deep) = tokio::join!(
-        similar_artist_pools(ctx, user_id, seeds, excluded),
-        genre_albums(ctx, username, excluded),
-        fresh_releases(ctx, username, excluded),
-        loved_artist_albums(ctx, user_id, username, excluded, per_artist),
-        deep_cuts(ctx, user_id, username, &deep_excluded, listened, per_artist),
-    );
-    let mut pools = similar;
-    pools.extend(
-        [genres, fresh, loved, deep]
-            .into_iter()
-            .filter(|pool| !pool.is_empty()),
-    );
-    pools
+        .map_err(|cause| format!("the pool could not be read: {cause}"))
 }
 
 /// Up to `limit` artists similar to `seed`, best first (see
@@ -402,21 +263,21 @@ pub(in crate::discover) async fn similar_to_each(
     .await
 }
 
-/// One pool per seed: the top albums of each artist similar to it (see
-/// [`similar_to_each`]).
+/// One pool per seed: the top `albums_per` albums of each of up to
+/// `similar_limit` artists similar to it (see [`similar_to_each`]).
 pub(in crate::discover) async fn similar_artist_pools(
     ctx: &BuildContext<'_>,
     user_id: &str,
     seeds: &[ArtistRow],
     excluded: &HashSet<String>,
-) -> Vec<Vec<QueueItemLight>> {
-    let settings = ctx.settings;
-    let lists = similar_to_each(ctx, user_id, seeds, settings.similar_artists_limit).await;
+    similar_limit: usize,
+    albums_per: usize,
+) -> Vec<Vec<AlbumCard>> {
+    let lists = similar_to_each(ctx, user_id, seeds, similar_limit).await;
     join_all(seeds.iter().zip(lists).map(|(seed, similar)| async move {
         if seed.mbid.is_none() {
             return Vec::new();
         }
-        let reason = format!("Similar to {}", seed.name);
         let mut pool = Vec::new();
         let mut seen = HashSet::new();
         for artist in similar.into_iter().map(|scored| scored.artist) {
@@ -428,12 +289,8 @@ pub(in crate::discover) async fn similar_artist_pools(
             }
             let albums = timed(
                 "artist albums",
-                ctx.listening.artist_albums(
-                    user_id,
-                    &artist_mbid,
-                    settings.albums_per_similar,
-                    &ctx.ask,
-                ),
+                ctx.listening
+                    .artist_albums(user_id, &artist_mbid, albums_per, &ctx.ask),
             )
             .await;
             for album in albums.into_iter().map(|ranked| ranked.album) {
@@ -443,13 +300,11 @@ pub(in crate::discover) async fn similar_artist_pools(
                 if excluded.contains(&group) || !seen.insert(group.clone()) {
                     continue;
                 }
-                pool.push(card(
+                pool.push(album_card(
                     &group,
                     &album.title,
                     &album.artist_name,
                     &artist_mbid,
-                    &reason,
-                    false,
                 ));
             }
         }
@@ -458,232 +313,20 @@ pub(in crate::discover) async fn similar_artist_pools(
     .await
 }
 
-/// Albums tagged with the user's top genres.
-async fn genre_albums(
-    ctx: &BuildContext<'_>,
-    username: &str,
-    excluded: &HashSet<String>,
-) -> Vec<QueueItemLight> {
-    if username.is_empty() {
-        return Vec::new();
-    }
-    let genres = or_empty(
-        "listenbrainz genres",
-        ctx.listening.genres(username, &ctx.ask).await,
-    );
-    let top: Vec<String> = genres.into_iter().take(4).map(|(name, _)| name).collect();
-    let found = join_all(
-        top.iter()
-            .map(|genre| ctx.listening.tag_albums(genre, 8, 0, &ctx.ask)),
-    )
-    .await;
-    let mut items = Vec::new();
-    let mut seen = HashSet::new();
-    for (genre, result) in top.iter().zip(found) {
-        let reason = format!("Because you listen to {genre}");
-        for album in or_empty("musicbrainz tag search", result) {
-            let Some(group) = normalize(Some(&album.release_group_mbid)) else {
-                continue;
-            };
-            if excluded.contains(&group) || !seen.insert(group.clone()) {
-                continue;
-            }
-            // The artist slot takes the credited artist, not the release group.
-            let artist_mbid = album.artist_mbid.clone().unwrap_or_default();
-            items.push(card(
-                &group,
-                &album.title,
-                &album.artist_name,
-                &artist_mbid,
-                &reason,
-                false,
-            ));
-        }
-    }
-    items
-}
-
-/// The user's ListenBrainz fresh releases.
-async fn fresh_releases(
-    ctx: &BuildContext<'_>,
-    username: &str,
-    excluded: &HashSet<String>,
-) -> Vec<QueueItemLight> {
-    if username.is_empty() {
-        return Vec::new();
-    }
-    let rows = or_empty(
-        "listenbrainz fresh releases",
-        ctx.listening.fresh_releases(username, &ctx.ask).await,
-    );
-    let mut items = Vec::new();
-    let mut seen = HashSet::new();
-    for album in rows {
-        let Some(group) = normalize(Some(&album.release_group_mbid)) else {
-            continue;
-        };
-        if excluded.contains(&group) || !seen.insert(group.clone()) {
-            continue;
-        }
-        let artist_mbid = normalize(album.artist_mbid.as_deref()).unwrap_or_default();
-        items.push(card(
-            &group,
-            &album.title,
-            &album.artist_name,
-            &artist_mbid,
-            "New release for you",
-            false,
-        ));
-    }
-    items
-}
-
-/// Top albums of up to six artists behind the user's loved recordings.
-async fn loved_artist_albums(
-    ctx: &BuildContext<'_>,
-    user_id: &str,
-    username: &str,
-    excluded: &HashSet<String>,
-    per_artist: usize,
-) -> Vec<QueueItemLight> {
-    if username.is_empty() {
-        return Vec::new();
-    }
-    let loved = or_empty(
-        "listenbrainz loved recordings",
-        ctx.listening.loved(username, 50, &ctx.ask).await,
-    );
-    let mut artists: Vec<String> = Vec::new();
-    for mbid in loved.into_iter().filter_map(|track| track.artist_mbid) {
-        if let Some(mbid) = normalize(Some(&mbid))
-            && !artists.contains(&mbid)
-        {
-            artists.push(mbid);
-        }
-        if artists.len() >= 6 {
-            break;
-        }
-    }
-    let found = join_all(artists.iter().map(|artist| {
-        ctx.listening
-            .artist_albums(user_id, artist, per_artist, &ctx.ask)
-    }))
-    .await;
-    let mut items = Vec::new();
-    let mut seen = HashSet::new();
-    for (artist, result) in artists.iter().zip(found) {
-        for album in or_empty("artist albums", result)
-            .into_iter()
-            .map(|ranked| ranked.album)
-        {
-            let Some(group) = normalize(Some(&album.release_group_mbid)) else {
-                continue;
-            };
-            if excluded.contains(&group) || !seen.insert(group.clone()) {
-                continue;
-            }
-            items.push(card(
-                &group,
-                &album.title,
-                &album.artist_name,
-                artist,
-                "From an artist you love",
-                false,
-            ));
-        }
-    }
-    items
-}
-
-/// Lesser-played albums by the user's top artists this month.
-async fn deep_cuts(
-    ctx: &BuildContext<'_>,
-    user_id: &str,
-    username: &str,
-    excluded: &HashSet<String>,
-    listened: &HashSet<String>,
-    per_artist: usize,
-) -> Vec<QueueItemLight> {
-    if username.is_empty() {
-        return Vec::new();
-    }
-    let top = or_empty(
-        "listenbrainz top albums",
-        ctx.listening
-            .user_albums(username, StatsRange::ThisMonth, 25, 0, &ctx.ask)
-            .await,
-    )
-    .into_iter()
-    .filter_map(ListenedAlbum::row)
-    .collect::<Vec<AlbumRow>>();
-    let current: HashSet<String> = top
-        .iter()
-        .map(|album| album.release_group_mbid.to_ascii_lowercase())
-        .collect();
-    let mut artists: Vec<(String, String)> = Vec::new();
-    for album in &top {
-        if let Some(mbid) = normalize(album.artist_mbid.as_deref())
-            && !artists.iter().any(|(known, _)| *known == mbid)
-        {
-            artists.push((mbid, album.artist_name.clone()));
-        }
-        if artists.len() >= 6 {
-            break;
-        }
-    }
-    let wanted = (per_artist + 2).max(4);
-    let found = join_all(artists.iter().map(|(artist, _)| {
-        ctx.listening
-            .artist_albums(user_id, artist, wanted, &ctx.ask)
-    }))
-    .await;
-    let mut items = Vec::new();
-    let mut seen = HashSet::new();
-    for ((artist, name), result) in artists.iter().zip(found) {
-        for album in or_empty("artist albums", result)
-            .into_iter()
-            .map(|ranked| ranked.album)
-        {
-            let Some(group) = normalize(Some(&album.release_group_mbid)) else {
-                continue;
-            };
-            if current.contains(&group)
-                || listened.contains(&group)
-                || excluded.contains(&group)
-                || !seen.insert(group.clone())
-            {
-                continue;
-            }
-            let source_name = if name.is_empty() {
-                &album.artist_name
-            } else {
-                name
-            };
-            items.push(card(
-                &group,
-                &album.title,
-                &album.artist_name,
-                artist,
-                &format!("More from {source_name}"),
-                false,
-            ));
-        }
-    }
-    items
-}
-
-/// One pool per seed from Last.fm: similar artists' top albums, matched
-/// to release groups. The similar artists are read as
+/// One pool per seed from Last.fm: the top `albums_per` albums of each of
+/// up to `similar_limit` similar artists, matched to release groups, at
+/// most `per_seed` a seed. The similar artists are read as
 /// [`similar_to_each`] reads them.
 pub(in crate::discover) async fn lastfm_pools(
     ctx: &BuildContext<'_>,
     user_id: &str,
     seeds: &[ArtistRow],
     excluded: &HashSet<String>,
+    similar_limit: usize,
+    albums_per: usize,
     per_seed: usize,
-) -> Vec<Vec<QueueItemLight>> {
-    let settings = ctx.settings;
-    let lists = similar_to_each(ctx, user_id, seeds, settings.similar_artists_limit).await;
+) -> Vec<Vec<AlbumCard>> {
+    let lists = similar_to_each(ctx, user_id, seeds, similar_limit).await;
     join_all(seeds.iter().zip(lists).map(|(seed, similar)| async move {
         if seed.mbid.is_none() {
             return Vec::new();
@@ -697,12 +340,8 @@ pub(in crate::discover) async fn lastfm_pools(
             })
             .collect();
         let albums = join_all(similar.iter().map(|artist| {
-            ctx.listening.lastfm_artist_albums(
-                user_id,
-                artist,
-                settings.albums_per_similar as u32,
-                &ctx.ask,
-            )
+            ctx.listening
+                .lastfm_artist_albums(user_id, artist, albums_per as u32, &ctx.ask)
         }))
         .await;
         let pairs: Vec<(ArtistRow, Vec<LastFmAlbum>)> = similar
@@ -710,16 +349,7 @@ pub(in crate::discover) async fn lastfm_pools(
             .zip(albums)
             .map(|(artist, result)| (artist, or_empty("lastfm artist albums", result)))
             .collect();
-        lastfm_cards(
-            ctx,
-            pairs,
-            excluded,
-            per_seed,
-            &format!("Similar to {}", seed.name),
-            false,
-            false,
-        )
-        .await
+        lastfm_cards(ctx, pairs, excluded, per_seed).await
     }))
     .await
 }
@@ -732,10 +362,7 @@ async fn lastfm_cards(
     pairs: Vec<(ArtistRow, Vec<LastFmAlbum>)>,
     excluded: &HashSet<String>,
     target: usize,
-    reason: &str,
-    is_wildcard: bool,
-    album_artist_names: bool,
-) -> Vec<QueueItemLight> {
+) -> Vec<AlbumCard> {
     let releases: Vec<String> = pairs
         .iter()
         .flat_map(|(_, albums)| albums.iter())
@@ -759,19 +386,7 @@ async fn lastfm_cards(
             if !seen.insert(group.to_ascii_lowercase()) {
                 continue;
             }
-            let artist_name = if album_artist_names && !album.artist_name.is_empty() {
-                album.artist_name.as_str()
-            } else {
-                artist.name.as_str()
-            };
-            items.push(card(
-                group,
-                &album.name,
-                artist_name,
-                &artist_mbid,
-                reason,
-                is_wildcard,
-            ));
+            items.push(album_card(group, &album.name, &artist.name, &artist_mbid));
         }
     }
     items
@@ -848,188 +463,4 @@ pub async fn resolve_release_groups(
         ctx.db.save_resolution(release, group).await;
     }
     resolved
-}
-
-/// This week's sitewide ListenBrainz albums, as rows.
-async fn trending(
-    ctx: &BuildContext<'_>,
-    count: u32,
-) -> crate::discover::listening::ListeningResult<Vec<AlbumRow>> {
-    let rows = ctx
-        .listening
-        .sitewide_albums(StatsRange::ThisWeek, count, 0, &ctx.ask)
-        .await?;
-    Ok(rows.into_iter().filter_map(ListenedAlbum::row).collect())
-}
-
-/// Trending albums to fill wildcard slots and short decks: Last.fm's
-/// chart for Last.fm users (or during a ListenBrainz popularity outage),
-/// else ListenBrainz's weekly chart, else MusicBrainz decade tags.
-#[allow(clippy::too_many_arguments)]
-async fn trending_filler(
-    ctx: &BuildContext<'_>,
-    user_id: &str,
-    user: &UserMusic,
-    count: usize,
-    ignored: &HashSet<String>,
-    seen: &HashSet<String>,
-    shuffler: &mut Shuffler,
-) -> Vec<QueueItemLight> {
-    if count == 0 {
-        return Vec::new();
-    }
-    let mut exclude: HashSet<String> = ignored.union(seen).cloned().collect();
-    let use_lastfm = ctx.listening.policy_for(user).popularity() == ListenSource::Lastfm;
-    let target = (count * 2).max(6);
-    let mut wildcards = if use_lastfm {
-        let mut artists = or_empty(
-            "lastfm chart",
-            ctx.listening
-                .lastfm_chart_artists(user_id, 15, &ctx.ask)
-                .await,
-        );
-        shuffler.shuffle(&mut artists);
-        let artists: Vec<ArtistRow> = artists
-            .into_iter()
-            .take(10)
-            .filter(|artist| !is_various_artists(artist.mbid.as_deref()))
-            .collect();
-        lastfm_trending(ctx, user_id, artists, &exclude, target).await
-    } else {
-        let mut albums = or_empty("listenbrainz trending", trending(ctx, 25).await);
-        shuffler.shuffle(&mut albums);
-        trending_cards(albums, &mut exclude, target, "Trending This Week")
-    };
-    if wildcards.is_empty() {
-        // Needs no popularity endpoint, so it still fills the slots during
-        // a ListenBrainz outage for users without Last.fm.
-        for tag in DECADE_TAGS {
-            if wildcards.len() >= target {
-                break;
-            }
-            let albums = or_empty(
-                "musicbrainz decade tags",
-                ctx.listening
-                    .tag_albums(tag, 25, 0, &ctx.ask)
-                    .await
-                    .map(|rows| rows.into_iter().map(TagAlbum::row).collect()),
-            );
-            let left = target - wildcards.len();
-            wildcards.extend(trending_cards(albums, &mut exclude, left, "Trending"));
-        }
-    }
-    if wildcards.is_empty() {
-        tracing::warn!("no trending albums for the discover queue; the deck stays short");
-    }
-    wildcards.truncate(count);
-    wildcards
-}
-
-async fn lastfm_trending(
-    ctx: &BuildContext<'_>,
-    user_id: &str,
-    artists: Vec<ArtistRow>,
-    exclude: &HashSet<String>,
-    target: usize,
-) -> Vec<QueueItemLight> {
-    let albums = join_all(artists.iter().map(|artist| {
-        ctx.listening
-            .lastfm_artist_albums(user_id, artist, 3, &ctx.ask)
-    }))
-    .await;
-    let pairs: Vec<(ArtistRow, Vec<LastFmAlbum>)> = artists
-        .into_iter()
-        .zip(albums)
-        .map(|(artist, result)| (artist, or_empty("lastfm artist albums", result)))
-        .collect();
-    lastfm_cards(
-        ctx,
-        pairs,
-        exclude,
-        target,
-        "Trending on Last.fm",
-        true,
-        true,
-    )
-    .await
-}
-
-/// Wildcard cards from chart or tag rows, skipping excluded ids and
-/// Various Artists, recording what they take in `exclude`.
-fn trending_cards(
-    albums: Vec<AlbumRow>,
-    exclude: &mut HashSet<String>,
-    target: usize,
-    reason: &str,
-) -> Vec<QueueItemLight> {
-    let mut items = Vec::new();
-    for album in albums {
-        if items.len() >= target {
-            break;
-        }
-        let Some(group) = normalize(Some(&album.release_group_mbid)) else {
-            continue;
-        };
-        if exclude.contains(&group) || is_various_artists(album.artist_mbid.as_deref()) {
-            continue;
-        }
-        let artist_mbid = normalize(album.artist_mbid.as_deref()).unwrap_or_default();
-        items.push(card(
-            &group,
-            &album.title,
-            &album.artist_name,
-            &artist_mbid,
-            reason,
-            true,
-        ));
-        exclude.insert(group);
-    }
-    items
-}
-
-/// A deck without personal listening: trending albums, topped up from the
-/// wildcard sources.
-async fn anonymous(
-    ctx: &BuildContext<'_>,
-    user_id: &str,
-    user: &UserMusic,
-    count: usize,
-    ignored: &HashSet<String>,
-    shuffler: &mut Shuffler,
-) -> Vec<QueueItemLight> {
-    let mut exclude = ignored.clone();
-    let mut items = if ctx.listening.policy_for(user).sitewide() == ListenSource::Lastfm {
-        let mut artists = or_empty(
-            "lastfm chart",
-            ctx.listening
-                .lastfm_chart_artists(user_id, 15, &ctx.ask)
-                .await,
-        );
-        shuffler.shuffle(&mut artists);
-        let artists: Vec<ArtistRow> = artists
-            .into_iter()
-            .filter(|artist| !is_various_artists(artist.mbid.as_deref()))
-            .collect();
-        lastfm_trending(ctx, user_id, artists, &exclude, count).await
-    } else {
-        let mut albums = or_empty("listenbrainz trending", trending(ctx, 50).await);
-        shuffler.shuffle(&mut albums);
-        trending_cards(albums, &mut exclude, count, "Trending This Week")
-    };
-    if items.len() < count {
-        let seen = lower_ids(&items);
-        let more = trending_filler(
-            ctx,
-            user_id,
-            user,
-            count - items.len(),
-            ignored,
-            &seen,
-            shuffler,
-        )
-        .await;
-        items.extend(more);
-    }
-    items.truncate(count);
-    items
 }

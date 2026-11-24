@@ -4,8 +4,8 @@
 //! Three writers fill a row, each its own columns:
 //!
 //! - [`offered`]: a saved deck or freshly built Top Picks
-//!   stamp when each card was offered, on which surface, and the evidence
-//!   it carried.
+//!   stamp when each pick was offered, on which surface, and the evidence
+//!   it carried: its reason and the paths that found it.
 //! - [`PickRecord::event`]: the web UI says a card was shown (counted once
 //!   per UTC day), sampled or opened. An album never offered to the caller
 //!   writes nothing.
@@ -26,7 +26,8 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::discover::cache::{ForgetCounts, Generation};
-use crate::discover::models::{QueueItemLight, ShelfSource, TopPicksSection};
+use crate::discover::engine::candidate::{Candidate, Path};
+use crate::discover::models::PickReason;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError};
 
@@ -110,33 +111,109 @@ pub enum PickEvent {
     Opened,
 }
 
-/// The evidence an offered card carried, as stored. The version names this
-/// shape, so a later shape can be told apart.
+/// The evidence an offered pick carried, as stored: the reason it showed
+/// and every path that found it. The version names this shape, so a later
+/// shape can be told apart; rows of version 1 (a card's reason lines, its
+/// seed's name and whether it was a chart card) are left as they were.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Evidence {
     /// The shape's version.
     pub version: u32,
-    /// The reason lines the card showed.
-    #[serde(default)]
-    pub reasons: Vec<String>,
-    /// The seed artist's name, when the card names one.
+    /// How the candidate came into the pool.
+    pub kind: String,
+    /// The reason the pick showed.
+    pub reason: PickReason,
+    /// Every path that found it, strongest first.
+    pub paths: Vec<EvidencePath>,
+}
+
+/// One path behind an offered pick, as stored.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EvidencePath {
+    /// What it is.
+    pub kind: String,
+    /// Where its fact came from.
+    pub source: String,
+    /// When that fact was fetched, unix ms, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed_artist: Option<String>,
-    /// Whether it was a chart card rather than one of the person's own.
-    #[serde(default)]
-    pub chart: bool,
-    /// The listening service behind it, when known.
+    pub fetched_at: Option<i64>,
+    /// The person's artist it runs through, for a seed path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub service: Option<ShelfSource>,
+    pub artist: Option<EvidenceArtist>,
+    /// The link, for a seed path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<EvidenceLink>,
+    /// A known artist credited on the album, lowercased.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub known_credit: Option<String>,
+}
+
+/// The person's artist a path runs through, as it stood when offered.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EvidenceArtist {
+    /// Its MusicBrainz id, lowercased.
+    pub mbid: String,
+    /// Its name.
+    pub name: String,
+    /// The person's plays and imported listens of it.
+    pub plays: i64,
+    /// Its weight in their taste.
+    pub weight: f64,
+    /// How many of its albums the library held.
+    pub albums_owned: i64,
+}
+
+/// A path's link from the person's artist to the pick's, as it stood.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EvidenceLink {
+    /// Its strength.
+    pub strength: f64,
+    /// The pick's artist's place in that artist's list, from 1.
+    pub rank: i64,
+    /// How long that list was.
+    pub of: i64,
+    /// Whether ListenBrainz labs' list named it.
+    pub labs: bool,
+    /// Whether Last.fm's list named it.
+    pub lastfm: bool,
+    /// Whether it was the closest artist in that list the person did not
+    /// know.
+    pub closest_new: bool,
 }
 
 /// The version [`Evidence`] is written at.
-pub const EVIDENCE_VERSION: u32 = 1;
+pub const EVIDENCE_VERSION: u32 = 2;
 
-/// One card a build offered.
+impl EvidencePath {
+    fn of(path: &Path) -> Self {
+        Self {
+            kind: path.kind.as_str().to_owned(),
+            source: path.source.as_str().to_owned(),
+            fetched_at: path.fetched_at,
+            artist: path.artist.as_ref().map(|artist| EvidenceArtist {
+                mbid: artist.mbid.clone(),
+                name: artist.name.clone(),
+                plays: artist.plays,
+                weight: artist.weight,
+                albums_owned: artist.albums_owned,
+            }),
+            link: path.link.as_ref().map(|link| EvidenceLink {
+                strength: link.strength,
+                rank: link.rank,
+                of: link.of,
+                labs: link.labs,
+                lastfm: link.lastfm,
+                closest_new: link.closest_new,
+            }),
+            known_credit: path.known_credit.clone(),
+        }
+    }
+}
+
+/// One pick a build offered.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Offer {
-    /// Release-group MBID, as the card has it.
+    /// Release-group MBID, as the pick has it.
     pub release_group_mbid: String,
     /// The artist's MBID, or empty.
     pub artist_mbid: String,
@@ -149,49 +226,21 @@ pub struct Offer {
 }
 
 impl Offer {
-    /// A deck card from a deck built on `service`. A wildcard is a
-    /// trending card, so it counts as a chart card.
-    pub fn from_card(card: &QueueItemLight, service: Option<ShelfSource>) -> Self {
+    /// A pick from the pool, offered with `reason`, with the candidate's
+    /// paths as its evidence.
+    pub fn from_pick(candidate: &Candidate, reason: &PickReason) -> Self {
         Self {
-            release_group_mbid: card.musicbrainz_id.clone(),
-            artist_mbid: card.artist_id.clone(),
-            album_name: card.title.clone(),
-            artist_name: card.artist_name.clone(),
+            release_group_mbid: candidate.release_group_mbid.clone(),
+            artist_mbid: candidate.artist_mbid.clone(),
+            album_name: candidate.title.clone(),
+            artist_name: candidate.artist_name.clone(),
             evidence: Evidence {
                 version: EVIDENCE_VERSION,
-                reasons: Some(card.recommendation_reason.clone())
-                    .filter(|reason| !reason.trim().is_empty())
-                    .into_iter()
-                    .collect(),
-                seed_artist: None,
-                chart: card.is_wildcard,
-                service,
+                kind: candidate.kind.as_str().to_owned(),
+                reason: reason.clone(),
+                paths: candidate.paths.iter().map(EvidencePath::of).collect(),
             },
         }
-    }
-
-    /// Every Top Pick of a built section. A pick without a release group
-    /// is left out.
-    pub fn from_top_picks(section: &TopPicksSection) -> Vec<Self> {
-        section
-            .items
-            .iter()
-            .filter_map(|pick| {
-                Some(Self {
-                    release_group_mbid: pick.album.musicbrainz_id.clone()?,
-                    artist_mbid: pick.album.artist_id.clone().unwrap_or_default(),
-                    album_name: pick.album.title.clone(),
-                    artist_name: pick.album.artist_name.clone().unwrap_or_default(),
-                    evidence: Evidence {
-                        version: EVIDENCE_VERSION,
-                        reasons: pick.reasons.clone(),
-                        seed_artist: pick.seed_artist.clone(),
-                        chart: false,
-                        service: section.source,
-                    },
-                })
-            })
-            .collect()
     }
 }
 

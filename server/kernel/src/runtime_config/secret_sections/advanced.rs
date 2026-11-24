@@ -17,16 +17,8 @@ pub struct AdvancedSettings {
     pub discover_queue_size: i64,
     /// Discover queue auto-generate.
     pub discover_queue_auto_generate: bool,
-    /// Discover seed artists.
-    pub discover_queue_seed_artists: i64,
-    /// Discover wildcard slots.
-    pub discover_queue_wildcard_slots: i64,
     /// Whether the background warm cycle may build queue decks.
     pub discover_queue_warm_cycle_build: bool,
-    /// Similar artists fetched per seed artist.
-    pub discover_queue_similar_artists_limit: i64,
-    /// Albums taken per similar artist.
-    pub discover_queue_albums_per_similar: i64,
     /// MusicBrainz lookups one Last.fm album batch may spend.
     pub discover_queue_lastfm_mbid_max_lookups: i64,
     /// Whether Discover blends Last.fm and ListenBrainz for a user who
@@ -34,8 +26,6 @@ pub struct AdvancedSettings {
     pub discover_blend_listening_services: bool,
     /// Discover picks count.
     pub discover_picks_count: i64,
-    /// Discover genre-affinity weight.
-    pub discover_picks_genre_affinity_weight: f64,
     /// AudioDB master switch.
     pub audiodb_enabled: bool,
     /// AudioDB name-search fallback.
@@ -63,15 +53,10 @@ impl Default for AdvancedSettings {
         Self {
             discover_queue_size: 10,
             discover_queue_auto_generate: true,
-            discover_queue_seed_artists: 3,
-            discover_queue_wildcard_slots: 2,
             discover_queue_warm_cycle_build: true,
-            discover_queue_similar_artists_limit: 15,
-            discover_queue_albums_per_similar: 5,
             discover_queue_lastfm_mbid_max_lookups: 10,
             discover_blend_listening_services: true,
             discover_picks_count: 12,
-            discover_picks_genre_affinity_weight: 0.7,
             audiodb_enabled: true,
             audiodb_name_search_fallback: false,
             direct_remote_images_enabled: true,
@@ -91,30 +76,6 @@ impl Section for AdvancedSettings {
         let key = Self::KEY;
         let ints: &[(&str, i64, i64, i64)] = &[
             ("discover_queue_size", self.discover_queue_size, 1, 20),
-            (
-                "discover_queue_seed_artists",
-                self.discover_queue_seed_artists,
-                1,
-                10,
-            ),
-            (
-                "discover_queue_wildcard_slots",
-                self.discover_queue_wildcard_slots,
-                0,
-                10,
-            ),
-            (
-                "discover_queue_similar_artists_limit",
-                self.discover_queue_similar_artists_limit,
-                5,
-                50,
-            ),
-            (
-                "discover_queue_albums_per_similar",
-                self.discover_queue_albums_per_similar,
-                1,
-                20,
-            ),
             (
                 "discover_queue_lastfm_mbid_max_lookups",
                 self.discover_queue_lastfm_mbid_max_lookups,
@@ -144,13 +105,7 @@ impl Section for AdvancedSettings {
         for (field, value, min, max) in ints {
             check_range(key, field, *value, *min, *max)?;
         }
-        check_range(
-            key,
-            "discover_picks_genre_affinity_weight",
-            self.discover_picks_genre_affinity_weight,
-            0.0,
-            1.0,
-        )
+        Ok(())
     }
 
     fn normalize(&mut self) {

@@ -25,13 +25,8 @@
 
 	const QUEUE_FIELDS = [
 		'discover_queue_size',
-		'discover_queue_seed_artists',
-		'discover_queue_wildcard_slots',
-		'discover_queue_similar_artists_limit',
-		'discover_queue_albums_per_similar',
 		'discover_queue_lastfm_mbid_max_lookups',
-		'discover_picks_count',
-		'discover_picks_genre_affinity_weight'
+		'discover_picks_count'
 	];
 	const RETENTION_FIELDS = [
 		'request_history_retention_days',

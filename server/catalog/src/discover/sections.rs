@@ -417,7 +417,7 @@ pub const SECTIONS: &[SectionDef] = &[
         None,
         B::Personal,
     )
-    .reading(&[I::Seeds, I::Similar, I::Genres], Dedupe::Albums(0)),
+    .reading(&[], Dedupe::Albums(0)),
     discover(
         K::ListenersLikeYou,
         Z::Essentials,

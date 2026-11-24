@@ -14,6 +14,7 @@
 		Volume2,
 		X
 	} from 'lucide-svelte';
+	import type { DeckCard } from '$lib/features/discover/queries/types';
 	import { discoverQueueDeck } from '$lib/features/discover/state/discoverQueueDeck.svelte';
 	import { deckSampler } from '$lib/features/discover/state/deckSampler.svelte';
 	import { audioFocus } from '$lib/features/player/state/audioFocus.svelte';
@@ -64,6 +65,12 @@
 
 	const current = $derived(deck.current);
 	const cardIdentity = $derived(`${deck.requestKey}:${current?.musicbrainz_id ?? ''}`);
+	/** What each kind of reason says on the card's tape. */
+	const TAPES: Record<DeckCard['reason']['kind'], string> = {
+		your_artists: 'New to you',
+		source: 'ListenBrainz pick'
+	};
+
 	const enrichment = $derived(current?.enrichment);
 	const enriching = $derived(current != null && !current.enrichment);
 	const artistMbid = $derived(current?.artist_id || enrichment?.artist_mbid || '');
@@ -360,10 +367,7 @@
 					<div in:fly={{ x: 24, duration: 300 }}>
 						<div class="dn-deck__top">
 							<p class="dn-deck__tapes">
-								<Tape>{current.recommendation_reason}</Tape>
-								{#if current.is_wildcard}
-									<Tape look="ink">Wildcard</Tape>
-								{/if}
+								<Tape>{TAPES[current.reason.kind]}</Tape>
 							</p>
 							<div class="dn-deck__count">
 								<BarcodeOrnament class="dn-deck__barcode" />
@@ -513,6 +517,7 @@
 								{:else}
 									<span class="dn-deck__artist">{current.artist_name}</span>
 								{/if}
+								<p class="mt-1.5 text-sm text-muted">{current.reason.line}</p>
 
 								{#if enriching}
 									<div class="mt-4 flex flex-col gap-2">

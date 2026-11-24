@@ -14,7 +14,8 @@ use axum::http::{Request, StatusCode};
 use droppedneedle_catalog::discover::cache::{
     self, ForgetCounts, Generation, PageKind, Timing, UserPageCache, Variant,
 };
-use droppedneedle_catalog::discover::record::{self, Evidence, MadeFrom, Offer};
+use droppedneedle_catalog::discover::models::{PickReason, PickReasonKind};
+use droppedneedle_catalog::discover::record::{self, EVIDENCE_VERSION, Evidence, MadeFrom, Offer};
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::Db;
 use droppedneedle_providers::Providers;
@@ -23,7 +24,9 @@ use tower::ServiceExt as _;
 use crate::common::Probe;
 use crate::common::auth::AuthRig;
 use crate::discover_page::page_script;
-use crate::discover_queue::{after_commits, discover_deps, discover_routes, insert, keep_facts_of};
+use crate::discover_queue::{
+    after_commits, discover_deps, discover_routes, insert, keep_facts_of, pool_of,
+};
 
 const DAY: i64 = 86_400_000;
 const FORGET: &str = "/api/v3/discover/history";
@@ -211,6 +214,19 @@ async fn forgetting_takes_the_callers_history_and_nothing_else() {
             .to_owned(),
     )
     .await;
+    insert(
+        &db,
+        pool_of(
+            "user-1",
+            &[("11111111-1111-4111-8111-111111111111", "Seed")],
+            &[(
+                "aaaaaaaa-0000-4000-8000-000000000001".to_owned(),
+                "bbbbbbbb-0000-4000-8000-000000000001".to_owned(),
+                "11111111-1111-4111-8111-111111111111",
+            )],
+        ),
+    )
+    .await;
     keep_facts_of(&rig, Arc::new(page_script())).await;
     let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |network| {
         *network = Arc::new(page_script());
@@ -227,6 +243,21 @@ async fn forgetting_takes_the_callers_history_and_nothing_else() {
         ) > 0,
         "the page offered its picks"
     );
+    // The pool those picks came from makes way for the rows below.
+    insert(
+        &db,
+        [
+            "catalog_discover_candidate_paths",
+            "catalog_discover_candidates",
+            "catalog_discover_pool_builds",
+            "catalog_taste_artists",
+            "catalog_taste_groups",
+            "catalog_taste_builds",
+        ]
+        .map(|table| format!("DELETE FROM {table} WHERE user_id = 'user-1';"))
+        .concat(),
+    )
+    .await;
 
     // A row in every forgotten table for both people, and something kept.
     let forgotten = listed("forgotten");
@@ -323,11 +354,14 @@ async fn offer(db: &Db, user: &str, built: Generation, forgets: &ForgetCounts) {
         album_name: "Album".to_owned(),
         artist_name: "Someone".to_owned(),
         evidence: Evidence {
-            version: 1,
-            reasons: Vec::new(),
-            seed_artist: None,
-            chart: false,
-            service: None,
+            version: EVIDENCE_VERSION,
+            kind: "new_artist".to_owned(),
+            reason: PickReason {
+                kind: PickReasonKind::YourArtists,
+                line: "Close to Seed.".to_owned(),
+                artists: Vec::new(),
+            },
+            paths: Vec::new(),
         },
     };
     record::offered(

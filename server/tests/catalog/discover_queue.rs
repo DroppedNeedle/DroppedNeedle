@@ -1,7 +1,8 @@
 //! The discover queue deck end to end over a real database: a background
-//! build from scripted ListenBrainz answers, what the person tells
-//! Discover honoured by every deck built or served after it, and both the
-//! answer and the deck surviving a restart.
+//! build dealt from a scripted pool, what the person tells Discover
+//! honoured by every deck built or served after it, and both the answer and
+//! the deck surviving a restart. The scripted listening answers here also
+//! stand behind the page, radio and seed tests of other files.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -125,38 +126,6 @@ pub(crate) struct Script {
     pub albums_down: AtomicBool,
     /// When set, the user's Jellyfin most played fails.
     pub jellyfin_down: AtomicBool,
-    /// When set, ListenBrainz top-artist reads wait here until released.
-    pub hold: Option<Arc<Hold>>,
-}
-
-/// A gate a scripted read stops at: it says it arrived, then waits until
-/// the gate is opened.
-pub(crate) struct Hold {
-    arrived: tokio::sync::Notify,
-    open: tokio::sync::Semaphore,
-}
-
-impl Hold {
-    fn new() -> Self {
-        Self {
-            arrived: tokio::sync::Notify::new(),
-            open: tokio::sync::Semaphore::new(0),
-        }
-    }
-
-    async fn pass(&self) {
-        self.arrived.notify_one();
-        // Opening closes the semaphore, which lets every waiter through.
-        let _ = self.open.acquire().await;
-    }
-
-    async fn reached(&self) {
-        self.arrived.notified().await;
-    }
-
-    fn release(&self) {
-        self.open.close();
-    }
 }
 
 type Answer<'a, T> = Read<'a, T>;
@@ -218,13 +187,7 @@ impl ListeningNetwork for Script {
             self.user_artist_reads.fetch_add(1, Ordering::SeqCst);
             self.user_artists.clone()
         };
-        let hold = self.hold.clone();
-        Box::pin(async move {
-            if let Some(hold) = hold {
-                hold.pass().await;
-            }
-            Ok(rows)
-        })
+        ok(rows)
     }
     fn user_albums<'a>(
         &'a self,
@@ -792,7 +755,6 @@ fn queue_app(rig: &AuthRig, dir: &Path, script: Script) -> Router {
     rig.config
         .save_secret_blocking(AdvancedSettings {
             discover_queue_size: 5,
-            discover_queue_wildcard_slots: 1,
             ..AdvancedSettings::default()
         })
         .expect("queue settings save");
@@ -886,12 +848,101 @@ fn deck_ids(body: &Value) -> Vec<String> {
         .collect()
 }
 
+const SEED_TWO: &str = "33333333-3333-4333-8333-333333333333";
+const OTHER: &str = "44444444-4444-4444-8444-444444444444";
+
+/// An artist's MusicBrainz id: `n` under one tag.
+fn artist(n: u8) -> String {
+    format!("{n:08x}-dddd-4ddd-8ddd-dddddddddddd")
+}
+
+/// One album of a scripted pool: its release group, its artist and the
+/// seed whose labs list leads to it.
+pub(crate) type Pooled<'a> = (String, String, &'a str);
+
+/// `user`'s taste build of `seeds` (id, name) in one group, and their pool
+/// of `albums` in rank order, each found through its seed's labs list, as
+/// the taste and pool jobs leave them.
+pub(crate) fn pool_of(user: &str, seeds: &[(&str, &str)], albums: &[Pooled<'_>]) -> String {
+    let (n, found) = (seeds.len(), albums.len());
+    let anchor = seeds.first().map_or("", |seed| seed.0);
+    let mut rows = format!(
+        "INSERT INTO catalog_taste_builds (user_id, built_at, plays_counted, \
+         imported_listens_counted, artists_played, seeds, incomplete) \
+         VALUES ('{user}', 1, 10, 0, {n}, {n}, 0); \
+         INSERT INTO catalog_taste_groups (user_id, group_no, anchor_artist_mbid, anchor_name, \
+         share, recent_share, trend) \
+         VALUES ('{user}', 0, '{anchor}', 'Anchor', 1.0, 1.0, 'steady'); \
+         INSERT INTO catalog_discover_pool_builds (user_id, built_at, incomplete, waiting_for, \
+         seeds_used, neighbours_found, known_left_out, hubs_left_out, artists_ranked, \
+         artists_without_album, new_artist_candidates, source_pick_candidates, gap_candidates, \
+         shelf_candidates, fresh_candidates, thread_candidates) \
+         VALUES ('{user}', 1, 0, '[]', {n}, {found}, 0, NULL, {found}, 0, {found}, 0, 0, 0, 0, 0);"
+    );
+    for (seed, name) in seeds {
+        rows += &format!(
+            "INSERT INTO catalog_taste_artists (user_id, artist_mbid_lower, artist_mbid, name, \
+             plays, imported_listens, months_active, weight, is_seed, group_no) \
+             VALUES ('{user}', '{seed}', '{seed}', '{name}', 5, 0, 1, 1.0, 1, 0);"
+        );
+    }
+    for (rank, (group, by, seed)) in albums.iter().enumerate() {
+        let name = seeds
+            .iter()
+            .find(|(id, _)| id == seed)
+            .map_or("", |(_, name)| *name);
+        rows += &format!(
+            "INSERT INTO catalog_discover_candidates (user_id, release_group_mbid_lower, rank, \
+             kind, title, artist_mbid, artist_name, credited_artist_mbids, support, group_no, \
+             group_support) VALUES ('{user}', '{group}', {rank}, 'new_artist', 'Album {rank}', \
+             '{by}', 'Artist {rank}', '[\"{by}\"]', 1.0, 0, 1.0); \
+             INSERT INTO catalog_discover_candidate_paths (user_id, release_group_mbid_lower, \
+             path_no, kind, source, artist_mbid, artist_name, artist_plays, artist_weight, \
+             artist_albums_owned, link_strength, link_rank, link_of, named_by_labs, \
+             named_by_lastfm) VALUES ('{user}', '{group}', 0, 'seed', 'listenbrainz_labs', \
+             '{seed}', '{name}', 5, 1.0, 0, 1.0, 1, 10, 1, 0);"
+        );
+    }
+    rows
+}
+
+/// user-1's pool: two albums through Seed and one through Seed Two, each by
+/// an artist of its own.
+fn three_picks() -> String {
+    pool_of(
+        "user-1",
+        &[(SEED, "Seed"), (SEED_TWO, "Seed Two")],
+        &[
+            (group(1), SIMILAR.to_owned(), SEED),
+            (group(2), artist(2), SEED),
+            (group(3), artist(3), SEED_TWO),
+        ],
+    )
+}
+
+/// Each card's reason line, in deck order.
+fn lines(deck: &Value) -> Vec<String> {
+    deck["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|card| {
+            assert_eq!(card["reason"]["kind"], "your_artists", "{card}");
+            card["reason"]["line"].as_str().unwrap_or("").to_owned()
+        })
+        .collect()
+}
+
+/// A deck is dealt from the top of the person's pool, each card with the
+/// reason its paths give; it survives a restart, and an ignored album never
+/// returns.
 #[tokio::test]
 async fn queue_builds_honours_ignores_and_survives_restart() {
     let dir = crate::common::ScratchDir::new("discover-queue");
     let rig = AuthRig::new("discover-queue").await;
     let db = rig.platform.db.clone();
     seed_user(&db).await;
+    insert(&db, three_picks()).await;
     let app = queue_app(&rig, &dir, queue_script());
 
     let (_, idle) = call(&app, "GET", "/api/v3/discover/queue/status", None).await;
@@ -907,8 +958,7 @@ async fn queue_builds_honours_ignores_and_survives_restart() {
     assert_eq!(started["action"], "started");
     let ready = settled(&app, &db).await;
     assert_eq!(ready["status"], "ready");
-    // Two cards from the one similar artist and the one chart slot: a
-    // deck short of picks stays short.
+    // Three picks for a deck of five: a deck short of picks stays short.
     assert_eq!(ready["item_count"], 3);
     assert_eq!(ready["stale"], false);
 
@@ -923,24 +973,11 @@ async fn queue_builds_honours_ignores_and_survives_restart() {
 
     let (_, deck) = call(&app, "GET", "/api/v3/discover/queue", None).await;
     let ids = deck_ids(&deck);
-    assert_eq!(ids.len(), 3);
-    let similar_cards = deck["items"]
-        .as_array()
-        .expect("items")
-        .iter()
-        .filter(|item| item["recommendation_reason"] == "Similar to Seed")
-        .count();
+    assert_eq!(ids, [group(1), group(2), group(3)], "the pool's order");
     assert_eq!(
-        similar_cards, 2,
-        "one similar artist holds at most two cards"
+        lines(&deck),
+        ["Close to Seed.", "Close to Seed.", "Close to Seed Two."]
     );
-    let wildcards = deck["items"]
-        .as_array()
-        .expect("items")
-        .iter()
-        .filter(|item| item["is_wildcard"] == true)
-        .count();
-    assert_eq!(wildcards, 1, "one chart card for the one wildcard slot");
     let row = after_commits(&db, "the deck was saved", || async {
         db.maybe::<String>(
             "SELECT CAST(payload AS TEXT) FROM catalog_cached_pages \
@@ -954,9 +991,8 @@ async fn queue_builds_honours_ignores_and_survives_restart() {
         row["health"],
         json!({
             "cards": 3,
-            "chart_cards": wildcards,
-            "distinct_artists": 1 + wildcards,
-            "max_cards_one_artist": 2,
+            "distinct_artists": 3,
+            "max_cards_one_artist": 1,
         }),
         "the saved deck carries its health"
     );
@@ -970,8 +1006,9 @@ async fn queue_builds_honours_ignores_and_survives_restart() {
     })
     .await;
     let (_, deck) = call(&app, "GET", "/api/v3/discover/queue", None).await;
-    assert!(
-        !deck_ids(&deck).contains(&ignored),
+    assert_eq!(
+        deck_ids(&deck),
+        [group(2), group(3)],
         "an ignored album never returns"
     );
 
@@ -1012,16 +1049,17 @@ async fn queue_builds_honours_ignores_and_survives_restart() {
 }
 
 /// A saved deck records each of its cards as offered on the deck, with the
-/// reason it carried. A card shown counts once per UTC day however often it
-/// is shown, its first sample and opening are stamped, and an event about
-/// an album never offered to the person writes nothing and answers the
-/// same.
+/// reason it showed and the paths that found it as its evidence. A card
+/// shown counts once per UTC day however often it is shown, its first
+/// sample and opening are stamped, and an event about an album never
+/// offered to the person writes nothing and answers the same.
 #[tokio::test]
 async fn a_saved_deck_records_its_picks_and_what_the_person_saw() {
     let dir = crate::common::ScratchDir::new("discover-queue-picks");
     let rig = AuthRig::new("discover-queue-picks").await;
     let db = rig.platform.db.clone();
     seed_user(&db).await;
+    insert(&db, three_picks()).await;
     let app = queue_app(&rig, &dir, queue_script());
     call(
         &app,
@@ -1053,21 +1091,42 @@ async fn a_saved_deck_records_its_picks_and_what_the_person_saw() {
         .map(|(_, evidence)| serde_json::from_str(evidence).expect("evidence is JSON"))
         .collect();
     assert!(
-        evidence.iter().all(|row| row["version"] == 1),
+        evidence.iter().all(|row| row["version"] == 2
+            && row["kind"] == "new_artist"
+            && row["reason"]["kind"] == "your_artists"),
         "{evidence:?}"
     );
+    let paths: Vec<(&Value, &Value, &Value)> = evidence
+        .iter()
+        .map(|row| {
+            let path = &row["paths"][0];
+            (
+                &row["reason"]["line"],
+                &path["source"],
+                &path["artist"]["mbid"],
+            )
+        })
+        .collect();
     assert_eq!(
-        evidence.iter().filter(|row| row["chart"] == true).count(),
-        1,
-        "the chart card says so: {evidence:?}"
-    );
-    assert_eq!(
-        evidence
-            .iter()
-            .filter(|row| row["reasons"] == json!(["Similar to Seed"]))
-            .count(),
-        2,
-        "{evidence:?}"
+        paths,
+        [
+            (
+                &json!("Close to Seed."),
+                &json!("listenbrainz_labs"),
+                &json!(SEED)
+            ),
+            (
+                &json!("Close to Seed."),
+                &json!("listenbrainz_labs"),
+                &json!(SEED)
+            ),
+            (
+                &json!("Close to Seed Two."),
+                &json!("listenbrainz_labs"),
+                &json!(SEED_TWO)
+            ),
+        ],
+        "each pick's line and the path it came by: {evidence:?}"
     );
 
     let card = ids[0].clone();
@@ -1136,17 +1195,30 @@ pub(crate) async fn own(db: &Db, groups: &[String]) {
     .expect("owned albums");
 }
 
-/// Owned albums are dropped before the deal, never after it: with a
-/// similar artist's album and a chart album owned, the deck holds neither,
-/// one chart card for its one wildcard slot, and stays short of the five
-/// it asks for rather than filling up from the chart.
+/// A pool with fewer candidates than the deck asks for deals a short deck
+/// that says so: owned albums are left out before the deal, nothing tops
+/// the deck up, and no card is anything but a pick of the person's own.
 #[tokio::test]
 async fn a_seeded_deck_holds_nothing_owned_and_is_never_refilled() {
     let dir = crate::common::ScratchDir::new("discover-queue-owned");
     let rig = AuthRig::new("discover-queue-owned").await;
     let db = rig.platform.db.clone();
     seed_user(&db).await;
-    let owned = [group(1), group(11)];
+    insert(
+        &db,
+        pool_of(
+            "user-1",
+            &[(SEED, "Seed"), (SEED_TWO, "Seed Two")],
+            &[
+                (group(1), artist(1), SEED),
+                (group(2), artist(2), SEED),
+                (group(3), artist(3), SEED_TWO),
+                (group(4), artist(4), SEED_TWO),
+            ],
+        ),
+    )
+    .await;
+    let owned = [group(1), group(3)];
     own(&db, &owned).await;
     let app = queue_app(&rig, &dir, queue_script());
 
@@ -1157,33 +1229,28 @@ async fn a_seeded_deck_holds_nothing_owned_and_is_never_refilled() {
         Some(json!({})),
     )
     .await;
-    assert_eq!(settled(&app, &db).await["status"], "ready");
+    let ready = settled(&app, &db).await;
+    assert_eq!(ready["status"], "ready");
+    assert_eq!(ready["reason"], "thin", "two of five");
     let (_, deck) = call(&app, "GET", "/api/v3/discover/queue", None).await;
-    let ids = deck_ids(&deck);
-    assert!(
-        ids.iter().all(|id| !owned.contains(id)),
-        "no owned card: {ids:?}"
+    assert_eq!(
+        deck_ids(&deck),
+        [group(2), group(4)],
+        "no owned card, none added"
     );
-    let charts = deck["items"]
-        .as_array()
-        .expect("items")
-        .iter()
-        .filter(|item| item["is_wildcard"] == true)
-        .count();
-    assert_eq!(charts, 1, "the one wildcard slot: {ids:?}");
-    assert_eq!(ids.len(), 3, "two picks and one chart card: {ids:?}");
+    assert_eq!(lines(&deck), ["Close to Seed.", "Close to Seed Two."]);
 }
 
-/// With all but one of the similar artist's albums and the whole chart
-/// owned, the deck holds that one album and nothing the library has.
+/// An answer that lands after a deck was dealt, before any build after it,
+/// never reaches the deck served: what the person told Discover is read
+/// again each time the deck is served.
 #[tokio::test]
-async fn a_deck_never_holds_an_album_the_library_has() {
-    let dir = crate::common::ScratchDir::new("discover-queue-owned-all");
-    let rig = AuthRig::new("discover-queue-owned-all").await;
+async fn an_answer_after_the_deal_never_reaches_the_served_deck() {
+    let dir = crate::common::ScratchDir::new("discover-queue-answer-after-deal");
+    let rig = AuthRig::new("discover-queue-answer-after-deal").await;
     let db = rig.platform.db.clone();
     seed_user(&db).await;
-    let owned: Vec<String> = (1..=4).chain(11..=15).map(group).collect();
-    own(&db, &owned).await;
+    insert(&db, three_picks()).await;
     let app = queue_app(&rig, &dir, queue_script());
 
     call(
@@ -1193,67 +1260,31 @@ async fn a_deck_never_holds_an_album_the_library_has() {
         Some(json!({})),
     )
     .await;
-    assert_eq!(settled(&app, &db).await["status"], "ready");
-    let (_, deck) = call(&app, "GET", "/api/v3/discover/queue", None).await;
-    assert_eq!(deck_ids(&deck), vec![group(5)], "no owned card");
-}
-
-/// An ignore that lands while a build is running, after that build read
-/// the ignores: the deck it leaves is served without the ignored albums.
-#[tokio::test]
-async fn an_ignore_during_a_build_never_reaches_the_deck() {
-    let dir = crate::common::ScratchDir::new("discover-queue-midbuild");
-    let rig = AuthRig::new("discover-queue-midbuild").await;
-    let db = rig.platform.db.clone();
-    seed_user(&db).await;
-    let hold = Arc::new(Hold::new());
-    let app = queue_app(
-        &rig,
-        &dir,
-        Script {
-            hold: Some(hold.clone()),
-            ..queue_script()
-        },
-    );
-
-    let (_, started) = call(
-        &app,
-        "POST",
-        "/api/v3/discover/queue/generate",
-        Some(json!({})),
+    let ready = settled(&app, &db).await;
+    assert_eq!(ready["item_count"], 3);
+    // Written as the answer lands while a build runs: no build follows it.
+    insert(
+        &db,
+        format!(
+            "INSERT INTO catalog_discover_feedback (user_id, target, target_mbid_lower, kind, \
+             created_at) VALUES ('user-1', 'album', '{}', 'no', 1)",
+            group(2)
+        ),
     )
     .await;
-    assert_eq!(started["action"], "started");
-    // The build has read the ignores and now waits on its seed artists.
-    hold.reached().await;
 
-    // Every deck holds at least one trending album, so ignoring all of
-    // them always catches a card this build picks.
-    let trending: Vec<String> = (11..=15).map(group).collect();
-    for mbid in &trending {
-        ignore(&app, mbid).await;
-    }
-    hold.release();
-
-    let deck = after_commits(&db, "the running build finished", || async {
-        let (_, status) = call(&app, "GET", "/api/v3/discover/queue/status", None).await;
-        if status["status"] != "ready" {
-            return None;
-        }
-        let (_, deck) = call(&app, "GET", "/api/v3/discover/queue", None).await;
-        Some(deck)
-    })
-    .await;
-    let ids = deck_ids(&deck);
-    assert!(!ids.is_empty(), "the similar artist's cards remain");
-    assert!(
-        ids.iter().all(|id| !trending.contains(id)),
-        "no ignored album is served: {ids:?}"
+    let (_, status) = call(&app, "GET", "/api/v3/discover/queue/status", None).await;
+    assert_eq!(status["queue_id"], ready["queue_id"], "the same deck");
+    let (_, deck) = call(&app, "GET", "/api/v3/discover/queue", None).await;
+    assert_eq!(
+        deck_ids(&deck),
+        [group(1), group(3)],
+        "the ignored album is not served"
     );
 }
 
 /// A hidden album leaves the deck and the ledger shows it. Once un-hidden
-/// it is off the ledger and the next deck can hold it again. The pool is
+/// it is off the ledger and the next deck holds it again. The pool is
 /// smaller than the deck, so every album still allowed is always dealt.
 #[tokio::test]
 async fn an_unhidden_album_returns_to_the_queue() {
@@ -1261,20 +1292,9 @@ async fn an_unhidden_album_returns_to_the_queue() {
     let rig = AuthRig::new("discover-queue-unhide").await;
     let db = rig.platform.db.clone();
     seed_user(&db).await;
-    let full = queue_script();
-    let script = Script {
-        artist_albums: HashMap::from([(
-            SIMILAR.to_owned(),
-            vec![RankedAlbum {
-                album: album(1, SIMILAR),
-                listen_count: 0,
-            }],
-        )]),
-        sitewide_albums: full.sitewide_albums.into_iter().take(1).collect(),
-        ..queue_script()
-    };
-    let app = queue_app(&rig, &dir, script);
-    let hidden = group(11);
+    insert(&db, three_picks()).await;
+    let app = queue_app(&rig, &dir, queue_script());
+    let hidden = group(2);
     let deck_once = |wanted: bool| {
         let (app, db, hidden) = (&app, &db, &hidden);
         async move {
@@ -1349,21 +1369,19 @@ async fn not_now_lapses_and_not_this_artist_clears_the_deck() {
     let rig = AuthRig::new("discover-queue-typed").await;
     let db = rig.platform.db.clone();
     seed_user(&db).await;
-    let full = queue_script();
-    let script = Script {
-        artist_albums: HashMap::from([(
-            SIMILAR.to_owned(),
-            (1..=2)
-                .map(|n| RankedAlbum {
-                    album: album(n, SIMILAR),
-                    listen_count: 0,
-                })
-                .collect(),
-        )]),
-        sitewide_albums: full.sitewide_albums.into_iter().take(1).collect(),
-        ..queue_script()
-    };
-    let app = queue_app(&rig, &dir, script);
+    insert(
+        &db,
+        pool_of(
+            "user-1",
+            &[(SEED, "Seed"), (SEED_TWO, "Seed Two")],
+            &[
+                (group(1), SIMILAR.to_owned(), SEED),
+                (group(11), OTHER.to_owned(), SEED_TWO),
+            ],
+        ),
+    )
+    .await;
+    let app = queue_app(&rig, &dir, queue_script());
     db.write(Lane::Foreground, "test.playlist", |tx| {
         tx.execute_batch(&format!(
             "INSERT INTO catalog_playlists (id, name, created_at, updated_at, user_id) \
@@ -1463,7 +1481,7 @@ async fn not_now_lapses_and_not_this_artist_clears_the_deck() {
     assert_eq!(body["expires_at"], Value::Null);
     let (_, deck) = call(&app, "GET", "/api/v3/discover/queue", None).await;
     let cards = deck["items"].as_array().expect("items");
-    assert!(!cards.is_empty(), "the chart card stays: {deck}");
+    assert!(!cards.is_empty(), "the other artist's card stays: {deck}");
     assert!(
         cards.iter().all(|card| card["artist_id"] != SIMILAR),
         "no card by the hidden artist is served: {deck}"
@@ -1507,90 +1525,6 @@ async fn a_card_built_during_an_outage_is_not_kept() {
     script.musicbrainz_down.store(false, Ordering::SeqCst);
     let card = queue.enrich("user-1", &group(1)).await.unwrap();
     assert_eq!(card.tags, ["shoegaze"], "the card fills in once it answers");
-}
-
-/// The status once no build is running. A build that keeps the deck
-/// before it writes nothing, so this asks until it has settled.
-async fn settled_status(app: &Router) -> Value {
-    tokio::time::timeout(Duration::from_secs(30), async {
-        loop {
-            let (_, body) = call(app, "GET", "/api/v3/discover/queue/status", None).await;
-            if body["status"] != "building" {
-                return body;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("the queue build settled")
-}
-
-/// A build that met failed reads and would deal fewer cards of its own
-/// than the deck it replaces keeps that deck and says why. The next build
-/// may start five minutes later.
-#[tokio::test]
-async fn a_build_whose_pools_failed_keeps_the_deck_before_it() {
-    let dir = crate::common::ScratchDir::new("discover-queue-kept");
-    let rig = AuthRig::new("discover-queue-kept").await;
-    let db = rig.platform.db.clone();
-    seed_user(&db).await;
-    rig.config
-        .save_secret_blocking(AdvancedSettings {
-            discover_queue_size: 5,
-            discover_queue_wildcard_slots: 1,
-            ..AdvancedSettings::default()
-        })
-        .expect("queue settings save");
-    let script = Arc::new(queue_script());
-    let network = Arc::clone(&script);
-    let providers = Providers::closed();
-    let answers = providers.cache.clone();
-    let app = discover_routes(discover_deps(&rig, &dir, providers, |slot| {
-        *slot = network;
-    }));
-    let generate = |force: bool| {
-        let app = app.clone();
-        async move {
-            let (_, body) = call(
-                &app,
-                "POST",
-                "/api/v3/discover/queue/generate",
-                Some(json!({ "force": force })),
-            )
-            .await;
-            body
-        }
-    };
-
-    assert_eq!(generate(false).await["action"], "started");
-    let first = settled(&app, &db).await;
-    assert_eq!(first["item_count"], 3);
-    assert_eq!(first["reason"], Value::Null, "three of five is not short");
-
-    script.similar_down.store(true, Ordering::SeqCst);
-    answers.clear().await.expect("provider answers cleared");
-    droppedneedle_catalog::discover::facts::clear(&db)
-        .await
-        .expect("kept facts cleared");
-    assert_eq!(generate(true).await["action"], "started");
-    let kept = settled_status(&app).await;
-    assert_eq!(kept["status"], "ready");
-    assert_eq!(
-        kept["queue_id"], first["queue_id"],
-        "the deck before it stays"
-    );
-    assert_eq!(kept["item_count"], 3);
-    assert_eq!(kept["reason"], "source_down");
-    let again = generate(false).await;
-    assert_eq!(again["action"], "already_ready");
-    assert_eq!(again["reason"], "source_down", "the answer says why too");
-
-    rig.clock().advance(301_000);
-    assert_eq!(
-        generate(false).await["action"],
-        "started",
-        "tried again five minutes on"
-    );
 }
 
 /// Last.fm answers are kept under keys every user shares, so a user who
@@ -1666,31 +1600,21 @@ fn mbid_of(n: u8) -> String {
     format!("{n:08x}-cccc-4ccc-8ccc-cccccccccccc")
 }
 
-/// The queue over `script`, asking for `seeds` seed artists.
-fn seeded_queue(rig: &AuthRig, dir: &Path, script: Arc<Script>, seeds: i64) -> Router {
-    rig.config
-        .save_secret_blocking(AdvancedSettings {
-            discover_queue_size: 5,
-            discover_queue_wildcard_slots: 1,
-            discover_queue_seed_artists: seeds,
-            ..AdvancedSettings::default()
-        })
-        .expect("queue settings save");
-    discover_routes(discover_deps(rig, dir, Providers::closed(), |network| {
-        *network = script;
-    }))
-}
-
-/// Build a deck now and wait until it is ready.
-async fn build_deck(app: &Router, db: &Db) {
-    call(
-        app,
-        "POST",
-        "/api/v3/discover/queue/generate",
-        Some(json!({ "force": true })),
+/// user-1's seed artists now, heaviest first, as a page build weighs them
+/// from `script` and the database.
+async fn seeds_of(rig: &AuthRig, script: Arc<Script>) -> Vec<String> {
+    let listening = ListeningData::new(
+        script,
+        Providers::closed().cache,
+        KeptFacts::new(rig.platform.db.clone(), rig.platform.clock.clone()),
+    );
+    droppedneedle_catalog::test_support::seed_artists(
+        &listening,
+        &rig.platform.db,
+        "user-1",
+        rig.platform.clock.now_ms(),
     )
-    .await;
-    assert_eq!(settled(app, db).await["status"], "ready");
+    .await
 }
 
 /// A person with nothing linked is seeded from what they did in the app,
@@ -1703,7 +1627,6 @@ async fn build_deck(app: &Router, db: &Db) {
 /// taste.
 #[tokio::test]
 async fn local_seeds_come_heaviest_first() {
-    let dir = crate::common::ScratchDir::new("discover-queue-local-seeds");
     let rig = AuthRig::new("discover-queue-local-seeds").await;
     let db = rig.platform.db.clone();
     seed_user(&db).await;
@@ -1774,11 +1697,8 @@ async fn local_seeds_come_heaviest_first() {
         user: UserMusic::default(),
         ..queue_script()
     });
-    let app = seeded_queue(&rig, &dir, Arc::clone(&script), 10);
-
-    build_deck(&app, &db).await;
     assert_eq!(
-        *script.similar_asked.lock().unwrap(),
+        seeds_of(&rig, script).await,
         [hearted, followed, played, listed],
         "the seeds, heaviest first"
     );
@@ -1789,7 +1709,6 @@ async fn local_seeds_come_heaviest_first() {
 /// seeds as they were. The same rows, made this person's own, are seeds.
 #[tokio::test]
 async fn another_persons_rows_never_seed_this_one() {
-    let dir = crate::common::ScratchDir::new("discover-queue-own-seeds");
     let rig = AuthRig::new("discover-queue-own-seeds").await;
     let db = rig.platform.db.clone();
     seed_user(&db).await;
@@ -1841,11 +1760,8 @@ async fn another_persons_rows_never_seed_this_one() {
         user: UserMusic::default(),
         ..queue_script()
     });
-    let app = seeded_queue(&rig, &dir, Arc::clone(&script), 10);
-
-    build_deck(&app, &db).await;
     assert_eq!(
-        *script.similar_asked.lock().unwrap(),
+        seeds_of(&rig, Arc::clone(&script)).await,
         std::slice::from_ref(&own)
     );
 
@@ -1860,37 +1776,22 @@ async fn another_persons_rows_never_seed_this_one() {
             .to_owned(),
     )
     .await;
-    build_deck(&app, &db).await;
-    let mut asked_for = script.similar_asked.lock().unwrap().clone();
+    let mut asked_for = seeds_of(&rig, script).await;
     asked_for.sort();
     let mut expected = vec![own, played, rated, followed, listed, asked];
     expected.sort();
     assert_eq!(asked_for, expected, "made their own, the rows are seeds");
 }
 
-/// A person with no listening account, seeded from their own plays in the
-/// app, gets album cards of the artists like their seed: the album step
-/// needs no ListenBrainz link, theirs or anyone's.
+/// A person with no pool yet gets an empty deck that says so, never a deck
+/// of chart albums.
 #[tokio::test]
-async fn a_person_with_no_listening_account_gets_album_cards() {
-    let dir = crate::common::ScratchDir::new("discover-queue-unlinked");
-    let rig = AuthRig::new("discover-queue-unlinked").await;
+async fn a_person_with_no_pool_gets_an_empty_deck_that_says_why() {
+    let dir = crate::common::ScratchDir::new("discover-queue-no-pool");
+    let rig = AuthRig::new("discover-queue-no-pool").await;
     let db = rig.platform.db.clone();
     seed_user(&db).await;
-    insert(
-        &db,
-        [
-            library_artist("s", "Seed", SEED, "group"),
-            plays("user-1", "s", 2, rig.platform.clock.now_ms()),
-        ]
-        .concat(),
-    )
-    .await;
-    let script = Script {
-        user: UserMusic::default(),
-        ..queue_script()
-    };
-    let app = queue_app(&rig, &dir, script);
+    let app = queue_app(&rig, &dir, queue_script());
 
     call(
         &app,
@@ -1899,59 +1800,20 @@ async fn a_person_with_no_listening_account_gets_album_cards() {
         Some(json!({})),
     )
     .await;
-    assert_eq!(settled(&app, &db).await["status"], "ready");
+    let ready = settled(&app, &db).await;
+    assert_eq!(ready["status"], "ready");
+    assert_eq!(ready["item_count"], 0);
+    assert_eq!(ready["reason"], "empty");
     let (_, deck) = call(&app, "GET", "/api/v3/discover/queue", None).await;
-    let similar = deck["items"]
-        .as_array()
-        .expect("items")
-        .iter()
-        .filter(|item| item["recommendation_reason"] == "Similar to Seed")
-        .count();
-    assert!(similar > 0, "{deck}");
-}
-
-/// A seeded person whose seeds turn up nothing like them, with every read
-/// answered, gets the deck of a person with no seeds: a full chart deck,
-/// not one chart card.
-#[tokio::test]
-async fn seeds_with_nothing_like_them_get_the_chart_deck() {
-    let dir = crate::common::ScratchDir::new("discover-queue-empty-pools");
-    let rig = AuthRig::new("discover-queue-empty-pools").await;
-    let db = rig.platform.db.clone();
-    seed_user(&db).await;
-    insert(
-        &db,
-        [
-            library_artist("l", "Lonely", &mbid_of(1), "group"),
-            plays("user-1", "l", 3, rig.platform.clock.now_ms()),
-        ]
-        .concat(),
-    )
-    .await;
-    let script = Arc::new(Script {
-        user: UserMusic::default(),
-        ..queue_script()
-    });
-    let app = seeded_queue(&rig, &dir, Arc::clone(&script), 3);
-
-    build_deck(&app, &db).await;
-    assert_eq!(*script.similar_asked.lock().unwrap(), [mbid_of(1)]);
-    let (_, deck) = call(&app, "GET", "/api/v3/discover/queue", None).await;
-    let items = deck["items"].as_array().expect("items");
-    assert_eq!(items.len(), 5, "{deck}");
-    assert!(
-        items.iter().all(|item| item["is_wildcard"] == true),
-        "{deck}"
-    );
+    assert_eq!(deck["items"], json!([]));
 }
 
 /// Plays fade with time: thirty plays two years ago weigh less than an
-/// artist the person's ListenBrainz names this year, so the one seed asked
-/// for is the current one, and this year's listening is enough without
-/// reading all time.
+/// artist the person's ListenBrainz names this year, so the heaviest seed
+/// is the current one, and this year's listening, three artists, is enough
+/// without reading all time.
 #[tokio::test]
 async fn years_old_plays_do_not_outweigh_current_listening() {
-    let dir = crate::common::ScratchDir::new("discover-queue-old-plays");
     let rig = AuthRig::new("discover-queue-old-plays").await;
     let db = rig.platform.db.clone();
     seed_user(&db).await;
@@ -1966,18 +1828,22 @@ async fn years_old_plays_do_not_outweigh_current_listening() {
     )
     .await;
     let current = mbid_of(2);
+    let this_year = |name: &str, n: u8, listens: i64| ArtistRow {
+        name: name.to_owned(),
+        mbid: Some(mbid_of(n)),
+        listen_count: Some(listens),
+    };
     let script = Arc::new(Script {
-        user_artists: vec![ArtistRow {
-            name: "Current".to_owned(),
-            mbid: Some(current.clone()),
-            listen_count: Some(20),
-        }],
+        user_artists: vec![
+            this_year("Current", 2, 20),
+            this_year("Also", 3, 15),
+            this_year("Third", 4, 10),
+        ],
         ..queue_script()
     });
-    let app = seeded_queue(&rig, &dir, Arc::clone(&script), 1);
 
-    build_deck(&app, &db).await;
-    assert_eq!(*script.similar_asked.lock().unwrap(), [current]);
+    let seeds = seeds_of(&rig, Arc::clone(&script)).await;
+    assert_eq!(seeds.first(), Some(&current), "{seeds:?}");
     assert_eq!(script.all_time_reads.load(Ordering::SeqCst), 0);
 }
 
@@ -1985,7 +1851,6 @@ async fn years_old_plays_do_not_outweigh_current_listening() {
 /// artists, the person's top artists of all time seed them.
 #[tokio::test]
 async fn too_little_listening_this_year_reads_all_time() {
-    let dir = crate::common::ScratchDir::new("discover-queue-all-time");
     let rig = AuthRig::new("discover-queue-all-time").await;
     let db = rig.platform.db.clone();
     seed_user(&db).await;
@@ -1999,9 +1864,6 @@ async fn too_little_listening_this_year_reads_all_time() {
         }],
         ..queue_script()
     });
-    let app = seeded_queue(&rig, &dir, Arc::clone(&script), 3);
-
-    build_deck(&app, &db).await;
-    assert_eq!(*script.similar_asked.lock().unwrap(), [longtime]);
+    assert_eq!(seeds_of(&rig, Arc::clone(&script)).await, [longtime]);
     assert_eq!(script.all_time_reads.load(Ordering::SeqCst), 1);
 }

@@ -38,6 +38,33 @@ pub async fn refresh_pick_outcomes(
     crate::discover::record::outcomes::run(db, user_id, now_ms, |_| Ok(())).await
 }
 
+/// `user_id`'s seed artists at `now_ms`, heaviest first, as a page build
+/// weighs them from `listening` and `db` under the default settings: each
+/// one's MusicBrainz id.
+pub async fn seed_artists(
+    listening: &crate::discover::listening::ListeningData,
+    db: &droppedneedle_kernel::db::Db,
+    user_id: &str,
+    now_ms: i64,
+) -> Vec<String> {
+    use crate::discover::queue::{QueueSettings, build::BuildContext, store::QueueDb};
+    let policy = listening.policy(user_id).await;
+    let settings = QueueSettings::from_advanced(&Default::default());
+    let queue_db = QueueDb::new(db.clone());
+    let ctx = BuildContext {
+        listening,
+        db: &queue_db,
+        settings: &settings,
+        ask: crate::discover::listening::Ask::person(),
+        now_ms,
+    };
+    crate::discover::queue::seeds::weighted_seeds(&ctx, user_id, policy.user(), policy.listening())
+        .await
+        .into_iter()
+        .filter_map(|seed| seed.artist.mbid)
+        .collect()
+}
+
 /// Every `sql.rs` of this crate, one line each, for the schema test.
 pub fn statement_files() -> Vec<StatementFile> {
     vec![

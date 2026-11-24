@@ -26,7 +26,6 @@ use futures_util::future::join_all;
 
 use super::library::{LibraryReads, fold};
 use super::memo::{BuildMemo, MemoKey};
-use super::picks::{self, Candidate};
 use super::shelves::{self, RowMut, SHELF_SIZE, album, artist, genre, one, shelf};
 use droppedneedle_kernel::db::Db;
 use droppedneedle_providers::{ProviderError, TransportKind, listenbrainz};
@@ -45,13 +44,13 @@ use crate::discover::models::{
 use crate::discover::ownership;
 use crate::discover::queue::QueueSettings;
 use crate::discover::queue::build::{
-    BuildContext, VARIOUS_ARTISTS_MBID, lastfm_pools, listened_albums, normalize, or_empty,
-    resolve_release_groups, similar_artist_pools,
+    AlbumCard, BuildContext, VARIOUS_ARTISTS_MBID, lastfm_pools, normalize, or_empty,
+    resolve_release_groups, similar_artist_pools, top_of_pool,
 };
-use crate::discover::queue::seeds::{links_listening, weighted_seeds};
+use crate::discover::queue::seeds::{SEEDS, links_listening, weighted_seeds};
 use crate::discover::queue::select::{MAX_PER_ARTIST, Shuffler, round_robin};
 use crate::discover::queue::store::QueueDb;
-use crate::discover::record::{self, MadeFrom, Offer};
+use crate::discover::record::{self, MadeFrom};
 use crate::discover::sections::{self, Dedupe, Input, Page, Requires, SectionDef};
 
 /// Bound on any one upstream read in a build.
@@ -65,14 +64,10 @@ const MIXES_BUDGET: Duration = Duration::from_secs(120);
 /// Room past [`MIXES_BUDGET`] for the Daily Mixes, which stop at it
 /// themselves; the outer bound only catches a read that never returns.
 const MIXES_GRACE: Duration = Duration::from_secs(5);
-/// Bound on the Last.fm route into Top Picks during a ListenBrainz outage.
-const PICKS_SIMILARITY_BUDGET: Duration = Duration::from_secs(12);
 /// Bound on resolving Last.fm release ids and weekly playlist covers.
 const RESOLVE_BUDGET: Duration = Duration::from_secs(15);
 /// Bound on one radio shelf.
 const RADIO_BUDGET: Duration = Duration::from_secs(18);
-/// Seed artists the page builds from.
-const SEEDS: usize = 3;
 /// Rediscover: artists played at least this often...
 const REDISCOVER_MIN_PLAYS: i64 = 5;
 /// ...and not in the last three months.
@@ -106,8 +101,6 @@ const GENRES_KEPT_MS: i64 = 30 * 86_400_000;
 pub struct PageSettings {
     /// Top Picks shown.
     pub picks_count: usize,
-    /// Weight of the genre signal in Top Picks.
-    pub genre_weight: f64,
     /// The queue settings (lookup budgets, ignore ledger).
     pub queue: QueueSettings,
     /// Whether some download client is set up (connect-a-service cards).
@@ -129,9 +122,9 @@ pub struct Builder<'a> {
     pub feedback: &'a Feedback,
     /// Library reads.
     pub library: &'a LibraryReads,
-    /// Daily Mix and Top Picks memos.
+    /// The Daily Mixes memo.
     pub memo: &'a BuildMemo,
-    /// What the page is built for, which the memos are kept under.
+    /// What the page is built for, which the memo is kept under.
     pub variant: &'a Variant,
     /// What the build was claimed under.
     pub generation: crate::discover::cache::Generation,
@@ -476,11 +469,9 @@ impl Builder<'_> {
         // against the sections grown from them.
         let seed_ask = self.ask.watched();
         let (seeds, seeds_found) = if needs(Input::Seeds) {
-            let mut seed_settings = self.settings.queue.clone();
-            seed_settings.seed_artists = SEEDS;
             let seed_ctx = BuildContext {
                 ask: seed_ask.clone(),
-                ..self.queue_ctx(&seed_settings)
+                ..self.queue_ctx(&self.settings.queue)
             };
             let found = weighted_seeds(&seed_ctx, user_id, &user, primary).await;
             let count = found.len();
@@ -663,12 +654,13 @@ impl Builder<'_> {
             (true, false) => Some(Some(service)),
             (true, true) => None,
         };
-        let listens = def.inputs.iter().any(|input| {
-            matches!(
-                input,
-                Input::Seeds | Input::Similar | Input::Genres | Input::LastfmGenreArtists
-            )
-        });
+        let listens = def.key == SectionKey::TopPicks
+            || def.inputs.iter().any(|input| {
+                matches!(
+                    input,
+                    Input::Seeds | Input::Similar | Input::Genres | Input::LastfmGenreArtists
+                )
+            });
         match def.requires {
             Some(Requires::Listenbrainz) => needs(
                 listenbrainz_on,
@@ -699,7 +691,7 @@ impl Builder<'_> {
         let (user_id, shared) = (ctx.user_id, ctx.shared);
         match key {
             SectionKey::TopPicks => self
-                .top_picks(user_id, ctx.user, ctx.primary, ctx.seeds, shared)
+                .top_picks(user_id, ctx.seed_source)
                 .await
                 .map(|picks| SectionContent::Picks { picks }),
             SectionKey::ListenersLikeYou => match ctx.lb_user {
@@ -1307,18 +1299,24 @@ impl Builder<'_> {
         similar_limit: usize,
         albums_per: usize,
         ask: &Ask,
-    ) -> Vec<Vec<crate::discover::models::QueueItemLight>> {
-        let mut settings = self.settings.queue.clone();
-        settings.similar_artists_limit = similar_limit;
-        settings.albums_per_similar = albums_per;
+    ) -> Vec<Vec<AlbumCard>> {
         let ctx = BuildContext {
             ask: ask.clone(),
-            ..self.queue_ctx(&settings)
+            ..self.queue_ctx(&self.settings.queue)
         };
         if self.lastfm_for_popularity(user) {
-            lastfm_pools(&ctx, user_id, seeds, excluded, similar_limit * albums_per).await
+            lastfm_pools(
+                &ctx,
+                user_id,
+                seeds,
+                excluded,
+                similar_limit,
+                albums_per,
+                similar_limit * albums_per,
+            )
+            .await
         } else {
-            similar_artist_pools(&ctx, user_id, seeds, excluded).await
+            similar_artist_pools(&ctx, user_id, seeds, excluded, similar_limit, albums_per).await
         }
     }
 
@@ -1627,278 +1625,58 @@ impl Builder<'_> {
         built.into_iter().flatten().collect()
     }
 
-    /// Scored album picks, memoised per user and source for four hours
-    /// (five minutes when the Last.fm route found nothing, or when a read
-    /// they stand on failed or ran out of time, so the next build tries
-    /// again).
-    async fn top_picks(
-        &self,
-        user_id: &str,
-        user: &UserMusic,
-        primary: ListenSource,
-        seeds: &[ArtistRow],
-        shared: &Shared,
-    ) -> Option<TopPicksSection> {
-        let key = self.memo_key(user_id, user, primary);
-        if let Some(picks) = self.memo.picks(&key).await {
-            return picks;
-        }
-        let (picks, degraded) = self
-            .build_top_picks(user_id, user, primary, seeds, shared)
-            .await;
-        if let Some(section) = &picks {
-            let now_ms = (self.now * 1000.0) as i64;
-            let offers = Offer::from_top_picks(section);
-            record::offered(
-                self.library.db(),
-                user_id,
-                MadeFrom::TopPicks,
-                offers,
-                now_ms,
-                record::Built {
-                    generation: self.generation,
-                    forgets: self.forgets,
-                },
-            )
-            .await;
-        }
-        // The section's own ask, which also holds the shared reads it
-        // stands on.
-        let short = degraded || self.ask.met_failure();
-        self.memo.store_picks(&key, picks.clone(), short).await;
-        picks
-    }
-
-    async fn build_top_picks(
-        &self,
-        user_id: &str,
-        user: &UserMusic,
-        primary: ListenSource,
-        seeds: &[ArtistRow],
-        shared: &Shared,
-    ) -> (Option<TopPicksSection>, bool) {
-        let settings = self.settings.queue.clone();
-        let listened = listened_albums(&self.queue_ctx(&settings), user_id, user, primary).await;
-        let exclude: HashSet<String> = listened.union(self.feedback.albums()).cloned().collect();
-
-        // Similarity from the reads the Because shelves already made.
-        let mut similar: Vec<(String, String, f64, String)> = Vec::new();
-        for (seed, rows) in seeds.iter().zip(&shared.similar) {
-            for scored in rows {
-                let Some(mbid) = normalize(scored.artist.mbid.as_deref()) else {
-                    continue;
-                };
-                if mbid == VARIOUS_ARTISTS_MBID {
-                    continue;
-                }
-                similar.push((
-                    mbid,
-                    scored.artist.name.clone(),
-                    scored.score,
-                    seed.name.clone(),
-                ));
+    /// The top of the person's pool ([`top_of_pool`]), each pick with its
+    /// reason, offered on Top Picks and recorded as such. Nothing is
+    /// memoised: the pool is the store. A pool that cannot be read fails
+    /// the section, so the page keeps the picks it had.
+    async fn top_picks(&self, user_id: &str, source: ShelfSource) -> Option<TopPicksSection> {
+        let now_ms = (self.now * 1000.0) as i64;
+        let db = self.library.db();
+        let picks = match top_of_pool(db, user_id, now_ms, self.settings.picks_count).await {
+            Ok(picks) => picks,
+            Err(cause) => {
+                tracing::warn!(%cause, "top picks: the pool could not be read");
+                self.ask.note_failure();
+                return None;
             }
+        };
+        if picks.is_empty() {
+            return None;
         }
-        let max_raw = similar.iter().map(|row| row.2).fold(0.0_f64, f64::max);
-        let mut best: HashMap<String, (f64, String, String)> = HashMap::new();
-        for (mbid, name, raw, seed) in similar {
-            let sim = if max_raw > 1.0 {
-                raw / max_raw
-            } else {
-                raw.min(1.0)
-            };
-            if best.get(&mbid).is_none_or(|current| sim > current.0) {
-                best.insert(mbid, (sim, name, seed));
-            }
-        }
-        let mut ranked: Vec<(String, (f64, String, String))> = best.into_iter().collect();
-        ranked.sort_by(|a, b| b.1.0.total_cmp(&a.1.0).then(a.0.cmp(&b.0)));
-        ranked.truncate(20);
-
-        let mut candidates: Vec<Candidate> = Vec::new();
-        let mut seen: HashSet<String> = HashSet::new();
-        let lastfm_route = self.lastfm_for_popularity(user);
-        if lastfm_route {
-            match tokio::time::timeout(
-                PICKS_SIMILARITY_BUDGET,
-                self.lastfm_pick_candidates(user_id, &ranked, &exclude),
-            )
-            .await
-            {
-                Ok(found) => {
-                    for candidate in found {
-                        if seen.insert(candidate.release_group_mbid.clone()) {
-                            candidates.push(candidate);
-                        }
-                    }
-                }
-                // A section that ran out of time failed, so the page keeps
-                // the picks it had.
-                Err(_) => {
-                    tracing::warn!("top picks ran out of time matching Last.fm albums");
-                    self.ask.note_failure();
-                }
-            }
-        } else {
-            let albums = join_all(ranked.iter().map(|(mbid, _)| async move {
-                self.listening
-                    .artist_albums(user_id, mbid, 2, &self.ask)
-                    .await
-                    .unwrap_or_default()
-            }))
-            .await;
-            for ((artist_mbid, (sim, artist_name, seed)), rows) in ranked.iter().zip(albums) {
-                for row in rows {
-                    let Some(group) = normalize(Some(&row.album.release_group_mbid)) else {
-                        continue;
-                    };
-                    if exclude.contains(&group) || !seen.insert(group.clone()) {
-                        continue;
-                    }
-                    candidates.push(Candidate {
-                        release_group_mbid: group,
-                        album_name: row.album.title,
-                        artist_name: if row.album.artist_name.is_empty() {
-                            artist_name.clone()
-                        } else {
-                            row.album.artist_name
-                        },
-                        artist_mbid: artist_mbid.clone(),
-                        sim: *sim,
-                        listen_count: row.listen_count,
-                        seed_artist: Some(seed.clone()).filter(|s| !s.is_empty()),
-                    });
-                }
-            }
-        }
-        let ids: Vec<String> = candidates
-            .iter()
-            .map(|c| c.release_group_mbid.clone())
-            .collect();
-        let owned = owned_album_ids(self.library.db(), &ids)
-            .await
-            .unwrap_or_default();
-        candidates.retain(|candidate| !owned.contains_key(&candidate.release_group_mbid));
-        // Chart albums never fill Top Picks: with no personal candidate the
-        // section is left out.
-        let degraded = lastfm_route && candidates.is_empty();
-        if candidates.is_empty() {
-            return (None, degraded);
-        }
-
-        let mut user_genres: HashSet<String> = shared
-            .genres
-            .iter()
-            .flatten()
-            .map(|(name, _)| name.to_lowercase())
-            .collect();
-        let seed_mbids: Vec<String> = seeds.iter().filter_map(|s| s.mbid.clone()).collect();
-        if let Ok(by_seed) = self.library.genres_for_artists(&seed_mbids).await {
-            user_genres.extend(by_seed.into_values().flatten().map(|g| g.to_lowercase()));
-        }
-        let artist_mbids: Vec<String> = candidates
-            .iter()
-            .map(|c| c.artist_mbid.clone())
-            .filter(|mbid| !mbid.is_empty())
-            .collect();
-        let genres_by_artist = self
-            .library
-            .genres_for_artists(&artist_mbids)
-            .await
-            .unwrap_or_default();
-        let picked = picks::score(
-            candidates,
+        let offers = picks.iter().map(|pick| pick.offer()).collect();
+        record::offered(
+            db,
             user_id,
-            &self.today,
-            &user_genres,
-            &genres_by_artist,
-            self.settings.genre_weight,
-            self.settings.picks_count,
-        );
-        if picked.is_empty() {
-            return (None, degraded);
-        }
-        tracing::info!(picks = picked.len(), degraded, "top picks built");
-        let section = TopPicksSection {
+            MadeFrom::TopPicks,
+            offers,
+            now_ms,
+            record::Built {
+                generation: self.generation,
+                forgets: self.forgets,
+            },
+        )
+        .await;
+        Some(TopPicksSection {
             title: "Top Picks for You".to_owned(),
-            items: picked
+            items: picks
                 .into_iter()
                 .map(|pick| {
                     let candidate = pick.candidate;
                     TopPickItem {
                         album: album(
                             Some(&candidate.release_group_mbid),
-                            &candidate.album_name,
+                            &candidate.title,
                             Some(&candidate.artist_name),
                             Some(&candidate.artist_mbid),
-                            (candidate.listen_count > 0).then_some(candidate.listen_count),
+                            None,
                         ),
-                        match_pct: pick.match_pct,
-                        reasons: pick.reasons,
-                        seed_artist: candidate.seed_artist,
+                        reason: pick.reason,
                     }
                 })
                 .collect(),
-            source: Some(self.seed_source(user, primary)),
-            personalizing: degraded,
-        };
-        (Some(section), degraded)
-    }
-
-    /// Top Picks candidates from Last.fm's top albums of each similar
-    /// artist, matched to release groups (when album popularity comes from
-    /// Last.fm). Last.fm play counts are not on ListenBrainz's
-    /// scale, so the popularity signal stays neutral.
-    async fn lastfm_pick_candidates(
-        &self,
-        user_id: &str,
-        ranked: &[(String, (f64, String, String))],
-        exclude: &HashSet<String>,
-    ) -> Vec<Candidate> {
-        let rows: Vec<ArtistRow> = ranked
-            .iter()
-            .map(|(mbid, (_, name, _))| ArtistRow {
-                name: name.clone(),
-                mbid: Some(mbid.clone()),
-                listen_count: None,
-            })
-            .collect();
-        let albums = join_all(rows.iter().map(|artist| {
-            self.listening
-                .lastfm_artist_albums(user_id, artist, 3, &self.ask)
-        }))
-        .await;
-        let releases: Vec<String> = albums
-            .iter()
-            .flatten()
-            .flatten()
-            .filter_map(|album| album.mbid.clone())
-            .collect();
-        let settings = self.settings.queue.clone();
-        let groups = resolve_release_groups(&self.queue_ctx(&settings), &releases).await;
-        let mut candidates = Vec::new();
-        for ((artist_mbid, (sim, artist_name, seed)), found) in ranked.iter().zip(albums) {
-            for row in found.unwrap_or_default() {
-                let Some(group) =
-                    normalize(row.mbid.as_deref()).and_then(|r| groups.get(&r).cloned())
-                else {
-                    continue;
-                };
-                if exclude.contains(&group) || candidates.len() >= 40 {
-                    continue;
-                }
-                candidates.push(Candidate {
-                    release_group_mbid: group,
-                    album_name: row.name,
-                    artist_name: artist_name.clone(),
-                    artist_mbid: artist_mbid.clone(),
-                    sim: *sim,
-                    listen_count: 0,
-                    seed_artist: Some(seed.clone()).filter(|s| !s.is_empty()),
-                });
-            }
-        }
-        candidates
+            source: Some(source),
+            personalizing: false,
+        })
     }
 
     /// Albums ListenBrainz users with similar taste play this month.
