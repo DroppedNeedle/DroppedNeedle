@@ -1589,7 +1589,8 @@ async fn keeping_spotifys_album_leaves_someone_elses_ask_standing() {
 }
 
 /// Keeping a moved song takes back what the sync filed for it, even after
-/// the owner turned Whole albums on: the song's own request.
+/// the owner turned Whole albums on: the song's own request. Turning Whole
+/// albums on while sync is on starts a pass at once.
 #[tokio::test]
 async fn keeping_spotifys_album_takes_back_what_was_filed() {
     let rig = rig("spotify-sync-kept-filed").await;
@@ -1600,6 +1601,7 @@ async fn keeping_spotifys_album_takes_back_what_was_filed() {
     let playlist_id = synced(&rig, &tess, "sp-filed", vec![on_a_compilation()]).await;
     let song = format!("track:{ON_THE_ALBUM}");
     assert_eq!(requests_of(&rig.app, &tess).0, std::slice::from_ref(&song));
+    let passes = rig.passes(&playlist_id, "done");
     let (status, body) = rig
         .call(
             &tess,
@@ -1610,6 +1612,11 @@ async fn keeping_spotifys_album_takes_back_what_was_filed() {
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["whole_albums"], true, "{body}");
+    rig.app
+        .until("the pass Whole albums starts", || async {
+            (rig.passes(&playlist_id, "done") > passes).then_some(())
+        })
+        .await;
     rig.app
         .seed(format!(
             "UPDATE request_history SET status = 'awaiting_approval', download_task_id = NULL \

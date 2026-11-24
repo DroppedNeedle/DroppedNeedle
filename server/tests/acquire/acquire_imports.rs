@@ -24,7 +24,7 @@ use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::worker::WorkerSettings;
 use droppedneedle_acquire::follows::Follows;
-use droppedneedle_acquire::imports::jobs::ImportState;
+use droppedneedle_acquire::imports::jobs::{ImportFailureReason, ImportState};
 use droppedneedle_acquire::probes::{LiveProbes, ProbeCache, refresh_probes};
 use droppedneedle_acquire::readiness::SourceReadiness;
 use droppedneedle_acquire::settings::{ConfigLidarrSettings, ConfigSpotifySettings};
@@ -49,7 +49,8 @@ use droppedneedle_providers::spotify::TokenGrant;
 use droppedneedle_providers::{ProviderEndpoints, Providers, RequestPriority, ReqwestWire};
 use droppedneedle_testkit::imports::{
     LIDARR_KEY, LIDARR_MBID_ALL, LIDARR_MBID_NONE, MockRecorder, SPOTIFY_LIKED_DEFAULT,
-    SPOTIFY_PLAYLIST_NO_TRACK_ID, SPOTIFY_TOKEN, serve_lidarr, serve_spotify,
+    SPOTIFY_PLAYLIST_NO_TRACK_ID, SPOTIFY_PLAYLIST_NOT_JOINED, SPOTIFY_TOKEN, serve_lidarr,
+    serve_spotify,
 };
 use droppedneedle_testkit::musicbrainz::MockMusicBrainz;
 use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
@@ -1661,7 +1662,9 @@ async fn spotify_failed_reimport_keeps_the_old_tracks() {
 
 /// A playlist entry whose track comes without its id is an answer the
 /// import does not understand: the import fails and writes no rows, never
-/// a playlist that quietly lost the track.
+/// a playlist that quietly lost the track. A playlist Spotify refuses
+/// (403), as it does one the user follows but has not joined, fails with
+/// its own reason, not as Spotify out of reach.
 #[tokio::test]
 async fn spotify_track_without_id_fails_the_import() {
     let (auth, admin_id, user_id) = seed_rig().await;
@@ -1693,6 +1696,20 @@ async fn spotify_track_without_id_fails_the_import() {
         playlist_rows(&bundle.playlists, &user_id, &playlist_id)
             .await
             .is_empty()
+    );
+
+    let (status, _) = post_json(
+        authed_app(bundle.deps.clone(), &user_id, Role::User),
+        &format!("/api/v3/acquire/spotify/playlists/{SPOTIFY_PLAYLIST_NOT_JOINED}/import"),
+        json!({"name": "Joined Later"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        poll_job_done(&bundle, &user_id, SPOTIFY_PLAYLIST_NOT_JOINED).await,
+        ImportState::Error {
+            reason: ImportFailureReason::Forbidden
+        }
     );
 }
 

@@ -51984,6 +51984,7 @@
         "enum": [
           "not_linked",
           "unavailable",
+          "forbidden",
           "rate_limited",
           "save_failed",
           "other"

@@ -24,6 +24,8 @@ export const ENTRY_CHIPS: Record<PlaylistEntryStateV3, { label: string; tone: To
 export const IMPORT_FAILURES: Record<ImportFailureReasonV3, string> = {
 	not_linked: 'The Spotify import failed: link Spotify again in your profile.',
 	unavailable: "The Spotify import failed: Spotify didn't answer.",
+	forbidden:
+		'The Spotify import failed: Spotify only lets this server read playlists you own or have joined.',
 	rate_limited: 'The Spotify import failed: Spotify is limiting requests.',
 	save_failed: "The Spotify import failed: the playlist couldn't be saved.",
 	other: "The Spotify import didn't finish."

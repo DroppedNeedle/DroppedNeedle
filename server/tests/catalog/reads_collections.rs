@@ -1298,7 +1298,9 @@ async fn remote_playlist_import_lands_in_the_users_playlists() {
 
 /// An album landing links the entries every playlist has for it, whoever
 /// owns the playlist, with no one opening it first: what apps read, as
-/// they never resolve sources themselves (#788).
+/// they never resolve sources themselves (#788). A playlist whose only
+/// such entry names a source it does not list (a YouTube radio save) is
+/// found too.
 #[tokio::test]
 async fn a_landing_links_every_playlist_without_a_visit() {
     use droppedneedle_catalog::collections::service::CollectionsService;
@@ -1310,13 +1312,19 @@ async fn a_landing_links_every_playlist_without_a_visit() {
         json!({"track_name": name, "artist_name": "Aurora", "album_name": "First Light",
                "album_id": album_id, "source_type": "", "track_number": track_number})
     };
+    let radio_save = |name: &str, album_id: &str, track_number: i32| {
+        let mut saved = entry(name, album_id, track_number);
+        saved["source_type"] = json!("youtube");
+        saved["track_source_id"] = json!("yt-2");
+        saved
+    };
     let mut playlists = Vec::new();
     for (user, tracks) in [
         (
             ADA,
             json!([entry("Opener", GROUP, 1), entry("Opener", MISSING, 1)]),
         ),
-        (BOB, json!([entry("Second Song", GROUP, 2)])),
+        (BOB, json!([radio_save("Second Song", GROUP, 2)])),
     ] {
         let (_, created) = call(
             &app,
@@ -1367,9 +1375,12 @@ async fn a_landing_links_every_playlist_without_a_visit() {
 /// its album is in (#759): resolving sources points it at the indexed track
 /// at its disc and track number on an album owning its release group, when
 /// the titles agree, else at the track titled the same elsewhere on that
-/// album. Entries with a source, a disagreeing title or an album the
-/// library lacks stay as they are, and a reader of a public playlist links
-/// nothing.
+/// album. An entry whose source lists none it plays from links the same
+/// way: one with an id to play it by keeps that source after the library,
+/// one without becomes the library's. Entries with a source they list, a
+/// local entry that names its file (as v2 left some, with no link), a
+/// disagreeing title or an album the library lacks stay as they are, and a
+/// reader of a public playlist links nothing.
 #[tokio::test]
 async fn resolving_sources_links_imported_entries_to_the_library() {
     const GROUP: &str = "0a0b0c0d-0001-4000-8000-000000000001";
@@ -1393,6 +1404,16 @@ async fn resolving_sources_links_imported_entries_to_the_library() {
     let mut sourced = entry("Opener", GROUP, 1);
     sourced["source_type"] = json!("youtube");
     sourced["track_source_id"] = json!("yt-1");
+    sourced["available_sources"] = json!(["youtube"]);
+    let mut unlisted = entry("Second Song", GROUP, 7);
+    unlisted["source_type"] = json!("youtube");
+    unlisted["track_source_id"] = json!("yt-2");
+    let mut unplayable = entry("Opener", GROUP, 1);
+    unplayable["source_type"] = json!("youtube");
+    unplayable["available_sources"] = json!([]);
+    let mut carried = entry("Opener", GROUP, 1);
+    carried["source_type"] = json!("local");
+    carried["track_source_id"] = json!("v2-file");
     let (status, _) = call(
         &app,
         Method::POST,
@@ -1404,10 +1425,29 @@ async fn resolving_sources_links_imported_entries_to_the_library() {
             sourced,
             entry("Opener", MISSING, 1),
             entry("Second Song", GROUP, 7),
+            unlisted,
+            unplayable,
+            carried,
         ]})),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+    rig.runtime
+        .db()
+        .write(
+            droppedneedle_kernel::db::Lane::Foreground,
+            "unlink the carried entry",
+            |tx| {
+                tx.execute(
+                    "UPDATE catalog_playlist_tracks SET library_file_id = NULL \
+                     WHERE track_source_id = 'v2-file'",
+                    [],
+                )?;
+                Ok::<_, droppedneedle_kernel::db::DbError>(())
+            },
+        )
+        .await
+        .unwrap();
     let resolve = format!("/api/v3/playlists/{id}/resolve-sources");
     let one = format!("/api/v3/playlists/{id}");
     let linked = |detail: &Value| {
@@ -1454,8 +1494,18 @@ async fn resolving_sources_links_imported_entries_to_the_library() {
             ("youtube".to_owned(), None),
             (String::new(), None),
             ("local".to_owned(), Some("trk-a2".to_owned())),
+            ("youtube".to_owned(), Some("trk-a2".to_owned())),
+            ("local".to_owned(), Some("trk-a1".to_owned())),
+            ("local".to_owned(), None),
         ]
     );
+    assert_eq!(detail["tracks"][7]["track_source_id"], "v2-file");
+    let kept = &detail["tracks"][5];
+    assert_eq!(kept["track_source_id"], "yt-2", "{kept}");
+    assert_eq!(kept["available_sources"], json!(["local", "youtube"]));
+    let replaced = &detail["tracks"][6];
+    assert_eq!(replaced["track_source_id"], "trk-a1", "{replaced}");
+    assert_eq!(replaced["available_sources"], json!(["local"]));
 }
 
 #[tokio::test]

@@ -242,32 +242,56 @@ impl SpotifyClient {
         }
     }
 
-    /// Every playlist the caller owns or follows, page by page. Spotify can
-    /// list one playlist on two pages when the list moves between requests,
-    /// so each id is kept once, at its first place.
+    /// Every playlist the caller owns or follows, page by page. A list that
+    /// moved while it was read (its total changed, or the pages ran out
+    /// before it) is read once more and the second read kept, so a
+    /// playlist pushed back past a page break is not missed. Spotify can
+    /// still list one playlist on two pages, so each id is kept once, at
+    /// its first place.
     pub async fn user_playlists(
         &self,
         refresher: &TokenRefresher<'_>,
     ) -> Result<Vec<SimplifiedPlaylist>, SpotifyError> {
+        let (mut playlists, moved) = self.playlist_pages(refresher).await?;
+        if moved {
+            playlists = self.playlist_pages(refresher).await?.0;
+        }
+        let mut seen = HashSet::new();
+        playlists.retain(|playlist| seen.insert(playlist.id.clone()));
+        Ok(playlists)
+    }
+
+    /// One read of every page of the caller's playlists, and whether the
+    /// list moved while it was read.
+    async fn playlist_pages(
+        &self,
+        refresher: &TokenRefresher<'_>,
+    ) -> Result<(Vec<SimplifiedPlaylist>, bool), SpotifyError> {
         let priority = refresher.priority;
         let mut playlists = Vec::new();
         let mut offset: i64 = 0;
+        let mut total: Option<i64> = None;
+        let mut moved = false;
         loop {
             let page = self
                 .authed(refresher, "/me/playlists", |token| async move {
                     self.api.playlists_page(&token, offset, priority).await
                 })
                 .await?;
+            moved |= total.is_some_and(|total| total != page.total);
+            total = Some(page.total);
             let page_len = page.items.len();
             playlists.extend(page.items);
-            if playlists.len() as i64 >= page.total || page_len == 0 {
+            if playlists.len() as i64 >= page.total {
+                break;
+            }
+            if page_len == 0 {
+                moved = true;
                 break;
             }
             offset += spotify::PLAYLISTS_PAGE;
         }
-        let mut seen = HashSet::new();
-        playlists.retain(|playlist| seen.insert(playlist.id.clone()));
-        Ok(playlists)
+        Ok((playlists, moved))
     }
 
     /// Playlist metadata.

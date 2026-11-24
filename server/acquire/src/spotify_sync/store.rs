@@ -134,10 +134,10 @@ impl SyncStore {
             .await
     }
 
-    /// Turn sync on (or change whole albums while it is on) and queue a
-    /// pass, in one write. Turning it on from off makes it due at once
-    /// and, with `ask_grant`, asks an admin again unless the grant waits
-    /// or stands.
+    /// Turn sync on, or change whole albums while it is on, in one write.
+    /// Turning it on from off, or whole albums on while it is on, queues a
+    /// pass due at once. Turning it on from off with `ask_grant` asks an
+    /// admin again unless the grant waits or stands.
     pub async fn turn_on(
         &self,
         playlist_id: &str,
@@ -167,6 +167,12 @@ impl SyncStore {
                             sql::SET_WHOLE_ALBUMS.text(),
                             params![playlist_id, whole_albums],
                         )?;
+                        // Open songs are asked for as albums from now on,
+                        // so the next pass runs now.
+                        if whole_albums && !row.whole_albums {
+                            tx.execute(sql::SET_NEXT_CHECK.text(), params![playlist_id, now])?;
+                            enqueue(&queue, tx, &playlist_id)?;
+                        }
                         return Ok(());
                     }
                     Some(_) => {

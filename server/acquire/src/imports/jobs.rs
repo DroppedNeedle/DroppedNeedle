@@ -30,6 +30,7 @@ use droppedneedle_kernel::jobs::queue::{
 };
 use serde::{Deserialize, Serialize};
 
+use super::LIKED_SONGS_REF;
 use super::spotify::{ImportFailure, SpotifyImportService};
 use super::spotify_client::SpotifyError;
 
@@ -46,6 +47,9 @@ pub const SPEC: KindSpec = KindSpec::new(KIND)
 pub const NOT_LINKED: &str = "SPOTIFY_NOT_LINKED";
 /// Spotify did not answer, or answered something the import cannot read.
 pub const UNAVAILABLE: &str = "SPOTIFY_UNAVAILABLE";
+/// Spotify refused the playlist's songs: it gives them only to the
+/// playlist's owner and the collaborators who joined it.
+pub const FORBIDDEN: &str = "SPOTIFY_FORBIDDEN";
 /// Spotify kept asking us to slow down.
 pub const RATE_LIMITED: &str = "SPOTIFY_RATE_LIMITED";
 /// The playlist could not be saved.
@@ -90,6 +94,9 @@ pub enum ImportFailureReason {
     NotLinked,
     /// Spotify did not answer, or answered something the import cannot read.
     Unavailable,
+    /// Spotify refused the playlist's songs: it gives them only to the
+    /// playlist's owner and the collaborators who joined it.
+    Forbidden,
     /// Spotify kept asking us to slow down.
     RateLimited,
     /// The playlist could not be saved.
@@ -104,6 +111,7 @@ impl ImportFailureReason {
         match code {
             Some(NOT_LINKED) => Self::NotLinked,
             Some(UNAVAILABLE) => Self::Unavailable,
+            Some(FORBIDDEN) => Self::Forbidden,
             Some(RATE_LIMITED) => Self::RateLimited,
             Some(SAVE_FAILED) => Self::SaveFailed,
             _ => Self::Other,
@@ -226,10 +234,19 @@ impl JobHandler for SpotifyImportJobs {
                     tracing::warn!(%cause, "spotify import fetch failed");
                     UNAVAILABLE
                 }
-                Err(ImportFailure::Spotify(
-                    error @ (SpotifyError::Forbidden | SpotifyError::NotFound),
-                )) => {
-                    tracing::warn!(?error, "spotify import refused");
+                // A collaborative playlist the person follows but has not
+                // joined is listed, and refused here. Liked Songs is never
+                // such a playlist.
+                Err(ImportFailure::Spotify(SpotifyError::Forbidden)) => {
+                    tracing::warn!("spotify import refused (403)");
+                    if import.spotify_playlist_id == LIKED_SONGS_REF {
+                        UNAVAILABLE
+                    } else {
+                        FORBIDDEN
+                    }
+                }
+                Err(ImportFailure::Spotify(SpotifyError::NotFound)) => {
+                    tracing::warn!("spotify import found no such playlist (404)");
                     UNAVAILABLE
                 }
                 // The wait Spotify named decides the next try.

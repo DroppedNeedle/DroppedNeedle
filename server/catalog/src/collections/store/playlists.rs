@@ -601,8 +601,8 @@ fn library_links(candidates: &[sql::LibraryCopyCandidate]) -> Vec<(String, Strin
         .collect()
 }
 
-/// The caller's playlist's entries with no source yet and their candidate
-/// library tracks.
+/// The caller's playlist's unlinked entries and their candidate library
+/// tracks.
 fn library_copy_candidates(
     conn: &Connection,
     user_id: &str,
@@ -818,8 +818,9 @@ impl PlaylistStore {
         Self { db }
     }
 
-    /// Every playlist, as (owner, playlist), holding an entry with no source
-    /// that an album now in the library owns.
+    /// Every playlist, as (owner, playlist), holding an entry with no
+    /// library file and no source it lists that an album now in the
+    /// library owns.
     pub async fn to_link(&self) -> Result<Vec<(String, String)>, StoreError> {
         self.db
             .read("playlists.to_link", |conn| {
@@ -2100,8 +2101,10 @@ impl OwnedPlaylists<'_> {
             .await
     }
 
-    /// Point each entry with no source yet whose album the library owns at
-    /// the library's copy (see [`library_links`]); when the album is held
+    /// Point each entry with no library file and no source it lists (none
+    /// yet, or one saved without any, as a YouTube radio song is) whose
+    /// album the library owns at the library's copy (see
+    /// [`library_links`]); when the album is held
     /// twice, the copy a lookup by its group opens comes first. Answers how
     /// many entries that linked; none when the playlist is not the user's.
     /// Opening a playlist runs this, and so does an import once its rows
@@ -2109,7 +2112,7 @@ impl OwnedPlaylists<'_> {
     /// too), so music apps list the songs before anyone opens the page.
     /// The links are worked out on a read; the writer is taken only when
     /// there is something to link, and each link checks again that the
-    /// entry has no source, the track is indexed and the playlist is the
+    /// entry is still unlinked, the track is indexed and the playlist is the
     /// user's.
     pub async fn link_library_copies(&self, playlist_id: &str) -> Result<usize, StoreError> {
         let (user_id, playlist_id) = (self.user_id.to_owned(), playlist_id.to_owned());

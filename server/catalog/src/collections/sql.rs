@@ -165,10 +165,25 @@ droppedneedle_kernel::sql! {
          WHERE id = ?2 AND playlist_id = ?3";
     /// The albums that own entry `e`'s release group.
     fragment ENTRY_OWNERS = (owns_group!("= lower(e.album_id)"));
-    /// The caller's playlist `?2`'s entries with no source yet, each with
-    /// the indexed library tracks on the albums that own its release group,
-    /// entry by entry in playlist order. An entry's tracks come first from
-    /// the copy a lookup by its group opens, then album by album.
+    /// Entry `e` names a source but lists none it plays from, as a song
+    /// saved from YouTube is. A local entry that names its file (as v2
+    /// left some) plays by that id and is not one.
+    fragment SOURCE_UNLISTED = "e.source_type <> '' \
+         AND COALESCE(e.available_sources, '[]') IN ('[]', '') \
+         AND NOT (e.source_type = 'local' AND COALESCE(e.track_source_id, '') <> '')";
+    /// Entry `e` has no library file, and no source or one it does not list:
+    /// an entry the library's copy may be linked to.
+    fragment UNLINKED = "e.library_file_id IS NULL AND (e.source_type = '' OR "
+        + SOURCE_UNLISTED + ")";
+    /// Entry `e` keeps its source when linked: one other than the library,
+    /// with an id to play it by.
+    fragment KEEPS_SOURCE = "e.source_type NOT IN ('', 'local') \
+         AND COALESCE(e.track_source_id, '') <> ''";
+    /// The caller's playlist `?2`'s entries with no library file and no
+    /// source they list, each with the indexed library tracks on the albums
+    /// that own its release group, entry by entry in playlist order. An
+    /// entry's tracks come first from the copy a lookup by its group opens,
+    /// then album by album.
     pub(super) LIBRARY_COPY_CANDIDATES = "SELECT e.id AS entry_id, e.track_name AS entry_title, \
          COALESCE(e.disc_number, 1) AS entry_disc, e.track_number AS entry_track, \
          t.id AS track_id, t.title AS track_title, t.disc_number AS track_disc, \
@@ -177,8 +192,7 @@ droppedneedle_kernel::sql! {
          ON t.local_album_id IN (SELECT album_id FROM (" + ENTRY_OWNERS + ")) \
          AND +t.availability = 'indexed' \
          WHERE e.playlist_id = (SELECT p.id FROM catalog_playlists p WHERE p.id = ?2 AND "
-        + OWNED + ") AND e.source_type = '' AND e.library_file_id IS NULL \
-         AND e.album_id IS NOT NULL \
+        + OWNED + ") AND " + UNLINKED + " AND e.album_id IS NOT NULL \
          ORDER BY e.position, t.local_album_id IS NOT ("
         + (copy_of_group!("= lower(e.album_id)"))
         + "), t.local_album_id, t.disc_number, t.track_number, t.id";
@@ -194,21 +208,39 @@ droppedneedle_kernel::sql! {
         track_number: i64,
     }
     /// Point entry `?3` of the caller's playlist `?2`, still without a
-    /// source, at library track `?4` while that track is indexed.
-    pub(super) LINK_LIBRARY_COPY = "UPDATE catalog_playlist_tracks SET track_source_id = ?4, \
-         library_file_id = ?4, source_type = 'local', available_sources = '[\"local\"]' \
-         WHERE id = ?3 AND playlist_id = (SELECT p.id FROM catalog_playlists p \
-         WHERE p.id = ?2 AND " + OWNED + ") AND source_type = '' AND library_file_id IS NULL \
+    /// library file or a source it lists, at library track `?4` while that
+    /// track is indexed. The library becomes its source, unless it keeps
+    /// its own (`KEEPS_SOURCE`): that stays its source and id, listed after
+    /// the library, so the library's copy plays first and the old source
+    /// can still be picked. A recording belongs to the source that gave it,
+    /// so one from a source given up goes with it.
+    pub(super) LINK_LIBRARY_COPY = "UPDATE catalog_playlist_tracks AS e SET library_file_id = ?4, \
+         track_source_id = CASE WHEN " + KEEPS_SOURCE + " THEN e.track_source_id ELSE ?4 END, \
+         available_sources = CASE WHEN " + KEEPS_SOURCE
+        + " THEN json_array('local', e.source_type) ELSE '[\"local\"]' END, \
+         recording_mbid = CASE WHEN e.source_type IN ('', 'local') OR " + KEEPS_SOURCE
+        + " THEN e.recording_mbid END, \
+         source_type = CASE WHEN " + KEEPS_SOURCE + " THEN e.source_type ELSE 'local' END \
+         WHERE e.id = ?3 AND e.playlist_id = (SELECT p.id FROM catalog_playlists p \
+         WHERE p.id = ?2 AND " + OWNED + ") AND " + UNLINKED + " \
          AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.id = ?4 AND +t.availability = 'indexed')";
-    /// Every playlist, with its owner, holding an entry with no source yet
-    /// whose release group an album with an indexed track owns: the ones a
-    /// link pass opens.
-    pub(super) PLAYLISTS_TO_LINK = "SELECT DISTINCT p.user_id AS user_id, p.id AS playlist_id \
+    /// Every playlist, with its owner, holding an entry with no library
+    /// file and no source it lists whose release group an album with an
+    /// indexed track owns: the ones a link pass opens. Entries with no
+    /// source are read through their own index; the few with an unlisted
+    /// source are found by a pass over the rest.
+    pub(super) PLAYLISTS_TO_LINK = "SELECT p.user_id AS user_id, p.id AS playlist_id \
          FROM catalog_playlist_tracks e JOIN catalog_playlists p ON p.id = e.playlist_id \
          WHERE e.source_type = '' AND e.library_file_id IS NULL AND e.album_id IS NOT NULL \
          AND p.user_id IS NOT NULL AND EXISTS (SELECT 1 FROM local_tracks t \
          WHERE t.local_album_id IN (SELECT album_id FROM (" + ENTRY_OWNERS + ")) \
-         AND +t.availability = 'indexed') ORDER BY p.user_id, p.id";
+         AND +t.availability = 'indexed') \
+         UNION SELECT p.user_id, p.id \
+         FROM catalog_playlist_tracks e JOIN catalog_playlists p ON p.id = e.playlist_id \
+         WHERE " + SOURCE_UNLISTED + " AND e.library_file_id IS NULL AND e.album_id IS NOT NULL \
+         AND p.user_id IS NOT NULL AND EXISTS (SELECT 1 FROM local_tracks t \
+         WHERE t.local_album_id IN (SELECT album_id FROM (" + ENTRY_OWNERS + ")) \
+         AND +t.availability = 'indexed') ORDER BY user_id, playlist_id";
     /// A playlist a link pass opens, and its owner.
     pub(super) row PlaylistToLink for [PLAYLISTS_TO_LINK] {
         user_id: String,

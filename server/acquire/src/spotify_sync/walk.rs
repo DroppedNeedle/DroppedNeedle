@@ -371,7 +371,9 @@ impl SpotifySync {
             self.playlists
                 .mark_followed_up(playlist_id, done, now)
                 .await?;
-            if stop {
+            // With MusicBrainz down the rest of the songs wait for the
+            // next pass.
+            if stop || musicbrainz_down {
                 break;
             }
         }

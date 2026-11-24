@@ -16728,7 +16728,7 @@ export interface components {
          * @description Why an import failed, read from the job's code.
          * @enum {string}
          */
-        ImportFailureReason: "not_linked" | "unavailable" | "rate_limited" | "save_failed" | "other";
+        ImportFailureReason: "not_linked" | "unavailable" | "forbidden" | "rate_limited" | "save_failed" | "other";
         /**
          * @description The folder on the server DroppedNeedle imports music from by itself and
          *     empties as it goes. An empty path turns it off.

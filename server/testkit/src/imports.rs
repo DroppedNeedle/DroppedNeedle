@@ -38,6 +38,9 @@ pub const SPOTIFY_REFRESH: &str = "spotify-refresh-token";
 pub const SPOTIFY_USER_ID: &str = "spotify-user-1";
 /// A playlist whose one track arrives without its `id`, a changed answer.
 pub const SPOTIFY_PLAYLIST_NO_TRACK_ID: &str = "sp-playlist-noid";
+/// A collaborative playlist the user follows but has not joined: Spotify
+/// refuses its details and its songs (403).
+pub const SPOTIFY_PLAYLIST_NOT_JOINED: &str = "sp-not-joined";
 /// MBIDs the Lidarr mock serves.
 pub const LIDARR_MBID_ALL: &str = "11111111-1111-1111-1111-111111111111";
 /// Second mock MBID (monitor `none`).
@@ -541,6 +544,9 @@ async fn spotify_playlist(
     if !spotify_authed(&headers) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
+    if id == SPOTIFY_PLAYLIST_NOT_JOINED {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     // The `fields` filter answers only the version, with no id.
     if params
         .get("fields")
@@ -582,6 +588,9 @@ async fn spotify_items(
         .record(|calls| calls.spotify_paths.push(format!("/playlists/{id}/items")));
     if !spotify_authed(&headers) {
         return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if id == SPOTIFY_PLAYLIST_NOT_JOINED {
+        return StatusCode::FORBIDDEN.into_response();
     }
     if let Some((_, tracks)) = state.recorder.playlist(&id) {
         let items: Vec<Value> = tracks
