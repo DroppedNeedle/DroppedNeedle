@@ -96,12 +96,19 @@ jobs:
               - '.github/node-version'
               - '.github/workflows/v3-ci.yml'
 
+  # Two shards that together run what `cargo test --workspace` runs: the two
+  # longest test binaries, then every other test target, the unit tests and
+  # the doc tests.
   test:
-    name: Tests
+    name: Tests (${{ matrix.shard }})
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ['library and server', 'other targets']
     defaults:
       run:
         working-directory: ./server
@@ -113,14 +120,49 @@ jobs:
       - name: Install Rust toolchain
         run: rustup toolchain install
 
+      # The shards share one cache and only one saves it. The other targets
+      # shard saves, because its doc test run builds the kernel's dependencies
+      # a second time, with the kernel's own features, on top of the set both
+      # shards build.
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: server
-          save-if: ${{ github.event_name != 'pull_request' }}
+          shared-key: test
+          save-if: ${{ github.event_name != 'pull_request' && matrix.shard == 'other targets' }}
 
-      - name: Run tests
-        run: cargo test --workspace
+      - name: Run the library and server tests
+        if: matrix.shard == 'library and server'
+        run: cargo test --workspace --test library --test server
+
+      # Every test target but those two, and the libraries with doc tests on,
+      # are read from the manifests, so a new one runs without an edit here.
+      # Cargo refuses --doc beside other target options, and with --workspace
+      # it would also run the libraries that turn doc tests off, so the doc
+      # tests are a run of their own over those packages.
+      - name: Run every other test target
+        if: matrix.shard == 'other targets'
+        shell: bash
+        run: |
+          meta=$(cargo metadata --format-version 1 --no-deps)
+          tests=$(jq -r '.packages[].targets[] | select(.kind == ["test"] and .test) | .name
+                         | select(. != "library" and . != "server") | "--test=" + .' <<< "$meta" \
+            | sort -u)
+          docs=$(jq -r '.packages[] | select(any(.targets[]; any(.kind[]; . == "lib") and .doctest))
+                        | "--package=" + .name' <<< "$meta" \
+            | sort -u)
+          if [ -z "$tests" ]; then
+            echo "::error::The manifests list no test targets besides library and server."
+            exit 1
+          fi
+          if [ -z "$docs" ]; then
+            echo "::error::The manifests list no library with doc tests turned on."
+            exit 1
+          fi
+          mapfile -t others <<< "$tests"
+          mapfile -t doc_packages <<< "$docs"
+          cargo test --workspace --lib --bins "${others[@]}"
+          cargo test "${doc_packages[@]}" --doc
 
   clippy:
     name: Clippy
