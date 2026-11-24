@@ -1,21 +1,28 @@
 name: Dev image
 
+# Builds :dev from a commit on main once CI has passed on it, so a commit CI
+# failed never reaches :dev. CI's path filters decide which pushes run it.
+# The jobs check out and tag the commit CI ran on: on workflow_run,
+# github.sha is main's newest commit, which can be a later one.
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
-    paths:
-      - 'server/**'
-      - 'frontend/**'
-      - 'Dockerfile'
-      - 'entrypoint.sh'
-      - 'rust-toolchain.toml'
-      - '.github/workflows/dev-image.yml'
 
 permissions:
   contents: read
 
+# On workflow_run github.ref is always main, so only runs that will publish
+# share the group, under the same condition as the build job. Any other run
+# gets a group of its own and cannot cancel a build already underway.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: >-
+    ${{ github.workflow }}-${{
+    (github.event.workflow_run.conclusion == 'success'
+    && github.event.workflow_run.event != 'pull_request'
+    && github.event.workflow_run.head_repository.full_name == github.repository)
+    && 'publish' || github.run_id }}
   cancel-in-progress: true
 
 env:
@@ -24,6 +31,12 @@ env:
 jobs:
   build:
     name: Build (${{ matrix.arch }})
+    # Only a passing run of this repository's own main: a pull request's
+    # run can carry a branch named main from a fork.
+    if: >-
+      github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event != 'pull_request'
+      && github.event.workflow_run.head_repository.full_name == github.repository
     strategy:
       matrix:
         include:
@@ -38,6 +51,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -80,6 +95,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
