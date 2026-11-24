@@ -92,3 +92,34 @@ describe('login page going straight to single sign-on', () => {
 		expect(api.calls('POST /api/v3/auth/oidc/authorize')).toHaveLength(0);
 	});
 });
+
+describe('login page after a single sign-on return', () => {
+	it('opens the SSO tab with the reason a single sign-on came back', async () => {
+		testPage.url = new URL('http://localhost/login?local&reason=cancelled');
+		const api = fakeApi({
+			'GET /api/v3/auth/providers': straightToSso,
+			'POST /api/v3/auth/oidc/authorize': refusedStart
+		});
+
+		await renderWithQuery(Login, {});
+
+		await expect
+			.element(page.getByRole('alert'))
+			.toHaveTextContent('Single sign-on was cancelled.');
+		await expect.element(page.getByRole('button', { name: 'Continue with SSO' })).toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: 'SSO', exact: true }))
+			.toHaveAttribute('aria-pressed', 'true');
+		expect(api.calls('POST /api/v3/auth/oidc/authorize')).toHaveLength(0);
+	});
+
+	it('ignores a reason it does not know', async () => {
+		testPage.url = new URL('http://localhost/login?local&reason=constructor');
+		fakeApi({ 'GET /api/v3/auth/providers': straightToSso });
+
+		await renderWithQuery(Login, {});
+
+		await expectMethodsAfterProvidersLoad();
+		await expect.element(page.getByRole('alert')).not.toBeInTheDocument();
+	});
+});

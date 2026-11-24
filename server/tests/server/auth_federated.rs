@@ -320,6 +320,18 @@ async fn land(
     (status, response_headers)
 }
 
+/// A return that did not sign in: a `no-store` 302 to the sign-in page
+/// carrying only its reason, with no cookie set or cleared, so no session.
+fn assert_sent_to_sign_in(status: StatusCode, headers: &HeaderMap, reason: &str) {
+    assert_eq!(status, StatusCode::FOUND);
+    assert_eq!(
+        headers["location"].to_str().expect("ascii"),
+        format!("/login?local&reason={reason}")
+    );
+    assert_eq!(headers["cache-control"], "no-store");
+    assert!(headers.get("set-cookie").is_none(), "{headers:?}");
+}
+
 #[tokio::test]
 async fn oidc_sign_in_verifies_the_id_token_and_creates_the_first_admin() {
     let e2e = E2e::open("oidc").await;
@@ -343,16 +355,17 @@ async fn oidc_sign_in_verifies_the_id_token_and_creates_the_first_admin() {
     })
     .await;
     let mock = mock_slot.lock().expect("slot").clone().expect("mock built");
+    let oidc_at = |issuer: &str| OidcConnection {
+        enabled: true,
+        issuer: issuer.to_owned(),
+        client_id: OIDC_CLIENT.to_owned(),
+        client_secret: Secret::new(OIDC_SECRET),
+        scopes: "openid email profile".to_owned(),
+        redirect_uri: "http://e2e.test/api/v3/auth/oidc/callback".to_owned(),
+        auto_redirect: false,
+    };
     e2e.store
-        .save_secret_blocking(OidcConnection {
-            enabled: true,
-            issuer: issuer.clone(),
-            client_id: OIDC_CLIENT.to_owned(),
-            client_secret: Secret::new(OIDC_SECRET),
-            scopes: "openid email profile".to_owned(),
-            redirect_uri: "http://e2e.test/api/v3/auth/oidc/callback".to_owned(),
-            auto_redirect: false,
-        })
+        .save_secret_blocking(oidc_at(&issuer))
         .expect("oidc settings save");
     assert_eq!(providers(e2e.router()).await["oidc"], true);
     assert_eq!(providers(e2e.router()).await["oidc_auto_redirect"], false);
@@ -374,8 +387,29 @@ async fn oidc_sign_in_verifies_the_id_token_and_creates_the_first_admin() {
         "{sent:?}"
     );
     // A callback in a browser that did not start the login is refused.
-    let (status, _) = land(&app, "/api/v3/auth/oidc/callback", &login, false).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, headers) = land(&app, "/api/v3/auth/oidc/callback", &login, false).await;
+    assert_sent_to_sign_in(status, &headers, "failed");
+    // A provider's refusal is read only to tell a cancel from a failure.
+    let cookie = [("cookie", login.cookie.as_str())];
+    for (error, reason) in [("access_denied", "cancelled"), ("server_error", "failed")] {
+        let (status, _, headers) = call(
+            app.clone(),
+            "GET",
+            &format!(
+                "/api/v3/auth/oidc/callback?{}",
+                form_query(&[
+                    ("code", OIDC_CODE),
+                    ("error", error),
+                    ("error_description", "https://idp.test/oops"),
+                    ("state", &login.state),
+                ])
+            ),
+            &cookie,
+            None,
+        )
+        .await;
+        assert_sent_to_sign_in(status, &headers, reason);
+    }
     let (status, headers) = land(&app, "/api/v3/auth/oidc/callback", &login, true).await;
     assert_eq!(status, StatusCode::FOUND);
     let url = login.url.clone();
@@ -439,14 +473,14 @@ async fn oidc_sign_in_verifies_the_id_token_and_creates_the_first_admin() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
     // A consumed state cannot be replayed.
-    let (status, _) = land(&app, "/api/v3/auth/oidc/callback", &login, true).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, headers) = land(&app, "/api/v3/auth/oidc/callback", &login, true).await;
+    assert_sent_to_sign_in(status, &headers, "failed");
 
     // A token minted for another login's nonce is refused.
     let other = start_oidc(&app, &mock).await;
     *mock.nonce.lock().expect("nonce") = "nonce-from-another-login".to_owned();
-    let (status, _) = land(&app, "/api/v3/auth/oidc/callback", &other, true).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, headers) = land(&app, "/api/v3/auth/oidc/callback", &other, true).await;
+    assert_sent_to_sign_in(status, &headers, "failed");
 
     // From a stated https address the state cookie is marked, so it goes
     // by the `__Secure-` name; the callback clears both names.
@@ -485,6 +519,17 @@ async fn oidc_sign_in_verifies_the_id_token_and_creates_the_first_admin() {
         ),
         "{cleared:?}"
     );
+
+    // Single sign-on switched off mid-login is a try-later, not a server error.
+    let unreachable = start_oidc(&app, &mock).await;
+    e2e.store
+        .save_secret_blocking(OidcConnection {
+            enabled: false,
+            ..oidc_at(&issuer)
+        })
+        .expect("oidc settings save");
+    let (status, headers) = land(&app, "/api/v3/auth/oidc/callback", &unreachable, true).await;
+    assert_sent_to_sign_in(status, &headers, "unavailable");
 }
 
 /// The login page goes straight to single sign-on only when the admin asks
@@ -526,8 +571,8 @@ async fn the_login_page_goes_straight_to_sso_only_when_asked_and_set_up() {
     }
 }
 
-/// A callback the `oidc` row cannot cover answers "try again" before it
-/// spends the login state, so reloading it still finishes the sign-in.
+/// A callback the `oidc` row cannot cover stops before it spends the
+/// login state, so the same return can still finish the sign-in.
 #[tokio::test]
 async fn a_paced_oidc_callback_keeps_its_login_state() {
     use droppedneedle_auth::federated::FederatedError;

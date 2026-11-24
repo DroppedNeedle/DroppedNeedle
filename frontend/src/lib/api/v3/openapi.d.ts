@@ -1245,7 +1245,8 @@ export interface paths {
         /**
          * OIDC callback: consumes the IdP code/state and redirects (relative
          *     Location, same-site hand-off, v2 parity) to the SPA callback carrying the
-         *     one-time exchange code. Always `no-store`.
+         *     one-time exchange code. A return that does not sign in redirects to the
+         *     sign-in page with a reason code. Always `no-store`.
          */
         get: operations["oidc_callback_handler"];
         put?: never;
@@ -29542,11 +29543,13 @@ export interface operations {
     };
     oidc_callback_handler: {
         parameters: {
-            query: {
-                /** @description Authorization code from the IdP */
-                code: string;
-                /** @description State echoed from the authorize step */
-                state: string;
+            query?: {
+                /** @description Authorization code from the IdP. */
+                code?: string;
+                /** @description State echoed from the authorize step. */
+                state?: string;
+                /** @description The provider's error code, when the sign-in did not complete. */
+                error?: string;
             };
             header?: never;
             path?: never;
@@ -29554,23 +29557,14 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Redirect to the SPA callback with the exchange code */
+            /** @description Redirect to the SPA callback with the exchange code or, when sign-in fails, to the sign-in page at `/login?local&reason=<code>`, the code one of: cancelled, failed, unavailable */
             302: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description OIDC authentication failed */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description OIDC provider unavailable */
+            /** @description Server busy */
             503: {
                 headers: {
                     [name: string]: unknown;

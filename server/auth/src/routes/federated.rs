@@ -46,8 +46,6 @@ use crate::federated::settings::SignInSettings;
 
 /// Jellyfin rejection, v2 message verbatim.
 pub const JELLYFIN_INVALID: &str = "Invalid credentials";
-/// OIDC callback rejection, v2 message verbatim.
-pub const OIDC_FAILED: &str = "OIDC authentication failed";
 /// OIDC exchange rejection, v2 message verbatim.
 pub const OIDC_BAD_CODE: &str = "Invalid or expired code";
 /// Plex poll rejection, v2 message verbatim.
@@ -165,21 +163,68 @@ pub async fn oidc_authorize_handler(
     }
 }
 
+/// Why a single sign-on return did not sign the person in. The callback
+/// sends the browser to `{base_path}/login?local&reason=<code>`, and the
+/// sign-in page shows the code's sentence on its SSO tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OidcFailure {
+    /// The person turned the sign-in down at the provider.
+    Cancelled,
+    /// The return could not be checked: no code or state, a state this
+    /// browser did not start, or a token the server refused.
+    Failed,
+    /// The provider could not be reached or is not set up.
+    Unavailable,
+}
+
+impl OidcFailure {
+    /// Every code, in the order the API document lists them.
+    pub const ALL: [Self; 3] = [Self::Cancelled, Self::Failed, Self::Unavailable];
+
+    /// The `reason` value in the sign-in page address.
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Cancelled => "cancelled",
+            Self::Failed => "failed",
+            Self::Unavailable => "unavailable",
+        }
+    }
+
+    /// The code for a provider's `error` parameter, which is read only to
+    /// choose between these two and never echoed.
+    fn from_provider_error(error: Option<&str>) -> Self {
+        match error {
+            Some("access_denied") => Self::Cancelled,
+            _ => Self::Failed,
+        }
+    }
+}
+
+/// The callback's 302, with the failure codes from [`OidcFailure`].
+fn oidc_callback_redirect_description() -> String {
+    let codes: Vec<&str> = OidcFailure::ALL
+        .iter()
+        .map(|failure| failure.code())
+        .collect();
+    format!(
+        "Redirect to the SPA callback with the exchange code or, when sign-in fails, \
+         to the sign-in page at `/login?local&reason=<code>`, the code one of: {}",
+        codes.join(", ")
+    )
+}
+
 /// OIDC callback: consumes the IdP code/state and redirects (relative
 /// Location, same-site hand-off, v2 parity) to the SPA callback carrying the
-/// one-time exchange code. Always `no-store`.
+/// one-time exchange code. A return that does not sign in redirects to the
+/// sign-in page with a reason code. Always `no-store`.
 #[utoipa::path(
     get,
     tag = "auth",
     path = "/api/v3/auth/oidc/callback",
-    params(
-        ("code" = String, Query, description = "Authorization code from the IdP"),
-        ("state" = String, Query, description = "State echoed from the authorize step")
-    ),
+    params(OidcCallbackQuery),
     responses(
-        (status = 302, description = "Redirect to the SPA callback with the exchange code"),
-        (status = 401, description = "OIDC authentication failed"),
-        (status = 503, description = "OIDC provider unavailable")
+        (status = 302, description = oidc_callback_redirect_description()),
+        (status = 503, description = "Server busy")
     )
 )]
 pub async fn oidc_callback_handler(
@@ -187,42 +232,71 @@ pub async fn oidc_callback_handler(
     headers: HeaderMap,
     ValidQuery(query): ValidQuery<OidcCallbackQuery>,
 ) -> Result<Response, ApiError> {
+    let (Some(code), Some(login_state), None) = (&query.code, &query.state, &query.error) else {
+        tracing::debug!(provider_error = ?query.error, "oidc callback without a code");
+        let failure = OidcFailure::from_provider_error(query.error.as_deref());
+        return oidc_failure_redirect(&state.base_path, failure);
+    };
     // The callback must land in the browser that started this login.
     let bound = cookies::OIDC_STATE_COOKIE
         .read(&headers)
-        .is_some_and(|cookie| secret_eq(&cookie, &hash_token(&query.state)));
+        .is_some_and(|cookie| secret_eq(&cookie, &hash_token(login_state)));
     if !bound {
         tracing::debug!("oidc callback without the matching state cookie");
-        return Err(AuthRouteError::auth_failed(OIDC_FAILED).into());
+        return oidc_failure_redirect(&state.base_path, OidcFailure::Failed);
     }
     let config = state.config.oidc_config();
     let user_agent = user_agent_of(&headers);
     match state
         .login
-        .handle_callback(&config, &query.code, &query.state, user_agent.as_deref())
+        .handle_callback(&config, code, login_state, user_agent.as_deref())
         .await
     {
         Ok(exchange_code) => {
-            let location = format!("{}/auth/callback?code={exchange_code}", state.base_path);
-            let value = HeaderValue::from_str(&location).map_err(|_| {
-                AuthRouteError::internal(&"callback redirect is not a header value")
-            })?;
-            let mut response = StatusCode::FOUND.into_response();
-            let response_headers = response.headers_mut();
-            response_headers.insert(axum::http::header::LOCATION, value);
+            let mut response = redirect_found(&format!(
+                "{}/auth/callback?code={exchange_code}",
+                state.base_path
+            ))?;
             for value in cookies::OIDC_STATE_COOKIE.clear(&oidc_state_cookie_path(&state.base_path))
             {
-                cookies::push_set_cookie(response_headers, &value);
+                cookies::push_set_cookie(response.headers_mut(), &value);
             }
-            insert_no_store(response_headers);
             Ok(response)
         }
         Err(FederatedError::Authentication(cause)) => {
             tracing::debug!(%cause, "oidc callback rejected");
-            Err(AuthRouteError::auth_failed(OIDC_FAILED).into())
+            oidc_failure_redirect(&state.base_path, OidcFailure::Failed)
+        }
+        Err(
+            error @ (FederatedError::ProviderUnavailable(_)
+            | FederatedError::NotConfigured(_)
+            | FederatedError::Paced { .. }),
+        ) => {
+            tracing::warn!(%error, "oidc callback could not finish at the provider");
+            oidc_failure_redirect(&state.base_path, OidcFailure::Unavailable)
         }
         Err(error) => Err(federated_unavailable(&error).into()),
     }
+}
+
+/// The 302 to the sign-in page for a return that did not sign in. `local`
+/// keeps "go straight to single sign-on" from starting it again.
+fn oidc_failure_redirect(base_path: &str, failure: OidcFailure) -> Result<Response, ApiError> {
+    redirect_found(&format!(
+        "{base_path}/login?local&reason={}",
+        failure.code()
+    ))
+}
+
+/// A `no-store` 302 to `location`.
+fn redirect_found(location: &str) -> Result<Response, ApiError> {
+    let value = HeaderValue::from_str(location)
+        .map_err(|_| AuthRouteError::internal(&"callback redirect is not a header value"))?;
+    let mut response = StatusCode::FOUND.into_response();
+    let headers = response.headers_mut();
+    headers.insert(axum::http::header::LOCATION, value);
+    insert_no_store(headers);
+    Ok(response)
 }
 
 /// OIDC exchange: swaps the one-time callback code for a session. Cookie

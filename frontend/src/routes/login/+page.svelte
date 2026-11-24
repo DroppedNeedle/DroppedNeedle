@@ -45,12 +45,25 @@
 	const providersQuery = getAuthProvidersQuery();
 	const providers = $derived(providersQuery.data ?? DEFAULT_PROVIDERS);
 
-	let activeTab = $state<Tab>('local');
+	// The server sends a single sign-on return that did not sign in back here
+	// with `?reason=<code>`; Continue with SSO is the retry.
+	const SSO_RETURN_MESSAGES = new Map([
+		['cancelled', 'Single sign-on was cancelled.'],
+		['failed', 'Single sign-on failed. Try again.'],
+		['unavailable', 'Single sign-on is unavailable. Try again later.']
+	]);
+	const ssoReturnMessage = SSO_RETURN_MESSAGES.get(page.url.searchParams.get('reason') ?? '');
+
+	let activeTab = $state<Tab>(ssoReturnMessage ? 'oidc' : 'local');
 	// auto-select a tab once providers load, but never override a user's choice
 	let tabInitialised = false;
 	$effect(() => {
 		if (tabInitialised || !providersQuery.isSuccess) return;
 		tabInitialised = true;
+		if (ssoReturnMessage) {
+			if (providers.oidc) return;
+			activeTab = 'local';
+		}
 		if (!providers.local && providers.plex) activeTab = 'plex';
 		else if (!providers.local && providers.jellyfin) activeTab = 'jellyfin';
 		else if (!providers.local && providers.oidc) activeTab = 'oidc';
@@ -75,7 +88,7 @@
 	const plexPin = createPlexStartMutation();
 
 	let oidcLoading = $state(false);
-	let oidcError = $state<string | null>(null);
+	let oidcError = $state<string | null>(ssoReturnMessage ?? null);
 	const oidcAuthorize = createOidcAuthorizeMutation();
 
 	onDestroy(() => {

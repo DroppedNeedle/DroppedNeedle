@@ -3763,14 +3763,14 @@
         "tags": [
           "auth"
         ],
-        "summary": "OIDC callback: consumes the IdP code/state and redirects (relative\nLocation, same-site hand-off, v2 parity) to the SPA callback carrying the\none-time exchange code. Always `no-store`.",
+        "summary": "OIDC callback: consumes the IdP code/state and redirects (relative\nLocation, same-site hand-off, v2 parity) to the SPA callback carrying the\none-time exchange code. A return that does not sign in redirects to the\nsign-in page with a reason code. Always `no-store`.",
         "operationId": "oidc_callback_handler",
         "parameters": [
           {
             "name": "code",
             "in": "query",
-            "description": "Authorization code from the IdP",
-            "required": true,
+            "description": "Authorization code from the IdP.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -3778,8 +3778,17 @@
           {
             "name": "state",
             "in": "query",
-            "description": "State echoed from the authorize step",
-            "required": true,
+            "description": "State echoed from the authorize step.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "description": "The provider's error code, when the sign-in did not complete.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -3787,20 +3796,10 @@
         ],
         "responses": {
           "302": {
-            "description": "Redirect to the SPA callback with the exchange code"
-          },
-          "401": {
-            "description": "OIDC authentication failed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "Redirect to the SPA callback with the exchange code or, when sign-in fails, to the sign-in page at `/login?local&reason=<code>`, the code one of: cancelled, failed, unavailable"
           },
           "503": {
-            "description": "OIDC provider unavailable",
+            "description": "Server busy",
             "content": {
               "application/json": {
                 "schema": {

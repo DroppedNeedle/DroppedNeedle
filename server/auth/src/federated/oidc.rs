@@ -285,8 +285,8 @@ impl OidcLogin {
         state: &str,
         user_agent: Option<&str>,
     ) -> Result<String, FederatedError> {
-        // A paced callback answers "try again" before it spends the state,
-        // so reloading the callback still finishes this login.
+        // A paced callback stops before it spends the state: the browser
+        // goes back to the sign-in page and the login can be started again.
         self.idp.room_for_callback()?;
         let verifier = self.states.consume_state(state).await?.ok_or_else(|| {
             FederatedError::Authentication("Invalid or expired OIDC state".to_owned())

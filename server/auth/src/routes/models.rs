@@ -9,7 +9,7 @@ use crate::federated::users::StoredUser;
 use crate::session::login::TransportParam;
 use crate::users::roles::Role;
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 
 /// Credential handoff for session-issuing routes. Mirrors the session login
 /// `TransportParam` (which owns the mechanism) so this layer stays the only
@@ -119,13 +119,17 @@ pub struct JellyfinLoginBody {
     pub transport: TransportDto,
 }
 
-/// OIDC callback query (IdP redirect target).
-#[derive(Debug, Clone, Deserialize)]
+/// OIDC callback query (IdP redirect target). All optional: a provider
+/// that turns the sign-in down sends `error` and no `code`.
+#[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct OidcCallbackQuery {
     /// Authorization code from the IdP.
-    pub code: String,
+    pub code: Option<String>,
     /// State echoed from the authorize step.
-    pub state: String,
+    pub state: Option<String>,
+    /// The provider's error code, when the sign-in did not complete.
+    pub error: Option<String>,
 }
 
 /// OIDC authorize answer: the browser URL for this login.
