@@ -162,6 +162,14 @@ Run from the repo root. `make help` lists every target.
 - The app connect token step (`POST /api/v3/auth/app-connect/token`) is
   OAuth 2.0 (RFC 6749): a form body read by its own parser and the RFC's
   `{"error"}` shape at 400; its 5xx still go through the boundary.
+- A route an outside service sends the browser back to (the single
+  sign-on, Spotify and MusicBrainz callbacks) answers what its handler
+  decides with a redirect into the web UI, never a JSON body. The address
+  is the base path plus fixed text: a failure carries only a fixed code the
+  page turns into a sentence, never a value from the request or the outside
+  answer. The single sign-on callback's redirects are `no-store`, its codes
+  are `OidcFailure`, and its busy and internal faults still go to the
+  boundary.
 - A paged list answers the kernel's `Page<T>` (`server/kernel/src/page.rs`):
   an opaque cursor read through `PageRequest` (one that does not decode
   is a 400), a limit clamped to the list's maximum, `next_cursor` null on
