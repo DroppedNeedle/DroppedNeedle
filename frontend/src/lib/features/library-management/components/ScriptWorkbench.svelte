@@ -18,6 +18,7 @@
 	} from '$lib/features/library-management/queries/types';
 	import Button from '$lib/ui/Button.svelte';
 	import TextAreaField from '$lib/ui/TextAreaField.svelte';
+	import { docsUrl } from '$lib/ui/docsUrl';
 	import { outsideLink } from '$lib/ui/outsideLink';
 
 	import {
@@ -41,8 +42,6 @@
 
 	let { kind, label, value = $bindable(''), help, error, rows = 2, oninput }: Props = $props();
 
-	const REFERENCE =
-		'https://github.com/DroppedNeedle/DroppedNeedle/blob/main/docs/library-management.md';
 	const SAMPLES: { id: ExampleAlbum; label: string }[] = [
 		{ id: 'one_disc', label: 'One disc' },
 		{ id: 'two_discs', label: 'Two discs' },
@@ -55,7 +54,7 @@
 
 	const tagging = $derived(kind === 'tagging');
 	const groups = $derived(tagging ? TAGGING_BLOCKS : NAMING_BLOCKS);
-	const anchor = $derived(tagging ? '#tagging-scripts' : '#naming-and-tagging-scripts');
+	const anchor = $derived(tagging ? 'tagging-scripts' : 'naming-and-tagging-scripts');
 
 	let element = $state<HTMLTextAreaElement | null>(null);
 	let sample = $state<ExampleAlbum>('one_disc');
@@ -205,7 +204,7 @@
 		{#snippet aside()}
 			<a
 				class="link text-sm"
-				href={outsideLink(`${REFERENCE}${anchor}`)}
+				href={outsideLink(docsUrl('library-management', anchor))}
 				target="_blank"
 				rel="noopener noreferrer">Script reference</a
 			>

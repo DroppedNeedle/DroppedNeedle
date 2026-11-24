@@ -1011,6 +1011,9 @@ Run from the repo root. `make help` lists every target.
   renders as text. Markup goes only through `SafeHtml`; eslint rejects a raw
   `{@html}`. A link to an outside address goes through `outsideLink`, which
   passes only http and https.
+- A link from the web UI to a guide is built by `docsUrl`
+  (`lib/ui/docsUrl.ts`), which points at `https://droppedneedle.com/docs/`,
+  and is bound through `outsideLink`: the server serves no docs.
 
 ## Testing (brief-first, minimal, fast)
 

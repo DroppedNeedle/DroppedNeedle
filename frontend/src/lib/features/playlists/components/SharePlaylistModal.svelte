@@ -37,7 +37,11 @@
 	type Person = { id: string; display_name: string };
 	type Member = Person & { can_edit: boolean };
 	const audiences: { value: Audience; label: string; description: string }[] = [
-		{ value: 'private', label: 'Only me', description: 'No one else sees it.' },
+		{
+			value: 'private',
+			label: 'Only me',
+			description: 'Others see it locked, with only your name and track count.'
+		},
 		{ value: 'people', label: 'Specific people', description: 'Only the people you add.' },
 		{ value: 'everyone', label: 'Everyone', description: 'Every user of this server.' }
 	];

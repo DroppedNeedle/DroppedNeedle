@@ -214,8 +214,8 @@
 			return `"${title}" leaves the library. Its files stay on disk, and you can put it back from Excluded.`;
 		}
 		return review.manual_identity
-			? `"${title}" has an edition someone picked by hand. Its pick and MusicBrainz match come off; it keeps its own tags. Undo from the album page.`
-			: `"${title}" loses its MusicBrainz match and keeps its own tags. Undo from the album page.`;
+			? `"${title}" has an edition someone picked by hand. Its pick and MusicBrainz match come off; it keeps its own tags. Undo last change in the album's edition sheet puts it back.`
+			: `"${title}" loses its MusicBrainz match and keeps its own tags. Undo last change in the album's edition sheet puts it back.`;
 	}
 
 	async function choose(review: LibraryReview, candidateKey: string): Promise<void> {
@@ -651,7 +651,7 @@
 		<p class="text-sm">
 			This changes <strong>{plan.eligible}</strong> of {plural(plan.matched, 'review')}.
 			{#if bulkSelection?.action === 'accept'}Each album gets its best-scoring edition, chosen so
-				automatic matching leaves it alone. Undo each from its album page.{/if}
+				automatic matching leaves it alone. Undo each with Undo last change in its edition sheet.{/if}
 			{#if bulkSelection?.action === 'exclude'}Their files stay on disk and can be put back from
 				Excluded.{/if}
 		</p>

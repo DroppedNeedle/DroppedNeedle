@@ -268,10 +268,11 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		return m;
 	});
 	// tracks this album downloaded but couldn't auto-verify (held for "import anyway"),
-	// keyed both ways so a track row can find its held candidate the same way owned files match
+	// keyed both ways so a track row can find its held candidate the same way owned files match;
+	// asked whether or not a download source is on, as held files outlast one
 	const heldQuery = getHeldEntriesQuery(
 		() => ({ releaseGroupMbid: albumIdGetter() }),
-		() => downloadClientConfigured && !!albumIdGetter()
+		() => !!albumIdGetter()
 	);
 	const heldFiles = $derived(
 		(heldQuery.data?.entries ?? []).flatMap((entry) =>

@@ -221,7 +221,7 @@
 									class="w-32"
 									bind:value={draft.poll_time}
 								/>
-								<span class="text-sm text-muted">server time</span>
+								<span class="text-sm text-muted">UTC</span>
 							</div>
 						{/snippet}
 					</Field>

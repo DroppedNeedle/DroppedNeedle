@@ -9,7 +9,6 @@
 		createBatchCancelRequestsMutation,
 		createCancelRequestMutation
 	} from '$lib/features/requests/queries/RequestMutations.svelte';
-	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import RequestsAlert from './RequestsAlert.svelte';
 	import RequestsEmpty from './RequestsEmpty.svelte';
@@ -139,9 +138,7 @@
 							selectable
 							selected={selectedKeys.has(itemRequestKey(item))}
 							onselect={handleSelect}
-							oncancel={authStore.isAdmin || item.user_id === authStore.user?.id
-								? handleCancel
-								: undefined}
+							oncancel={handleCancel}
 						/>
 					</div>
 				{/each}

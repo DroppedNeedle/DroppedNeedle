@@ -46,7 +46,7 @@ const ACTION_TOAST: Record<ReviewAction, string> = {
 
 // Said after the toast's sentence, for an action undone elsewhere.
 const ACTION_HINT: Partial<Record<ReviewAction, string>> = {
-	detach: ' Undo it from the album page.'
+	detach: " Undo last change in the album's edition sheet puts it back."
 };
 
 /** One review action, decided on the review's `row_revision` as it was read. */

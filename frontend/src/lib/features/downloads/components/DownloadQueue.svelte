@@ -8,10 +8,7 @@
 		createStopAllRetriesMutation
 	} from '$lib/features/downloads/queries/DownloadMutations.svelte';
 	import { getDownloadsQuery } from '$lib/features/downloads/queries/DownloadQueries.svelte';
-	import {
-		getHeldEntriesQuery,
-		createRecheckAllHeldMutation
-	} from '$lib/features/downloads/queries/HeldQueries.svelte';
+	import { getHeldEntriesQuery } from '$lib/features/downloads/queries/HeldQueries.svelte';
 	import {
 		createClearQuarantineMutation,
 		getQuarantineQuery
@@ -27,7 +24,7 @@
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 
 	import DownloadItem from './DownloadItem.svelte';
-	import HeldEntryCard from './HeldEntryCard.svelte';
+	import HeldSection from './HeldSection.svelte';
 	import NowPressingHero from './NowPressingHero.svelte';
 	import QuarantinePanel from './QuarantinePanel.svelte';
 	import QueueSectionHead from './QueueSectionHead.svelte';
@@ -61,16 +58,10 @@
 				?.source_task_id ?? null
 		);
 	}
-	const recheckEntryIds = $derived(
-		held
-			.filter((entry) => entry.files.some((file) => file.actions.includes('recheck')))
-			.map((entry) => entry.id)
-	);
 
 	const clear = createClearFinishedMutation();
 	const stopAll = createStopAllRetriesMutation();
 	const retryAll = createRetryAllFailedMutation();
-	const recheckAll = createRecheckAllHeldMutation();
 	const clearQuarantine = createClearQuarantineMutation();
 
 	// collapse auto-retry chains so each album is one row (latest attempt), then group into
@@ -212,29 +203,7 @@
 
 		<!-- HELD: files waiting for a decision -->
 		{#if held.length > 0}
-			<section>
-				<QueueSectionHead title="To decide" aside="files kept" count={held.length}>
-					{#snippet actions()}
-						{#if recheckEntryIds.length > 0}
-							<Button
-								variant="outline"
-								size="sm"
-								icon={RotateCcw}
-								loading={recheckAll.isPending}
-								onclick={() => recheckAll.mutate(recheckEntryIds)}
-								title="Ask AcoustID again. Files it now confirms are imported"
-							>
-								{recheckAll.isPending ? 'Checking...' : 'Re-check all'}
-							</Button>
-						{/if}
-					{/snippet}
-				</QueueSectionHead>
-				<div class="space-y-3">
-					{#each held as entry (entry.id)}
-						<HeldEntryCard {entry} retryTaskId={verdictTaskOf(entry)} />
-					{/each}
-				</div>
-			</section>
+			<HeldSection entries={held} retryTaskOf={verdictTaskOf} />
 		{/if}
 
 		<!-- CUEING UP -->

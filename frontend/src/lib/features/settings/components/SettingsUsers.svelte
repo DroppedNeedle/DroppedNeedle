@@ -425,8 +425,8 @@
 						<SelectField label="Role" options={roleOptions} bind:value={newRole} />
 						{#if !passwordLogin}
 							<p class="sm:col-span-2 text-sm text-muted">
-								Password sign-in is off. This account signs in through SSO, Plex or Jellyfin with
-								the same email.
+								Password sign-in is off. Only single sign-on with a verified email joins this
+								account; Plex and Jellyfin make their own.
 							</p>
 						{/if}
 						{#if createError}

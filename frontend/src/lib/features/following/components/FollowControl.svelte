@@ -10,11 +10,13 @@
 
 	interface Props {
 		artistMbid: string;
+		/** The artist's name, kept with a new follow. */
+		artistName: string;
 		/** The Follow button's size, to match the buttons beside it. */
 		size?: ButtonSize;
 	}
 
-	let { artistMbid, size = 'sm' }: Props = $props();
+	let { artistMbid, artistName, size = 'sm' }: Props = $props();
 
 	const NOT_FOLLOWING: FollowStatus = {
 		followed: false,
@@ -23,7 +25,10 @@
 	};
 
 	const statusQuery = getFollowStatusQuery(() => artistMbid);
-	const followMutation = createSetFollowMutation(() => artistMbid);
+	const followMutation = createSetFollowMutation(
+		() => artistMbid,
+		() => artistName
+	);
 	const autoDownloadMutation = createSetAutoDownloadMutation(() => artistMbid);
 
 	const status = $derived(statusQuery.data ?? NOT_FOLLOWING);

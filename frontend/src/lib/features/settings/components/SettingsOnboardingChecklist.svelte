@@ -10,13 +10,9 @@
 		getNzbgetConfigQuery,
 		getSabnzbdConfigQuery
 	} from '$lib/features/downloads/queries/DownloadClientsQueries.svelte';
-	import {
-		getIndexersQuery,
-		getSearchBackendQuery
-	} from '$lib/features/downloads/queries/IndexerQueries.svelte';
-	import { getProwlarrConfigQuery } from '$lib/features/downloads/queries/ProwlarrQueries.svelte';
 	import { getLibraryRunHistoryQuery } from '$lib/features/library-management/queries/LibraryOperationQueries.svelte';
 	import { getTargetLibrarySettingsQuery } from '$lib/features/library-management/queries/LibraryPolicyQueries.svelte';
+	import { getUsenetIndexerState } from '$lib/features/settings/queries/usenetIndexer.svelte';
 	import Card from '$lib/ui/Card.svelte';
 
 	const libQuery = getTargetLibrarySettingsQuery();
@@ -26,9 +22,7 @@
 	const sabQuery = getSabnzbdConfigQuery();
 	const nzbgetQuery = getNzbgetConfigQuery();
 	const deemixQuery = getDeemixConfigQuery();
-	const indexersQuery = getIndexersQuery();
-	const backendQuery = getSearchBackendQuery();
-	const prowlarrQuery = getProwlarrConfigQuery();
+	const indexer = getUsenetIndexerState();
 
 	const hasLibraryPath = $derived((libQuery.data?.library_roots.length ?? 0) > 0);
 	const slskdConfigured = $derived(Boolean(dcQuery.data?.url && dcQuery.data?.api_key));
@@ -40,15 +34,9 @@
 		deemixQuery.data?.enabled === true && Boolean(deemixQuery.data?.url)
 	);
 	const usenetClient = $derived(sabnzbdEnabled ? 'SABnzbd' : nzbgetEnabled ? 'NZBGet' : null);
-	// Either/or backends, backend-aware like is_usenet_ready: the SELECTED side is
-	// what counts, so a Prowlarr-only install with backend=indexers still shows the
-	// item (readiness is genuinely false there). Presence-loose like the pre-existing
-	// rows check (enabled flags and masked-vs-real keys are backend-side concerns).
-	const hasIndexer = $derived(
-		backendQuery.data?.backend === 'prowlarr'
-			? Boolean(prowlarrQuery.data?.url && prowlarrQuery.data?.api_key)
-			: (indexersQuery.data?.length ?? 0) > 0
-	);
+	// The selected backend counts, as in is_usenet_ready: a Prowlarr-only install
+	// with backend=indexers still shows the item (readiness is false there).
+	const hasIndexer = $derived(indexer.hasIndexer);
 	const mountOk = $derived(statusQuery.data?.mount?.ok === true);
 	const hasAcoustid = $derived(Boolean(libQuery.data?.acoustid_api_key));
 	// Done once ANY scan run has terminalized (completed, cancelled,

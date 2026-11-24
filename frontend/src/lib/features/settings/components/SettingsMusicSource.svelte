@@ -26,12 +26,12 @@
 			.then(() => true)
 			.catch(() => false);
 		if (ok) {
-			message = 'Default music source updated';
+			message = 'Primary source saved';
 			setTimeout(() => {
 				message = '';
 			}, 5000);
 		} else {
-			message = "Couldn't save the default music source.";
+			message = "Couldn't save your primary source.";
 		}
 		saving = false;
 	}
@@ -40,12 +40,12 @@
 <div class="space-y-5">
 	<SettingsPaneHeader
 		title="Primary Music Source"
-		description="Choose which listening service powers your Home and Discover by default. You can also set this from your profile, and switch it on each page."
+		description="Your own source for Home and Discover, not a server default. The same setting as on your profile."
 	/>
 	<Card variant="bordered">
 		<div class="max-w-xs">
 			<SelectField
-				label="Default source for your discovery data"
+				label="Your primary source"
 				bind:value={() => currentSource, (next) => void handleChange(next)}
 				options={[
 					{ value: 'listenbrainz', label: 'ListenBrainz' },

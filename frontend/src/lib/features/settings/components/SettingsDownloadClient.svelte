@@ -16,6 +16,8 @@
 	import SaveBar from '$lib/ui/SaveBar.svelte';
 	import SecretField from '$lib/ui/SecretField.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
+	import { docsUrl } from '$lib/ui/docsUrl';
+	import { outsideLink } from '$lib/ui/outsideLink';
 	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
 
@@ -278,7 +280,13 @@
 									<p class="mt-1 text-muted">
 										Expose slskd's completed-downloads directory to DroppedNeedle
 										<strong>read-write</strong>. For fast moves, keep it and the library inside one
-										common-parent container mount. See the slskd setup section in the README.
+										common-parent container mount. See
+										<a
+											class="link"
+											href={outsideLink(docsUrl('connect-slskd'))}
+											target="_blank"
+											rel="noopener noreferrer">Connect slskd</a
+										>.
 									</p>
 								</details>
 							</div>

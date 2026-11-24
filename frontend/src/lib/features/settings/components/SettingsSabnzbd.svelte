@@ -7,7 +7,7 @@
 		createSaveSabnzbdConfigMutation,
 		createTestSabnzbdMutation
 	} from '$lib/features/downloads/queries/DownloadClientsQueries.svelte';
-	import { getIndexersQuery } from '$lib/features/downloads/queries/IndexerQueries.svelte';
+	import { getUsenetIndexerState } from '$lib/features/settings/queries/usenetIndexer.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import type {
 		SabnzbdConnectionSettings,
@@ -27,11 +27,10 @@
 	import DownloadClientCard from './DownloadClientCard.svelte';
 
 	const statusQuery = getSabnzbdStatusQuery();
-	const indexersQuery = getIndexersQuery();
+	const indexer = getUsenetIndexerState();
 	const test = createTestSabnzbdMutation();
 
 	// SABnzbd only downloads what an indexer finds - a Usenet source with no indexer is inert.
-	const hasIndexer = $derived((indexersQuery.data?.length ?? 0) > 0);
 
 	let testResult = $state<UsenetClientTestResult | null>(null);
 
@@ -104,7 +103,7 @@
 			onToggle={() => void onToggle(draft)}
 			enableAriaLabel="Enable SABnzbd download client"
 		>
-			{#if draft.enabled && !indexersQuery.isLoading && !hasIndexer}
+			{#if draft.enabled && !indexer.loading && !indexer.hasIndexer}
 				<div class="alert alert-warning items-start text-sm">
 					<TriangleAlert class="size-5 shrink-0" aria-hidden="true" />
 					<div class="space-y-1">

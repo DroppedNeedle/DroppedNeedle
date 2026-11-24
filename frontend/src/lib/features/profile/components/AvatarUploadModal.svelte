@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { ImagePlus } from 'lucide-svelte';
 	import { getApiUrl } from '$lib/api/api-utils';
+	import { ApiError } from '$lib/api/errors';
 	import { createUploadAvatarMutation } from '$lib/features/profile/queries/profile.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -18,9 +19,14 @@
 	let avatarFile: File | null = $state(null);
 	let draggingOver = $state(false);
 	let fileInput: HTMLInputElement | undefined = $state();
+	let avatarError: string | null = $state(null);
 
 	function handleAvatarFile(file: File) {
-		if (!file.type.startsWith('image/')) return;
+		if (!file.type.startsWith('image/')) {
+			avatarError = 'That file is not an image.';
+			return;
+		}
+		avatarError = null;
 		avatarFile = file;
 		if (avatarPreview) URL.revokeObjectURL(avatarPreview);
 		avatarPreview = URL.createObjectURL(file);
@@ -46,17 +52,19 @@
 
 	async function uploadAvatar() {
 		if (!avatarFile) return;
+		avatarError = null;
 		try {
 			await avatarMutation.mutateAsync(avatarFile);
 			close();
-		} catch {
-			// keep the dialog open to retry; failure shows via disabled/loading state
+		} catch (e) {
+			avatarError = e instanceof ApiError ? e.message : 'Could not reach the server';
 		}
 	}
 
 	function close() {
 		open = false;
 		avatarFile = null;
+		avatarError = null;
 		if (avatarPreview) {
 			URL.revokeObjectURL(avatarPreview);
 			avatarPreview = null;
@@ -95,6 +103,9 @@
 			<span class="text-xs text-muted">JPEG, PNG, WebP, or GIF, max 5 MB</span>
 		{/if}
 	</button>
+	{#if avatarError}
+		<p class="mt-3 text-sm text-error" role="alert">{avatarError}</p>
+	{/if}
 
 	{#snippet actions()}
 		<Button variant="ghost" size="sm" onclick={close}>Cancel</Button>

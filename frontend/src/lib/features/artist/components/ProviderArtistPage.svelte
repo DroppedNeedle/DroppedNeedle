@@ -627,7 +627,7 @@
 					>
 				{/if}
 				<div class="dn-artist-follow">
-					<FollowControl artistMbid={artist.musicbrainz_id} size="md" />
+					<FollowControl artistMbid={artist.musicbrainz_id} artistName={artist.name} size="md" />
 				</div>
 				{#if localArtist}
 					<FavoriteHeart

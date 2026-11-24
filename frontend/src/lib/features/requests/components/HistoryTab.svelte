@@ -165,9 +165,7 @@
 						['failed', 'incomplete', 'cancelled'].includes(item.status)
 							? wantedStates.get(item.musicbrainz_id.toLowerCase())
 							: undefined}
-						onretry={authStore.isAdmin || item.user_id === authStore.user?.id
-							? handleRetry
-							: undefined}
+						onretry={handleRetry}
 						onclear={handleClear}
 						onremoved={handleRemoved}
 					/>

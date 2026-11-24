@@ -1,8 +1,15 @@
+import { docsUrl } from '$lib/ui/docsUrl';
 import type { MusicBrainzSourceMode } from '$lib/features/settings/queries/musicbrainz/types';
 
 export type { MusicBrainzSourceMode } from '$lib/features/settings/queries/musicbrainz/types';
 
-export const MUSICBRAINZ_GUIDE_HREF = '/docs/musicbrainz-mirror-selfhosting.md';
+/** The guide for a source: running your own mirror, or choosing one. */
+export function musicBrainzGuideHref(mode: MusicBrainzSourceMode): string {
+	return docsUrl(
+		mode === 'mirror' ? 'musicbrainz-mirror-selfhosting' : 'choose-a-musicbrainz-source'
+	);
+}
+
 export const BRAINZMASH_ENDPOINT_URL = 'https://api.brainzmash.cc/ws/2';
 export const BRAINZMASH_SUPPORTED_ROUTE_FAMILIES = [
 	'artist',

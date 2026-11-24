@@ -3,6 +3,8 @@
 	import { fromStore } from 'svelte/store';
 	import { PersistedState } from 'runed';
 	import { CircleArrowUp, X } from 'lucide-svelte';
+	import { authStore } from '$lib/stores/authStore.svelte';
+	import { outsideLink } from '$lib/ui/outsideLink';
 	import { withBasePath } from '$lib/utils/basePath';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
@@ -10,8 +12,10 @@
 	interface Props {
 		updateAvailable: boolean;
 		latestVersion: string | null;
+		/** The release's GitHub page, where non-admins read the details. */
+		releaseUrl: string | null;
 	}
-	let { updateAvailable, latestVersion }: Props = $props();
+	let { updateAvailable, latestVersion, releaseUrl }: Props = $props();
 
 	const status = fromStore(serviceStatusStore);
 
@@ -26,6 +30,9 @@
 	const showBanner = $derived(
 		updateAvailable && latestVersion !== null && dismissedVersion.current !== latestVersion
 	);
+
+	// Non-admins open the release page; the About tab is admin only.
+	const releaseLink = $derived(outsideLink(releaseUrl));
 
 	function dismiss() {
 		dismissedVersion.current = latestVersion;
@@ -48,7 +55,17 @@
 					<span class="font-semibold">({latestVersion})</span>
 				{/if}
 			</span>
-			<Button variant="info" size="xs" href={withBasePath('/settings?tab=about')}>Details</Button>
+			{#if authStore.isAdmin}
+				<Button variant="info" size="xs" href={withBasePath('/settings?tab=about')}>Details</Button>
+			{:else if releaseLink}
+				<Button
+					variant="info"
+					size="xs"
+					href={releaseLink}
+					target="_blank"
+					rel="noopener noreferrer">Details</Button
+				>
+			{/if}
 			<IconButton size="sm" icon={X} label="Dismiss update notification" onclick={dismiss} />
 		</div>
 	</div>

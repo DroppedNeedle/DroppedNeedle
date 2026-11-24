@@ -255,9 +255,15 @@ export const createClearHistoryMutation = () =>
 			),
 		onMutate: () => ({ userId: authStore.user?.id }),
 		effects: (_data, _vars, context) => (sameUser(context.userId) ? requestSurface([], false) : []),
-		onSuccess: (_data, _vars, context) => {
+		// A refused clear (a status that may not be cleared) answers 200 with
+		// success false.
+		onSuccess: (data, _vars, context) => {
 			if (!sameUser(context.userId)) return;
-			toastStore.show({ message: 'Removed from history', type: 'info' });
+			toastStore.show(
+				data.success
+					? { message: 'Removed from history', type: 'info' }
+					: { message: "That request can't be removed from history", type: 'error' }
+			);
 		},
 		onError: (err) =>
 			toastStore.show({ message: errorMessage(err, 'Could not remove that item'), type: 'error' })

@@ -8,7 +8,7 @@
 		createSaveNzbgetConfigMutation,
 		createTestNzbgetMutation
 	} from '$lib/features/downloads/queries/DownloadClientsQueries.svelte';
-	import { getIndexersQuery } from '$lib/features/downloads/queries/IndexerQueries.svelte';
+	import { getUsenetIndexerState } from '$lib/features/settings/queries/usenetIndexer.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import type {
 		NzbgetConnectionSettings,
@@ -28,12 +28,11 @@
 	import DownloadClientCard from './DownloadClientCard.svelte';
 
 	const statusQuery = getNzbgetStatusQuery();
-	const indexersQuery = getIndexersQuery();
+	const indexer = getUsenetIndexerState();
 	const sabnzbdQuery = getSabnzbdConfigQuery();
 	const test = createTestNzbgetMutation();
 
 	// NZBGet only downloads what an indexer finds - a Usenet source with no indexer is inert.
-	const hasIndexer = $derived((indexersQuery.data?.length ?? 0) > 0);
 	// New jobs go to SABnzbd when both are on; each client finishes the jobs it took.
 	const sabnzbdOn = $derived(
 		sabnzbdQuery.data?.enabled === true && Boolean(sabnzbdQuery.data?.url)
@@ -117,7 +116,7 @@
 					</p>
 				</div>
 			{/if}
-			{#if draft.enabled && !indexersQuery.isLoading && !hasIndexer}
+			{#if draft.enabled && !indexer.loading && !indexer.hasIndexer}
 				<div class="alert alert-warning items-start text-sm">
 					<TriangleAlert class="size-5 shrink-0" aria-hidden="true" />
 					<div class="space-y-1">

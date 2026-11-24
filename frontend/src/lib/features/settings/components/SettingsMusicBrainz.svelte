@@ -24,6 +24,8 @@
 	import SaveBar from '$lib/ui/SaveBar.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
 	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
+	import { docsUrl } from '$lib/ui/docsUrl';
+	import { outsideLink } from '$lib/ui/outsideLink';
 	import {
 		CircleAlert,
 		ExternalLink,
@@ -51,7 +53,7 @@
 		MIRROR_BANNER_LINES,
 		MORE_INFO_DISCLOSURES,
 		MORE_INFO_SUMMARY,
-		MUSICBRAINZ_GUIDE_HREF,
+		musicBrainzGuideHref,
 		MUSICBRAINZ_SOURCE_CARDS,
 		OFFICIAL_ENDPOINT_URL,
 		CLAMPED_WARNING,
@@ -543,7 +545,7 @@
 							{/each}
 							{#if selectedMode !== 'official' && selectedMode !== 'brainzmash'}
 								<a
-									href={MUSICBRAINZ_GUIDE_HREF}
+									href={outsideLink(musicBrainzGuideHref(selectedMode))}
 									target="_blank"
 									rel="noopener noreferrer"
 									class="link link-hover inline-flex items-center gap-1 text-primary"
@@ -694,7 +696,12 @@
 										<p class="mt-1 ml-1 text-xs text-muted">
 											Test Connection checks the server is alive. Data vintage is documented in the
 											<a
-												href={MUSICBRAINZ_GUIDE_HREF}
+												href={outsideLink(
+													docsUrl(
+														'musicbrainz-mirror-selfhosting',
+														'checking-how-fresh-your-data-is'
+													)
+												)}
 												target="_blank"
 												rel="noopener noreferrer"
 												class="link link-hover text-primary">setup guide</a
@@ -758,11 +765,13 @@
 								<div class="space-y-1">
 									{#each MIRROR_BANNER_LINES as line (line.slice(0, 40))}<p>{line}</p>{/each}
 									<a
-										href={MUSICBRAINZ_GUIDE_HREF}
+										href={outsideLink(musicBrainzGuideHref(selectedMode))}
 										target="_blank"
 										rel="noopener noreferrer"
 										class="link link-hover inline-flex items-center gap-1 text-primary"
-										><ExternalLink class="h-3 w-3" aria-hidden="true" />Mirror setup guide</a
+										><ExternalLink class="h-3 w-3" aria-hidden="true" />{selectedMode === 'mirror'
+											? 'Mirror setup guide'
+											: 'Setup guide'}</a
 									>
 								</div>
 							</div>

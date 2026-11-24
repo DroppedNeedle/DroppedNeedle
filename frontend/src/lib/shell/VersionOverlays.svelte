@@ -59,5 +59,6 @@
 <UpdateBanner
 	updateAvailable={updateCheckQuery.data?.update_available ?? false}
 	latestVersion={updateCheckQuery.data?.latest_version ?? null}
+	releaseUrl={updateCheckQuery.data?.latest_release?.html_url ?? null}
 />
 <WhatsNewModal {currentVersion} {buildDate} releases={minorReleases} />

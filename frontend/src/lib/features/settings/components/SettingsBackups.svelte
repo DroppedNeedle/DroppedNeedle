@@ -7,6 +7,7 @@
 		getRestoreReportQuery,
 		type BackupView
 	} from '$lib/features/settings/queries/system.svelte';
+	import { docsUrl } from '$lib/ui/docsUrl';
 	import { outsideLink } from '$lib/ui/outsideLink';
 	import { toastStore } from '$lib/stores/toast';
 	import { formatBytes } from '$lib/utils/formatting';
@@ -16,10 +17,8 @@
 	import Modal from '$lib/ui/Modal.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 
-	const RESTORE_DOCS =
-		'https://github.com/DroppedNeedle/DroppedNeedle/blob/main/docs/reverse-proxy-and-security.md#backups';
-	const STORAGE_DOCS =
-		'https://github.com/DroppedNeedle/DroppedNeedle/blob/main/docs/configuration.md#storage-and-permissions';
+	const RESTORE_DOCS = docsUrl('backups-and-restore', 'restoring-a-backup');
+	const STORAGE_DOCS = docsUrl('configuration', 'storage-and-permissions');
 
 	const backupsQuery = getBackupsQuery();
 	const runBackup = createRunBackupMutation();

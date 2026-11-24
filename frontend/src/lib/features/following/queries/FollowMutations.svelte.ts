@@ -19,6 +19,10 @@ import {
 	followedArtistsChanged
 } from '$lib/queries/effects';
 
+function errorMessage(err: unknown, fallback: string): string {
+	return err instanceof Error && err.message ? err.message : fallback;
+}
+
 const NOT_FOLLOWING: FollowStatus = {
 	followed: false,
 	auto_download: false,
@@ -31,13 +35,15 @@ function statusKey(mbid: string) {
 
 const followedArtists = () => [followedArtistsChanged(authStore.user?.id)];
 
-export const createSetFollowMutation = (getMbid: () => string) =>
+// A follow carries the artist's name, which the server keeps for the
+// followed list, new releases and gig searches.
+export const createSetFollowMutation = (getMbid: () => string, getName: () => string) =>
 	createAppMutation(() => ({
 		mutationFn: async (followed: boolean) =>
 			toFollowStatus(
 				await api.v3.PUT(
 					v3('/api/v3/artists/{artist_mbid}/follow', { path: { artist_mbid: getMbid() } }),
-					{ followed }
+					followed ? { followed, artist_name: getName() } : { followed }
 				)
 			),
 		onMutate: async (followed: boolean) => {
@@ -51,9 +57,16 @@ export const createSetFollowMutation = (getMbid: () => string) =>
 			await setQueryDataWithPersister<FollowStatus>(key, optimistic);
 			return { prev };
 		},
-		onError: (_err, _followed, ctx) => {
+		onError: (err, followed, ctx) => {
 			if (ctx) void setQueryDataWithPersister<FollowStatus>(statusKey(getMbid()), ctx.prev);
 			void applyEffects(...followedArtists());
+			toastStore.show({
+				message: errorMessage(
+					err,
+					followed ? "Couldn't follow this artist" : "Couldn't unfollow this artist"
+				),
+				type: 'error'
+			});
 		},
 		onSuccess: (data) => {
 			void setQueryDataWithPersister<FollowStatus>(statusKey(getMbid()), data);

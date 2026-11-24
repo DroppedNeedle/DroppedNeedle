@@ -7,6 +7,8 @@
 	import DiscoveryBatchList from '$lib/features/discover/components/DiscoveryBatchList.svelte';
 	import DropImportJobList from '$lib/features/downloads/components/DropImportJobList.svelte';
 	import DropImportZone from '$lib/features/downloads/components/DropImportZone.svelte';
+	import HeldSection from '$lib/features/downloads/components/HeldSection.svelte';
+	import { getHeldEntriesQuery } from '$lib/features/downloads/queries/HeldQueries.svelte';
 	import ImportFolderLine from '$lib/features/settings/components/ImportFolderLine.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import ListPageHeader from '$lib/ui/ListPageHeader.svelte';
@@ -22,6 +24,13 @@
 	const canImport = $derived(authStore.isTrusted);
 	const loaded = $derived(!integrationStatus.isLoading);
 	const configured = $derived(integrationStatus.data?.download_client ?? false);
+	// Files kept for a decision stay reachable while no download source is on;
+	// with one on, the queue lists them.
+	const heldQuery = getHeldEntriesQuery(
+		() => ({}),
+		() => loaded && !configured
+	);
+	const held = $derived(heldQuery.data?.entries ?? []);
 
 	let activeTab = $state<Tab>('queue');
 	let showAllImports = $state(false);
@@ -121,21 +130,26 @@
 				<div class="skeleton h-24 w-full rounded-box"></div>
 			</div>
 		{:else if !configured}
-			{#if isAdmin}
-				<EmptyState
-					icon={Download}
-					title="Download client not configured"
-					description="Connect a download client to request albums."
-					ctaLabel="Configure Download Client"
-					ctaHref="/settings?tab=download-client"
-				/>
-			{:else}
-				<EmptyState
-					icon={Download}
-					title="Download client not configured"
-					description="Contact your admin to configure the download client."
-				/>
-			{/if}
+			<div class="space-y-9">
+				{#if isAdmin}
+					<EmptyState
+						icon={Download}
+						title="Download client not configured"
+						description="Connect a download client to request albums."
+						ctaLabel="Configure Download Client"
+						ctaHref="/settings?tab=download-client"
+					/>
+				{:else}
+					<EmptyState
+						icon={Download}
+						title="Download client not configured"
+						description="Contact your admin to configure the download client."
+					/>
+				{/if}
+				{#if held.length > 0}
+					<HeldSection entries={held} />
+				{/if}
+			</div>
 		{:else}
 			<DownloadQueue />
 			<DiscoveryBatchList />

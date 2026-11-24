@@ -237,7 +237,7 @@
 									Plays count as @{linked.username || 'your account'}
 								</p>
 							{:else}
-								<p class="pf-meta">Plays use the shared account</p>
+								<p class="pf-meta">Plays are not sent without your own link</p>
 							{/if}
 						</div>
 						<div class="shrink-0">

@@ -36,7 +36,11 @@ export function createRequestLibraryRunMutation() {
 		onSuccess: () => {
 			toastStore.show({ message: 'Library work queued', type: 'success' });
 		},
-		onError: () => toastStore.show({ message: 'Could not queue library work', type: 'error' })
+		onError: (error) =>
+			toastStore.show({
+				message: serverErrorMessage(error, 'Could not queue library work'),
+				type: 'error'
+			})
 	}));
 }
 

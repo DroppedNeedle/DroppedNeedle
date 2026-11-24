@@ -36,7 +36,8 @@
 	let currentPassword = $state('');
 	let newPassword = $state('');
 	let passwordError = $state<string | null>(null);
-	let passwordDone = $state(false);
+	// What the row says once a save lands, chosen when it was sent.
+	let passwordDone = $state<string | null>(null);
 
 	const passwordPending = $derived(
 		changePasswordMutation.isPending || setPasswordMutation.isPending
@@ -47,11 +48,12 @@
 		currentPassword = '';
 		newPassword = '';
 		passwordError = null;
-		passwordDone = false;
+		passwordDone = null;
 	}
 
 	async function submitPassword() {
 		passwordError = null;
+		const done = hasLocalPassword ? 'Password updated' : 'Password set';
 		try {
 			if (hasLocalPassword) {
 				await changePasswordMutation.mutateAsync({
@@ -64,7 +66,7 @@
 			currentPassword = '';
 			newPassword = '';
 			showPasswordForm = false;
-			passwordDone = true;
+			passwordDone = done;
 		} catch (e) {
 			passwordError = e instanceof ApiError ? e.message : 'Could not reach the server';
 		}
@@ -170,7 +172,7 @@
 		{#if passwordDone && !showPasswordForm}
 			<p class="pf-row__under flex items-center gap-1.5 text-sm text-success">
 				<Check class="size-4" aria-hidden="true" />
-				{hasLocalPassword ? 'Password updated' : 'Local password set'}
+				{passwordDone}
 			</p>
 		{/if}
 

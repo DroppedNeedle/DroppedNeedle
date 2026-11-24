@@ -68,6 +68,10 @@
 	const reimport = createReimportDownloadMutation();
 	const fromAlbum = createFromAlbumMutation();
 
+	// Someone who joined another person's request: their cancel takes only
+	// their own ask off it, and the download carries on for the others.
+	const joined = $derived(!authStore.isAdmin && item.user_id !== authStore.user?.id);
+
 	let confirmingCancel = $state(false);
 	let showDeleteModal = $state(false);
 
@@ -382,7 +386,7 @@
 				<Button variant="outline" size="display-sm" onclick={handleCancelNo}>No</Button>
 			{:else}
 				<Button variant="outline" size="display-sm" icon={X} onclick={handleCancelClick}>
-					Cancel download
+					{joined ? 'Cancel my request' : 'Cancel download'}
 				</Button>
 			{/if}
 		{:else}
