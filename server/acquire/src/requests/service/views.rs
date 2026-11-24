@@ -194,7 +194,8 @@ impl RequestsService {
     }
 
     /// Pending-review badge count: album/track rows no card holds, each
-    /// approval card as one, auto-download units and personal-mix rows.
+    /// approval card as one, auto-download units, personal-mix rows and
+    /// synced playlists asking for their requests.
     pub async fn pending_approval_count(
         &self,
         _admin: &Admin,
@@ -206,11 +207,15 @@ impl RequestsService {
             .len() as u32;
         let follows = self.follows.pending_units().await?;
         let mixes = self.mixes.pending_count().await?;
+        let syncs = crate::spotify_sync::store::pending_grant_count(self.library.db())
+            .await
+            .map_err(|error| crate::requests::sqlite::lane_error("spotify_sync.pending", error))?;
         Ok(ActiveCountResponse {
             count: asks
                 .saturating_add(cards)
                 .saturating_add(follows)
-                .saturating_add(mixes),
+                .saturating_add(mixes)
+                .saturating_add(syncs),
         })
     }
 

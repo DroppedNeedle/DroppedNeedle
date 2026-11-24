@@ -227,6 +227,36 @@ impl LocalCatalog {
         Ok(by_group.union(&by_release).cloned().collect())
     }
 
+    /// The ISRCs (uppercase) among `isrcs` and the recordings (lowercase)
+    /// among `recordings` an indexed library track carries or is: a song
+    /// the library holds whatever album its file is on.
+    pub async fn owned_songs(
+        &self,
+        isrcs: &[String],
+        recordings: &[String],
+    ) -> Result<HashSet<String>, StoreError> {
+        let mut found = HashSet::new();
+        let isrcs: Vec<String> = isrcs.iter().map(|isrc| isrc.to_ascii_uppercase()).collect();
+        for (asked, isrc) in [(isrcs, true), (lowered(recordings), false)] {
+            for chunk in asked.chunks(MAX_BINDS) {
+                let values = texts(chunk);
+                let chunk_found: Vec<String> = self
+                    .read("catalog.library.owned_songs", move |conn| {
+                        let len = ListLen::new(values.len());
+                        let text = if isrc {
+                            sql::owned_isrcs_in(len)
+                        } else {
+                            sql::owned_recordings_in(len)
+                        };
+                        rows(conn, &text, &values, |row| row.get::<_, String>(0))
+                    })
+                    .await?;
+                found.extend(chunk_found);
+            }
+        }
+        Ok(found)
+    }
+
     /// Every owned release-group MBID (lowercase, sorted): the unfiltered
     /// form of [`Self::owned_albums`].
     pub async fn all_owned_release_groups(&self) -> Result<Vec<String>, StoreError> {

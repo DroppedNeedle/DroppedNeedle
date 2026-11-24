@@ -7,13 +7,16 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
 };
-use droppedneedle_auth::User;
+use droppedneedle_auth::{Admin, User};
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::ValidJson;
 use droppedneedle_kernel::mount::{Routes, routes};
 
+use super::grant::{GrantDecided, PlaylistSyncApprovalsResponse};
 use super::models::{PlaylistSync, PlaylistSyncBody};
 use super::{PlaylistSyncError, SpotifySync};
+use crate::requests::ledger::ApprovalState;
+use crate::requests::models::ActionResponse;
 
 /// The playlist did not come from Spotify.
 pub const PLAYLIST_NOT_SYNCABLE: &str = "PLAYLIST_NOT_SYNCABLE";
@@ -56,7 +59,115 @@ impl From<PlaylistSyncError> for ApiError {
 /// The sync routes: any signed-in user, answered only for a playlist they
 /// own (or, to read it, may edit).
 pub fn routes() -> Routes<Arc<SpotifySync>> {
-    Routes::new().user(routes!(get_sync_handler, put_sync_handler))
+    Routes::new()
+        .user(routes!(get_sync_handler, put_sync_handler))
+        .admin(routes!(sync_approvals_handler))
+        .admin(routes!(approve_sync_handler))
+        .admin(routes!(reject_sync_handler))
+        .admin(routes!(revoke_sync_handler))
+}
+
+/// The reply to a decision on a sync's grant.
+fn decided(outcome: GrantDecided) -> ActionResponse {
+    let (success, message) = match outcome {
+        GrantDecided::NoMatch => (false, "No matching approval found"),
+        GrantDecided::Approved => (true, "Playlist sync approved"),
+        GrantDecided::Rejected => (true, "Playlist sync turned down"),
+        GrantDecided::Revoked => (true, "Playlist sync approval taken back"),
+    };
+    ActionResponse {
+        success,
+        message: message.to_owned(),
+    }
+}
+
+/// The synced playlists of plain users waiting for an admin to approve
+/// their requests, and the approvals that stand.
+#[utoipa::path(
+    get,
+    tag = "requests",
+    path = "/api/v3/requests/playlist-sync-approvals",
+    responses(
+        (status = 200, description = "Sync asks and approvals", body = PlaylistSyncApprovalsResponse),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Not an admin"),
+    )
+)]
+pub async fn sync_approvals_handler(
+    State(sync): State<Arc<SpotifySync>>,
+    admin: Admin,
+) -> Result<Json<PlaylistSyncApprovalsResponse>, ApiError> {
+    Ok(Json(sync.approvals(&admin).await?))
+}
+
+/// Approve a synced playlist's requests: its songs are then requested by
+/// themselves, inside the owner's quota.
+#[utoipa::path(
+    post,
+    tag = "requests",
+    path = "/api/v3/requests/playlist-sync-approvals/{playlist_id}/approve",
+    params(("playlist_id" = String, Path, description = "Playlist id")),
+    responses(
+        (status = 200, description = "The decision", body = ActionResponse),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Not an admin"),
+    )
+)]
+pub async fn approve_sync_handler(
+    State(sync): State<Arc<SpotifySync>>,
+    admin: Admin,
+    Path(playlist_id): Path<String>,
+) -> Result<Json<ActionResponse>, ApiError> {
+    Ok(Json(decided(
+        sync.decide(&admin, &playlist_id, ApprovalState::Approved)
+            .await?,
+    )))
+}
+
+/// Turn down a synced playlist's requests. Its new songs are still added.
+#[utoipa::path(
+    post,
+    tag = "requests",
+    path = "/api/v3/requests/playlist-sync-approvals/{playlist_id}/reject",
+    params(("playlist_id" = String, Path, description = "Playlist id")),
+    responses(
+        (status = 200, description = "The decision", body = ActionResponse),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Not an admin"),
+    )
+)]
+pub async fn reject_sync_handler(
+    State(sync): State<Arc<SpotifySync>>,
+    admin: Admin,
+    Path(playlist_id): Path<String>,
+) -> Result<Json<ActionResponse>, ApiError> {
+    Ok(Json(decided(
+        sync.decide(&admin, &playlist_id, ApprovalState::Rejected)
+            .await?,
+    )))
+}
+
+/// Take back a synced playlist's approval. Its new songs are still added.
+#[utoipa::path(
+    post,
+    tag = "requests",
+    path = "/api/v3/requests/playlist-sync-approvals/{playlist_id}/revoke",
+    params(("playlist_id" = String, Path, description = "Playlist id")),
+    responses(
+        (status = 200, description = "The decision", body = ActionResponse),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Not an admin"),
+    )
+)]
+pub async fn revoke_sync_handler(
+    State(sync): State<Arc<SpotifySync>>,
+    admin: Admin,
+    Path(playlist_id): Path<String>,
+) -> Result<Json<ActionResponse>, ApiError> {
+    Ok(Json(decided(
+        sync.decide(&admin, &playlist_id, ApprovalState::Revoked)
+            .await?,
+    )))
 }
 
 /// A playlist's Spotify sync: whether it is on, whether its songs are

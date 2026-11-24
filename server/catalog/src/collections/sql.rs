@@ -8,6 +8,8 @@
 use droppedneedle_kernel::db::statement::ListLen;
 use droppedneedle_kernel::db::time::Millis;
 
+use super::models::{AlbumPick, SourceAlbumKind};
+
 use droppedneedle_auth::listed_user;
 use droppedneedle_library::{copy_of_group, owns_group};
 
@@ -273,13 +275,88 @@ droppedneedle_kernel::sql! {
         source_ref: Option<String>,
     }
     /// The songs playlist `?1` took from its source that a sync has not
-    /// followed up: entries still there that do not play yet, with an
-    /// album or a look for one due by `?2`.
+    /// followed up: entries still there that do not play yet, with no look
+    /// put off past `?2`.
     pub(super) OPEN_SOURCE_SONG_COUNT = "SELECT COUNT(*) FROM catalog_playlist_source_songs s \
          JOIN catalog_playlist_tracks e ON e.id = s.entry_id \
          WHERE s.playlist_id = ?1 AND s.followed_up_at IS NULL \
          AND e.library_file_id IS NULL AND e.source_type = '' \
-         AND (e.album_id IS NOT NULL OR s.look_again_at IS NULL OR s.look_again_at <= ?2)";
+         AND (s.look_again_at IS NULL OR s.look_again_at <= ?2)";
+    /// The songs playlist `?1` took from its source that a sync has not
+    /// followed up and whose next look for an album is due by `?2`, with
+    /// their entries, in playlist order; only those with no album yet when
+    /// `?3`.
+    pub(super) OPEN_SOURCE_SONGS = "SELECT s.source_song_id AS song_id, e.id AS entry_id, \
+         e.track_name AS track_name, e.artist_name AS artist_name, e.album_name AS album_name, \
+         e.album_id AS album_id, e.recording_mbid AS recording_mbid, e.isrc AS isrc, \
+         e.duration_ms AS duration_ms, \
+         (e.library_file_id IS NOT NULL OR e.source_type <> '' \
+          OR COALESCE(e.available_sources, '[]') NOT IN ('[]', '')) AS playable, \
+         s.album_source_id AS album_source_id, s.album_title AS album_title, \
+         s.album_artist AS album_artist, s.album_kind AS album_kind, \
+         s.album_tracks AS album_tracks, s.album_pick AS album_pick, s.looks AS looks \
+         FROM catalog_playlist_source_songs s JOIN catalog_playlist_tracks e ON e.id = s.entry_id \
+         WHERE s.playlist_id = ?1 AND s.followed_up_at IS NULL \
+         AND (s.look_again_at IS NULL OR s.look_again_at <= ?2) \
+         AND (?3 = 0 OR e.album_id IS NULL) ORDER BY e.position";
+    /// One song a sync still has to follow up.
+    pub(super) row OpenSourceSongColumns for [OPEN_SOURCE_SONGS] {
+        song_id: String,
+        entry_id: String,
+        track_name: String,
+        artist_name: String,
+        album_name: String,
+        album_id: Option<String>,
+        recording_mbid: Option<String>,
+        isrc: Option<String>,
+        duration_ms: Option<i64>,
+        playable: bool,
+        album_source_id: Option<String>,
+        album_title: String,
+        album_artist: String,
+        album_kind: Option<SourceAlbumKind>,
+        album_tracks: Option<u32>,
+        album_pick: Option<AlbumPick>,
+        looks: i64,
+    }
+    /// The release groups playlist `?1`'s entries were given, by the
+    /// source album their songs are on: none moved to an artist's own album.
+    pub(super) PLACED_ALBUMS = "SELECT s.album_source_id AS album_source_id, \
+         lower(e.album_id) AS album_id \
+         FROM catalog_playlist_source_songs s JOIN catalog_playlist_tracks e ON e.id = s.entry_id \
+         WHERE s.playlist_id = ?1 AND s.album_source_id IS NOT NULL AND e.album_id IS NOT NULL \
+         AND s.album_pick IS NOT 'own_album' ORDER BY e.position";
+    /// A source album and the release group one of its songs was given.
+    pub(super) row PlacedAlbum for [PLACED_ALBUMS] {
+        album_source_id: String,
+        album_id: String,
+    }
+    /// The titles and ISRCs of playlist `?1`'s songs on source album `?2`.
+    pub(super) SOURCE_ALBUM_SONGS = "SELECT e.track_name AS track_name, e.isrc AS isrc \
+         FROM catalog_playlist_source_songs s JOIN catalog_playlist_tracks e ON e.id = s.entry_id \
+         WHERE s.playlist_id = ?1 AND s.album_source_id = ?2 ORDER BY e.position";
+    /// One song of a source album.
+    pub(super) row SourceAlbumSong for [SOURCE_ALBUM_SONGS] {
+        track_name: String,
+        isrc: Option<String>,
+    }
+    /// The entries of playlist `?1` a sync has not followed up.
+    pub(super) OPEN_SOURCE_ENTRIES = "SELECT entry_id FROM catalog_playlist_source_songs \
+         WHERE playlist_id = ?1 AND followed_up_at IS NULL AND entry_id IS NOT NULL";
+    /// A sync followed up playlist `?1`'s source song `?2` at `?3`.
+    pub(super) FOLLOW_UP_SOURCE_SONG = "UPDATE catalog_playlist_source_songs \
+         SET followed_up_at = ?3 WHERE playlist_id = ?1 AND source_song_id = ?2 \
+         AND followed_up_at IS NULL";
+    /// A sync filed a request of kind `?4` for MusicBrainz id `?5` that
+    /// covers playlist `?1`'s source song `?2`, at `?3`.
+    pub(super) FILE_SOURCE_SONG = "UPDATE catalog_playlist_source_songs \
+         SET followed_up_at = ?3, filed_kind = ?4, filed_key = ?5 \
+         WHERE playlist_id = ?1 AND source_song_id = ?2 AND followed_up_at IS NULL";
+    /// Nothing proved playlist `?1`'s source song `?2`'s album: look again
+    /// at `?3`.
+    pub(super) LOOK_AGAIN_SOURCE_SONG = "UPDATE catalog_playlist_source_songs \
+         SET looks = looks + 1, look_again_at = ?3 WHERE playlist_id = ?1 \
+         AND source_song_id = ?2 AND followed_up_at IS NULL";
     /// What a link pass follows: the library's catalog revision, which
     /// every change to its albums and tracks moves, and the latest change
     /// to any playlist, which adding entries moves.

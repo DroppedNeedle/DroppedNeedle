@@ -56,9 +56,9 @@ use crate::requests::state::{AcquireReadiness, MixRoutes, RequestsPorts, Request
 use crate::search_jobs::SearchJobs;
 use crate::search_jobs::store::JobStore;
 use crate::settings::{ConfigLidarrSettings, ConfigSpotifySettings};
-use crate::spotify_sync::SpotifySync;
 use crate::spotify_sync::job::SpotifySyncJobs;
 use crate::spotify_sync::store::SyncStore;
+use crate::spotify_sync::{SpotifySync, WalkPorts};
 use crate::target::Targets;
 use crate::target::lookup::AlbumLookup;
 use crate::usenet::indexer::{Indexer, PluginIndexers};
@@ -924,6 +924,14 @@ impl AcquireSetup {
             collections.playlists.clone(),
             sync_store.clone(),
             events.clone(),
+            WalkPorts {
+                requests: core.requests.clone(),
+                library: droppedneedle_catalog::metadata::library::LocalCatalog::new(
+                    core.requests.library.db().clone(),
+                ),
+                resolver: resolver.clone(),
+                catalog: ports.catalog.clone(),
+            },
         ));
         let spotify_sync_jobs = Arc::new(SpotifySyncJobs::new(spotify_sync.clone()));
         let playlist_requests = Arc::new(PlaylistRequests::new(
@@ -932,6 +940,7 @@ impl AcquireSetup {
             ports.catalog,
             spotify_imports.clone(),
             queue,
+            sync_store.clone(),
         ));
         let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
         let imports = ImportsDeps {

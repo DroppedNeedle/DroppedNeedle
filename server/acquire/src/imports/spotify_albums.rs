@@ -67,6 +67,10 @@ const FILE_ALBUM_POLICY: Policy = Policy {
     miss: Duration::from_secs(7 * 24 * 3600),
 };
 
+/// How long the recordings an ISRC names are kept: a month when MusicBrainz
+/// knows the ISRC, a day when it does not.
+const ISRC_POLICY: Policy = Policy::RECORDING_TO_GROUP;
+
 /// How long a Spotify album's proof is kept: a week when MusicBrainz places
 /// it, a day when it does not, so an album it cannot place is asked about
 /// once a day.
@@ -135,6 +139,52 @@ impl SpotifyAlbum {
     }
 }
 
+/// The one cached read of the recordings an ISRC names, shared by the
+/// album proof and the compilation rule: one MusicBrainz call per ISRC a
+/// month at most.
+#[derive(Clone)]
+struct IsrcReads {
+    view: MusicBrainzView,
+    cache: ProviderCacheStore,
+    namespace: String,
+}
+
+impl IsrcReads {
+    /// The recordings a search for `isrc` finds, up to
+    /// [`RECORDING_SEARCH_LIMIT`].
+    async fn hits(&self, isrc: &str) -> Result<Vec<RecordingSearchHit>, ProviderError> {
+        let key = CacheKey::hashed(
+            Source::MusicBrainz,
+            "isrc_recordings",
+            &[&self.namespace, isrc],
+        );
+        let (view, query) = (self.view.clone(), format!("isrc:{isrc}"));
+        let found = self
+            .cache
+            .get_or_fetch(
+                &key,
+                ISRC_POLICY,
+                RequestPriority::BackgroundSync,
+                move |_| async move {
+                    let page = view
+                        .search_recordings_query(
+                            &query,
+                            RECORDING_SEARCH_LIMIT,
+                            Criticality::IdentityCritical,
+                        )
+                        .await?;
+                    Ok(if page.items.is_empty() {
+                        Fetched::Missing
+                    } else {
+                        Fetched::Found(page.items)
+                    })
+                },
+            )
+            .await?;
+        Ok(found.unwrap_or_default())
+    }
+}
+
 /// Finds the release group of Spotify albums through MusicBrainz.
 #[derive(Clone)]
 pub struct AlbumResolver {
@@ -165,17 +215,8 @@ impl AlbumResolver {
         if album.title.trim().is_empty() || (album.isrcs.is_empty() && !can_list) {
             return Ok(None);
         }
-        let Some(settings) = self.settings.read() else {
-            return Err(ProviderError::NotConfigured {
-                provider: SOURCE,
-                message: "the musicbrainz settings cannot be read".to_owned(),
-            });
-        };
-        let namespace = format!("{}:g{}", settings.source_id, settings.generation);
-        let view = self.musicbrainz.fixed(
-            self.musicbrainz.source_from(&settings),
-            RequestPriority::BackgroundSync,
-        );
+        let reads = self.isrc_reads()?;
+        let namespace = reads.namespace.clone();
         let isrcs: Vec<&str> = album.isrcs.iter().map(String::as_str).collect();
         let joined = isrcs.join(",");
         let tracks = album
@@ -206,13 +247,67 @@ impl AlbumResolver {
                 RESOLVE_POLICY,
                 RequestPriority::BackgroundSync,
                 move |_| async move {
-                    Ok(match prove(&view, &album).await? {
+                    Ok(match prove(&reads, &album).await? {
                         Some(group) => Fetched::Found(group),
                         None => Fetched::Missing,
                     })
                 },
             )
             .await
+    }
+
+    /// The cached ISRC reads over the MusicBrainz source the settings name
+    /// now.
+    fn isrc_reads(&self) -> Result<IsrcReads, ProviderError> {
+        let Some(settings) = self.settings.read() else {
+            return Err(ProviderError::NotConfigured {
+                provider: SOURCE,
+                message: "the musicbrainz settings cannot be read".to_owned(),
+            });
+        };
+        Ok(IsrcReads {
+            namespace: format!("{}:g{}", settings.source_id, settings.generation),
+            view: self.musicbrainz.fixed(
+                self.musicbrainz.source_from(&settings),
+                RequestPriority::BackgroundSync,
+            ),
+            cache: self.cache.clone(),
+        })
+    }
+
+    /// The one recording an ISRC names on release group `group`, when
+    /// exactly one is there.
+    ///
+    /// # Errors
+    ///
+    /// A MusicBrainz failure, or settings that cannot be read.
+    pub async fn recording_on_group(
+        &self,
+        isrc: &str,
+        group: &str,
+    ) -> Result<Option<String>, ProviderError> {
+        let Some(isrc) = clean_isrc(isrc) else {
+            return Ok(None);
+        };
+        let hits = self.isrc_reads()?.hits(&isrc).await?;
+        let on_group: BTreeSet<String> = hits
+            .iter()
+            .filter(|hit| {
+                hit.releases.iter().any(|release| {
+                    release
+                        .release_group
+                        .as_ref()
+                        .is_some_and(|found| normalize_mb_id(&found.id) == group)
+                })
+            })
+            .map(|hit| normalize_mb_id(&hit.id))
+            .filter(|id| is_valid_mbid(id))
+            .collect();
+        let mut on_group = on_group.into_iter();
+        Ok(match (on_group.next(), on_group.next()) {
+            (Some(recording), None) => Some(recording),
+            _ => None,
+        })
     }
 
     /// The release group a playlist file's album is, by proof only: an
@@ -233,17 +328,8 @@ impl AlbumResolver {
         {
             return Ok(None);
         }
-        let Some(settings) = self.settings.read() else {
-            return Err(ProviderError::NotConfigured {
-                provider: SOURCE,
-                message: "the musicbrainz settings cannot be read".to_owned(),
-            });
-        };
-        let namespace = format!("{}:g{}", settings.source_id, settings.generation);
-        let view = self.musicbrainz.fixed(
-            self.musicbrainz.source_from(&settings),
-            RequestPriority::BackgroundSync,
-        );
+        let reads = self.isrc_reads()?;
+        let namespace = reads.namespace.clone();
         // The unit separator survives CacheKey::hashed's whitespace
         // collapse, as in `resolve`.
         let songs: Vec<&str> = album.songs.iter().map(|song| song.title.as_str()).collect();
@@ -270,7 +356,7 @@ impl AlbumResolver {
                 FILE_ALBUM_POLICY,
                 RequestPriority::BackgroundSync,
                 move |_| async move {
-                    Ok(match prove_file(&view, &album).await? {
+                    Ok(match prove_file(&reads, &album).await? {
                         Some(found) => Fetched::Found(found),
                         None => Fetched::Missing,
                     })
@@ -284,9 +370,10 @@ impl AlbumResolver {
 /// listing when it gives none, or when its ISRCs prove no group. ISRCs
 /// that prove two groups leave it unknown.
 async fn prove_file(
-    view: &MusicBrainzView,
+    reads: &IsrcReads,
     album: &FileAlbum,
 ) -> Result<Option<FoundAlbum>, ProviderError> {
+    let view = &reads.view;
     let isrcs: BTreeSet<String> = album
         .songs
         .iter()
@@ -302,7 +389,7 @@ async fn prove_file(
             songs: BTreeSet::new(),
             isrcs,
         };
-        let (proven, hits) = isrc_search(view, &as_listed).await?;
+        let (proven, hits) = isrc_search(reads, &as_listed).await?;
         if proven.is_empty() {
             return by_listing(view, album).await;
         }
@@ -537,13 +624,10 @@ impl Proven {
 
 /// The proven group, by the album's ISRCs first and its title and
 /// artist second.
-async fn prove(
-    view: &MusicBrainzView,
-    album: &SpotifyAlbum,
-) -> Result<Option<String>, ProviderError> {
-    let mut proven = by_isrc(view, album).await?;
+async fn prove(reads: &IsrcReads, album: &SpotifyAlbum) -> Result<Option<String>, ProviderError> {
+    let mut proven = by_isrc(reads, album).await?;
     if proven.is_empty() {
-        proven = by_search(view, album).await?;
+        proven = by_search(&reads.view, album).await?;
     }
     Ok(pick(album, proven))
 }
@@ -551,16 +635,17 @@ async fn prove(
 /// The groups of the releases a recording search by the album's ISRCs
 /// finds under one of its title forms.
 async fn by_isrc(
-    view: &MusicBrainzView,
+    reads: &IsrcReads,
     album: &SpotifyAlbum,
 ) -> Result<BTreeMap<String, Proven>, ProviderError> {
-    Ok(isrc_search(view, album).await?.0)
+    Ok(isrc_search(reads, album).await?.0)
 }
 
 /// [`by_isrc`]'s groups, with every hit its searches read and the ISRC
-/// each was searched by.
+/// each was searched by. Each ISRC's hits come through the one cached read
+/// ([`IsrcReads::hits`]).
 async fn isrc_search(
-    view: &MusicBrainzView,
+    reads: &IsrcReads,
     album: &SpotifyAlbum,
 ) -> Result<(BTreeMap<String, Proven>, Vec<(String, RecordingSearchHit)>), ProviderError> {
     let forms = non_empty_forms(&album.title);
@@ -575,14 +660,8 @@ async fn isrc_search(
         .filter(|isrc| is_isrc(isrc))
         .take(ISRC_SEARCHES)
     {
-        let page = view
-            .search_recordings_query(
-                &format!("isrc:{isrc}"),
-                RECORDING_SEARCH_LIMIT,
-                Criticality::IdentityCritical,
-            )
-            .await?;
-        for release in page.items.iter().flat_map(|hit| &hit.releases) {
+        let items = reads.hits(isrc).await?;
+        for release in items.iter().flat_map(|hit| &hit.releases) {
             let (Some(title), Some(group)) = (&release.title, &release.release_group) else {
                 continue;
             };
@@ -595,7 +674,7 @@ async fn isrc_search(
                     .extend(release.track_count);
             }
         }
-        hits.extend(page.items.into_iter().map(|hit| (isrc.clone(), hit)));
+        hits.extend(items.into_iter().map(|hit| (isrc.clone(), hit)));
         if !proven.is_empty() {
             break;
         }
@@ -892,6 +971,15 @@ mod tests {
         )
     }
 
+    /// The cached ISRC reads over `view`, on a cache of their own.
+    fn reads(view: &MusicBrainzView) -> IsrcReads {
+        IsrcReads {
+            view: view.clone(),
+            cache: Providers::unpaced(Arc::new(ScriptedWire::new())).cache,
+            namespace: "test".to_owned(),
+        }
+    }
+
     fn group_ref(primary_type: Option<&str>, secondary_types: &[&str]) -> ReleaseGroupRef {
         ReleaseGroupRef {
             id: GROUP_A.to_owned(),
@@ -972,14 +1060,20 @@ mod tests {
         };
         plus.add_isrc("QZAAA2600001");
         assert!(
-            by_isrc(&view, &plus).await.expect("mb answers").is_empty(),
+            by_isrc(&reads(&view), &plus)
+                .await
+                .expect("mb answers")
+                .is_empty(),
             "+ must not match ÷"
         );
 
         let mut blank = plus.clone();
         blank.title = "   ".to_owned();
         assert!(
-            by_isrc(&view, &blank).await.expect("mb answers").is_empty(),
+            by_isrc(&reads(&view), &blank)
+                .await
+                .expect("mb answers")
+                .is_empty(),
             "blank title must never match"
         );
     }
@@ -1011,7 +1105,7 @@ mod tests {
         album.isrcs.insert("BAD OR artist:x".to_owned());
         album.add_isrc("QZAAA2600001");
 
-        let proven = by_isrc(&view, &album).await.expect("mb answers");
+        let proven = by_isrc(&reads(&view), &album).await.expect("mb answers");
         assert!(
             proven.contains_key(GROUP_A),
             "MB release with trailing edition note should match on ISRC lookup"
@@ -1078,7 +1172,7 @@ mod tests {
             isrcs: BTreeSet::new(),
         };
         assert_eq!(
-            prove(&view, &album).await.expect("mb answers"),
+            prove(&reads(&view), &album).await.expect("mb answers"),
             None,
             "1-track single with zero ISRCs must stay unresolved"
         );
@@ -1123,7 +1217,7 @@ mod tests {
                 isrcs: BTreeSet::new(),
             };
             assert_eq!(
-                prove(&view, &album).await.expect("mb answers"),
+                prove(&reads(&view), &album).await.expect("mb answers"),
                 None,
                 "kind {kind:?} must not match by listing"
             );
@@ -1178,7 +1272,9 @@ mod tests {
             isrcs: BTreeSet::new(),
         };
         assert_eq!(
-            prove(&view, &blank_artist).await.expect("mb answers"),
+            prove(&reads(&view), &blank_artist)
+                .await
+                .expect("mb answers"),
             None,
             "blank artist must not match empty MB artist credit"
         );
@@ -1214,7 +1310,7 @@ mod tests {
             ),
         );
         assert_eq!(
-            prove(&scripted_view(wire_song), &blank_song)
+            prove(&reads(&scripted_view(wire_song)), &blank_song)
                 .await
                 .expect("mb answers"),
             None,
@@ -1230,7 +1326,9 @@ mod tests {
             isrcs: BTreeSet::new(),
         };
         assert_eq!(
-            prove(&view, &symbol_mismatch).await.expect("mb answers"),
+            prove(&reads(&view), &symbol_mismatch)
+                .await
+                .expect("mb answers"),
             None,
             "punctuation-only + must not match ÷ in listing"
         );
@@ -1419,7 +1517,10 @@ mod tests {
             isrcs: BTreeSet::new(),
         };
         assert_eq!(
-            prove(&view, &album).await.expect("mb answers").as_deref(),
+            prove(&reads(&view), &album)
+                .await
+                .expect("mb answers")
+                .as_deref(),
             Some(GROUP_A),
             "listing should use release.title and track.display_title()"
         );

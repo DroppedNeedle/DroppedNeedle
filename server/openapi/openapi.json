@@ -31090,6 +31090,231 @@
         ]
       }
     },
+    "/api/v3/requests/playlist-sync-approvals": {
+      "get": {
+        "tags": [
+          "requests"
+        ],
+        "summary": "The synced playlists of plain users waiting for an admin to approve\ntheir requests, and the approvals that stand.",
+        "operationId": "sync_approvals_handler",
+        "responses": {
+          "200": {
+            "description": "Sync asks and approvals",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaylistSyncApprovalsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/requests/playlist-sync-approvals/{playlist_id}/approve": {
+      "post": {
+        "tags": [
+          "requests"
+        ],
+        "summary": "Approve a synced playlist's requests: its songs are then requested by\nthemselves, inside the owner's quota.",
+        "operationId": "approve_sync_handler",
+        "parameters": [
+          {
+            "name": "playlist_id",
+            "in": "path",
+            "description": "Playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The decision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/requests/playlist-sync-approvals/{playlist_id}/reject": {
+      "post": {
+        "tags": [
+          "requests"
+        ],
+        "summary": "Turn down a synced playlist's requests. Its new songs are still added.",
+        "operationId": "reject_sync_handler",
+        "parameters": [
+          {
+            "name": "playlist_id",
+            "in": "path",
+            "description": "Playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The decision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/requests/playlist-sync-approvals/{playlist_id}/revoke": {
+      "post": {
+        "tags": [
+          "requests"
+        ],
+        "summary": "Take back a synced playlist's approval. Its new songs are still added.",
+        "operationId": "revoke_sync_handler",
+        "parameters": [
+          {
+            "name": "playlist_id",
+            "in": "path",
+            "description": "Playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The decision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/requests/retry/{musicbrainz_id}": {
       "post": {
         "tags": [
@@ -61149,7 +61374,8 @@
           "downloading",
           "awaiting_review",
           "album_in_library",
-          "rejected"
+          "rejected",
+          "queued"
         ]
       },
       "PlaylistImportState": {
@@ -61650,6 +61876,84 @@
           "whole_albums": {
             "type": "boolean",
             "description": "New songs are asked for as whole albums."
+          }
+        }
+      },
+      "PlaylistSyncApprovalItem": {
+        "type": "object",
+        "description": "One playlist's sync asking for, or holding, an admin's approval.",
+        "required": [
+          "playlist_id",
+          "playlist_name",
+          "user_id",
+          "user_name",
+          "requested_at",
+          "song_count",
+          "whole_albums"
+        ],
+        "properties": {
+          "playlist_id": {
+            "type": "string",
+            "description": "The synced playlist."
+          },
+          "playlist_name": {
+            "type": "string",
+            "description": "Its name."
+          },
+          "requested_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the owner turned sync on, epoch seconds.",
+            "minimum": 0
+          },
+          "song_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Songs on the playlist.",
+            "minimum": 0
+          },
+          "user_id": {
+            "type": "string",
+            "description": "Its owner."
+          },
+          "user_name": {
+            "type": "string",
+            "description": "The owner's display name."
+          },
+          "whole_albums": {
+            "type": "boolean",
+            "description": "New songs are asked for as whole albums."
+          }
+        }
+      },
+      "PlaylistSyncApprovalsResponse": {
+        "type": "object",
+        "description": "The sync asks waiting for an admin, and the approvals that stand.",
+        "required": [
+          "count",
+          "items",
+          "granted"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many wait.",
+            "minimum": 0
+          },
+          "granted": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlaylistSyncApprovalItem"
+            },
+            "description": "The approvals that stand."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlaylistSyncApprovalItem"
+            },
+            "description": "The asks that wait, oldest first."
           }
         }
       },

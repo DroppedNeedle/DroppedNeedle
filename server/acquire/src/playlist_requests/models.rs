@@ -73,6 +73,9 @@ pub enum PlaylistEntryState {
     AlbumInLibrary,
     /// Its album's last request was rejected.
     Rejected,
+    /// The playlist's Spotify sync asks for it by itself, a few songs a
+    /// pass, and has not reached it yet.
+    Queued,
 }
 
 /// One song's state.

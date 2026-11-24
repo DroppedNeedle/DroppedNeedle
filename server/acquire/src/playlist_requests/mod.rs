@@ -48,9 +48,10 @@ use crate::requests::batches::BatchFiling;
 use crate::requests::batches::models::{BatchOutcome, BatchSource};
 use crate::requests::batches::store::{BatchHead, BatchItem, BatchStore, NewBatch};
 use crate::requests::error::RequestsError;
-use crate::requests::ledger::RequestStatus;
+use crate::requests::ledger::{ApprovalState, RequestStatus};
 use crate::requests::models::{RequestKind, RequestTaskState, TrackIntake, TrackIntakeResponse};
 use crate::requests::service::RequestsService;
+use crate::spotify_sync::store::SyncStore;
 
 /// Most albums one press files.
 pub const PRESS_MAX_ALBUMS: usize = 200;
@@ -158,6 +159,32 @@ fn count(n: usize) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 
+/// The one recording titled `title` on the tracklist the album page shows
+/// for `group`.
+pub(crate) async fn recording_on(
+    catalog: &Catalog,
+    group: &str,
+    title: &str,
+) -> Result<String, PlaylistRequestError> {
+    let tracklist = catalog
+        .album_tracks(group)
+        .await
+        .map_err(PlaylistRequestError::Catalog)?;
+    let found: HashSet<String> = tracklist
+        .tracks
+        .iter()
+        .filter(|track| same_title(&track.title, title))
+        .filter_map(|track| track.recording_id.as_deref())
+        .map(str::to_ascii_lowercase)
+        .filter(|id| is_valid_mbid(id))
+        .collect();
+    let mut found = found.into_iter();
+    match (found.next(), found.next()) {
+        (Some(recording), None) => Ok(recording),
+        _ => Err(PlaylistRequestError::SongNotOnAlbum),
+    }
+}
+
 /// Playlist requests over the requests state, the playlist store and the
 /// library.
 #[derive(Clone)]
@@ -168,18 +195,21 @@ pub struct PlaylistRequests {
     catalog: Catalog,
     imports: SpotifyImports,
     queue: JobQueue,
+    syncs: SyncStore,
 }
 
 impl PlaylistRequests {
     /// Playlist requests filed through `requests`, reading playlists from
     /// `playlists`, album tracklists from `catalog`, Spotify imports from
-    /// `imports` and identify jobs from `queue`.
+    /// `imports`, identify jobs from `queue` and Spotify syncs from
+    /// `syncs`.
     pub fn new(
         requests: RequestsState,
         playlists: PlaylistStore,
         catalog: Catalog,
         imports: SpotifyImports,
         queue: JobQueue,
+        syncs: SyncStore,
     ) -> Self {
         Self {
             library: LocalCatalog::new(requests.library.db().clone()),
@@ -188,7 +218,38 @@ impl PlaylistRequests {
             catalog,
             imports,
             queue,
+            syncs,
         }
+    }
+
+    /// The entries a Spotify sync of the playlist will ask for by itself:
+    /// its songs not followed up yet, while sync is on and its requests are
+    /// granted (by the owner's role or an admin's approval). Empty
+    /// otherwise.
+    async fn sync_queue(&self, row: &PlaylistRow) -> Result<HashSet<String>, PlaylistRequestError> {
+        let Some(owner) = row.owner_id.as_deref() else {
+            return Ok(HashSet::new());
+        };
+        let failed = |error: droppedneedle_kernel::db::DbError| match error {
+            droppedneedle_kernel::db::DbError::Busy { operation } => RequestsError::Busy {
+                operation: operation.to_owned(),
+            },
+            other => RequestsError::internal(&other),
+        };
+        let Some(sync) = self.syncs.get(&row.id).await.map_err(failed)? else {
+            return Ok(HashSet::new());
+        };
+        let curator = self
+            .syncs
+            .owner(owner)
+            .await
+            .map_err(failed)?
+            .is_some_and(|(role, _)| role.is_curator());
+        let granted = curator || sync.grant == Some(ApprovalState::Approved);
+        if !sync.enabled || !granted {
+            return Ok(HashSet::new());
+        }
+        Ok(self.playlists.open_source_entries(&row.id).await?)
     }
 
     /// The playlist and its entries, when the caller owns it or may edit
@@ -430,24 +491,7 @@ impl PlaylistRequests {
     /// The one recording titled `title` on the tracklist the album page
     /// shows for `group`.
     async fn recording_on(&self, group: &str, title: &str) -> Result<String, PlaylistRequestError> {
-        let tracklist = self
-            .catalog
-            .album_tracks(group)
-            .await
-            .map_err(PlaylistRequestError::Catalog)?;
-        let found: HashSet<String> = tracklist
-            .tracks
-            .iter()
-            .filter(|track| same_title(&track.title, title))
-            .filter_map(|track| track.recording_id.as_deref())
-            .map(str::to_ascii_lowercase)
-            .filter(|id| is_valid_mbid(id))
-            .collect();
-        let mut found = found.into_iter();
-        match (found.next(), found.next()) {
-            (Some(recording), None) => Ok(recording),
-            _ => Err(PlaylistRequestError::SongNotOnAlbum),
-        }
+        recording_on(&self.catalog, group, title).await
     }
 
     /// What each of the playlist's missing songs waits for.
@@ -458,6 +502,7 @@ impl PlaylistRequests {
     ) -> Result<PlaylistRequestState, PlaylistRequestError> {
         let (row, tracks) = self.editable(caller, playlist_id).await?;
         let import = self.import_state(&row).await?;
+        let queued = self.sync_queue(&row).await?;
         let finding_albums = self
             .queue
             .latest(IDENTIFY, &identify_key(playlist_id))
@@ -510,7 +555,11 @@ impl PlaylistRequests {
                         None if owned.contains(&group) => PlaylistEntryState::AlbumInLibrary,
                         None => {
                             requestable.insert(group);
-                            PlaylistEntryState::Requestable
+                            if queued.contains(&track.id) {
+                                PlaylistEntryState::Queued
+                            } else {
+                                PlaylistEntryState::Requestable
+                            }
                         }
                     }
                 }

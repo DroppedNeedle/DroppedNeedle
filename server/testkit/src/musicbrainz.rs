@@ -25,9 +25,10 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 
 use axum::{
-    extract::Query,
+    extract::{Query, State},
     http::{StatusCode, Uri, header},
     response::{IntoResponse, Response},
 };
@@ -390,6 +391,48 @@ const RECORDINGS: &[Recording] = &[
     },
 ];
 
+/// The first ISRC the synced songs of the Spotify journeys use:
+/// `QZSYN26` and a five-digit song number.
+pub const SYNC_ISRC_PREFIX: &str = "QZSYN26";
+
+/// The release group the MusicBrainz mock puts synced song `n` on: an
+/// album of its own, titled `Album n` as the Spotify mock's song is.
+#[must_use]
+pub fn sync_group(n: u32) -> String {
+    format!("5907a1b0-0000-4000-8000-0000000d{n:04}")
+}
+
+/// The recording the mock gives synced song `n`.
+#[must_use]
+pub fn sync_recording(n: u32) -> String {
+    format!("5907a1b0-0000-4000-8000-0000000e{n:04}")
+}
+
+/// A recording search by the ISRC of synced song `n`, written by hand in
+/// the shape of the recorded one (`search_recording_isrc_bohemian_rhapsody.json`):
+/// one recording, by Aurora Current, on one official release of its own
+/// album. Songs numbered 900 and up are ones MusicBrainz does not know.
+fn sync_isrc_answer(query: &str) -> Option<String> {
+    let n: u32 = query
+        .strip_prefix("isrc:")?
+        .strip_prefix(SYNC_ISRC_PREFIX)?
+        .parse()
+        .ok()?;
+    if n >= 900 {
+        return Some(
+            r#"{"created":"2026-11-24T00:00:00.000Z","count":0,"offset":0,"recordings":[]}"#
+                .to_owned(),
+        );
+    }
+    let artist = r#"{"name":"Aurora Current","artist":{"id":"5907a1b0-0000-4000-8000-000000000c01","name":"Aurora Current","sort-name":"Aurora Current"}}"#;
+    Some(format!(
+        r#"{{"created":"2026-11-24T00:00:00.000Z","count":1,"offset":0,"recordings":[{{"id":"{recording}","score":100,"title":"Song {n}","length":200000,"video":null,"artist-credit":[{artist}],"isrcs":["{prefix}{n:05}"],"releases":[{{"id":"5907a1b0-0000-4000-8000-0000000f{n:04}","title":"Album {n}","status":"Official","date":"2024-01-01","artist-credit":[{artist}],"release-group":{{"id":"{group}","title":"Album {n}","primary-type":"Album"}},"track-count":10}}]}}]}}"#,
+        recording = sync_recording(n),
+        group = sync_group(n),
+        prefix = SYNC_ISRC_PREFIX,
+    ))
+}
+
 /// The recording for a request, if one was made for it.
 fn find(path: &str, query: &HashMap<String, String>) -> Option<&'static str> {
     // `inc` arrives joined with `+`, which form decoding turns into spaces.
@@ -417,8 +460,28 @@ fn find(path: &str, query: &HashMap<String, String>) -> Option<&'static str> {
         .map(|recording| recording.body)
 }
 
-async fn answer(uri: Uri, Query(query): Query<HashMap<String, String>>) -> Response {
+/// The requests the mock answered, in order, as path and query.
+type Calls = Arc<Mutex<Vec<String>>>;
+
+async fn answer(
+    State(calls): State<Calls>,
+    uri: Uri,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    if let Ok(mut calls) = calls.lock() {
+        calls.push(uri.to_string());
+    }
     let path = uri.path().strip_prefix("/ws/2").unwrap_or_default();
+    if path == "/recording"
+        && let Some(body) = query.get("query").and_then(|query| sync_isrc_answer(query))
+    {
+        return (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
+            body,
+        )
+            .into_response();
+    }
     let (status, body) = match find(path, &query) {
         Some(body) => (StatusCode::OK, body),
         None => {
@@ -434,14 +497,15 @@ async fn answer(uri: Uri, Query(query): Query<HashMap<String, String>>) -> Respo
         .into_response()
 }
 
-fn router() -> axum::Router {
-    axum::Router::new().fallback(answer)
+fn router(calls: Calls) -> axum::Router {
+    axum::Router::new().fallback(answer).with_state(calls)
 }
 
 /// A running mock MusicBrainz. Point a client at [`Self::base_url`].
 /// Dropping it stops the server.
 pub struct MockMusicBrainz {
     addr: SocketAddr,
+    calls: Calls,
     _guard: ServerGuard,
 }
 
@@ -459,15 +523,28 @@ impl MockMusicBrainz {
         let addr = listener
             .local_addr()
             .map_err(|error| format!("mock musicbrainz has an address: {error}"))?;
+        let calls = Calls::default();
+        let app = router(calls.clone());
         let guard = ServerGuard::new(tokio::spawn(async move {
-            if let Err(error) = axum::serve(listener, router()).await {
+            if let Err(error) = axum::serve(listener, app).await {
                 eprintln!("mock musicbrainz stopped: {error}");
             }
         }));
         Ok(Self {
             addr,
+            calls,
             _guard: guard,
         })
+    }
+
+    /// Every request the mock answered so far, in order, as path and
+    /// query: what a test counts MusicBrainz calls by.
+    #[must_use]
+    pub fn calls(&self) -> Vec<String> {
+        self.calls
+            .lock()
+            .map(|calls| calls.clone())
+            .unwrap_or_default()
     }
 
     /// The `/ws/2` base a client is configured with.

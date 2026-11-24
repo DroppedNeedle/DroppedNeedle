@@ -10,22 +10,27 @@ use droppedneedle_testkit::imports::{
     MockRecorder, MockServer, SPOTIFY_LIKED_DEFAULT, SPOTIFY_REFRESH, SPOTIFY_SCOPES,
     SPOTIFY_TOKEN, SPOTIFY_USER_ID, serve_spotify, spotify_track,
 };
+use droppedneedle_testkit::musicbrainz::{MockMusicBrainz, sync_group, sync_recording};
 use serde_json::{Value, json};
 
 use crate::common::{Login, TestApp, closed_outbound};
 
-/// The app with the Spotify mocks as Spotify, its app turned on.
+/// The app with the Spotify mocks as Spotify, its app turned on, and the
+/// MusicBrainz mock as MusicBrainz.
 struct Rig {
     app: TestApp,
     spotify: MockRecorder,
+    musicbrainz: MockMusicBrainz,
     _servers: (MockServer, MockServer, MockServer),
 }
 
 async fn rig(tag: &str) -> Rig {
     let (api, accounts, covers, spotify) = serve_spotify().await.expect("the mock serves");
+    let musicbrainz = MockMusicBrainz::start().await.expect("the mock serves");
     let app = TestApp::start_with(
         tag,
         droppedneedle::bootstrap::Outbound {
+            brainzmash: musicbrainz.base_url(),
             spotify_api: api.base_url.clone(),
             spotify_accounts: accounts.base_url.clone(),
             spotify_cover_cdn: Some(covers.base_url.clone()),
@@ -51,6 +56,7 @@ async fn rig(tag: &str) -> Rig {
     Rig {
         app,
         spotify,
+        musicbrainz,
         _servers: (api, accounts, covers),
     }
 }
@@ -533,6 +539,470 @@ async fn sync_off_cancels_and_a_refused_link_reads_not_linked() {
         )
         .unwrap();
     assert_eq!(live, 0, "turning sync off cancels its pass");
+
+    rig.app.stop().await;
+}
+
+/// The keys of the requests `who` filed (`track:` and a recording, or a
+/// release group), sorted, with how many wait for an admin's approval.
+fn requests_of(app: &TestApp, who: &Login) -> (Vec<String>, usize) {
+    let rows: Vec<(String, String)> = app
+        .db()
+        .prepare(
+            "SELECT musicbrainz_id_lower, status FROM request_history \
+             WHERE user_id = ?1 ORDER BY musicbrainz_id_lower",
+        )
+        .unwrap()
+        .query_map([&who.user_id], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    let waiting = rows
+        .iter()
+        .filter(|(_, status)| status == "awaiting_approval")
+        .count();
+    (rows.into_iter().map(|(key, _)| key).collect(), waiting)
+}
+
+/// `songs` as `who`'s Spotify playlist `spotify_id`, imported and synced,
+/// its first pass run.
+async fn synced(rig: &Rig, who: &Login, spotify_id: &str, songs: Vec<Value>) -> String {
+    let rows = songs.len();
+    rig.spotify.set_playlist(spotify_id, "v1", songs);
+    let playlist_id = rig.import(who, spotify_id, rows).await;
+    let (status, body) = rig.switch(who, &playlist_id, true).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    rig.app
+        .until("the first pass", || async {
+            rig.checked_at(&playlist_id).map(|_| ())
+        })
+        .await;
+    playlist_id
+}
+
+/// An admin's call.
+async fn admin(rig: &Rig) -> Login {
+    Login {
+        user_id: String::new(),
+        authorization: rig.app.login_admin().await,
+    }
+}
+
+/// Approve, turn down or take back `playlist_id`'s requests as `admin`,
+/// and wait for the pass an approval queues.
+async fn decide(rig: &Rig, admin: &Login, playlist_id: &str, verb: &str) {
+    let before = rig.checked_at(playlist_id);
+    let (status, body) = rig
+        .call(
+            admin,
+            "POST",
+            &format!("/api/v3/requests/playlist-sync-approvals/{playlist_id}/{verb}"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["success"], true, "{body}");
+    if verb == "approve" {
+        rig.app
+            .until("the approved pass", || async {
+                (rig.checked_at(playlist_id) != before).then_some(())
+            })
+            .await;
+    }
+}
+
+async fn set_role(rig: &Rig, admin: &Login, who: &Login, role: &str) {
+    let (status, body) = rig
+        .call(
+            admin,
+            "PUT",
+            &format!("/api/v3/admin/users/{}/role", who.user_id),
+            Some(json!({"role": role})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+/// The number on an admin's approvals badge.
+async fn badge(rig: &Rig, admin: &Login) -> u64 {
+    let (status, body) = rig
+        .call(admin, "GET", "/api/v3/requests/approvals/count", None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body["count"].as_u64().expect("a count")
+}
+
+/// The sync as `who` reads it.
+async fn sync_of(rig: &Rig, who: &Login, playlist_id: &str) -> Value {
+    let (status, body) = rig
+        .call(
+            who,
+            "GET",
+            &format!("/api/v3/playlists/{playlist_id}/sync"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body
+}
+
+/// A plain user's synced playlist asks an admin once, and requests nothing
+/// and asks MusicBrainz nothing until a yes. After the yes its songs are
+/// requested by themselves, as songs that wait for no approval, 25 a pass
+/// until it has caught up, from the ISRC reads the import made. Once the
+/// yes is taken back new songs are still added and nothing is requested.
+#[tokio::test]
+async fn a_plain_users_sync_requests_only_under_its_grant() {
+    let rig = rig("spotify-sync-grant").await;
+    let admin = admin(&rig).await;
+    let ada = rig.app.login_user("ada").await;
+    rig.link(&ada, SPOTIFY_SCOPES, SPOTIFY_TOKEN).await;
+    let before_import = rig.musicbrainz.calls().len();
+    let playlist_id = synced(&rig, &ada, "sp-grant", (1..=30).map(song).collect()).await;
+    let after_import = rig.musicbrainz.calls().len();
+    assert_eq!(
+        after_import - before_import,
+        30,
+        "the import proves each album by one ISRC read"
+    );
+    assert_eq!(
+        requests_of(&rig.app, &ada).0.len(),
+        0,
+        "nothing before a yes"
+    );
+    assert_eq!(sync_of(&rig, &ada, &playlist_id).await["grant"], "waiting");
+    let (status, asks) = rig
+        .call(
+            &admin,
+            "GET",
+            "/api/v3/requests/playlist-sync-approvals",
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{asks}");
+    assert_eq!(asks["count"], 1, "{asks}");
+    assert_eq!(asks["items"][0]["playlist_id"], playlist_id.as_str());
+    assert_eq!(asks["items"][0]["song_count"], 30);
+    assert_eq!(badge(&rig, &admin).await, 1, "the ask counts on the badge");
+
+    decide(&rig, &admin, &playlist_id, "approve").await;
+    assert_eq!(badge(&rig, &admin).await, 0, "and leaves it once approved");
+    let (filed, waiting) = requests_of(&rig.app, &ada);
+    assert_eq!(filed.len(), 25, "25 songs a pass: {filed:?}");
+    assert_eq!(waiting, 0, "songs under the grant wait for no approval");
+    assert!(
+        filed.contains(&format!("track:{}", sync_recording(1))),
+        "{filed:?}"
+    );
+    assert_eq!(
+        rig.musicbrainz.calls().len(),
+        after_import,
+        "the walk reads the ISRCs the import read"
+    );
+
+    rig.pass(&ada, "sp-grant", &playlist_id).await;
+    assert_eq!(
+        requests_of(&rig.app, &ada).0.len(),
+        30,
+        "the rest next pass"
+    );
+    assert_eq!(
+        sync_of(&rig, &ada, &playlist_id).await["progress"],
+        "caught_up"
+    );
+
+    decide(&rig, &admin, &playlist_id, "revoke").await;
+    rig.spotify
+        .set_playlist("sp-grant", "v2", (1..=31).map(song).collect());
+    rig.pass(&ada, "sp-grant", &playlist_id).await;
+    assert_eq!(
+        titles(&rig.app, &playlist_id).len(),
+        31,
+        "new songs still come"
+    );
+    assert_eq!(
+        requests_of(&rig.app, &ada).0.len(),
+        30,
+        "nothing is requested"
+    );
+    assert_eq!(sync_of(&rig, &ada, &playlist_id).await["grant"], "revoked");
+
+    rig.app.stop().await;
+}
+
+/// A trusted user's sync needs no grant, and asking for whole albums asks
+/// once for an album two of its songs are on. Demoted to a plain user, the
+/// owner's next pass asks an admin and requests nothing.
+#[tokio::test]
+async fn a_trusted_sync_asks_for_each_album_once() {
+    let rig = rig("spotify-sync-albums").await;
+    let admin = admin(&rig).await;
+    let tess = rig.app.login_user("tess").await;
+    set_role(&rig, &admin, &tess, "trusted").await;
+    rig.link(&tess, SPOTIFY_SCOPES, SPOTIFY_TOKEN).await;
+    let mut twin = song(901);
+    twin["album"] = song(1)["album"].clone();
+    rig.spotify
+        .set_playlist("sp-albums", "v1", vec![song(1), twin, song(3)]);
+    let playlist_id = rig.import(&tess, "sp-albums", 3).await;
+    let (status, body) = rig
+        .call(
+            &tess,
+            "PUT",
+            &format!("/api/v3/playlists/{playlist_id}/sync"),
+            Some(json!({"enabled": true, "whole_albums": true})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["grant"], "not_needed", "{body}");
+    rig.app
+        .until("the first pass", || async {
+            rig.checked_at(&playlist_id).map(|_| ())
+        })
+        .await;
+    let asked = vec![sync_group(1), sync_group(3)];
+    assert_eq!(
+        requests_of(&rig.app, &tess),
+        (asked.clone(), 0),
+        "one ask an album"
+    );
+
+    set_role(&rig, &admin, &tess, "user").await;
+    rig.spotify
+        .set_playlist("sp-albums", "v2", vec![song(1), song(3), song(4)]);
+    rig.pass(&tess, "sp-albums", &playlist_id).await;
+    let grant: Option<String> = rig
+        .app
+        .db()
+        .query_row(
+            "SELECT grant_state FROM acquire_playlist_syncs WHERE playlist_id = ?1",
+            [&playlist_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        grant.as_deref(),
+        Some("pending"),
+        "a demoted owner asks an admin"
+    );
+    assert_eq!(
+        requests_of(&rig.app, &tess),
+        (asked, 0),
+        "and requests nothing"
+    );
+
+    rig.app.stop().await;
+}
+
+/// A full quota holds a sync's requests, and the songs are requested once
+/// there is room. A request that ended is never asked again, even once the
+/// request list forgets it.
+#[tokio::test]
+async fn a_full_quota_holds_and_an_ended_request_is_never_asked_again() {
+    let rig = rig("spotify-sync-quota").await;
+    let admin = admin(&rig).await;
+    let quin = rig.app.login_user("quin").await;
+    let quota = |count: u32| {
+        let (rig, admin, quin) = (&rig, &admin, &quin);
+        async move {
+            let (status, body) = rig
+                .call(
+                    admin,
+                    "PUT",
+                    &format!("/api/v3/admin/users/{}/quota", quin.user_id),
+                    Some(json!({"request_quota_count": count, "request_quota_days": 7})),
+                )
+                .await;
+            assert!(status.is_success(), "{status} {body}");
+        }
+    };
+    quota(1).await;
+    rig.link(&quin, SPOTIFY_SCOPES, SPOTIFY_TOKEN).await;
+    let playlist_id = synced(&rig, &quin, "sp-quota", vec![song(4), song(5)]).await;
+    decide(&rig, &admin, &playlist_id, "approve").await;
+    let song_4 = format!("track:{}", sync_recording(4));
+    assert_eq!(requests_of(&rig.app, &quin).0, [song_4.clone()]);
+    assert_eq!(sync_of(&rig, &quin, &playlist_id).await["hold"], "quota");
+
+    rig.app
+        .seed(format!(
+            "UPDATE request_history SET status = 'rejected' WHERE musicbrainz_id_lower = '{song_4}'; \
+             DELETE FROM request_history WHERE musicbrainz_id_lower = '{song_4}'"
+        ))
+        .await;
+    quota(10).await;
+    rig.pass(&quin, "sp-quota", &playlist_id).await;
+    assert_eq!(
+        requests_of(&rig.app, &quin).0,
+        [format!("track:{}", sync_recording(5))],
+        "the held song is asked for, and the one followed up is never asked again"
+    );
+    assert_eq!(
+        sync_of(&rig, &quin, &playlist_id).await["hold"],
+        Value::Null
+    );
+
+    rig.app.stop().await;
+}
+
+/// When `playlist_id`'s song `song_id` is looked at next, and whether the
+/// sync is done with it.
+fn next_look_of(app: &TestApp, playlist_id: &str, song_id: &str) -> (Option<i64>, bool) {
+    app.db()
+        .query_row(
+            "SELECT look_again_at, followed_up_at IS NOT NULL FROM catalog_playlist_source_songs \
+             WHERE playlist_id = ?1 AND source_song_id = ?2",
+            [playlist_id, song_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap()
+}
+
+/// A song the requests refuse for a reason the next pass would meet again
+/// (here a title that names nothing) is looked at again later and stops
+/// counting as left, rather than being tried every pass.
+#[tokio::test]
+async fn a_refused_song_waits_for_its_next_look() {
+    let rig = rig("spotify-sync-refused").await;
+    let admin = admin(&rig).await;
+    let tess = rig.app.login_user("tess").await;
+    set_role(&rig, &admin, &tess, "trusted").await;
+    rig.link(&tess, SPOTIFY_SCOPES, SPOTIFY_TOKEN).await;
+    let mut nameless = song(7);
+    nameless["name"] = json!("Unknown");
+    let playlist_id = synced(&rig, &tess, "sp-refused", vec![nameless]).await;
+
+    assert_eq!(requests_of(&rig.app, &tess).0.len(), 0, "nothing filed");
+    let (look, done) = next_look_of(&rig.app, &playlist_id, "sp-song-7");
+    assert!(look.is_some() && !done, "looked at again later: {look:?}");
+    let sync = sync_of(&rig, &tess, &playlist_id).await;
+    assert_eq!(sync["songs_left"], 0, "{sync}");
+
+    rig.app.stop().await;
+}
+
+/// A backlog of songs whose albums were asked for before costs a pass no
+/// more MusicBrainz reads than its budget, even once the cached answers
+/// are gone.
+#[tokio::test]
+async fn a_backlog_already_asked_for_keeps_to_the_pass_budget() {
+    let rig = rig("spotify-sync-budget").await;
+    let admin = admin(&rig).await;
+    let tess = rig.app.login_user("tess").await;
+    set_role(&rig, &admin, &tess, "trusted").await;
+    rig.link(&tess, SPOTIFY_SCOPES, SPOTIFY_TOKEN).await;
+    rig.spotify
+        .set_playlist("sp-budget", "v1", (1..=40).map(song).collect());
+    let playlist_id = rig.import(&tess, "sp-budget", 40).await;
+    let asked: Vec<String> = (1..=40)
+        .map(|n| {
+            format!(
+                "INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, artist_name, \
+                 album_title, requested_at, status) VALUES ('{group}', '{group}', \
+                 'Aurora Current', 'Album {n}', 1, 'imported')",
+                group = sync_group(n)
+            )
+        })
+        .collect();
+    rig.app.seed(asked.join("; ")).await;
+    let (status, body) = rig
+        .call(
+            &admin,
+            "POST",
+            "/api/v3/admin/cache/clear",
+            Some(json!({"scope": "provider_data"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let before = rig.musicbrainz.calls().len();
+    let (status, body) = rig.switch(&tess, &playlist_id, true).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    rig.app
+        .until("the first pass", || async {
+            rig.checked_at(&playlist_id).map(|_| ())
+        })
+        .await;
+    let reads = rig.musicbrainz.calls().len() - before;
+    assert!(
+        reads <= 25,
+        "{reads} MusicBrainz reads in one pass, past the 25 a pass may make"
+    );
+    assert_eq!(
+        requests_of(&rig.app, &tess).0.len(),
+        0,
+        "nothing asked again"
+    );
+
+    rig.app.stop().await;
+}
+
+/// Before an admin approves a plain user's sync, its new songs still get
+/// their albums, by proof, and nothing is requested.
+#[tokio::test]
+async fn a_sync_waiting_for_its_grant_still_finds_albums() {
+    let rig = rig("spotify-sync-waiting").await;
+    let ada = rig.app.login_user("ada").await;
+    rig.link(&ada, SPOTIFY_SCOPES, SPOTIFY_TOKEN).await;
+    let playlist_id = synced(&rig, &ada, "sp-waiting", vec![song(1)]).await;
+    rig.spotify
+        .set_playlist("sp-waiting", "v2", vec![song(1), song(2)]);
+    rig.pass(&ada, "sp-waiting", &playlist_id).await;
+
+    let album: Option<String> = rig
+        .app
+        .db()
+        .query_row(
+            "SELECT album_id FROM catalog_playlist_tracks WHERE playlist_id = ?1 \
+             AND track_name = 'Song 2'",
+            [&playlist_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(album, Some(sync_group(2)), "the new song has its album");
+    assert_eq!(requests_of(&rig.app, &ada).0.len(), 0, "nothing requested");
+    assert_eq!(sync_of(&rig, &ada, &playlist_id).await["grant"], "waiting");
+
+    rig.app.stop().await;
+}
+
+/// While its grant waits, a pass reads only the songs that still need an
+/// album: a song that has one is not visited at all, even one that plays
+/// already, so the pass reads no library rows for it.
+#[tokio::test]
+async fn a_waiting_pass_visits_only_songs_without_an_album() {
+    let rig = rig("spotify-sync-waiting-reads").await;
+    let ada = rig.app.login_user("ada").await;
+    rig.link(&ada, SPOTIFY_SCOPES, SPOTIFY_TOKEN).await;
+    rig.spotify
+        .set_playlist("sp-waiting-reads", "v1", (1..=60).map(song).collect());
+    let playlist_id = rig.import(&ada, "sp-waiting-reads", 60).await;
+    rig.app
+        .seed(format!(
+            "UPDATE catalog_playlist_tracks SET available_sources = '[\"jellyfin\"]' \
+             WHERE playlist_id = '{playlist_id}' AND track_name = 'Song 60'"
+        ))
+        .await;
+    let (status, body) = rig.switch(&ada, &playlist_id, true).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    rig.app
+        .until("the first pass", || async {
+            rig.checked_at(&playlist_id).map(|_| ())
+        })
+        .await;
+
+    assert_eq!(sync_of(&rig, &ada, &playlist_id).await["grant"], "waiting");
+    let followed: i64 = rig
+        .app
+        .db()
+        .query_row(
+            "SELECT COUNT(*) FROM catalog_playlist_source_songs \
+             WHERE playlist_id = ?1 AND followed_up_at IS NOT NULL",
+            [&playlist_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(followed, 0, "the song that plays waits for the grant too");
 
     rig.app.stop().await;
 }

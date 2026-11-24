@@ -69,6 +69,44 @@ droppedneedle_kernel::sql! {
          WHERE enabled = 1 AND failure IN ('not_linked', 'needs_reconnect') \
          AND playlist_id IN (SELECT id FROM catalog_playlists WHERE user_id = ?1) \
          RETURNING playlist_id";
+    /// The synced playlists whose plain-user owner's grant is in state
+    /// `?1`, oldest ask first, with the songs on each.
+    pub(super) GRANTS = "SELECT s.playlist_id AS playlist_id, p.name AS playlist_name, \
+         p.user_id AS user_id, u.display_name AS user_name, \
+         s.grant_requested_at AS grant_requested_at, s.whole_albums AS whole_albums, \
+         (SELECT COUNT(*) FROM catalog_playlist_tracks e WHERE e.playlist_id = s.playlist_id) \
+         AS song_count \
+         FROM acquire_playlist_syncs s JOIN catalog_playlists p ON p.id = s.playlist_id \
+         JOIN auth_users u ON u.id = p.user_id \
+         WHERE s.grant_state = ?1 AND s.enabled = 1 AND u.role = 'user' \
+         ORDER BY s.grant_requested_at, s.playlist_id";
+    /// How many sync asks wait for an admin: the rows [`GRANTS`] lists
+    /// for `pending`.
+    pub(super) PENDING_GRANT_COUNT = "SELECT COUNT(*) FROM acquire_playlist_syncs s \
+         JOIN catalog_playlists p ON p.id = s.playlist_id \
+         JOIN auth_users u ON u.id = p.user_id \
+         WHERE s.grant_state = 'pending' AND s.enabled = 1 AND u.role = 'user'";
+    /// One grant an admin sees.
+    pub(super) row GrantColumns for [GRANTS] {
+        playlist_id: String,
+        playlist_name: String,
+        user_id: String,
+        user_name: Option<String>,
+        grant_requested_at: Option<i64>,
+        whole_albums: bool,
+        song_count: i64,
+    }
+    /// Playlist `?1`'s grant.
+    pub(super) GRANT_STATE = "SELECT grant_state FROM acquire_playlist_syncs \
+         WHERE playlist_id = ?1";
+    /// Move playlist `?1`'s grant from `?6` to `?2`, stamped by reviewer
+    /// `?3` (`?4` their name) at `?5`.
+    pub(super) DECIDE_GRANT = "UPDATE acquire_playlist_syncs SET grant_state = ?2, \
+         grant_reviewed_by_id = ?3, grant_reviewed_by_name = ?4, grant_reviewed_at = ?5 \
+         WHERE playlist_id = ?1 AND grant_state = ?6";
+    /// Ask an admin for playlist `?1`'s grant at `?2`, when it has none.
+    pub(super) ASK_GRANT_IF_NONE = "UPDATE acquire_playlist_syncs SET grant_state = 'pending', \
+         grant_requested_at = ?2 WHERE playlist_id = ?1 AND grant_state IS NULL";
     /// The role and request name of user `?1`.
     pub(super) OWNER = "SELECT role, COALESCE(username_display, username) AS name \
          FROM auth_users WHERE id = ?1";

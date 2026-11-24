@@ -759,6 +759,10 @@ droppedneedle_kernel::sql! {
     /// Owned albums identified as one of the releases: album id and the
     /// lowercase release.
     family OWNERS_BY_RELEASE = owners_by_release;
+    /// The asked ISRCs (uppercase) an indexed library track's tags carry.
+    family OWNED_ISRCS = owned_isrcs_in;
+    /// The asked recordings (lowercase) an indexed library track is.
+    family OWNED_RECORDINGS = owned_recordings_in;
     /// The album one release group (`?1`, lowercase) opens, owned or not.
     pub(crate) LIVE_COPY_BY_GROUP = (copy_of_group!("= ?1"));
     /// Owned albums titled `?1` by `?2` (both folded) that have no
@@ -2097,6 +2101,36 @@ pub(crate) fn requested_in(ids: ListLen) -> String {
         "SELECT musicbrainz_id_lower FROM request_history \
          WHERE {OPEN_REQUEST} AND musicbrainz_id_lower IN ({})",
         marks(ids)
+    )
+}
+
+/// The ISRCs among `ids` (uppercase) an indexed library track's tags carry.
+/// The tags keep a file's ISRCs comma-joined, so each asked one is looked
+/// for whole in that list.
+pub(crate) fn owned_isrcs_in(ids: ListLen) -> String {
+    format!(
+        "{}SELECT a.g FROM asked a WHERE EXISTS (SELECT 1 FROM local_track_edition_tags h \
+         JOIN local_tracks t ON t.id = h.local_track_id WHERE +t.availability = 'indexed' \
+         AND h.isrcs IS NOT NULL AND instr(',' || h.isrcs || ',', ',' || a.g || ',') > 0)",
+        asked_groups(ids)
+    )
+}
+
+/// The recordings among `ids` (lowercase) an indexed library track is: by
+/// its identity's recording, else by the one its tags carry. Each side is
+/// reached by its lowercase index.
+pub(crate) fn owned_recordings_in(ids: ListLen) -> String {
+    format!(
+        "{}SELECT a.g FROM asked a WHERE EXISTS (SELECT 1 \
+         FROM local_track_external_identities tri JOIN local_tracks t ON t.id = tri.local_track_id \
+         WHERE lower(tri.recording_mbid) = a.g AND tri.provider = 'musicbrainz' \
+         AND +t.availability = 'indexed') \
+         OR EXISTS (SELECT 1 FROM local_tracks t \
+         WHERE lower(COALESCE(t.embedded_recording_mbid, '')) = a.g \
+         AND +t.availability = 'indexed' AND NOT EXISTS (SELECT 1 \
+         FROM local_track_external_identities x WHERE x.local_track_id = t.id \
+         AND x.provider = 'musicbrainz' AND x.recording_mbid IS NOT NULL))",
+        asked_groups(ids)
     )
 }
 

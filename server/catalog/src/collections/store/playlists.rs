@@ -25,7 +25,7 @@ use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 use super::super::db::{CollectionsDb, StoreError};
 use super::super::entry_cover::entry_cover;
 use super::super::identify_job::{IDENTIFY, IdentifyJob, identify_key};
-use super::super::models::{PlaylistMember, PlaylistTrack, SourceAlbumKind};
+use super::super::models::{AlbumPick, FiledKind, PlaylistMember, PlaylistTrack, SourceAlbumKind};
 use super::super::sql::{self, PlaylistExportRow};
 use droppedneedle_auth::users::roles::Admin;
 use droppedneedle_kernel::db::{DbError, fold_text};
@@ -158,6 +158,38 @@ pub struct SourceEntry {
     pub album: SourceAlbum,
     /// The entry.
     pub entry: NewEntry,
+}
+
+/// One song a playlist took from its source that a sync has not followed
+/// up, with its entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenSourceSong {
+    /// The source's id for the song.
+    pub song_id: String,
+    /// Its entry.
+    pub entry_id: String,
+    /// Track title.
+    pub track_name: String,
+    /// Artist text, every credit included.
+    pub artist_name: String,
+    /// Album name on the entry.
+    pub album_name: String,
+    /// The release group the entry was given, when one was.
+    pub album_id: Option<String>,
+    /// The recording the entry carries, when it carries one.
+    pub recording_mbid: Option<String>,
+    /// The song's ISRC.
+    pub isrc: Option<String>,
+    /// Length, milliseconds.
+    pub duration_ms: Option<i64>,
+    /// The entry plays already: a library file or a source of its own.
+    pub playable: bool,
+    /// What the source said about its album.
+    pub album: SourceAlbum,
+    /// How its album was chosen, when not as the source files it.
+    pub pick: Option<AlbumPick>,
+    /// Looks for an album made so far.
+    pub looks: i64,
 }
 
 /// Where a sync puts the songs it adds.
@@ -846,6 +878,185 @@ impl PlaylistStore {
                     tx.execute(sql::STAMP.text(), params![now, playlist_id])?;
                 }
                 Ok(changed)
+            })
+            .await
+    }
+
+    /// The songs `playlist_id` took from its source that a sync has not
+    /// followed up and whose next look for an album is due by `now` (unix
+    /// ms), in playlist order; with `albumless_only`, only those with no
+    /// album yet.
+    pub async fn open_source_songs(
+        &self,
+        playlist_id: &str,
+        now: i64,
+        albumless_only: bool,
+    ) -> Result<Vec<OpenSourceSong>, StoreError> {
+        let playlist_id = playlist_id.to_owned();
+        self.db
+            .read("playlists.open_source_songs", move |conn| {
+                let rows = conn
+                    .prepare(sql::OPEN_SOURCE_SONGS.text())?
+                    .query_map(
+                        params![playlist_id, now, albumless_only],
+                        sql::OpenSourceSongColumns::read,
+                    )?
+                    .map(|row| {
+                        row.map(|row| OpenSourceSong {
+                            song_id: row.song_id,
+                            entry_id: row.entry_id,
+                            track_name: row.track_name,
+                            artist_name: row.artist_name,
+                            album_name: row.album_name,
+                            album_id: row.album_id,
+                            recording_mbid: row.recording_mbid,
+                            isrc: row.isrc,
+                            duration_ms: row.duration_ms,
+                            playable: row.playable,
+                            album: SourceAlbum {
+                                source_id: row.album_source_id,
+                                title: row.album_title,
+                                artist: row.album_artist,
+                                kind: row.album_kind,
+                                tracks: row.album_tracks,
+                            },
+                            pick: row.album_pick,
+                            looks: row.looks,
+                        })
+                    })
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await
+    }
+
+    /// The release group each source album of `playlist_id` was given on
+    /// one of its songs' entries, the first in playlist order; none an
+    /// album moved to an artist's own album.
+    pub async fn placed_albums(
+        &self,
+        playlist_id: &str,
+    ) -> Result<std::collections::HashMap<String, String>, StoreError> {
+        let playlist_id = playlist_id.to_owned();
+        self.db
+            .read("playlists.placed_albums", move |conn| {
+                let mut placed = std::collections::HashMap::new();
+                for row in conn
+                    .prepare(sql::PLACED_ALBUMS.text())?
+                    .query_map(params![playlist_id], sql::PlacedAlbum::read)?
+                {
+                    let row = row?;
+                    placed.entry(row.album_source_id).or_insert(row.album_id);
+                }
+                Ok(placed)
+            })
+            .await
+    }
+
+    /// The titles and ISRCs of `playlist_id`'s songs on source album
+    /// `album_source_id`, in playlist order.
+    pub async fn source_album_songs(
+        &self,
+        playlist_id: &str,
+        album_source_id: &str,
+    ) -> Result<Vec<(String, Option<String>)>, StoreError> {
+        let (playlist_id, album_source_id) = (playlist_id.to_owned(), album_source_id.to_owned());
+        self.db
+            .read("playlists.source_album_songs", move |conn| {
+                let rows = conn
+                    .prepare(sql::SOURCE_ALBUM_SONGS.text())?
+                    .query_map(
+                        params![playlist_id, album_source_id],
+                        sql::SourceAlbumSong::read,
+                    )?
+                    .map(|row| row.map(|row| (row.track_name, row.isrc)))
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await
+    }
+
+    /// A sync is done with `song_ids` of `playlist_id` at `now`: requested,
+    /// or nothing to ask for.
+    pub async fn mark_followed_up(
+        &self,
+        playlist_id: &str,
+        song_ids: Vec<String>,
+        now: i64,
+    ) -> Result<(), StoreError> {
+        if song_ids.is_empty() {
+            return Ok(());
+        }
+        let playlist_id = playlist_id.to_owned();
+        self.db
+            .write("playlists.mark_followed_up", move |tx| {
+                let mut statement = tx.prepare(sql::FOLLOW_UP_SOURCE_SONG.text())?;
+                for song_id in &song_ids {
+                    statement.execute(params![playlist_id, song_id, now])?;
+                }
+                Ok(())
+            })
+            .await
+    }
+
+    /// A sync filed a request of `kind` for MusicBrainz id `key` that
+    /// covers `song_ids` of `playlist_id`, at `now`: they are followed up,
+    /// and each keeps what was filed for it.
+    pub async fn mark_filed(
+        &self,
+        playlist_id: &str,
+        song_ids: Vec<String>,
+        (kind, key): (FiledKind, &str),
+        now: i64,
+    ) -> Result<(), StoreError> {
+        if song_ids.is_empty() {
+            return Ok(());
+        }
+        let (playlist_id, key) = (playlist_id.to_owned(), key.to_ascii_lowercase());
+        self.db
+            .write("playlists.mark_filed", move |tx| {
+                let mut statement = tx.prepare(sql::FILE_SOURCE_SONG.text())?;
+                for song_id in &song_ids {
+                    statement.execute(params![playlist_id, song_id, now, kind.as_str(), key])?;
+                }
+                Ok(())
+            })
+            .await
+    }
+
+    /// Nothing proved the album of `playlist_id`'s song `song_id`: count
+    /// the look and look again at `at` (unix ms).
+    pub async fn look_again(
+        &self,
+        playlist_id: &str,
+        song_id: &str,
+        at: i64,
+    ) -> Result<(), StoreError> {
+        let (playlist_id, song_id) = (playlist_id.to_owned(), song_id.to_owned());
+        self.db
+            .write("playlists.look_again", move |tx| {
+                tx.execute(
+                    sql::LOOK_AGAIN_SOURCE_SONG.text(),
+                    params![playlist_id, song_id, at],
+                )?;
+                Ok(())
+            })
+            .await
+    }
+
+    /// The entries of `playlist_id` whose songs a sync has not followed up.
+    pub async fn open_source_entries(
+        &self,
+        playlist_id: &str,
+    ) -> Result<std::collections::HashSet<String>, StoreError> {
+        let playlist_id = playlist_id.to_owned();
+        self.db
+            .read("playlists.open_source_entries", move |conn| {
+                let rows = conn
+                    .prepare(sql::OPEN_SOURCE_ENTRIES.text())?
+                    .query_map(params![playlist_id], |row| row.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<_>>()?;
+                Ok(rows)
             })
             .await
     }

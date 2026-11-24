@@ -19,17 +19,24 @@
 //! person removed it. Spotify's version is kept only after that write, so a
 //! write that failed is read again next time.
 //!
+//! Then the walk ([`walk`]) requests the songs the library lacks, a few a
+//! pass, while the owner holds the grant ([`grant`]): by role for an admin
+//! or a trusted user, else by an admin's approval of that playlist. Without
+//! it songs are still added and nothing is requested.
+//!
 //! A pass that cannot reach Spotify, or cannot save, records one closed
 //! reason ([`models::SyncFailure`]) and when to try again, and finishes; a
 //! busy database puts it back without spending anything. Every step is safe
 //! to repeat after a restart.
 
 pub mod due;
+pub mod grant;
 pub mod http;
 pub mod job;
 pub mod models;
 pub(crate) mod sql;
 pub mod store;
+pub mod walk;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -47,10 +54,14 @@ use droppedneedle_kernel::runtime_config::secret_sections::SpotifySettings;
 use self::models::{PlaylistSync, PlaylistSyncBody, SyncGrant, SyncProgress};
 use self::store::SyncStore;
 use crate::imports::LIKED_SONGS_REF;
+use crate::imports::spotify_albums::AlbumResolver;
 use crate::imports::spotify_client::SpotifyClient;
 use crate::imports::spotify_store::SqliteSpotifyLinks;
+use crate::requests::RequestsState;
 use crate::requests::ledger::ApprovalState;
 use crate::settings::ConfigSpotifySettings;
+use droppedneedle_catalog::metadata::Catalog;
+use droppedneedle_catalog::metadata::library::LocalCatalog;
 
 /// The sync job kind.
 pub const KIND: JobKind = JobKind::new("spotify.sync");
@@ -140,6 +151,18 @@ impl From<StoreError> for PlaylistSyncError {
     }
 }
 
+/// What the walk files requests through and looks albums up with.
+pub struct WalkPorts {
+    /// The requests service's state.
+    pub requests: RequestsState,
+    /// The library's songs and albums.
+    pub library: LocalCatalog,
+    /// Albums by proof, and the ISRC reads.
+    pub resolver: Arc<AlbumResolver>,
+    /// Album tracklists.
+    pub catalog: Catalog,
+}
+
 /// Spotify sync: the pass, the switch and the state read.
 pub struct SpotifySync {
     client: SpotifyClient,
@@ -148,12 +171,16 @@ pub struct SpotifySync {
     playlists: PlaylistStore,
     store: SyncStore,
     events: EventHub,
+    requests: RequestsState,
+    library: LocalCatalog,
+    resolver: Arc<AlbumResolver>,
+    catalog: Catalog,
 }
 
 impl SpotifySync {
     /// Sync over the Spotify client and the owner's links, writing songs to
     /// `playlists` and sync rows to `store`, and telling owners on
-    /// `events`.
+    /// `events`; the walk files through `walk`.
     pub fn new(
         client: SpotifyClient,
         settings: Arc<ConfigSpotifySettings>,
@@ -161,6 +188,7 @@ impl SpotifySync {
         playlists: PlaylistStore,
         store: SyncStore,
         events: EventHub,
+        walk: WalkPorts,
     ) -> Self {
         Self {
             client,
@@ -169,6 +197,10 @@ impl SpotifySync {
             playlists,
             store,
             events,
+            requests: walk.requests,
+            library: walk.library,
+            resolver: walk.resolver,
+            catalog: walk.catalog,
         }
     }
 

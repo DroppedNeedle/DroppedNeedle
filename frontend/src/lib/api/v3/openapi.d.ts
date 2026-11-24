@@ -8163,6 +8163,80 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/requests/playlist-sync-approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The synced playlists of plain users waiting for an admin to approve
+         *     their requests, and the approvals that stand.
+         */
+        get: operations["sync_approvals_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/playlist-sync-approvals/{playlist_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve a synced playlist's requests: its songs are then requested by
+         *     themselves, inside the owner's quota.
+         */
+        post: operations["approve_sync_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/playlist-sync-approvals/{playlist_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Turn down a synced playlist's requests. Its new songs are still added. */
+        post: operations["reject_sync_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/playlist-sync-approvals/{playlist_id}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Take back a synced playlist's approval. Its new songs are still added. */
+        post: operations["revoke_sync_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/requests/retry/{musicbrainz_id}": {
         parameters: {
             query?: never;
@@ -21024,7 +21098,7 @@ export interface components {
          * @description What a song the library lacks waits for.
          * @enum {string}
          */
-        PlaylistEntryState: "requestable" | "no_album_yet" | "finding_album" | "awaiting_approval" | "downloading" | "awaiting_review" | "album_in_library" | "rejected";
+        PlaylistEntryState: "requestable" | "no_album_yet" | "finding_album" | "awaiting_approval" | "downloading" | "awaiting_review" | "album_in_library" | "rejected" | "queued";
         /** @description Where the Spotify import of a playlist stands, while it is not done. */
         PlaylistImportState: {
             /** @enum {string} */
@@ -21245,6 +21319,41 @@ export interface components {
             syncable: boolean;
             /** @description New songs are asked for as whole albums. */
             whole_albums: boolean;
+        };
+        /** @description One playlist's sync asking for, or holding, an admin's approval. */
+        PlaylistSyncApprovalItem: {
+            /** @description The synced playlist. */
+            playlist_id: string;
+            /** @description Its name. */
+            playlist_name: string;
+            /**
+             * Format: int64
+             * @description When the owner turned sync on, epoch seconds.
+             */
+            requested_at: number;
+            /**
+             * Format: int32
+             * @description Songs on the playlist.
+             */
+            song_count: number;
+            /** @description Its owner. */
+            user_id: string;
+            /** @description The owner's display name. */
+            user_name: string;
+            /** @description New songs are asked for as whole albums. */
+            whole_albums: boolean;
+        };
+        /** @description The sync asks waiting for an admin, and the approvals that stand. */
+        PlaylistSyncApprovalsResponse: {
+            /**
+             * Format: int32
+             * @description How many wait.
+             */
+            count: number;
+            /** @description The approvals that stand. */
+            granted: components["schemas"]["PlaylistSyncApprovalItem"][];
+            /** @description The asks that wait, oldest first. */
+            items: components["schemas"]["PlaylistSyncApprovalItem"][];
         };
         /** @description Turn a playlist's sync on or off. */
         PlaylistSyncBody: {
@@ -48455,6 +48564,167 @@ export interface operations {
             };
             /** @description ListenBrainz is not connected */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    sync_approvals_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sync asks and approvals */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaylistSyncApprovalsResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not an admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    approve_sync_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The decision */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not an admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    reject_sync_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The decision */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not an admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    revoke_sync_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The decision */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not an admin */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

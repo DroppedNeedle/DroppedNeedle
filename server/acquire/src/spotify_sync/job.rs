@@ -15,11 +15,13 @@ use droppedneedle_providers::spotify::models::EntryTrack;
 
 use super::models::SyncFailure;
 use super::store::SyncRow;
+use super::walk::WalkStop;
 use super::{SpotifySync, SyncJob, jitter};
 use crate::imports::spotify::ImportedTrack;
 use crate::imports::spotify_client::{SpotifyError, TokenRefresher};
 use crate::imports::spotify_store::source_entry;
 use crate::imports::{LIKED_SONGS_REF, spotify_oauth::SpotifyConnection};
+use droppedneedle_auth::Principal;
 
 /// How long after a pass the next one is due, before its spread.
 const PASS_INTERVAL: Duration = Duration::from_secs(3600);
@@ -41,8 +43,8 @@ const SETTINGS_RECHECK: Duration = Duration::from_secs(300);
 
 /// What a pass ended with.
 enum Ended {
-    /// Finished: songs added this pass.
-    Done { added: usize },
+    /// Finished: songs added and requested this pass.
+    Done { added: usize, requested: usize },
     /// Spotify or the store failed; the row says why.
     Failed {
         failure: SyncFailure,
@@ -104,9 +106,9 @@ impl SpotifySync {
         match ended {
             Ended::Idle => Outcome::Done,
             Ended::Busy => Outcome::Busy,
-            Ended::Done { added } => {
-                if added > 0 {
-                    self.announce(playlist_id, added, 0).await;
+            Ended::Done { added, requested } => {
+                if added > 0 || requested > 0 {
+                    self.announce(playlist_id, added, requested).await;
                 }
                 Outcome::Done
             }
@@ -283,15 +285,42 @@ impl SpotifySync {
                 taken.added.len()
             }
         };
+        let (role, name) = match self.store.owner(&owner).await {
+            Ok(Some(found)) => found,
+            Ok(None) => return Ended::Idle,
+            Err(DbError::Busy { .. }) => return Ended::Busy,
+            Err(error) => {
+                tracing::error!(%error, "spotify sync owner read failed");
+                return Ended::Idle;
+            }
+        };
+        // Albums are looked for either way; only a grant files requests.
+        let granted = self.holds_grant(playlist_id, role, row.grant).await;
+        let principal = Principal::acting_for(owner.clone(), role, name);
+        let walked = match self
+            .walk(job, playlist_id, &principal, row.whole_albums, granted)
+            .await
+        {
+            Ok(walked) => walked,
+            Err(WalkStop::Busy) => return Ended::Busy,
+            Err(WalkStop::Failed(cause)) => {
+                tracing::error!(%cause, "spotify sync walk failed");
+                return Ended::Failed {
+                    failure: SyncFailure::SaveFailed,
+                    retry_after: None,
+                };
+            }
+        };
         if job.token().is_cancelled() {
             return Ended::Busy;
         }
-        match self.store.finish(job, playlist_id, None).await {
-            Ok(()) | Err(JobError::LeaseLost) => Ended::Done { added },
+        let requested = walked.requested;
+        match self.store.finish(job, playlist_id, walked.hold).await {
+            Ok(()) | Err(JobError::LeaseLost) => Ended::Done { added, requested },
             Err(error) if error.is_busy() => Ended::Busy,
             Err(error) => {
                 tracing::error!(%error, "spotify sync pass not recorded");
-                Ended::Done { added }
+                Ended::Done { added, requested }
             }
         }
     }
@@ -362,7 +391,7 @@ impl SpotifySync {
     }
 
     /// Tell the owner's open tabs the playlist changed.
-    async fn announce(&self, playlist_id: &str, added: usize, requested: usize) {
+    pub(super) async fn announce(&self, playlist_id: &str, added: usize, requested: usize) {
         let owner = match self.playlists.source_of(playlist_id).await {
             Ok(Some((owner, _))) => owner,
             Ok(None) => return,

@@ -577,6 +577,26 @@ impl RequestsService {
         principal: &Principal,
         body: &TrackIntake,
     ) -> Result<TrackIntakeResponse, RequestsError> {
+        self.intake_track(principal, body, false).await
+    }
+
+    /// Ask for one exact recording under a standing grant (a synced
+    /// playlist's approved requests): no per-request approval wait, quotas
+    /// and storage still apply.
+    pub async fn request_track_granted(
+        &self,
+        principal: &Principal,
+        body: &TrackIntake,
+    ) -> Result<TrackIntakeResponse, RequestsError> {
+        self.intake_track(principal, body, true).await
+    }
+
+    async fn intake_track(
+        &self,
+        principal: &Principal,
+        body: &TrackIntake,
+        granted: bool,
+    ) -> Result<TrackIntakeResponse, RequestsError> {
         let role = principal.role();
         let mbid = validate_mbid(&body.recording_mbid)?;
         if let Some(rg) = body.release_group_mbid.as_deref() {
@@ -619,7 +639,7 @@ impl RequestsService {
             .check_storage_admission(principal.user_id(), role, DispatchOrigin::User)
             .await?;
 
-        let needs_approval = !auto_approves(role);
+        let needs_approval = !granted && !auto_approves(role);
         let record = RequestRecord {
             artist_name,
             album_title,

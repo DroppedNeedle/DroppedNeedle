@@ -7,13 +7,13 @@
 
 use std::collections::HashMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{PayloadKind, ProviderError};
 use crate::executor::decode_failure;
 
 /// One artist-credit entry: credited name, join phrase, and artist.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ArtistCreditName {
     /// Name as credited on this release (differs from canonical at times).
     #[serde(default)]
@@ -27,7 +27,7 @@ pub struct ArtistCreditName {
 }
 
 /// Minimal artist reference inside credits.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ArtistRef {
     /// Artist MBID: required identity.
     pub id: String,
@@ -56,7 +56,7 @@ pub struct ArtistRef {
 }
 
 /// Release-group reference shared by search hits and release lookups.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ReleaseGroupRef {
     /// Release-group MBID: required identity.
     pub id: String,
@@ -89,7 +89,7 @@ pub struct ReleaseGroupRef {
 }
 
 /// One MusicBrainz genre with its vote count.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MbGenre {
     /// Genre MBID.
     #[serde(default)]
@@ -327,7 +327,7 @@ pub struct Tag {
 /// One artist alias. `primary`, `locale` and `type-id` are null on
 /// aliases that have none (seen on 2026-10-15 per
 /// `server/tests/fixtures/musicbrainz/README.md`).
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Alias {
     /// Alias text.
     pub name: String,
@@ -652,7 +652,7 @@ pub struct ReleaseSearchHit {
 /// facet carried no `first-release-date`. The hit's `artist-credit`,
 /// `length` and `video` and each release's `title` are in the same
 /// fixture.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RecordingSearchHit {
     /// Recording MBID: required identity.
     pub id: String,
@@ -690,7 +690,7 @@ pub struct RecordingSearchHit {
 }
 
 /// One release a recording search hit lists.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RecordingSearchRelease {
     /// Release MBID: required identity.
     pub id: String,

@@ -57,7 +57,11 @@ impl From<sql::SyncColumns> for SyncRow {
 }
 
 /// Queue playlist `playlist_id`'s pass now, on the caller's transaction.
-fn enqueue(queue: &JobQueue, tx: &Transaction, playlist_id: &str) -> Result<(), JobError> {
+pub(super) fn enqueue(
+    queue: &JobQueue,
+    tx: &Transaction,
+    playlist_id: &str,
+) -> Result<(), JobError> {
     let job = SyncJob {
         playlist_id: playlist_id.to_owned(),
     };
@@ -88,6 +92,14 @@ impl SyncStore {
     /// Wall time, unix ms.
     pub fn now_ms(&self) -> i64 {
         self.clock.now_ms()
+    }
+
+    pub(super) fn db(&self) -> &Db {
+        &self.db
+    }
+
+    pub(super) fn queue(&self) -> &JobQueue {
+        &self.queue
     }
 
     /// Playlist `playlist_id`'s sync, or none when it never had one.
@@ -330,4 +342,13 @@ impl SyncStore {
             })
             .await
     }
+}
+
+/// How many sync asks wait for an admin, for the approvals badge.
+pub(crate) async fn pending_grant_count(db: &Db) -> Result<u32, DbError> {
+    db.read("spotify_sync.pending_grant_count", move |conn| {
+        let count: i64 = conn.query_row(sql::PENDING_GRANT_COUNT.text(), [], |row| row.get(0))?;
+        Ok(u32::try_from(count).unwrap_or(u32::MAX))
+    })
+    .await
 }

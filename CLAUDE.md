@@ -346,6 +346,19 @@ Run from the repo root. `make help` lists every target.
   `catalog/src/discover/due.rs`: `clock_pass` from the demand tick (nothing
   while `DISCOVER_WARMER_ENABLED` is off) and `visit` where the page records
   a person's activity.
+- Spotify sync (`acquire/src/spotify_sync/`) is one job kind keyed per
+  playlist, queued only by its due tick, its switch, a grant decision, a
+  Spotify reconnect and the import route. It reads a playlist's songs only
+  when its `snapshot_id` changed or once a day (Liked Songs: newest first,
+  to the first page holding a song already taken), adds what is new in one
+  write with its row in `catalog_playlist_source_songs` (at the end; Liked
+  Songs at the top), and never removes, reorders or adds a song twice. A
+  plain user's sync requests nothing until an admin approves that
+  playlist's grant, though it still looks for its songs' albums; a pass
+  requests at most 25 songs, looks for at most 25 albums and reads
+  MusicBrainz to file at most 25 songs, waits on a full quota, and never
+  asks again for a song it followed up. It does not read Discover's feedback:
+  the songs are a person's own choice.
 - A worker that hears a busy database puts its job back and tries again
   later. Busy never spends an attempt or marks work failed.
 - Durable operations are SQLite state machines with idempotency keys and
@@ -811,6 +824,10 @@ Run from the repo root. `make help` lists every target.
   the artist's name never count. A found album is written as the entry's
   album and cover only while it still has no source, no file and no album,
   with the recording when only one on that group has the song's title.
+- A Spotify sync gets a song's album only by proof through the cached
+  `AlbumResolver`; a song nothing proves shows "No album found yet" and is
+  looked for again 1, 3, 7, 14 and 30 days after each look, then every 30
+  days. It is never requested by name.
 
 **Discover**
 - Discover's seed artists come from one function, `weighted_seeds`
