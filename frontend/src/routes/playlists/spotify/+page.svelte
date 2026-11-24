@@ -17,17 +17,50 @@
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import {
 		getSpotifyPlaylistsQuery,
+		createImportLikedSongsMutation,
 		createImportSpotifyPlaylistMutation
 	} from '$lib/features/playlists/queries/spotify.svelte';
+	import { createConnectSpotifyMutation } from '$lib/features/profile/queries/ConnectionsMutations.svelte';
 	import { ApiError } from '$lib/api/errors';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { providerUnavailableMessage } from '$lib/utils/serviceError';
 
 	const playlistsQuery = getSpotifyPlaylistsQuery();
 	const importMutation = createImportSpotifyPlaylistMutation();
+	const likedMutation = createImportLikedSongsMutation();
+	const reconnectMutation = createConnectSpotifyMutation();
+
+	/** The Liked Songs tile's id while its import starts. */
+	const LIKED = 'liked';
+
+	async function handleImportLiked() {
+		if (importing || importingAll) return;
+		importing = LIKED;
+		try {
+			const result = await likedMutation.mutateAsync();
+			toastStore.show({ message: 'Liked Songs is importing in the background', type: 'success' });
+			await goto(withBasePath(`/playlists/${result.playlist_id}`));
+		} catch (error) {
+			toastStore.show({
+				message: providerUnavailableMessage(error) ?? "Couldn't import Liked Songs",
+				type: 'error'
+			});
+		} finally {
+			importing = null;
+		}
+	}
+
+	async function reconnect() {
+		try {
+			await reconnectMutation.mutateAsync();
+		} catch {
+			toastStore.show({ message: "Couldn't start Spotify sign-in", type: 'error' });
+		}
+	}
 
 	let importing = $state<string | null>(null);
 	let importingAll = $state(false);
@@ -92,6 +125,7 @@
 	);
 
 	const playlistList = $derived(playlistsQuery.data?.playlists ?? []);
+	const liked = $derived(playlistsQuery.data?.liked_songs ?? null);
 	const importedCount = $derived(playlistList.length - unimportedCount);
 	const notConnected = $derived(
 		playlistsQuery.error instanceof ApiError &&
@@ -208,11 +242,89 @@
 				<MediaTileSkeleton />
 			{/each}
 		</div>
-	{:else if playlistsQuery.isSuccess && playlistList.length === 0}
+	{:else if playlistsQuery.isSuccess && playlistList.length === 0 && !liked}
 		<p class="py-12 text-center text-muted">No Spotify playlists found.</p>
-	{:else if playlistList.length > 0}
+	{:else if playlistList.length > 0 || liked}
 		<section aria-label="Spotify playlists">
 			<div class="dn-list-grid">
+				{#if liked}
+					{@const isImporting = importing === LIKED}
+					<MediaTile title="Liked Songs">
+						{#snippet art()}
+							<AlbumImage
+								customUrl={null}
+								alt="Liked Songs"
+								size="full"
+								requestSize={250}
+								rounded="lg"
+								className="h-full w-full"
+							/>
+						{/snippet}
+						{#snippet meta()}
+							{#if liked.access === 'needs_reconnect'}
+								Reconnect Spotify to import Liked Songs.
+							{:else if liked.track_count != null}
+								{liked.track_count} {liked.track_count === 1 ? 'song' : 'songs'}
+							{:else}
+								Your liked songs
+							{/if}
+						{/snippet}
+						{#snippet overlay()}
+							{#if liked.access === 'needs_reconnect'}
+								<div class="sp-cover-actions">
+									<Button
+										variant="spotify"
+										size="display-sm"
+										loading={reconnectMutation.isPending}
+										onclick={() => void reconnect()}
+									>
+										Reconnect
+									</Button>
+								</div>
+							{:else if liked.imported_playlist_id}
+								<div class="sp-cover-actions">
+									<Button
+										variant="primary"
+										size="display-sm"
+										href={withBasePath(`/playlists/${liked.imported_playlist_id}`)}
+									>
+										View Playlist
+									</Button>
+									{#if liked.synced}
+										<StatusChip tone="success">Synced</StatusChip>
+									{:else}
+										<Button
+											variant="outline"
+											size="sm"
+											icon={RefreshCw}
+											loading={isImporting}
+											onclick={() => void handleImportLiked()}
+											disabled={!!importing}
+										>
+											Re-import
+										</Button>
+									{/if}
+								</div>
+							{:else}
+								<button
+									type="button"
+									class="sp-cover-actions sp-cover-actions--import"
+									class:is-busy={isImporting}
+									aria-label="Import Liked Songs"
+									onclick={() => void handleImportLiked()}
+									disabled={!!importing}
+								>
+									{#if isImporting}
+										<LoaderCircle class="size-8 animate-spin motion-keep" aria-hidden="true" />
+									{:else}
+										<SpotifyIcon class="size-8 text-spotify" />
+										<span class="sp-import-label">Import</span>
+									{/if}
+								</button>
+							{/if}
+						{/snippet}
+					</MediaTile>
+				{/if}
 				{#each playlistList as playlist (playlist.id)}
 					{@const isImporting = importing === playlist.id}
 					{@const alreadyImported = !!playlist.imported_playlist_id}
@@ -245,16 +357,20 @@
 									>
 										View Playlist
 									</Button>
-									<Button
-										variant="outline"
-										size="sm"
-										icon={RefreshCw}
-										loading={isImporting}
-										onclick={() => void handleImport(playlist)}
-										disabled={!!importing}
-									>
-										Re-import
-									</Button>
+									{#if playlist.synced}
+										<StatusChip tone="success">Synced</StatusChip>
+									{:else}
+										<Button
+											variant="outline"
+											size="sm"
+											icon={RefreshCw}
+											loading={isImporting}
+											onclick={() => void handleImport(playlist)}
+											disabled={!!importing}
+										>
+											Re-import
+										</Button>
+									{/if}
 								</div>
 							{:else}
 								<button

@@ -92,6 +92,24 @@ export const getPlaylistRequestStateQuery = (
 	}));
 };
 
+export type PlaylistSyncV3 = components['schemas']['PlaylistSync'];
+export type SyncFailureV3 = components['schemas']['SyncFailure'];
+
+/**
+ * A playlist's Spotify sync, for its owner and editors. Sync events
+ * refresh it; nothing polls.
+ */
+export const getPlaylistSyncQuery = (getId: Getter<string>, getEnabled: Getter<boolean>) =>
+	createQuery(() => ({
+		enabled: getEnabled() && Boolean(authStore.user?.id),
+		staleTime: STALE_LIVE,
+		queryKey: PlaylistQueryKeyFactory.sync(authStore.user?.id, getId()),
+		queryFn: ({ signal }: { signal?: AbortSignal } = {}) =>
+			api.v3.GET(v3('/api/v3/playlists/{playlist_id}/sync', { path: { playlist_id: getId() } }), {
+				signal
+			})
+	}));
+
 export type PlaylistMemberV3 = components['schemas']['PlaylistMember'];
 
 /** The people the caller's playlist is shared with. */

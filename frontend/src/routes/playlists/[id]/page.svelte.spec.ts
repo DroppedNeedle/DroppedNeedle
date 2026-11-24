@@ -39,6 +39,7 @@ vi.mock('$lib/features/playlists/queries/PlaylistV3Queries.svelte', () => ({
 	getPlaylistMembersV3Query: () => ({ data: [], isPending: false, isError: false }),
 	getUserDirectoryV3Query: () => ({ data: [], isPending: false, isError: false }),
 	getPlaylistRequestStateQuery: () => ({ data: undefined, isPending: false, isError: false }),
+	getPlaylistSyncQuery: () => ({ data: undefined, isPending: false, isError: false }),
 	getPlaylistSourcesV3QueryOptions: (userId: string | undefined, id: string) => ({
 		queryKey: PlaylistQueryKeyFactory.sources(userId, id),
 		queryFn: async () => (await mockResolveMutate(id)).sources
@@ -59,6 +60,8 @@ vi.mock('$lib/features/playlists/queries/PlaylistV3Mutations.svelte', () => ({
 	createReorderPlaylistTrackV3Mutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	createRequestPlaylistMissingMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	createRequestPlaylistSongMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	createSetPlaylistSyncMutation: () => ({ mutate: vi.fn(), isPending: false }),
+	createKeepSpotifyAlbumMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	refreshPlaylist: vi.fn().mockResolvedValue(undefined),
 	forgetPlaylistSources: mockForgetSources
 }));

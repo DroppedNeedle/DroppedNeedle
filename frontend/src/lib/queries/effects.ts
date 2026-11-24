@@ -43,6 +43,7 @@ import { SessionsQueryKeyFactory } from '$lib/queries/featureKeys';
 import { SettingsQueryKeyFactory } from '$lib/features/settings/queries/SettingsQueryKeyFactory';
 import { SourcePlaylistQueryKeyFactory } from '$lib/queries/featureKeys';
 import { SpotifyQueryKeyFactory } from '$lib/queries/featureKeys';
+import { PlaylistSyncApprovalsQueryKeyFactory } from '$lib/queries/featureKeys';
 import { SystemQueryKeyFactory } from '$lib/queries/featureKeys';
 import { PlaylistQueryKeyFactory } from '$lib/features/playlists/queries/PlaylistQueryKeyFactory';
 import type { RemoteSource } from '$lib/features/remote-library/queries/types';
@@ -239,7 +240,8 @@ export const EFFECTS = {
 	],
 	/** The caller's linked accounts. */
 	connectionsChanged: (userId: UserId): Sweep[] => [
-		{ key: ConnectionsQueryKeyFactory.list(userId) }
+		{ key: ConnectionsQueryKeyFactory.list(userId) },
+		{ key: SpotifyQueryKeyFactory.link(userId) }
 	],
 	/** The caller's playlists on one media server. */
 	sourcePlaylistsChanged: (userId: UserId, source: SourcePlaylistSource): Sweep[] => [
@@ -248,6 +250,15 @@ export const EFFECTS = {
 	/** The caller's Spotify playlists. */
 	spotifyPlaylistsChanged: (userId: UserId): Sweep[] => [
 		{ key: SpotifyQueryKeyFactory.playlists(userId) }
+	],
+	/** One playlist's Spotify sync, and what its missing songs wait for. */
+	playlistSyncChanged: (userId: UserId, playlistId: string): Sweep[] => [
+		{ key: PlaylistQueryKeyFactory.sync(userId, playlistId) },
+		{ key: PlaylistQueryKeyFactory.requestState(userId, playlistId) }
+	],
+	/** The synced playlists asking an admin to approve their requests. */
+	playlistSyncApprovalsChanged: (): Sweep[] => [
+		{ key: PlaylistSyncApprovalsQueryKeyFactory.list() }
 	],
 	/** The caller's Discover page. */
 	discoverHomeChanged: (userId: UserId): Sweep[] => [
@@ -586,6 +597,8 @@ export const userCustomCssChanged = fact('userCustomCssChanged');
 export const connectionsChanged = fact('connectionsChanged');
 export const sourcePlaylistsChanged = fact('sourcePlaylistsChanged');
 export const spotifyPlaylistsChanged = fact('spotifyPlaylistsChanged');
+export const playlistSyncChanged = fact('playlistSyncChanged');
+export const playlistSyncApprovalsChanged = fact('playlistSyncApprovalsChanged');
 export const discoverHomeChanged = fact('discoverHomeChanged');
 export const discoverHistoryForgotten = fact('discoverHistoryForgotten');
 export const listeningHistoryChanged = fact('listeningHistoryChanged');

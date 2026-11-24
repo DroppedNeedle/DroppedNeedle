@@ -34,6 +34,25 @@ export const createImportSpotifyPlaylistMutation = () =>
 		]
 	}));
 
+/** Imports the caller's Liked Songs as a playlist of that name. */
+export const createImportLikedSongsMutation = () =>
+	createAppMutation(() => ({
+		mutationFn: () => api.v3.POST(v3('/api/v3/acquire/spotify/liked-songs/import')),
+		effects: () => [
+			playlistsChanged(authStore.user?.id),
+			spotifyPlaylistsChanged(authStore.user?.id)
+		]
+	}));
+
+/** The caller's own Spotify link and whether it may read Liked Songs. */
+export const getSpotifyLinkQuery = () =>
+	createQuery(() => ({
+		enabled: Boolean(authStore.user?.id),
+		queryKey: SpotifyQueryKeyFactory.link(authStore.user?.id),
+		queryFn: ({ signal }: { signal: AbortSignal }) =>
+			api.v3.GET(v3('/api/v3/acquire/spotify/link'), { signal })
+	}));
+
 /** The address Spotify sends the browser back to, for the saved redirect origin. */
 export const getSpotifyRedirectUriQuery = (getOrigin: Getter<string | undefined>) =>
 	createQuery(() => {

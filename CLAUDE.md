@@ -968,10 +968,12 @@ Run from the repo root. `make help` lists every target.
   `Input`, `Modal`, `CardTitle`, `CardActions`, `ConfirmDialog`, `Field`,
   `TextField`, `NumberField`, `SecretField`, `PasswordField`, `SelectField`,
   `TextAreaField`, `CodeField` (a CSS editor, CodeMirror loaded on first
-  use), `ToggleRow`, `RadioCards`, `StatusChip`, `SectionHead` (a shelf's
-  title row), `ListPageHeader` (a browse page's title, count, lede or a
-  hub's tagline, ticket and record, with an optional brush stroke after the
-  title; `backStyle="link"` puts a mono caps back link over the title,
+  use), `ToggleRow` (`leading` puts the switch before its label, for a slim
+  row), `RadioCards`, `SegmentedChoice` (two or three short options side by
+  side, one radio group), `StatusChip`, `SectionHead` (a shelf's title row),
+  `ListPageHeader` (a browse page's title, count, lede or a hub's tagline,
+  ticket and record, with an optional brush stroke after the title;
+  `backStyle="link"` puts a mono caps back link over the title,
   `compact` suits a working page), `SaveBar`, `AsyncButton`,
   `QueryBoundary`, `RatingStars` (`quiet` in list rows), `StatRow` (counts
   split by rules), `JumpTabs` (a page's sticky section strip; `look="pills"`

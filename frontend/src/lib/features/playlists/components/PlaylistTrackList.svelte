@@ -6,12 +6,14 @@
 		createRemovePlaylistTrackV3Mutation,
 		createRemovePlaylistTracksV3Mutation,
 		createReorderPlaylistTrackV3Mutation,
+		createKeepSpotifyAlbumMutation,
 		createRequestPlaylistMissingMutation,
 		createRequestPlaylistSongMutation,
 		createUpdatePlaylistTrackV3Mutation
 	} from '$lib/features/playlists/queries/PlaylistV3Mutations.svelte';
 	import { getPlaylistRequestStateQuery } from '$lib/features/playlists/queries/PlaylistV3Queries.svelte';
 	import { ENTRY_CHIPS, pressMessage } from './requestStates';
+	import { refusalText } from './syncStates';
 	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import { createUuid } from '$lib/utils/uuid';
 	import { toPageTrack } from '$lib/features/playlists/queries/playlistV3Adapter';
@@ -27,6 +29,7 @@
 	import SourcePickerDropdown from '$lib/features/playlists/components/SourcePickerDropdown.svelte';
 	import NowPlayingIndicator from '$lib/features/player/components/NowPlayingIndicator.svelte';
 	import {
+		Undo2,
 		Trash2,
 		ListPlus,
 		ListStart,
@@ -49,6 +52,8 @@
 		readonly?: boolean;
 		/** The owner or an editor: missing songs show what they wait for and can be asked for. */
 		canRequest?: boolean;
+		/** The owner: a song the sync moved can be put back on Spotify's album. */
+		isOwner?: boolean;
 	}
 
 	let {
@@ -57,7 +62,8 @@
 		onsourcechange,
 		onplaytrack,
 		readonly = false,
-		canRequest = false
+		canRequest = false,
+		isOwner = false
 	}: Props = $props();
 
 	// The banner polls this answer; the rows read the same one.
@@ -68,9 +74,10 @@
 	);
 	const pressMutation = createRequestPlaylistMissingMutation();
 	const songMutation = createRequestPlaylistSongMutation();
+	const keepMutation = createKeepSpotifyAlbumMutation();
 	// Keyed on the entry, so only the rows the server names carry a state.
-	const entryStates = $derived(
-		new Map((requestState.data?.entries ?? []).map((entry) => [entry.entry_id, entry.state]))
+	const entries = $derived(
+		new Map((requestState.data?.entries ?? []).map((entry) => [entry.entry_id, entry]))
 	);
 
 	function requestFailed(error: unknown, fallback: string) {
@@ -90,6 +97,21 @@
 			toastStore.show({ message: pressMessage(result), type: 'success' });
 		} catch (error) {
 			requestFailed(error, "Couldn't ask for that album");
+		}
+	}
+
+	async function keepSpotifyAlbum(track: PlaylistTrack) {
+		try {
+			await keepMutation.mutateAsync({ playlistId: playlist.id, entryId: track.id });
+			toastStore.show({
+				message: `${track.track_name} is back on Spotify's album.`,
+				type: 'success'
+			});
+		} catch (error) {
+			toastStore.show({
+				message: refusalText(error, "Couldn't move that song back"),
+				type: 'error'
+			});
 		}
 	}
 
@@ -410,7 +432,8 @@
 				onclick: () => playTrackNext(track)
 			}
 		];
-		const state = entryStates.get(track.id);
+		const entry = entries.get(track.id);
+		const state = entry?.state;
 		if (state === 'requestable') {
 			items.push({
 				label: 'Request album',
@@ -423,6 +446,13 @@
 				label: 'Request just this song',
 				icon: Music,
 				onclick: () => void requestSong(track)
+			});
+		}
+		if (isOwner && entry?.listed_on) {
+			items.push({
+				label: "Use Spotify's album",
+				icon: Undo2,
+				onclick: () => void keepSpotifyAlbum(track)
 			});
 		}
 		// Non-owners (public read-only view) cannot mutate the playlist.
@@ -498,8 +528,8 @@
 						: playerStore.currentQueueItem?.trackSourceId === track.track_source_id &&
 							playerStore.currentQueueItem?.sourceType === track.source_type)}
 				{@const albumLinked = isValidMbid(track.album_id)}
-				{@const entryState = entryStates.get(track.id)}
-				{@const chip = entryState ? ENTRY_CHIPS[entryState] : null}
+				{@const entry = entries.get(track.id)}
+				{@const chip = entry ? ENTRY_CHIPS[entry.state] : null}
 				<li
 					transition:slide={{ duration: 200 }}
 					class="pl-row group {selectedIds.has(track.id)
@@ -606,6 +636,11 @@
 								</span>
 							{/if}
 						</span>
+						{#if entry?.listed_on}
+							<span class="pl-row__listed pl-row__listed--phone"
+								>Spotify lists it on {entry.listed_on}</span
+							>
+						{/if}
 					</span>
 
 					{#if !readonly}
@@ -630,6 +665,9 @@
 							{:else}
 								{track.album_name}
 							{/if}
+						{/if}
+						{#if entry?.listed_on}
+							<span class="pl-row__listed">Spotify lists it on {entry.listed_on}</span>
 						{/if}
 					</span>
 
@@ -814,6 +852,20 @@
 	@media (min-width: 768px) {
 		.pl-row__album {
 			display: block;
+		}
+	}
+	/* where Spotify files a song the sync asks for on the artist's own album */
+	.pl-row__listed {
+		display: block;
+		overflow: hidden;
+		font-size: 0.75rem;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		color: var(--dn-muted);
+	}
+	@media (min-width: 768px) {
+		.pl-row__listed--phone {
+			display: none;
 		}
 	}
 

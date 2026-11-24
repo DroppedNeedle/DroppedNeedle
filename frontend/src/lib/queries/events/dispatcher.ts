@@ -9,8 +9,12 @@ import {
 	libraryActivityChanged,
 	libraryOperationsChanged,
 	localChanged,
+	anyRequestChanged,
 	newReleasesChanged,
+	pendingApprovalsChanged,
+	playlistChanged,
 	playlistRequestStatesChanged,
+	playlistSyncChanged,
 	playlistsChanged,
 	requestsChanged,
 	searchJobChanged,
@@ -111,6 +115,14 @@ export const EVENT_TABLE: { [N in ServerEventName]: EventEntry<N> } = {
 	},
 	playlist_imported: {
 		effects: (_, { userId }) => [playlistsChanged(userId)]
+	},
+	playlist_sync_changed: {
+		effects: (data, { userId }) => [
+			playlistSyncChanged(userId, data.playlist_id),
+			playlistChanged(userId, data.playlist_id),
+			anyRequestChanged(),
+			pendingApprovalsChanged(userId)
+		]
 	},
 	drop_import_updated: {
 		effects: (_, { userId }) => [dropImportsChanged(userId)]

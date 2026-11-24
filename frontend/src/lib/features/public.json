@@ -151,6 +151,7 @@
 		"components/CssSnippetsMenu.svelte",
 		"components/CssVariablesPanel.svelte",
 		"components/cssVocabulary.ts",
+		"queries/ConnectionsMutations.svelte.ts",
 		"queries/ConnectionsQuery.svelte.ts",
 		"queries/connect-apps.svelte.ts",
 		"queries/scrobble-preferences.svelte.ts"

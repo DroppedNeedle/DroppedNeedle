@@ -16,7 +16,8 @@ export const ENTRY_CHIPS: Record<PlaylistEntryStateV3, { label: string; tone: To
 	downloading: { label: 'Downloading', tone: 'info' },
 	awaiting_review: { label: 'Awaiting review', tone: 'warning' },
 	album_in_library: { label: 'Album in library', tone: 'success' },
-	rejected: { label: 'Rejected', tone: 'error' }
+	rejected: { label: 'Rejected', tone: 'error' },
+	queued: { label: 'Queued', tone: 'neutral' }
 };
 
 /** The one line a failed Spotify import shows, by why it failed. */

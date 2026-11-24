@@ -148,6 +148,12 @@ export const ScrobblePreferencesQueryKeyFactory = {
 	personalMixApprovals: () => key(ADMIN, 'me', 'scrobble-preferences', 'personal-mix-approvals')
 };
 
+// The admin queue of synced playlists asking for their requests, the same
+// for every admin.
+export const PlaylistSyncApprovalsQueryKeyFactory = {
+	list: () => key(ADMIN, 'requests', 'playlist-sync-approvals')
+};
+
 // The caller's listening history imported from ListenBrainz.
 export const ListeningHistoryQueryKeyFactory = {
 	get: (userId: UserId) => key(userScope(userId), 'me', 'listening-history')
@@ -175,6 +181,8 @@ export const SourcePlaylistQueryKeyFactory = {
 
 export const SpotifyQueryKeyFactory = {
 	playlists: (userId: UserId) => key(userScope(userId), 'spotify', 'playlists'),
+	// The caller's own link and what it may read.
+	link: (userId: UserId) => key(userScope(userId), 'spotify', 'link'),
 	// The address follows the saved redirect origin, so a saved change reads it again.
 	redirectUri: (userId: UserId, origin: string | null) =>
 		key(userScope(userId), 'spotify', 'redirect-uri', origin)

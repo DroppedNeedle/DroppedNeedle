@@ -155,4 +155,49 @@ describe('missing songs on a playlist', () => {
 		await expect.element(page.getByText('Awaiting approval')).not.toBeInTheDocument();
 		expect(api.calls('GET /api/v3/playlists/{playlist_id}/request-state')).toEqual([]);
 	});
+
+	it('says where Spotify lists a moved song and lets only the owner keep it there', async () => {
+		const moved: RouteData<'GET /api/v3/playlists/{playlist_id}/request-state'> = {
+			...STATE,
+			entries: [{ entry_id: 'e1', state: 'queued', listed_on: 'Pop Classics' }]
+		};
+		const api = fakeApi({
+			'GET /api/v3/playlists/{playlist_id}/request-state': moved,
+			'POST /api/v3/playlists/{playlist_id}/tracks/{track_id}/spotify-album': {
+				album_id: null,
+				cancelled: true
+			}
+		});
+		const shown = await renderWithQuery(PlaylistTrackList, {
+			playlist: playlist(),
+			ontrackchange: () => {},
+			canRequest: true
+		});
+
+		await expect.element(page.getByText('Queued')).toBeVisible();
+		await expect.element(page.getByText('Spotify lists it on Pop Classics').first()).toBeVisible();
+		await page.getByLabelText('More actions for Paper Lanterns').click();
+		await expect
+			.element(page.getByRole('menuitem', { name: "Use Spotify's album" }))
+			.not.toBeInTheDocument();
+		await page.getByLabelText('More actions for Paper Lanterns').click();
+		shown.unmount();
+
+		await renderWithQuery(PlaylistTrackList, {
+			playlist: playlist(),
+			ontrackchange: () => {},
+			canRequest: true,
+			isOwner: true
+		});
+		await page.getByLabelText('More actions for Paper Lanterns').click();
+		await page.getByRole('menuitem', { name: "Use Spotify's album" }).click();
+
+		await expect
+			.poll(
+				() =>
+					api.calls('POST /api/v3/playlists/{playlist_id}/tracks/{track_id}/spotify-album')[0]
+						?.params
+			)
+			.toEqual({ playlist_id: 'pl-1', track_id: 'e1' });
+	});
 });

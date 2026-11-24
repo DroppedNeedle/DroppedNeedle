@@ -36,6 +36,7 @@
 	import SharePlaylistModal from '$lib/features/playlists/components/SharePlaylistModal.svelte';
 	import PlaylistNotice from '$lib/features/playlists/components/PlaylistNotice.svelte';
 	import PlaylistRequestBanner from '$lib/features/playlists/components/PlaylistRequestBanner.svelte';
+	import PlaylistSyncBand from '$lib/features/playlists/components/PlaylistSyncBand.svelte';
 
 	let { data }: { data: PageData } = $props();
 
@@ -280,6 +281,7 @@
 
 		<div class="mx-auto max-w-7xl space-y-6 px-4 pb-10 sm:px-6 lg:px-8">
 			{#if canRequest}
+				<PlaylistSyncBand playlistId={playlist.id} {isOwner} />
 				<PlaylistRequestBanner playlistId={playlist.id} />
 			{/if}
 
@@ -288,6 +290,7 @@
 				{playlist}
 				readonly={!playlist.can_edit}
 				{canRequest}
+				{isOwner}
 				ontrackchange={() => {}}
 				onsourcechange={handleSourceChange}
 				onplaytrack={playFromTrack}

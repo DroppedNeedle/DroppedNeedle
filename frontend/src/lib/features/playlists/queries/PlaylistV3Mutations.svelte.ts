@@ -2,6 +2,9 @@ import { v3 } from '$lib/api/v3/endpoint';
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { authStore } from '$lib/stores/authStore.svelte';
+import { useQueryClient } from '@tanstack/svelte-query';
+import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
+import { PlaylistQueryKeyFactory } from './PlaylistQueryKeyFactory';
 import {
 	anyDownloadChanged,
 	anyRequestChanged,
@@ -12,6 +15,8 @@ import {
 	playlistListChanged,
 	playlistRequestStatesChanged,
 	playlistSourcesDropped,
+	playlistSyncChanged,
+	spotifyPlaylistsChanged,
 	userQuotaChanged
 } from '$lib/queries/effects';
 
@@ -68,6 +73,56 @@ export const createRequestPlaylistSongMutation = () =>
 				})
 			),
 		effects: requested
+	}));
+
+/**
+ * Turns a playlist's Spotify sync on or off, for its owner. The answer is
+ * the sync as the switch left it.
+ */
+export function createSetPlaylistSyncMutation() {
+	const client = useQueryClient();
+	return createAppMutation(
+		() => ({
+			mutationFn: (vars: { playlistId: string; enabled: boolean; wholeAlbums: boolean }) =>
+				api.v3.PUT(
+					v3('/api/v3/playlists/{playlist_id}/sync', { path: { playlist_id: vars.playlistId } }),
+					{ enabled: vars.enabled, whole_albums: vars.wholeAlbums }
+				),
+			onSuccess: (sync, vars) =>
+				setQueryDataWithPersister(
+					PlaylistQueryKeyFactory.sync(authStore.user?.id, vars.playlistId),
+					sync,
+					undefined,
+					client
+				),
+			effects: () => [
+				playlistRequestStatesChanged(),
+				spotifyPlaylistsChanged(authStore.user?.id),
+				pendingApprovalsChanged(authStore.user?.id)
+			]
+		}),
+		client
+	);
+}
+
+/**
+ * Puts a song the sync moved to the artist's own album back on the album
+ * Spotify lists it on, for the playlist's owner.
+ */
+export const createKeepSpotifyAlbumMutation = () =>
+	createAppMutation(() => ({
+		mutationFn: (vars: { playlistId: string; entryId: string }) =>
+			api.v3.POST(
+				v3('/api/v3/playlists/{playlist_id}/tracks/{track_id}/spotify-album', {
+					path: { playlist_id: vars.playlistId, track_id: vars.entryId }
+				})
+			),
+		effects: (_data, vars) => [
+			...detail(vars.playlistId),
+			playlistSyncChanged(authStore.user?.id, vars.playlistId),
+			anyRequestChanged(),
+			pendingApprovalsChanged(authStore.user?.id)
+		]
 	}));
 
 /** Reads one playlist again, after its tracks' sources were healed. */
