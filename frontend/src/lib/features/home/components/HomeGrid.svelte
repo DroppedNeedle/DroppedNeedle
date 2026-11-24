@@ -85,7 +85,7 @@
 			{
 				column: REFERENCE_COLUMNS,
 				cellHeight,
-				margin: 0,
+				margin: 8,
 				mode: 'top',
 				animate: true,
 				staticGrid: !editingNow,

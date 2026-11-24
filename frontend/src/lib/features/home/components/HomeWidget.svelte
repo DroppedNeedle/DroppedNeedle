@@ -50,7 +50,7 @@
 		height: 100%;
 		min-height: 0;
 		box-sizing: border-box;
-		border: 1px solid color-mix(in srgb, var(--color-base-content) 12%, transparent);
+		border: 1px solid var(--color-edge);
 		border-radius: 0.5rem;
 	}
 	.home-widget-body {
@@ -59,7 +59,7 @@
 		padding-inline: 1rem;
 	}
 	.home-widget.is-editing {
-		border-color: color-mix(in srgb, var(--color-base-content) 40%, transparent);
+		border-color: var(--color-base-content);
 		border-radius: 0.5rem;
 	}
 
