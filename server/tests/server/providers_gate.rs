@@ -237,11 +237,6 @@ const HTTP: Rule = Rule {
             why: "test support: the Deemix wiring for tests, over a factory of its own",
         },
         Allow {
-            path: "auth/src/wiring.rs",
-            shapes: &["factory"],
-            why: "passes the factory's client to the user's Jellyfin for sign-in",
-        },
-        Allow {
             path: "catalog/src/wiring.rs",
             shapes: &["client"],
             why: TO_MEDIA_SERVERS,

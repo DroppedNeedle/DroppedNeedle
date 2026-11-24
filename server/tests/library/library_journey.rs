@@ -10958,7 +10958,10 @@ async fn each_library_worker_recovers_and_wakes() {
 
     assert_eq!(
         platform.supervisor.running_names(),
-        vec![droppedneedle_library::management::JOB_NAME.to_owned()],
+        vec![
+            droppedneedle_library::management::JOB_NAME.to_owned(),
+            droppedneedle_library::management::PREVIEW_CLEANUP_JOB.to_owned(),
+        ],
         "{case}"
     );
     platform
