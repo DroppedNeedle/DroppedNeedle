@@ -24,9 +24,7 @@ use tower::ServiceExt as _;
 use crate::common::Probe;
 use crate::common::auth::AuthRig;
 use crate::discover_page::page_script;
-use crate::discover_queue::{
-    after_commits, discover_deps, discover_routes, insert, keep_facts_of, pool_of,
-};
+use crate::discover_queue::{after_commits, discover_deps, discover_routes, insert, keep_facts_of};
 
 const DAY: i64 = 86_400_000;
 const FORGET: &str = "/api/v3/discover/history";
@@ -229,50 +227,15 @@ async fn forgetting_takes_the_callers_history_and_nothing_else() {
             .to_owned(),
     )
     .await;
-    insert(
-        &db,
-        pool_of(
-            "user-1",
-            &[("11111111-1111-4111-8111-111111111111", "Seed")],
-            &[(
-                "aaaaaaaa-0000-4000-8000-000000000001".to_owned(),
-                "bbbbbbbb-0000-4000-8000-000000000001".to_owned(),
-                "11111111-1111-4111-8111-111111111111",
-            )],
-        ),
-    )
-    .await;
     keep_facts_of(&rig, Arc::new(page_script())).await;
     let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |network| {
         *network = Arc::new(page_script());
     }));
 
-    // A first visit builds and saves the page, which offers its picks.
+    // A first visit builds and saves the page.
     assert_eq!(call(&app, "GET", "/api/v3/discover").await, StatusCode::OK);
     let start = rig.clock().now_ms();
     page_built(&db, start, "the first page was saved").await;
-    assert!(
-        count(
-            &db,
-            "SELECT COUNT(*) FROM catalog_discover_picks WHERE user_id = 'user-1'"
-        ) > 0,
-        "the page offered its picks"
-    );
-    // The pool those picks came from makes way for the rows below.
-    insert(
-        &db,
-        [
-            "catalog_discover_candidate_paths",
-            "catalog_discover_candidates",
-            "catalog_discover_pool_builds",
-            "catalog_taste_artists",
-            "catalog_taste_groups",
-            "catalog_taste_builds",
-        ]
-        .map(|table| format!("DELETE FROM {table} WHERE user_id = 'user-1';"))
-        .concat(),
-    )
-    .await;
 
     // A row in every forgotten table for both people, and something kept.
     let forgotten = listed("forgotten");

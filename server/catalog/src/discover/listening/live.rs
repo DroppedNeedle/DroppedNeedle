@@ -474,14 +474,6 @@ impl ListeningNetwork for LiveNetwork {
         })
     }
 
-    fn similar_users<'a>(
-        &'a self,
-        username: &'a str,
-        priority: RequestPriority,
-    ) -> Read<'a, Vec<String>> {
-        Box::pin(async move { provider(self.listenbrainz.similar_users(username, priority).await) })
-    }
-
     fn weekly_playlist<'a>(
         &'a self,
         user_id: &'a str,

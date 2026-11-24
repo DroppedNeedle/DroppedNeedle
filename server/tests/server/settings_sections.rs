@@ -1,7 +1,8 @@
 //! Settings sections: the masked secret round trip over HTTP (read masked,
 //! a re-saved mask keeps the secret, verify tests the stored secret), unit
-//! scaling, revision checks, the BrainzMash ceremony and the live probes
-//! against a loopback stub.
+//! scaling, revision checks, the BrainzMash ceremony, the live probes
+//! against a loopback stub, and section switches saved for a section that
+//! has since gone.
 
 use crate::common::auth::{AuthRig, test_principal, with_test_principal};
 use crate::common::{self, ScratchDir};
@@ -16,8 +17,11 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use common::{FIXED_ID, FixedIdGenerator};
 use droppedneedle::settings::effects::{Effects, SaveEffects};
-use droppedneedle::settings::models::LibrarySettingsSaveRequest;
+use droppedneedle::settings::models::{
+    LibrarySettingsSaveRequest, SectionPage, SectionPrefUpdateItem, SectionPrefsUpdate,
+};
 use droppedneedle::settings::musicbrainz::BRAINZMASH_DISCLOSURE_VERSION;
+use droppedneedle::settings::section_prefs::{self, Masters, SectionPrefs};
 use droppedneedle::settings::services::SettingsService;
 use droppedneedle::settings::verify::{
     JellyfinVerdict, LiveProbes, NewznabVerdict, PlexVerdict, ProbeVerdict, ProwlarrVerdict,
@@ -25,10 +29,13 @@ use droppedneedle::settings::verify::{
 };
 use droppedneedle::settings::wiring::SettingsSetup;
 use droppedneedle_auth::federated::settings::InstallIds;
+use droppedneedle_auth::sqlite::{AuthDb, LastFmLinks};
 use droppedneedle_auth::users::roles::{Role, SessionKind};
+use droppedneedle_kernel::db::{DbError, Lane};
 use droppedneedle_kernel::runtime_config::effects::Effect;
 use droppedneedle_kernel::runtime_config::mask::SECRET_MASK;
 use droppedneedle_kernel::runtime_config::secret_sections::{JellyfinConnection, TypedLibrary};
+use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use futures_util::future::BoxFuture;
 use serde_json::{Value, json};
@@ -343,7 +350,7 @@ async fn section_saves_mask_and_check_revisions() {
             r#"{"discover_queue_size": 9, "discover_queue_seed_artists": 3,
                 "discover_queue_wildcard_slots": 2, "discover_queue_similar_artists_limit": 15,
                 "discover_queue_albums_per_similar": 5,
-                "discover_picks_genre_affinity_weight": 0.7}"#,
+                "discover_picks_genre_affinity_weight": 0.7, "discover_picks_count": 12}"#,
         )
         .expect("an old row is stored");
     let stored = service
@@ -395,6 +402,74 @@ async fn section_saves_mask_and_check_revisions() {
     );
     let stored = service.store.get_raw::<TypedLibrary>().expect("raw reads");
     assert_eq!(stored.acoustid_api_key.expose(), "acoustid-secret");
+}
+
+/// A switch saved for a Discover section that has since gone reads as no
+/// section and never fails a read or a save: the page lists only today's
+/// sections, the weekly set reads as on though the deck it replaces was
+/// off, and a save of today's keys lands. A client still sending a key
+/// that has gone learns its list drifted.
+#[tokio::test]
+async fn a_switch_for_a_section_that_has_gone_never_fails_a_save() {
+    let rig = AuthRig::new("section-prefs-gone").await;
+    let db = rig.platform.db.clone();
+    let user = rig.seed_user("ada", Role::User).await;
+    let id = user.id.clone();
+    db.write(Lane::Foreground, "test.seed", move |tx| {
+        tx.execute(
+            "INSERT INTO app_section_prefs (user_id, page, section_key, enabled, updated_at) \
+             VALUES (?1, 'discover', 'discover_queue', 0, 1), \
+             (?1, 'discover', 'top_picks', 0, 1)",
+            [&id],
+        )?;
+        Ok::<_, DbError>(())
+    })
+    .await
+    .expect("old switches stored");
+    let prefs = SectionPrefs::new(
+        db.clone(),
+        rig.platform.clock.clone(),
+        LastFmLinks::new(&AuthDb::new(&db, rig.platform.clock.clone())),
+    );
+    let masters = Masters {
+        lastfm: false,
+        listenbrainz: true,
+    };
+    let switch = |key: &str, enabled| SectionPrefsUpdate {
+        page: SectionPage::Discover,
+        sections: vec![SectionPrefUpdateItem {
+            key: key.to_owned(),
+            enabled,
+        }],
+    };
+    let weekly_set = |items: &[droppedneedle::settings::models::SectionPrefItem]| {
+        items
+            .iter()
+            .find(|item| item.key == "weekly_set")
+            .map(|item| (item.title.clone(), item.enabled))
+    };
+
+    let listed = section_prefs::page(&prefs, &user.id, SectionPage::Discover, masters)
+        .await
+        .expect("the page reads");
+    let keys: Vec<&str> = listed.iter().map(|item| item.key.as_str()).collect();
+    assert!(
+        !keys.contains(&"discover_queue") && !keys.contains(&"top_picks"),
+        "{keys:?}"
+    );
+    assert_eq!(weekly_set(&listed), Some(("This week".to_owned(), true)));
+
+    let saved = section_prefs::save_page(&prefs, &user.id, &switch("weekly_set", false), masters)
+        .await
+        .expect("a save lands");
+    assert_eq!(weekly_set(&saved), Some(("This week".to_owned(), false)));
+
+    let stale =
+        section_prefs::save_page(&prefs, &user.id, &switch("top_picks", false), masters).await;
+    assert!(
+        matches!(stale, Err(SettingsError::InvalidInput { .. })),
+        "{stale:?}"
+    );
 }
 
 /// Two saves holding the same revision: exactly one lands, the other is

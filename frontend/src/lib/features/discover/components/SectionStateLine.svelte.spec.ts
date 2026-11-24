@@ -5,8 +5,8 @@ import { render } from 'vitest-browser-svelte';
 import type { SectionState } from '../queries/types';
 import SectionStateLine from './SectionStateLine.svelte';
 
-const KEY = 'because_you_listen_to';
-const ZONE = 'because_you_listened';
+const KEY = 'radio_sections';
+const ZONE = 'made_for_you';
 
 const cases: [SectionState, RegExp][] = [
 	[

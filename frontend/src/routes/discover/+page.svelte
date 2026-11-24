@@ -4,27 +4,19 @@
 	import ServiceErrorState from '$lib/ui/ServiceErrorState.svelte';
 	import DailyMixCard from '$lib/features/discover/components/DailyMixCard.svelte';
 	import RadioCard from '$lib/features/discover/components/RadioCard.svelte';
-	import TopPicksDeck from '$lib/features/discover/components/TopPicksDeck.svelte';
 	import PlayableSection from '$lib/features/discover/components/PlayableSection.svelte';
-	import ListeningLounge from '$lib/features/discover/components/ListeningLounge.svelte';
 	import JumpTabs from '$lib/ui/JumpTabs.svelte';
 	import DiscoverHeader from '$lib/features/discover/components/DiscoverHeader.svelte';
 	import DiscoverPlaylistBand from '$lib/features/discover/components/DiscoverPlaylistBand.svelte';
-	import DiscoverBecauseEmpty from '$lib/features/discover/components/DiscoverBecauseEmpty.svelte';
 	import SectionHead from '$lib/ui/SectionHead.svelte';
-	import SourceBadge from '$lib/features/discover/components/SourceBadge.svelte';
-	import GenrePills from '$lib/features/genre/components/GenrePills.svelte';
 	import GenreGrid from '$lib/features/genre/components/GenreGrid.svelte';
 	import DiscoverQueueDeck from '$lib/features/discover/components/DiscoverQueueDeck.svelte';
 	import ToldDiscoverModal from '$lib/features/discover/components/ToldDiscoverModal.svelte';
-	import { passOn, type PassActions } from '$lib/features/discover/state/passLine';
 	import PlaylistDiscoveryModal from '$lib/features/discover/components/PlaylistDiscoveryModal.svelte';
 	import WeeklyExploration from '$lib/features/discover/components/WeeklyExploration.svelte';
 	import ServicePromptCard, {
 		promptsFor
 	} from '$lib/features/discover/components/ServicePromptCard.svelte';
-	import DiscoverArtistHero from '$lib/features/discover/components/DiscoverArtistHero.svelte';
-	import DiscoverArtistMiniBand from '$lib/features/discover/components/DiscoverArtistMiniBand.svelte';
 	import SectionDivider from '$lib/ui/SectionDivider.svelte';
 	import CarouselSkeleton from '$lib/ui/CarouselSkeleton.svelte';
 	import LiveUpdatingBadge from '$lib/ui/LiveUpdatingBadge.svelte';
@@ -42,8 +34,6 @@
 		Library,
 		TrendingUp,
 		LayoutGrid,
-		Heart,
-		Globe,
 		SlidersHorizontal
 	} from 'lucide-svelte';
 	import { getDiscoverHomeV3Query } from '$lib/features/discover/queries/DiscoverV3Queries.svelte';
@@ -54,20 +44,11 @@
 		PageSection,
 		SectionKey,
 		SectionState,
-		SectionZone,
-		TopPickItem
+		SectionZone
 	} from '$lib/features/discover/queries/types';
 	import type { KitIcon } from '$lib/ui/Button.svelte';
 	import { getSectionPrefsQuery } from '$lib/features/settings/queries/section-prefs.svelte';
-	import {
-		becauseOf,
-		picksOf,
-		shelfOf,
-		shelvesOf,
-		stateOf,
-		weeklyOf,
-		zoneSections
-	} from '$lib/features/discover/queries/sections';
+	import { shelfOf, shelvesOf, stateOf, weeklyOf } from '$lib/features/discover/queries/sections';
 	import { albumRows, genreRows } from '$lib/features/discover/components/sectionRows';
 
 	useDiscoverActivity(() => ({ feature: 'discover' }));
@@ -95,31 +76,11 @@
 		await refreshDiscoverMutation.mutateAsync();
 	}
 
-	function handlePassTopPick(pick: TopPickItem, actions: PassActions) {
-		if (!pick.album.musicbrainz_id) return;
-		void passOn(
-			{
-				releaseGroupMbid: pick.album.musicbrainz_id,
-				artistMbid: pick.album.artist_id ?? '',
-				releaseName: pick.album.title,
-				artistName: pick.album.artist_name ?? '',
-				madeFrom: 'top_picks'
-			},
-			actions
-		);
-	}
-
 	const sections = $derived(discoverData?.sections);
-	const topPicks = $derived(picksOf(sections));
-	const lounge = $derived(shelfOf(sections, 'listeners_like_you'));
 	const weekly = $derived(weeklyOf(sections));
 	const dailyMixes = $derived(shelvesOf(sections, 'daily_mixes'));
 	const radioSections = $derived(shelvesOf(sections, 'radio_sections'));
-	const because = $derived(becauseOf(sections));
-	const artistsYouMightLike = $derived(shelfOf(sections, 'artists_you_might_like'));
-	const popularInYourGenres = $derived(shelfOf(sections, 'popular_in_your_genres'));
 	const missingEssentials = $derived(shelfOf(sections, 'missing_essentials'));
-	const unexploredGenres = $derived(shelfOf(sections, 'unexplored_genres'));
 	const genreList = $derived(shelfOf(sections, 'genre_list'));
 
 	let hasContent = $derived((sections?.length ?? 0) > 0);
@@ -143,16 +104,6 @@
 		return list.sort((a, b) => at(a.key) - at(b.key));
 	});
 	const titleOf = (key: SectionKey) => discoverPrefs.find((p) => p.key === key)?.title ?? '';
-	// the lines of the Because You Listened zone sit inside its block
-	let becauseStates = $derived(
-		entries
-			.filter((entry) => entry.zone === 'because_you_listened')
-			.flatMap((entry) => {
-				const state = stateOf(sectionStates, entry.key);
-				return state ? [state] : [];
-			})
-	);
-	let becauseState = $derived(stateOf(sectionStates, 'because_you_listen_to'));
 	let isBuilding = $derived(
 		!!discoverData && !hasContent && (!!discoverData.refreshing || isUpdating)
 	);
@@ -166,11 +117,7 @@
 		);
 	});
 
-	let queueEnabled = $derived(discoverData?.discover_queue_enabled ?? true);
-
-	let hasLounge = $derived(!!lounge || (topPicks?.items.length ?? 0) > 3);
-
-	let hasBecauseYouListened = $derived(zoneSections(sections, 'because_you_listened').length > 0);
+	let queueEnabled = $derived(discoverData?.weekly_set_enabled ?? true);
 
 	// Each section is a block with a width: a wide block takes a row of its
 	// own, and two half blocks next to each other share one. Blocks follow the
@@ -186,21 +133,14 @@
 		/** How the section stands, when it is not plainly built. */
 		state?: SectionState;
 	} & (
-		| { kind: 'queue' | 'picks' | 'lounge' | 'weekly' | 'playlist' | 'because' }
-		| { kind: 'mixes' | 'radio' | 'genres-explore' | 'genres-browse' }
+		| { kind: 'queue' | 'weekly' | 'playlist' }
+		| { kind: 'mixes' | 'radio' | 'genres-browse' }
 		| { kind: 'shelf'; shelf: ChartSection; key: SectionKey; playable: boolean; link?: string }
-		| { kind: 'trending-lead'; shelf: ChartSection }
 		| { kind: 'state'; title: string; state: SectionState }
 	);
 
 	const ZONES: Partial<Record<SectionZone, { id: string; nav: string } & Kicker>> = {
 		made_for_you: { id: 'zone-made', nav: 'Made For You', label: 'Made For You', icon: Sparkles },
-		because_you_listened: {
-			id: 'zone-because',
-			nav: 'For You',
-			label: 'Because You Listened',
-			icon: Heart
-		},
 		new_and_fresh: { id: 'zone-fresh', nav: 'New', label: 'New & Fresh', icon: Music },
 		from_your_library: {
 			id: 'zone-library',
@@ -216,14 +156,13 @@
 		new_from_followed: '/following/new-releases'
 	};
 
-	// zones that come before the playlist band and Because You Listened
+	// zones that come before the playlist band
 	const EARLY_ZONES = new Set<SectionZone>(['essentials', 'for_you']);
 
 	let blocks = $derived.by(() => {
 		const list: Block[] = [];
 		const seenZones: SectionZone[] = [];
 		let playlistPlaced = false;
-		let becausePlaced = false;
 		const placePlaylist = () => {
 			if (playlistPlaced) return;
 			playlistPlaced = true;
@@ -234,18 +173,6 @@
 					width: 'wide',
 					nav: { id: 'zone-playlist', label: 'Playlist' }
 				});
-		};
-		// For You always shows, with its empty state when nothing is there yet
-		const placeBecause = () => {
-			if (becausePlaced) return;
-			becausePlaced = true;
-			seenZones.push('because_you_listened');
-			list.push({
-				id: 'zone-because',
-				kind: 'because',
-				width: 'wide',
-				nav: { id: 'zone-because', label: 'For You' }
-			});
 		};
 
 		if (queueEnabled)
@@ -258,7 +185,6 @@
 
 		for (const { key, zone, section } of entries) {
 			if (!EARLY_ZONES.has(zone)) placePlaylist();
-			if (!EARLY_ZONES.has(zone) && zone !== 'made_for_you') placeBecause();
 
 			const zoneInfo = ZONES[zone];
 			const id = `section-${key}`;
@@ -278,41 +204,13 @@
 			const state = stateOf(sectionStates, key) ?? undefined;
 
 			if (!section) {
-				// its lines sit inside the Because You Listened block, and the
-				// lounge plays Top Picks' runners-up when it has no shelf
-				if (zone === 'because_you_listened') placeBecause();
-				else if (state && (key !== 'listeners_like_you' || !hasLounge))
-					place({ id, kind: 'state', width: 'half', kicker, title: titleOf(key), state });
+				if (state) place({ id, kind: 'state', width: 'half', kicker, title: titleOf(key), state });
 				continue;
 			}
 			const { content } = section;
 			const placed = list.length;
 
-			if (key === 'top_picks') {
-				if (topPicks)
-					list.push({
-						id: 'zone-picks',
-						kind: 'picks',
-						width: 'half',
-						nav: { id: 'zone-picks', label: 'Top Picks' }
-					});
-				// the lounge also plays Top Picks' runners-up when it has no shelf
-				if (!lounge && hasLounge)
-					list.push({
-						id: 'zone-lounge',
-						kind: 'lounge',
-						width: 'half',
-						nav: { id: 'zone-lounge', label: 'Lounge' }
-					});
-			} else if (key === 'listeners_like_you') {
-				if (hasLounge)
-					list.push({
-						id: 'zone-lounge',
-						kind: 'lounge',
-						width: 'half',
-						nav: { id: 'zone-lounge', label: 'Lounge' }
-					});
-			} else if (key === 'weekly_exploration') {
+			if (key === 'weekly_exploration') {
 				if (weekly)
 					list.push({
 						id: 'zone-weekly',
@@ -328,16 +226,8 @@
 						width: 'wide',
 						kicker
 					});
-			} else if (zone === 'because_you_listened') {
-				// its shelves sit inside the Because You Listened block
-				placeBecause();
-			} else if (key === 'unexplored_genres') {
-				if (unexploredGenres && shuffledGenres.length > 0)
-					place({ id, kind: 'genres-explore', width: 'half', kicker });
 			} else if (key === 'genre_list') {
 				if (genreList) place({ id, kind: 'genres-browse', width: 'half', kicker });
-			} else if (content.shape === 'shelf' && key === 'globally_trending') {
-				place({ id, kind: 'trending-lead', width: 'wide', shelf: content.shelf });
 			} else if (content.shape === 'shelf') {
 				place({
 					id,
@@ -350,11 +240,9 @@
 					link: SHELF_LINKS[key]
 				});
 			}
-			if (state && zone !== 'because_you_listened' && list.length > placed)
-				list[placed].state = state;
+			if (state && list.length > placed) list[placed].state = state;
 		}
 		placePlaylist();
-		placeBecause();
 		return list;
 	});
 
@@ -378,34 +266,11 @@
 
 	// covers the page already shows, for the playlist band's sleeves
 	let bandCovers = $derived.by(() => {
-		const ids = [
-			...(topPicks?.items.map((pick) => pick.album.musicbrainz_id) ?? []),
-			...albumRows(lounge).map((album) => album.musicbrainz_id),
-			...albumRows(missingEssentials).map((album) => album.musicbrainz_id)
-		].filter((id): id is string => !!id);
+		const ids = albumRows(missingEssentials)
+			.map((album) => album.musicbrainz_id)
+			.filter((id): id is string => !!id);
 		return ids.filter((id, i) => ids.indexOf(id) === i).slice(0, 4);
 	});
-
-	let shuffledGenres = $state<
-		{ name: string; listen_count?: number | null; artist_count?: number | null }[]
-	>([]);
-	$effect(() => {
-		const items = unexploredGenres?.items;
-		if (items && items.length > 0) {
-			shuffledGenres = [...(items as typeof shuffledGenres)];
-		} else {
-			shuffledGenres = [];
-		}
-	});
-
-	function shuffleGenres() {
-		const copy = [...shuffledGenres];
-		for (let i = copy.length - 1; i > 0; i--) {
-			const j = Math.floor(Math.random() * (i + 1));
-			[copy[i], copy[j]] = [copy[j], copy[i]];
-		}
-		shuffledGenres = copy;
-	}
 
 	function handlePromptDismiss(_service: string) {
 		dismissVersion++;
@@ -453,7 +318,7 @@
 					</div>
 				{/if}
 				<div class="space-y-8" aria-label="Loading Discover sections">
-					{#each ['Top Picks', 'Made For You', 'Because You Listened', 'New & Fresh'] as label (label)}
+					{#each ['Made For You', 'New & Fresh'] as label (label)}
 						<section>
 							<SectionDivider {label} updating />
 							<CarouselSkeleton />
@@ -573,19 +438,9 @@
 	{/if}
 {/snippet}
 
-{#snippet zoneLines(skip: SectionKey[] = [])}
-	{#each becauseStates.filter((state) => !skip.includes(state.key)) as state (state.key)}
-		<SectionStateLine status={state} title={titleOf(state.key)} />
-	{/each}
-{/snippet}
-
 {#snippet blockBody(block: Block, paired: boolean)}
 	{#if block.kind === 'queue'}
 		<DiscoverQueueDeck youtubeEnabled={discoverData?.integration_status?.youtube ?? false} />
-	{:else if block.kind === 'picks' && topPicks}
-		<TopPicksDeck section={topPicks} updating={sectionsUpdating} onpass={handlePassTopPick} />
-	{:else if block.kind === 'lounge'}
-		<ListeningLounge section={lounge} {topPicks} updating={sectionsUpdating} />
 	{:else if block.kind === 'weekly' && weekly}
 		<WeeklyExploration madeFrom="discover_shelf" section={weekly} updating={sectionsUpdating} />
 	{:else if block.kind === 'playlist'}
@@ -610,52 +465,6 @@
 				/>
 			{/each}
 		</div>
-	{:else if block.kind === 'because'}
-		{#if hasBecauseYouListened}
-			{@render kickerRow({ label: 'Because You Listened', icon: Heart })}
-			<div class="space-y-5 sm:space-y-6">
-				{#each because as entry, i (`${entry.seed_artist_mbid || entry.seed_artist}-${i}`)}
-					{#if i === 0}
-						<DiscoverArtistHero {entry} />
-					{:else}
-						<DiscoverArtistMiniBand {entry} />
-					{/if}
-				{/each}
-				{#if artistsYouMightLike || popularInYourGenres}
-					<div
-						class="dn-discover-row"
-						class:dn-discover-row--pair={!!artistsYouMightLike && !!popularInYourGenres}
-					>
-						{#if artistsYouMightLike}
-							<div>
-								<HomeSection
-									madeFrom="discover_shelf"
-									section={artistsYouMightLike}
-									compact={!!popularInYourGenres}
-								/>
-							</div>
-						{/if}
-						{#if popularInYourGenres}
-							<div>
-								<HomeSection
-									madeFrom="discover_shelf"
-									section={popularInYourGenres}
-									compact={!!artistsYouMightLike}
-								/>
-							</div>
-						{/if}
-					</div>
-				{/if}
-				{@render zoneLines()}
-			</div>
-		{:else if becauseState && becauseState.state !== 'empty' && becauseState.state !== 'building'}
-			{@render kickerRow({ label: 'Because You Listened', icon: Heart })}
-			<SectionHead title={titleOf('because_you_listen_to') || 'Because You Listened'} />
-			{@render zoneLines()}
-		{:else}
-			<DiscoverBecauseEmpty updating={sectionsUpdating} />
-			{@render zoneLines(['because_you_listen_to'])}
-		{/if}
 	{:else if block.kind === 'shelf'}
 		{@render kickerRow(block.kicker)}
 		{#if block.playable}
@@ -668,9 +477,6 @@
 		{:else}
 			<HomeSection madeFrom="discover_shelf" section={block.shelf} compact={paired} />
 		{/if}
-	{:else if block.kind === 'genres-explore' && unexploredGenres}
-		{@render kickerRow(block.kicker)}
-		<GenrePills title={unexploredGenres.title} genres={shuffledGenres} onShuffle={shuffleGenres} />
 	{:else if block.kind === 'genres-browse' && genreList}
 		{@render kickerRow(block.kicker)}
 		<div class="dn-discover-genres" class:dn-discover-genres--paired={paired}>
@@ -680,18 +486,6 @@
 		{@render kickerRow(block.kicker)}
 		<SectionHead title={block.title} />
 		<SectionStateLine status={block.state} />
-	{:else if block.kind === 'trending-lead'}
-		{@render kickerRow({ label: 'Trending Now', icon: TrendingUp })}
-		<div class="dn-trending">
-			<div class="dn-trending__head">
-				<Globe class="size-9 text-title" aria-hidden="true" />
-				<h2 class="dn-trending__title">{block.shelf.title}</h2>
-				<SourceBadge source={block.shelf.source ?? undefined} />
-			</div>
-			<div class="min-w-0 flex-1">
-				<HomeSection madeFrom="discover_shelf" section={block.shelf} hideHeader />
-			</div>
-		</div>
 	{/if}
 {/snippet}
 
@@ -752,52 +546,6 @@
 		}
 		.dn-discover-genres--paired :global(.genre-grid) {
 			grid-template-columns: repeat(2, minmax(0, 1fr));
-		}
-	}
-
-	/* Globally Trending: its title stacked at the left of the artists */
-	.dn-trending {
-		display: flex;
-		align-items: flex-start;
-		gap: 2rem;
-	}
-	.dn-trending__head {
-		display: flex;
-		flex: none;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 0.75rem;
-		width: 11rem;
-		padding-top: 0.5rem;
-	}
-	.dn-trending__title {
-		font-family: var(--font-display);
-		font-weight: 400;
-		font-size: 2.5rem;
-		line-height: 0.95;
-		text-transform: uppercase;
-		color: var(--color-base-content);
-		font-synthesis: none;
-		overflow-wrap: anywhere;
-	}
-	@media (max-width: 767px) {
-		.dn-trending {
-			flex-direction: column;
-			gap: 0.75rem;
-		}
-		.dn-trending__head {
-			flex-direction: row;
-			flex-wrap: wrap;
-			align-items: center;
-			width: auto;
-			padding-top: 0;
-		}
-		.dn-trending__head :global(svg) {
-			width: 1.5rem;
-			height: 1.5rem;
-		}
-		.dn-trending__title {
-			font-size: 1.625rem;
 		}
 	}
 </style>

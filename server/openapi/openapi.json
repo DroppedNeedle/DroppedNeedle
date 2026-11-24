@@ -39031,12 +39031,6 @@
             "description": "Whether Discover blends Last.fm and ListenBrainz for a user who\nlinks both, instead of following only their primary service.",
             "default": true
           },
-          "discover_picks_count": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Discover picks count.",
-            "default": 12
-          },
           "discover_queue_auto_generate": {
             "type": "boolean",
             "description": "Discover queue auto-generate.",
@@ -42950,58 +42944,6 @@
           "playlist"
         ]
       },
-      "BecauseYouListenTo": {
-        "type": "object",
-        "description": "One \"because you listen to\" shelf: seed plus similar albums.",
-        "required": [
-          "seed_artist",
-          "seed_artist_mbid",
-          "section"
-        ],
-        "properties": {
-          "banner_url": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Banner art URL, when resolved."
-          },
-          "fanart_url": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Fanart URL, when resolved."
-          },
-          "listen_count": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Seed listen count backing the pick; null when the provider sent none."
-          },
-          "section": {
-            "$ref": "#/components/schemas/ChartSection",
-            "description": "Similar-albums shelf."
-          },
-          "seed_artist": {
-            "type": "string",
-            "description": "Seed artist name."
-          },
-          "seed_artist_mbid": {
-            "type": "string",
-            "description": "Seed MusicBrainz artist id."
-          },
-          "wide_thumb_url": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Wide thumbnail URL, when resolved."
-          }
-        }
-      },
       "BinAlbumView": {
         "type": "object",
         "description": "The album a group of files came from.",
@@ -46367,17 +46309,13 @@
         "description": "Discover: its sections, in page order, plus the page-level fields. A\nsection with no rows is left out, and `section_states` says why.",
         "required": [
           "sections",
-          "discover_queue_enabled",
+          "weekly_set_enabled",
           "service_prompts",
           "genre_artwork",
           "genre_artwork_schema_version",
           "refreshing"
         ],
         "properties": {
-          "discover_queue_enabled": {
-            "type": "boolean",
-            "description": "Whether the queue deck is enabled for the user."
-          },
           "generated_at": {
             "type": [
               "integer",
@@ -46461,6 +46399,10 @@
                 "lastfm"
               ]
             }
+          },
+          "weekly_set_enabled": {
+            "type": "boolean",
+            "description": "Whether the weekly set is switched on for the user."
           }
         }
       },
@@ -51668,7 +51610,7 @@
                 "$ref": "#/components/schemas/DiscoverPreview"
               }
             ],
-            "description": "Discover teaser: the first \"because you listen to\" shelf of the\nuser's last discover page."
+            "description": "Discover teaser. Not sent while Discover has nothing to tease\nwith: the shelf it copied has left the page."
           },
           "genre_artwork": {
             "type": "object",
@@ -59135,7 +59077,6 @@
           "distinct_albums",
           "distinct_artists",
           "personal_cards",
-          "owned_picks",
           "duplicates",
           "repeats",
           "seeds_used",
@@ -59171,11 +59112,6 @@
           "max_cards_one_artist": {
             "type": "integer",
             "description": "The most cards any one artist has.",
-            "minimum": 0
-          },
-          "owned_picks": {
-            "type": "integer",
-            "description": "Top Picks the library already holds.",
             "minimum": 0
           },
           "personal_cards": {
@@ -70008,49 +69944,6 @@
           },
           {
             "type": "object",
-            "description": "The \"because you listen to\" shelves.",
-            "required": [
-              "entries",
-              "shape"
-            ],
-            "properties": {
-              "entries": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/BecauseYouListenTo"
-                },
-                "description": "One per seed artist."
-              },
-              "shape": {
-                "type": "string",
-                "enum": [
-                  "because"
-                ]
-              }
-            }
-          },
-          {
-            "type": "object",
-            "description": "Top Picks.",
-            "required": [
-              "picks",
-              "shape"
-            ],
-            "properties": {
-              "picks": {
-                "$ref": "#/components/schemas/TopPicksSection",
-                "description": "The picks."
-              },
-              "shape": {
-                "type": "string",
-                "enum": [
-                  "picks"
-                ]
-              }
-            }
-          },
-          {
-            "type": "object",
             "description": "The weekly exploration playlist.",
             "required": [
               "weekly",
@@ -70183,23 +70076,16 @@
           "favorite_artists",
           "library_artists",
           "library_albums",
-          "discover_queue",
-          "top_picks",
-          "listeners_like_you",
+          "weekly_set",
           "playlist_discovery",
           "daily_mixes",
           "radio_sections",
-          "because_you_listen_to",
-          "artists_you_might_like",
-          "popular_in_your_genres",
           "fresh_releases",
           "new_from_followed",
           "missing_essentials",
           "rediscover",
           "anniversaries",
           "lastfm_recent_scrobbles",
-          "unexplored_genres",
-          "globally_trending",
           "lastfm_weekly_artist_chart",
           "lastfm_weekly_album_chart"
         ]
@@ -70384,7 +70270,6 @@
           "browse_genres",
           "essentials",
           "made_for_you",
-          "because_you_listened",
           "new_and_fresh",
           "from_your_library",
           "trending_now"
@@ -72516,61 +72401,6 @@
               "$ref": "#/components/schemas/ListenSource"
             },
             "description": "Services that failed, or are switched off, while the list was built."
-          }
-        }
-      },
-      "TopPickItem": {
-        "type": "object",
-        "description": "One personalized top pick: an album from the top of the person's pool.",
-        "required": [
-          "album",
-          "reason"
-        ],
-        "properties": {
-          "album": {
-            "$ref": "#/components/schemas/AlbumRef",
-            "description": "Picked album."
-          },
-          "reason": {
-            "$ref": "#/components/schemas/PickReason",
-            "description": "Why it is offered."
-          }
-        }
-      },
-      "TopPicksSection": {
-        "type": "object",
-        "description": "The personalized top-picks shelf.",
-        "required": [
-          "title",
-          "items",
-          "personalizing"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TopPickItem"
-            },
-            "description": "Ranked picks."
-          },
-          "personalizing": {
-            "type": "boolean",
-            "description": "Whether the picks are still being worked out. Always false: Top\nPicks with nothing personal are left out instead."
-          },
-          "source": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ShelfSource"
-              }
-            ],
-            "description": "Provider behind the picks, when it has one."
-          },
-          "title": {
-            "type": "string",
-            "description": "Shelf title."
           }
         }
       },

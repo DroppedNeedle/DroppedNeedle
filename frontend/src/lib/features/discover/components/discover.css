@@ -1,6 +1,5 @@
-/* Discover's panel styles, shared by Top Picks, the Listening Lounge and
-   the page's own bands. A class one component uses lives in that
-   component instead. */
+/* Discover's panel styles, shared by the page's own bands. A class one
+   component uses lives in that component instead. */
 
 /* a section's square icon tile beside its title */
 .dn-panel__icon {

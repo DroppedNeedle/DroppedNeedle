@@ -10854,12 +10854,6 @@ export interface components {
              */
             discover_blend_listening_services: boolean;
             /**
-             * Format: int64
-             * @description Discover picks count.
-             * @default 12
-             */
-            discover_picks_count: number;
-            /**
              * @description Discover queue auto-generate.
              * @default true
              */
@@ -12624,26 +12618,6 @@ export interface components {
          * @enum {string}
          */
         BatchSource: "discover" | "playlist";
-        /** @description One "because you listen to" shelf: seed plus similar albums. */
-        BecauseYouListenTo: {
-            /** @description Banner art URL, when resolved. */
-            banner_url?: string | null;
-            /** @description Fanart URL, when resolved. */
-            fanart_url?: string | null;
-            /**
-             * Format: int64
-             * @description Seed listen count backing the pick; null when the provider sent none.
-             */
-            listen_count?: number | null;
-            /** @description Similar-albums shelf. */
-            section: components["schemas"]["ChartSection"];
-            /** @description Seed artist name. */
-            seed_artist: string;
-            /** @description Seed MusicBrainz artist id. */
-            seed_artist_mbid: string;
-            /** @description Wide thumbnail URL, when resolved. */
-            wide_thumb_url?: string | null;
-        };
         /** @description The album a group of files came from. */
         BinAlbumView: {
             artist?: string | null;
@@ -14134,8 +14108,6 @@ export interface components {
          *     section with no rows is left out, and `section_states` says why.
          */
         DiscoverResponse: {
-            /** @description Whether the queue deck is enabled for the user. */
-            discover_queue_enabled: boolean;
             /**
              * Format: int64
              * @description Build timestamp (unix seconds), when built.
@@ -14169,6 +14141,8 @@ export interface components {
             service_status?: {
                 [key: string]: components["schemas"]["ServiceState"];
             } | null;
+            /** @description Whether the weekly set is switched on for the user. */
+            weekly_set_enabled: boolean;
         };
         /** @description One way a person tuned what Discover offers them. */
         DiscoverTuningEntry: {
@@ -16612,8 +16586,8 @@ export interface components {
          */
         HomeResponse: {
             /**
-             * @description Discover teaser: the first "because you listen to" shelf of the
-             *     user's last discover page.
+             * @description Discover teaser. Not sent while Discover has nothing to tease
+             *     with: the shelf it copied has left the page.
              */
             discover_preview?: null | components["schemas"]["DiscoverPreview"];
             /** @description Mosaic art keyed by genre name. */
@@ -20140,8 +20114,6 @@ export interface components {
             incomplete: boolean;
             /** @description The most cards any one artist has. */
             max_cards_one_artist: number;
-            /** @description Top Picks the library already holds. */
-            owned_picks: number;
             /** @description Cards in sections that claim to be about the person. */
             personal_cards: number;
             /** @description Albums the page it replaced showed too. */
@@ -24899,16 +24871,6 @@ export interface components {
             /** @description The shelves. */
             shelves: components["schemas"]["ChartSection"][];
         } | {
-            /** @description One per seed artist. */
-            entries: components["schemas"]["BecauseYouListenTo"][];
-            /** @enum {string} */
-            shape: "because";
-        } | {
-            /** @description The picks. */
-            picks: components["schemas"]["TopPicksSection"];
-            /** @enum {string} */
-            shape: "picks";
-        } | {
             /** @enum {string} */
             shape: "weekly";
             /** @description The playlist. */
@@ -24932,7 +24894,7 @@ export interface components {
          * @description One section of the home or discover page.
          * @enum {string}
          */
-        SectionKey: "popular_albums" | "trending_artists" | "weekly_exploration" | "your_top_albums" | "recently_played" | "recently_added" | "genre_list" | "favorite_artists" | "library_artists" | "library_albums" | "discover_queue" | "top_picks" | "listeners_like_you" | "playlist_discovery" | "daily_mixes" | "radio_sections" | "because_you_listen_to" | "artists_you_might_like" | "popular_in_your_genres" | "fresh_releases" | "new_from_followed" | "missing_essentials" | "rediscover" | "anniversaries" | "lastfm_recent_scrobbles" | "unexplored_genres" | "globally_trending" | "lastfm_weekly_artist_chart" | "lastfm_weekly_album_chart";
+        SectionKey: "popular_albums" | "trending_artists" | "weekly_exploration" | "your_top_albums" | "recently_played" | "recently_added" | "genre_list" | "favorite_artists" | "library_artists" | "library_albums" | "weekly_set" | "playlist_discovery" | "daily_mixes" | "radio_sections" | "fresh_releases" | "new_from_followed" | "missing_essentials" | "rediscover" | "anniversaries" | "lastfm_recent_scrobbles" | "lastfm_weekly_artist_chart" | "lastfm_weekly_album_chart";
         /**
          * @description What a section's rows are.
          * @enum {string}
@@ -25009,7 +24971,7 @@ export interface components {
          * @description A group of sections on a page.
          * @enum {string}
          */
-        SectionZone: "whats_hot" | "for_you" | "your_library" | "browse_genres" | "essentials" | "made_for_you" | "because_you_listened" | "new_and_fresh" | "from_your_library" | "trending_now";
+        SectionZone: "whats_hot" | "for_you" | "your_library" | "browse_genres" | "essentials" | "made_for_you" | "new_and_fresh" | "from_your_library" | "trending_now";
         /** @description Security posture settings (no secrets; the HIBP path is a local file). */
         SecuritySettings: {
             /**
@@ -25982,27 +25944,6 @@ export interface components {
             source: components["schemas"]["ListenSource"];
             /** @description Services that failed, or are switched off, while the list was built. */
             unavailable_sources: components["schemas"]["ListenSource"][];
-        };
-        /** @description One personalized top pick: an album from the top of the person's pool. */
-        TopPickItem: {
-            /** @description Picked album. */
-            album: components["schemas"]["AlbumRef"];
-            /** @description Why it is offered. */
-            reason: components["schemas"]["PickReason"];
-        };
-        /** @description The personalized top-picks shelf. */
-        TopPicksSection: {
-            /** @description Ranked picks. */
-            items: components["schemas"]["TopPickItem"][];
-            /**
-             * @description Whether the picks are still being worked out. Always false: Top
-             *     Picks with nothing personal are left out instead.
-             */
-            personalizing: boolean;
-            /** @description Provider behind the picks, when it has one. */
-            source?: null | components["schemas"]["ShelfSource"];
-            /** @description Shelf title. */
-            title: string;
         };
         /** @description One of an artist's most played songs. */
         TopSong: {

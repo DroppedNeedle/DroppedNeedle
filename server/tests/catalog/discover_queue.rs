@@ -310,9 +310,6 @@ impl ListeningNetwork for Script {
     ) -> Answer<'a, Vec<LovedTrack>> {
         ok(self.loved.clone())
     }
-    fn similar_users<'a>(&'a self, _u: &'a str, _p: RequestPriority) -> Answer<'a, Vec<String>> {
-        ok(Vec::new())
-    }
     fn weekly_playlist<'a>(
         &'a self,
         _id: &'a str,

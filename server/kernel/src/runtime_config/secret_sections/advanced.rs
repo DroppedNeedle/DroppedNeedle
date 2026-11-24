@@ -3,7 +3,7 @@
 use super::*;
 
 // --- advanced_settings (closed export allowlist) ---------------------------
-// Kept: the discover queue and picks tuning, the AudioDB switches and key,
+// Kept: the discover queue tuning, the AudioDB switches and key,
 // image serving, and the retention and prune cadences. Cache lifetimes,
 // precache pacing, HTTP limits and the browser cache lifetimes are fixed
 // in code; a v2 export that carries them has them reported as dropped.
@@ -24,8 +24,6 @@ pub struct AdvancedSettings {
     /// Whether Discover blends Last.fm and ListenBrainz for a user who
     /// links both, instead of following only their primary service.
     pub discover_blend_listening_services: bool,
-    /// Discover picks count.
-    pub discover_picks_count: i64,
     /// AudioDB master switch.
     pub audiodb_enabled: bool,
     /// AudioDB name-search fallback.
@@ -56,7 +54,6 @@ impl Default for AdvancedSettings {
             discover_queue_warm_cycle_build: true,
             discover_queue_lastfm_mbid_max_lookups: 10,
             discover_blend_listening_services: true,
-            discover_picks_count: 12,
             audiodb_enabled: true,
             audiodb_name_search_fallback: false,
             direct_remote_images_enabled: true,
@@ -82,7 +79,6 @@ impl Section for AdvancedSettings {
                 1,
                 50,
             ),
-            ("discover_picks_count", self.discover_picks_count, 4, 30),
             (
                 "request_history_retention_days",
                 self.request_history_retention_days,

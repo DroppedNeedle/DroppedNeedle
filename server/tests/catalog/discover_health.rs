@@ -1,12 +1,10 @@
-//! The health numbers of a discover build, on a hand-built page: an owned
-//! pick, an album in two sections and one the page before showed are each
-//! counted.
+//! The health numbers of a discover build, on a hand-built page: an album
+//! in two sections and one the page before showed are each counted.
 
 use droppedneedle_catalog::discover::health::{BuildFacts, PageHealth, page_health};
 use droppedneedle_catalog::discover::models::{
-    AlbumRef, ArtistRef, ChartSection, DiscoverResponse, PageSection, PickReason, PickReasonKind,
-    SectionContent, SectionItem, SectionKey, SectionKind, SectionZone, TopPickItem,
-    TopPicksSection,
+    AlbumRef, ArtistRef, ChartSection, DiscoverResponse, PageSection, SectionContent, SectionItem,
+    SectionKey, SectionKind, SectionZone,
 };
 use droppedneedle_catalog::discover::page::empty_page;
 use droppedneedle_catalog::discover::sections::{self, Page};
@@ -19,14 +17,16 @@ fn album(id: &str, artist: &str) -> AlbumRef {
     }
 }
 
-fn pick(album: AlbumRef) -> TopPickItem {
-    TopPickItem {
-        album,
-        reason: PickReason {
-            kind: PickReasonKind::YourArtists,
-            line: "Close to Seed.".to_owned(),
-            artists: Vec::new(),
-        },
+fn chart(kind: SectionKind, items: Vec<SectionItem>) -> ChartSection {
+    ChartSection {
+        title: String::new(),
+        kind,
+        items,
+        source: None,
+        fallback_message: None,
+        connect_service: None,
+        radio_seed_type: None,
+        radio_seed_id: None,
     }
 }
 
@@ -35,16 +35,7 @@ fn shelf(key: SectionKey, kind: SectionKind, items: Vec<SectionItem>) -> PageSec
         key,
         zone: SectionZone::NewAndFresh,
         content: SectionContent::Shelf {
-            shelf: ChartSection {
-                title: String::new(),
-                kind,
-                items,
-                source: None,
-                fallback_message: None,
-                connect_service: None,
-                radio_seed_type: None,
-                radio_seed_id: None,
-            },
+            shelf: chart(kind, items),
         },
     }
 }
@@ -57,22 +48,20 @@ fn page(sections: Vec<PageSection>) -> DiscoverResponse {
 }
 
 #[test]
-fn a_page_counts_owned_picks_duplicates_and_repeats() {
-    let owned = AlbumRef {
-        in_library: true,
-        ..album("a3", "x")
-    };
+fn a_page_counts_duplicates_and_repeats() {
     let built = page(vec![
         PageSection {
-            key: SectionKey::TopPicks,
-            zone: SectionZone::Essentials,
-            content: SectionContent::Picks {
-                picks: TopPicksSection {
-                    title: String::new(),
-                    items: vec![pick(album("a1", "x")), pick(album("a2", "y")), pick(owned)],
-                    source: None,
-                    personalizing: false,
-                },
+            key: SectionKey::RadioSections,
+            zone: SectionZone::MadeForYou,
+            content: SectionContent::Shelves {
+                shelves: vec![chart(
+                    SectionKind::Albums,
+                    ["a1", "a2", "a3"]
+                        .into_iter()
+                        .zip(["x", "y", "x"])
+                        .map(|(id, artist)| SectionItem::Album(album(id, artist)))
+                        .collect(),
+                )],
             },
         },
         shelf(
@@ -81,7 +70,7 @@ fn a_page_counts_owned_picks_duplicates_and_repeats() {
             vec![SectionItem::Album(album("a1", "x"))],
         ),
         shelf(
-            SectionKey::GloballyTrending,
+            SectionKey::LastfmWeeklyArtistChart,
             SectionKind::Artists,
             vec![SectionItem::Artist(ArtistRef {
                 musicbrainz_id: Some("y".to_owned()),
@@ -95,11 +84,11 @@ fn a_page_counts_owned_picks_duplicates_and_repeats() {
         vec![SectionItem::Album(album("a2", "y"))],
     )]);
     let wanted: Vec<_> = [
-        SectionKey::DiscoverQueue,
-        SectionKey::TopPicks,
+        SectionKey::WeeklySet,
+        SectionKey::RadioSections,
         SectionKey::FreshReleases,
         SectionKey::MissingEssentials,
-        SectionKey::GloballyTrending,
+        SectionKey::LastfmWeeklyArtistChart,
         SectionKey::WeeklyExploration,
         SectionKey::LastfmWeeklyAlbumChart,
     ]
@@ -124,14 +113,14 @@ fn a_page_counts_owned_picks_duplicates_and_repeats() {
         health,
         PageHealth {
             sections: 3,
-            // Missing Essentials: the deck is never a page section, and
-            // sections of services the person has not linked never count.
+            // Missing Essentials: the weekly set is never a page section,
+            // and sections of services the person has not linked never
+            // count.
             wanted_empty: 1,
             cards: 5,
             distinct_albums: 3,
             distinct_artists: 2,
             personal_cards: 4,
-            owned_picks: 1,
             duplicates: 1,
             repeats: 1,
             seeds_used: 2,

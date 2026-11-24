@@ -6,8 +6,9 @@
 //! both, unless the server turns the blend off. Unreadable settings hold
 //! every build, a page built past a failed read is rebuilt soon and keeps
 //! the sections it had, each section not plainly built says why, and a
-//! background warm that keeps nothing waits before it is tried again. Top
-//! Picks never hold an album the library has, nor a chart album.
+//! background warm that keeps nothing waits before it is tried again. The
+//! sections that left Discover are gone, a switch saved for one changes
+//! nothing, and nothing is read for them.
 
 use crate::common::Probe;
 use std::collections::HashMap;
@@ -54,7 +55,7 @@ use crate::common::auth::AuthRig;
 use crate::common::platform::TEST_KEY;
 use crate::discover_queue::{
     Script, after_commits, discover_deps, discover_inputs, discover_routes, insert, keep_facts_of,
-    library_artist, own, plays, pool_of, seen_now,
+    library_artist, plays, seen_now,
 };
 
 const SEED: &str = "11111111-1111-4111-8111-111111111111";
@@ -207,7 +208,6 @@ async fn page_builds_in_the_background_is_saved_and_records_activity() {
     .await
     .expect("user row");
     keep_facts_of(&rig, Arc::new(page_script())).await;
-    insert(&db, seed_pool(&[1, 2, 3])).await;
     let app = page_app(&rig, &dir);
 
     let (status, first) = call(&app, "GET", "/api/v3/discover", None).await;
@@ -241,13 +241,26 @@ async fn page_builds_in_the_background_is_saved_and_records_activity() {
         row["health"]["sections"].as_u64(),
         page["sections"].as_array().map(|s| s.len() as u64)
     );
+    let shown: Vec<&str> = page["sections"]
+        .as_array()
+        .expect("sections")
+        .iter()
+        .filter_map(|section| section["key"].as_str())
+        .collect();
+    for gone in [
+        "top_picks",
+        "listeners_like_you",
+        "because_you_listen_to",
+        "artists_you_might_like",
+        "popular_in_your_genres",
+        "unexplored_genres",
+        "globally_trending",
+    ] {
+        assert!(!shown.contains(&gone), "{gone} left Discover: {shown:?}");
+    }
     assert_eq!(
-        content(&page, "because_you_listen_to")["entries"][0]["section"]["title"],
-        "Because You Listen To Seed"
-    );
-    assert_eq!(
-        content(&page, "globally_trending")["shelf"]["items"][0]["name"],
-        "Everyone's Favourite"
+        content(&page, "radio_sections")["shelves"][0]["title"],
+        "Radio: Seed"
     );
     assert_eq!(
         content(&page, "fresh_releases")["shelf"]["items"]
@@ -255,20 +268,6 @@ async fn page_builds_in_the_background_is_saved_and_records_activity() {
             .map(Vec::len),
         Some(1)
     );
-    let picks = content(&page, "top_picks")["picks"]["items"]
-        .as_array()
-        .expect("top picks")
-        .clone();
-    assert!(!picks.is_empty());
-    assert_eq!(picks[0]["reason"]["kind"], "your_artists");
-    assert_eq!(picks[0]["reason"]["line"], "Close to Seed.");
-    for pick in &picks {
-        let fields = pick.as_object().expect("a pick is an object");
-        assert!(
-            fields.values().all(|field| !field.is_number()),
-            "no number on a pick: {pick}"
-        );
-    }
     assert_eq!(
         content(&page, "genre_list")["shelf"]["items"][0]["name"],
         "shoegaze"
@@ -279,8 +278,8 @@ async fn page_builds_in_the_background_is_saved_and_records_activity() {
     let (_, again) = call(&restarted, "GET", "/api/v3/discover", None).await;
     assert_eq!(again["refreshing"], false, "the build finished");
     assert_eq!(
-        content(&again, "because_you_listen_to")["entries"][0]["seed_artist"],
-        "Seed",
+        content(&again, "radio_sections")["shelves"][0]["title"],
+        "Radio: Seed",
         "served from the snapshot"
     );
 
@@ -328,16 +327,6 @@ async fn seed_user(db: &droppedneedle_kernel::db::Db) {
     })
     .await
     .expect("user row");
-}
-
-/// user-1's pool: the first album [`page_script`] gives each of the
-/// [`page_script`], each found through Seed.
-fn seed_pool(similar: &[u8]) -> String {
-    let albums: Vec<_> = similar
-        .iter()
-        .map(|n| (mbid('a', b'0' + n), mbid('b', *n), SEED))
-        .collect();
-    pool_of("user-1", &[(SEED, "Seed")], &albums)
 }
 
 fn page_cache(rig: &AuthRig) -> UserPageCache<String> {
@@ -543,10 +532,10 @@ fn seed(name: &str, n: u8) -> ArtistRow {
     }
 }
 
-/// The Because You Listen To entries of a page built for a user who
-/// listens on ListenBrainz (primary) and Last.fm, with the blend `on` or
-/// off: (seed, badge, first similar artist) per entry.
-async fn because_entries(on: bool) -> Vec<(String, String, String)> {
+/// The radio shelves of a page built for a user who listens on
+/// ListenBrainz (primary) and Last.fm, with the blend `on` or off:
+/// (title, badge, the artists its albums are by) per shelf.
+async fn radio_shelves(on: bool) -> Vec<(String, String, Vec<String>)> {
     let dir = crate::common::ScratchDir::new("discover-blend");
     let rig = AuthRig::new("discover-blend").await;
     seed_user(&rig.platform.db).await;
@@ -558,6 +547,16 @@ async fn because_entries(on: bool) -> Vec<(String, String, String)> {
         .expect("advanced settings save");
     let (lb_only, both, lastfm_only) =
         (seed("LB Only", 1), seed("Both", 2), seed("Last.fm Only", 3));
+    let artist_albums = (1..=9)
+        .map(|n| ('b', n))
+        .chain([('c', 1), ('c', 2)])
+        .enumerate()
+        .map(|(at, (prefix, n))| {
+            let artist = mbid(prefix, n);
+            let album = ranked(10 + at as u8, &artist, 100);
+            (artist, vec![album])
+        })
+        .collect();
     let script = Script {
         user: UserMusic {
             listenbrainz: Some("listener".to_owned()),
@@ -599,6 +598,7 @@ async fn because_entries(on: bool) -> Vec<(String, String, String)> {
                 },
             ],
         )]),
+        artist_albums,
         ..Script::default()
     };
     let script = Arc::new(script);
@@ -608,17 +608,21 @@ async fn because_entries(on: bool) -> Vec<(String, String, String)> {
     }));
     call(&app, "GET", "/api/v3/discover", None).await;
     let page = settled_page(&rig, &app, "the blended page was built").await;
-    content(&page, "because_you_listen_to")["entries"]
+    content(&page, "radio_sections")["shelves"]
         .as_array()
-        .expect("because entries")
+        .expect("radio shelves")
         .iter()
-        .map(|entry| {
+        .map(|shelf| {
             let text = |value: &Value| value.as_str().unwrap_or_default().to_owned();
-            (
-                text(&entry["seed_artist"]),
-                text(&entry["section"]["source"]),
-                text(&entry["section"]["items"][0]["name"]),
-            )
+            let mut by: Vec<String> = shelf["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|item| text(&item["artist_id"]))
+                .collect();
+            by.sort();
+            by.dedup();
+            (text(&shelf["title"]), text(&shelf["source"]), by)
         })
         .collect()
 }
@@ -629,22 +633,26 @@ async fn because_entries(on: bool) -> Vec<(String, String, String)> {
 /// in. Turned off, only the primary service's seeds are read.
 #[tokio::test]
 async fn both_services_blend_unless_the_server_turns_it_off() {
-    let entry = |seed: &str, source: &str, first: &str| {
-        (seed.to_owned(), source.to_owned(), first.to_owned())
+    let shelf = |seed: &str, source: &str, similar: std::ops::RangeInclusive<u8>| {
+        (
+            format!("Radio: {seed}"),
+            source.to_owned(),
+            similar.map(|n| mbid('b', n)).collect::<Vec<_>>(),
+        )
     };
     assert_eq!(
-        because_entries(true).await,
+        radio_shelves(true).await,
         vec![
-            entry("Both", "blended", "Artist b4"),
-            entry("LB Only", "blended", "Artist b1"),
-            entry("Last.fm Only", "blended", "Artist b7"),
+            shelf("Both", "blended", 4..=6),
+            shelf("LB Only", "blended", 1..=3),
+            shelf("Last.fm Only", "blended", 7..=9),
         ]
     );
     assert_eq!(
-        because_entries(false).await,
+        radio_shelves(false).await,
         vec![
-            entry("LB Only", "listenbrainz", "Artist b1"),
-            entry("Both", "listenbrainz", "Artist b4"),
+            shelf("LB Only", "listenbrainz", 1..=3),
+            shelf("Both", "listenbrainz", 4..=6),
         ]
     );
 }
@@ -709,8 +717,8 @@ async fn unreadable_settings_hold_builds_and_serve_the_saved_page() {
     let (_, page) = call(&restarted, "GET", "/api/v3/discover", None).await;
     assert_eq!(page["refreshing"], false, "no build started");
     assert_eq!(
-        content(&page, "because_you_listen_to")["entries"][0]["seed_artist"],
-        "Seed",
+        content(&page, "radio_sections")["shelves"][0]["title"],
+        "Radio: Seed",
         "the saved page is served"
     );
 
@@ -788,8 +796,9 @@ async fn page_after(app: &Router, before: &Value, what: &str) -> Value {
 }
 
 /// A rebuild that finds no similar-artist list kept (provider data was
-/// cleared and labs is down) keeps the Because shelves the page had, as
-/// they were, and says when they are from. A section whose reads all
+/// cleared and labs is down) keeps the radio shelves the page had, as
+/// they were, and says when they are from; Fresh Releases, whose
+/// ListenBrainz read failed, is kept too and names ListenBrainz. A section whose reads all
 /// answered with nothing says it is empty.
 #[tokio::test]
 async fn a_failed_read_keeps_the_sections_the_page_had() {
@@ -807,12 +816,18 @@ async fn a_failed_read_keeps_the_sections_the_page_had() {
 
     call(&app, "GET", "/api/v3/discover", None).await;
     let first = settled_page(&rig, &app, "the first page was built").await;
-    let because = content(&first, "because_you_listen_to").clone();
+    let radio = content(&first, "radio_sections").clone();
     assert!(
-        because["entries"].as_array().is_some_and(|e| !e.is_empty()),
+        radio["shelves"].as_array().is_some_and(|s| !s.is_empty()),
         "{first}"
     );
-    assert_eq!(state_of(&first, "because_you_listen_to"), Value::Null);
+    assert_eq!(state_of(&first, "radio_sections"), Value::Null);
+    let fresh = content(&first, "fresh_releases").clone();
+    assert!(
+        fresh["shelf"]["items"]
+            .as_array()
+            .is_some_and(|i| !i.is_empty())
+    );
     assert_eq!(
         state_of(&first, "anniversaries"),
         json!({"key": "anniversaries", "state": "empty"}),
@@ -820,6 +835,7 @@ async fn a_failed_read_keeps_the_sections_the_page_had() {
     );
 
     script.similar_down.store(true, Ordering::SeqCst);
+    script.fresh_down.store(true, Ordering::SeqCst);
     answers.clear().await.expect("provider answers cleared");
     droppedneedle_catalog::discover::facts::clear(&rig.platform.db)
         .await
@@ -829,14 +845,23 @@ async fn a_failed_read_keeps_the_sections_the_page_had() {
     assert_eq!(status, StatusCode::ACCEPTED);
     let page = page_after(&app, &first, "the rebuild landed").await;
     assert_eq!(
-        content(&page, "because_you_listen_to"),
-        &because,
+        content(&page, "radio_sections"),
+        &radio,
         "the shelves are kept as they were"
     );
     assert_eq!(
-        state_of(&page, "because_you_listen_to"),
+        state_of(&page, "radio_sections"),
         json!({
-            "key": "because_you_listen_to",
+            "key": "radio_sections",
+            "state": "kept",
+            "since": first["generated_at"],
+        })
+    );
+    assert_eq!(content(&page, "fresh_releases"), &fresh);
+    assert_eq!(
+        state_of(&page, "fresh_releases"),
+        json!({
+            "key": "fresh_releases",
             "state": "kept",
             "source": "listenbrainz",
             "since": first["generated_at"],
@@ -844,9 +869,9 @@ async fn a_failed_read_keeps_the_sections_the_page_had() {
     );
 }
 
-/// For a person with nothing linked, the Listening Lounge and the shelves
-/// grown from listening ask for ListenBrainz, and a library shelf with
-/// nothing in it says it is empty.
+/// For a person with nothing linked, the shelves grown from listening ask
+/// for ListenBrainz, and a library shelf with nothing in it says it is
+/// empty.
 #[tokio::test]
 async fn sections_say_what_a_person_with_nothing_linked_needs() {
     let dir = crate::common::ScratchDir::new("discover-unlinked");
@@ -864,12 +889,8 @@ async fn sections_say_what_a_person_with_nothing_linked_needs() {
     let needs_listenbrainz =
         |key: &str| json!({"key": key, "state": "needs_link", "source": "listenbrainz"});
     assert_eq!(
-        state_of(&page, "listeners_like_you"),
-        needs_listenbrainz("listeners_like_you")
-    );
-    assert_eq!(
-        state_of(&page, "because_you_listen_to"),
-        needs_listenbrainz("because_you_listen_to")
+        state_of(&page, "radio_sections"),
+        needs_listenbrainz("radio_sections")
     );
     assert_eq!(
         state_of(&page, "anniversaries"),
@@ -881,10 +902,9 @@ async fn sections_say_what_a_person_with_nothing_linked_needs() {
     );
 }
 
-/// A person with nothing linked who plays music in the app gets a "Because
-/// You Listen To" row for the artist they play most, with their own play
-/// count and the app's own badge, and the saved health counts every seed
-/// they have.
+/// A person with nothing linked who plays music in the app gets a radio
+/// shelf for the artist they play, with the app's own badge, and the saved
+/// health counts every seed they have.
 #[tokio::test]
 async fn plays_in_the_app_seed_a_person_with_nothing_linked() {
     let dir = crate::common::ScratchDir::new("discover-local-seeds");
@@ -913,10 +933,9 @@ async fn plays_in_the_app_seed_a_person_with_nothing_linked() {
 
     call(&app, "GET", "/api/v3/discover", None).await;
     let page = settled_page(&rig, &app, "the page was built").await;
-    let entry = &content(&page, "because_you_listen_to")["entries"][0];
-    assert_eq!(entry["seed_artist"], "Seed", "{page}");
-    assert_eq!(entry["listen_count"], 5, "their own plays");
-    assert_eq!(entry["section"]["source"], "local");
+    let radio = &content(&page, "radio_sections")["shelves"][0];
+    assert_eq!(radio["title"], "Radio: Seed", "{page}");
+    assert_eq!(radio["source"], "local");
     let row: Value = serde_json::from_str(&db.one::<String>(
         "SELECT CAST(payload AS TEXT) FROM catalog_cached_pages \
          WHERE user_id = 'user-1' AND page = 'discover'",
@@ -927,136 +946,46 @@ async fn plays_in_the_app_seed_a_person_with_nothing_linked() {
     assert_eq!(row["health"]["seeds_used"], 2);
 }
 
-/// The health the user's saved discover page carries.
-fn saved_health(db: &droppedneedle_kernel::db::Db) -> Value {
-    let row: Value = serde_json::from_str(&db.one::<String>(
-        "SELECT CAST(payload AS TEXT) FROM catalog_cached_pages \
-         WHERE user_id = 'user-1' AND page = 'discover'",
-        [],
-    ))
-    .expect("the saved page decodes");
-    row["health"].clone()
-}
-
-/// The album ids of a page's Top Picks.
-fn pick_ids(page: &Value) -> Vec<String> {
-    content(page, "top_picks")["picks"]["items"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|pick| pick["album"]["musicbrainz_id"].as_str().map(str::to_owned))
-        .collect()
-}
-
-/// Top Picks are the top of the person's pool, and an album the library
-/// holds is never one: the others are picked, and the saved health counts
-/// no owned pick.
+/// A switch saved for a section that has left Discover changes nothing
+/// until its row is carried over: the page builds as if it were not there,
+/// and the weekly set reads as on though the deck it replaces was switched
+/// off. A switch for a section that stays still holds. Nothing is read for
+/// the sections that left: no other person's albums.
 #[tokio::test]
-async fn top_picks_never_hold_an_album_the_library_has() {
-    let dir = crate::common::ScratchDir::new("discover-picks-owned");
-    let rig = AuthRig::new("discover-picks-owned").await;
+async fn a_switch_for_a_section_that_left_changes_nothing() {
+    let dir = crate::common::ScratchDir::new("discover-stale-switch");
+    let rig = AuthRig::new("discover-stale-switch").await;
     let db = rig.platform.db.clone();
     seed_user(&db).await;
-    let two = mbid('e', 2);
     insert(
         &db,
-        pool_of(
-            "user-1",
-            &[(SEED, "Seed"), (two.as_str(), "Seed Two")],
-            &[
-                (mbid('a', 1), mbid('b', 1), SEED),
-                (mbid('a', 2), mbid('b', 2), SEED),
-                (mbid('a', 3), mbid('b', 3), two.as_str()),
-                (mbid('a', 4), mbid('b', 4), two.as_str()),
-            ],
-        ),
+        "INSERT INTO app_section_prefs (user_id, page, section_key, enabled, updated_at) \
+         VALUES ('user-1', 'discover', 'discover_queue', 0, 1), \
+         ('user-1', 'discover', 'top_picks', 0, 1), \
+         ('user-1', 'discover', 'listeners_like_you', 0, 1), \
+         ('user-1', 'discover', 'fresh_releases', 0, 1)"
+            .to_owned(),
     )
     .await;
-    let owned = [mbid('a', 1), mbid('a', 3)];
-    own(&db, &owned).await;
-    let app = page_app(&rig, &dir);
+    keep_facts_of(&rig, Arc::new(page_script())).await;
+    let script = Arc::new(Script {
+        user_albums: vec![listened(ranked(80, &mbid('d', 2), 99))],
+        ..page_script()
+    });
+    let network = Arc::clone(&script);
+    let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |slot| {
+        *slot = network;
+    }));
 
     call(&app, "GET", "/api/v3/discover", None).await;
     let page = settled_page(&rig, &app, "the page was built").await;
+    assert_eq!(page["weekly_set_enabled"], true, "{page}");
+    assert_eq!(content(&page, "fresh_releases"), &Value::Null);
     assert_eq!(
-        pick_ids(&page),
-        [mbid('a', 2), mbid('a', 4)],
-        "{}",
-        content(&page, "top_picks")
+        content(&page, "radio_sections")["shelves"][0]["title"],
+        "Radio: Seed"
     );
-    assert_eq!(saved_health(&db)["owned_picks"], 0);
-}
-
-/// Top Picks hold no chart album: a person whose pool holds three albums
-/// gets those three, though they are fewer than asked for, each with a
-/// reason from their own artists. A person with no pool gets no Top Picks,
-/// the section saying what to link, or that it is empty when ListenBrainz
-/// is linked, however full the charts are.
-#[tokio::test]
-async fn top_picks_hold_no_chart_album_with_seeds_or_without() {
-    let chart: Vec<ListenedAlbum> = (1..=12)
-        .map(|n| listened(ranked(100 + n, &mbid('d', n), 10_000)))
-        .collect();
-    let seeded = Script {
-        sitewide_albums: chart.clone(),
-        ..page_script()
-    };
-    let two = mbid('e', 2);
-    let three_picks = pool_of(
-        "user-1",
-        &[(SEED, "Seed"), (two.as_str(), "Seed Two")],
-        &[
-            (mbid('a', 1), mbid('b', 1), SEED),
-            (mbid('a', 2), mbid('b', 2), SEED),
-            (mbid('a', 3), mbid('b', 3), two.as_str()),
-        ],
-    );
-    let nothing = Script {
-        user: UserMusic::default(),
-        user_artists: Vec::new(),
-        similar: HashMap::new(),
-        sitewide_albums: chart.clone(),
-        ..page_script()
-    };
-    let linked = Script {
-        user_artists: Vec::new(),
-        similar: HashMap::new(),
-        sitewide_albums: chart,
-        ..page_script()
-    };
-    let needs_link = json!({"key": "top_picks", "state": "needs_link", "source": "listenbrainz"});
-    let empty = json!({"key": "top_picks", "state": "empty"});
-
-    for (name, script, pool, picks, state) in [
-        ("seeded", seeded, Some(three_picks), 3, Value::Null),
-        ("nothing", nothing, None, 0, needs_link),
-        ("linked", linked, None, 0, empty),
-    ] {
-        let dir = crate::common::ScratchDir::new(&format!("discover-picks-{name}"));
-        let rig = AuthRig::new(&format!("discover-picks-{name}")).await;
-        seed_user(&rig.platform.db).await;
-        if let Some(pool) = pool {
-            insert(&rig.platform.db, pool).await;
-        }
-        let script = Arc::new(script);
-        keep_facts_of(&rig, Arc::clone(&script)).await;
-        let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |slot| {
-            *slot = script;
-        }));
-
-        call(&app, "GET", "/api/v3/discover", None).await;
-        let page = settled_page(&rig, &app, "the page was built").await;
-        let items = content(&page, "top_picks")["picks"]["items"].clone();
-        assert_eq!(pick_ids(&page).len(), picks, "{name}: {items}");
-        let items = items.as_array().cloned().unwrap_or_default();
-        assert!(
-            items
-                .iter()
-                .all(|pick| pick["reason"]["kind"] == "your_artists"),
-            "{name}: every pick grew from their own artists: {items:?}"
-        );
-        assert_eq!(state_of(&page, "top_picks"), state, "{name}");
-    }
+    assert_eq!(script.user_album_reads.load(Ordering::SeqCst), 0);
 }
 
 /// A home warm that keeps nothing, as every warm does while ListenBrainz
@@ -1230,9 +1159,9 @@ async fn similar_stub() -> (String, Arc<Mutex<HashMap<String, usize>>>) {
     (origin, hits)
 }
 
-/// One answer serves every "similar to" list: the artist page, the Because
-/// shelf, the album page (a Last.fm-first person's too) and the Weekly
-/// Mix's source give one order for one artist, with fame divided out (a
+/// One answer serves every "similar to" list: the artist page, the album
+/// page (a Last.fm-first person's too) and the Weekly Mix's source give one
+/// order for one artist, with fame divided out (a
 /// neighbour with a lower score and far fewer listeners leads a famous
 /// one, and one with no count comes last). The artist page a person opens
 /// reads the list and the counts once and keeps them; every other list
@@ -1312,15 +1241,7 @@ async fn one_similar_answer_leads_every_list_in_one_order() {
     );
 
     call(&app, "GET", "/api/v3/discover", None).await;
-    let page = settled_page(&rig, &app, "the page was built").await;
-    let shelf: Vec<String> =
-        content(&page, "because_you_listen_to")["entries"][0]["section"]["items"]
-            .as_array()
-            .expect("a Because shelf")
-            .iter()
-            .map(|item| item["name"].as_str().unwrap_or_default().to_owned())
-            .collect();
-    assert_eq!(shelf, RANKED, "{page}");
+    settled_page(&rig, &app, "the page was built").await;
 
     let album_page = catalog
         .similar_albums("user-1", &mbid('a', 1), SEED, 5)
@@ -1762,7 +1683,7 @@ async fn people_with_nothing_linked_get_album_cards_for_one_read() {
 }
 
 /// Every album and artist row a served page shows, as (section, kind, id,
-/// artist id): shelves, shelves of several, because shelves, Top Picks.
+/// artist id): shelves and shelves of several.
 fn page_rows(page: &Value) -> Vec<(String, String, String, String)> {
     let mut rows = Vec::new();
     let text = |value: &Value| value.as_str().unwrap_or_default().to_owned();
@@ -1773,17 +1694,6 @@ fn page_rows(page: &Value) -> Vec<(String, String, String, String)> {
         items.extend(content["shelf"]["items"].as_array().into_iter().flatten());
         for shelf in content["shelves"].as_array().into_iter().flatten() {
             items.extend(shelf["items"].as_array().into_iter().flatten());
-        }
-        for entry in content["entries"].as_array().into_iter().flatten() {
-            items.extend(entry["section"]["items"].as_array().into_iter().flatten());
-        }
-        for pick in content["picks"]["items"].as_array().into_iter().flatten() {
-            rows.push((
-                key.clone(),
-                "album".to_owned(),
-                text(&pick["album"]["musicbrainz_id"]),
-                text(&pick["album"]["artist_id"]),
-            ));
         }
         for item in items {
             rows.push((
@@ -1799,12 +1709,11 @@ fn page_rows(page: &Value) -> Vec<(String, String, String, String)> {
 
 /// What a person tells Discover leaves the page they are served at once,
 /// with no rebuild: an album they said no to goes from every section that
-/// held it, and an artist they hid goes from the because shelves and from
-/// every album shelf as a row filed under them, while an album filed under
-/// another artist that only credits them stays. Sections that are not
-/// about the person keep them: the worldwide chart and their own Last.fm
-/// chart. Home's weekly exploration playlist leaves out the hidden
-/// artist's song too.
+/// held it, and an artist they hid goes from every album shelf as a row
+/// filed under them, while an album filed under another artist that only
+/// credits them stays. A section that is not about the person keeps them:
+/// their own Last.fm chart. Home's weekly exploration playlist leaves out
+/// the hidden artist's song too.
 #[tokio::test]
 async fn what_a_person_hid_leaves_the_served_page_at_once() {
     let dir = crate::common::ScratchDir::new("discover-feedback");
@@ -1813,19 +1722,28 @@ async fn what_a_person_hid_leaves_the_served_page_at_once() {
     seed_user(&db).await;
     let hidden_artist = mbid('b', 3);
     let credited = mbid('f', 1);
-    let charted = mbid('c', 1);
     let scrobbled = mbid('e', 1);
-    let mut script = page_script();
+    // One album each for the similar artists, so the radio shelf keeps
+    // the one Fresh Releases shows too.
+    let one_each = || {
+        let mut script = page_script();
+        for albums in script.artist_albums.values_mut() {
+            albums.truncate(1);
+        }
+        script
+    };
+    let mut script = one_each();
     script.user.lastfm_username = Some("scrobbler".to_owned());
     script.user.lastfm = true;
-    // A fresh release of Similar 2's is a Top Pick too.
-    let both = ranked(91, &mbid('b', 2), 0).album;
+    // Similar 2's album is on the radio shelf too.
+    let both = ranked(b'2', &mbid('b', 2), 500).album;
     script.fresh = vec![
         AlbumRow {
             artist_name: "Similar 3 & Friends".to_owned(),
             ..ranked(90, &credited, 0).album
         },
-        both.clone(),
+        both,
+        ranked(91, &hidden_artist, 0).album,
     ];
     script.lastfm_weekly_artists = vec![ArtistRow {
         name: "Scrobbled".to_owned(),
@@ -1838,19 +1756,7 @@ async fn what_a_person_hid_leaves_the_served_page_at_once() {
     by_hidden_song.artist_mbid = Some(hidden_artist.clone());
     weekly.tracks.push(by_hidden_song);
     script.weekly = Some(weekly);
-    keep_facts_of(&rig, Arc::new(page_script())).await;
-    insert(
-        &db,
-        pool_of(
-            "user-1",
-            &[(SEED, "Seed")],
-            &[
-                (mbid('a', b'3'), hidden_artist.clone(), SEED),
-                (both.release_group_mbid.clone(), mbid('b', 2), SEED),
-            ],
-        ),
-    )
-    .await;
+    keep_facts_of(&rig, Arc::new(one_each())).await;
     let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |network| {
         *network = Arc::new(script);
     }));
@@ -1904,9 +1810,12 @@ async fn what_a_person_hid_leaves_the_served_page_at_once() {
             .collect::<std::collections::HashSet<_>>()
     };
     let shown = by(&hidden_artist, &before);
-    assert!(
-        shown.contains("because_you_listen_to") && shown.len() > 1,
-        "the artist is on a because shelf and an album shelf: {shown:?}"
+    assert_eq!(
+        shown,
+        ["fresh_releases", "radio_sections"]
+            .map(str::to_owned)
+            .into(),
+        "the artist is on two album shelves"
     );
     assert!(
         before
@@ -1916,31 +1825,19 @@ async fn what_a_person_hid_leaves_the_served_page_at_once() {
                 && *artist == credited),
         "the album that only credits them is shown"
     );
-    let kept = [
-        (charted.clone(), "globally_trending"),
-        (scrobbled.clone(), "lastfm_weekly_artist_chart"),
-    ];
-    for (artist, key) in &kept {
-        assert_eq!(
-            by(artist, &before),
-            [key.to_string()].into(),
-            "shown on {key}"
-        );
-    }
+    assert_eq!(
+        by(&scrobbled, &before),
+        ["lastfm_weekly_artist_chart".to_owned()].into(),
+        "shown on the Last.fm chart"
+    );
 
-    let ids = [
-        passed.clone(),
-        hidden_artist.clone(),
-        charted.clone(),
-        scrobbled.clone(),
-    ];
+    let ids = [passed.clone(), hidden_artist.clone(), scrobbled.clone()];
     db.write(Lane::Foreground, "test.feedback", move |tx| {
         tx.execute(
             "INSERT INTO catalog_discover_feedback (user_id, target, target_mbid_lower, kind, \
              release_group_mbid, created_at) VALUES ('user-1', 'album', ?1, 'no', ?1, 1), \
              ('user-1', 'artist', ?2, 'not_artist', '', 1), \
-             ('user-1', 'artist', ?3, 'not_artist', '', 1), \
-             ('user-1', 'artist', ?4, 'not_artist', '', 1)",
+             ('user-1', 'artist', ?3, 'not_artist', '', 1)",
             ids,
         )?;
         Ok::<_, droppedneedle_kernel::db::DbError>(())
@@ -1968,13 +1865,11 @@ async fn what_a_person_hid_leaves_the_served_page_at_once() {
             .any(|(key, _, id, _)| key == "fresh_releases" && *id == mbid('a', 90)),
         "an album filed under another artist stays"
     );
-    for (artist, key) in &kept {
-        assert_eq!(
-            by(artist, &after),
-            [key.to_string()].into(),
-            "{key} is not about the person, so it keeps them"
-        );
-    }
+    assert_eq!(
+        by(&scrobbled, &after),
+        ["lastfm_weekly_artist_chart".to_owned()].into(),
+        "the Last.fm chart is not about the person, so it keeps them"
+    );
     assert_eq!(
         home_weekly().await.expect("home's weekly playlist"),
         ["Song"],

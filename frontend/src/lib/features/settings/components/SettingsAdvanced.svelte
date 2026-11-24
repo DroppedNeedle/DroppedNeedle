@@ -23,11 +23,7 @@
 	let openAudioDB = $state(false);
 	let openRetention = $state(false);
 
-	const QUEUE_FIELDS = [
-		'discover_queue_size',
-		'discover_queue_lastfm_mbid_max_lookups',
-		'discover_picks_count'
-	];
+	const QUEUE_FIELDS = ['discover_queue_size', 'discover_queue_lastfm_mbid_max_lookups'];
 	const RETENTION_FIELDS = [
 		'request_history_retention_days',
 		'ignored_releases_retention_days',
@@ -48,7 +44,7 @@
 			<div class="space-y-6">
 				<SettingsSectionCollapse
 					title="Discover Queue"
-					description="Set how the Discover Queue and Discover Picks are built"
+					description="Set how the Discover Queue is built"
 					icon={Database}
 					iconBgClass="bg-warning/10"
 					iconTextClass="text-warning"

@@ -336,8 +336,8 @@ pub struct HomeResponse {
     pub genre_artwork: HashMap<String, GenreArtwork>,
     /// Genre artwork schema version.
     pub genre_artwork_schema_version: String,
-    /// Discover teaser: the first "because you listen to" shelf of the
-    /// user's last discover page.
+    /// Discover teaser. Not sent while Discover has nothing to tease
+    /// with: the shelf it copied has left the page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discover_preview: Option<DiscoverPreview>,
     /// True while a fuller build runs in the background (the UI polls).
@@ -463,52 +463,6 @@ pub struct ChartPage<T> {
 // Discover
 // ---------------------------------------------------------------------------
 
-/// One "because you listen to" shelf: seed plus similar albums.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct BecauseYouListenTo {
-    /// Seed artist name.
-    pub seed_artist: String,
-    /// Seed MusicBrainz artist id.
-    pub seed_artist_mbid: String,
-    /// Similar-albums shelf.
-    pub section: ChartSection,
-    /// Seed listen count backing the pick; null when the provider sent none.
-    pub listen_count: Option<i64>,
-    /// Banner art URL, when resolved.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub banner_url: Option<String>,
-    /// Wide thumbnail URL, when resolved.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub wide_thumb_url: Option<String>,
-    /// Fanart URL, when resolved.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fanart_url: Option<String>,
-}
-
-/// One personalized top pick: an album from the top of the person's pool.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct TopPickItem {
-    /// Picked album.
-    pub album: AlbumRef,
-    /// Why it is offered.
-    pub reason: PickReason,
-}
-
-/// The personalized top-picks shelf.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct TopPicksSection {
-    /// Shelf title.
-    pub title: String,
-    /// Ranked picks.
-    pub items: Vec<TopPickItem>,
-    /// Provider behind the picks, when it has one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<ShelfSource>,
-    /// Whether the picks are still being worked out. Always false: Top
-    /// Picks with nothing personal are left out instead.
-    pub personalizing: bool,
-}
-
 /// How a listening service fared in a discover build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -580,16 +534,6 @@ pub enum SectionContent {
         /// The shelves.
         shelves: Vec<ChartSection>,
     },
-    /// The "because you listen to" shelves.
-    Because {
-        /// One per seed artist.
-        entries: Vec<BecauseYouListenTo>,
-    },
-    /// Top Picks.
-    Picks {
-        /// The picks.
-        picks: TopPicksSection,
-    },
     /// The weekly exploration playlist.
     Weekly {
         /// The playlist.
@@ -607,8 +551,8 @@ pub struct DiscoverResponse {
     /// kept from an earlier build, short, empty or missing, and why.
     #[serde(default)]
     pub section_states: Vec<SectionState>,
-    /// Whether the queue deck is enabled for the user.
-    pub discover_queue_enabled: bool,
+    /// Whether the weekly set is switched on for the user.
+    pub weekly_set_enabled: bool,
     /// Integration availability behind the shelves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub integration_status: Option<IntegrationStatus>,

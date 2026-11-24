@@ -53,19 +53,6 @@
 	/>
 </div>
 <div class="divider my-4"></div>
-<h4 class="font-medium text-sm text-muted mb-3">Discover Picks</h4>
-<div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
-	<NumberField
-		label="Discover Picks Count"
-		error={fieldError('discover_picks_count', 'Discover Picks Count')}
-		help="How many albums appear in Discover Picks (default: 12)"
-		bind:value={data.discover_picks_count}
-		min={4}
-		max={30}
-		step={1}
-	/>
-</div>
-<div class="divider my-4"></div>
 <h4 class="font-medium text-sm text-muted mb-3">Listening Services</h4>
 <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
 	<ToggleRow

@@ -124,30 +124,6 @@ impl LibraryReads {
             .collect())
     }
 
-    /// Credited artists per genre, keyed by folded genre.
-    pub async fn genre_artist_counts(
-        &self,
-        genres: &[String],
-    ) -> Result<HashMap<String, i64>, String> {
-        let wanted = dedup_folded(genres);
-        if wanted.is_empty() {
-            return Ok(HashMap::new());
-        }
-        let rows = read_all(
-            &self.db,
-            "discover.library.genre_counts",
-            sql::genre_artist_counts(ListLen::new(wanted.len())),
-            rusqlite::params_from_iter(wanted),
-            sql::GenreCount::read,
-        )
-        .await
-        .map_err(|error| format!("genre counts read: {error}"))?;
-        Ok(rows
-            .into_iter()
-            .map(|row| (row.genre_folded, row.cnt))
-            .collect())
-    }
-
     /// Lowercased artist MBIDs per folded genre.
     pub async fn artists_for_genres(
         &self,

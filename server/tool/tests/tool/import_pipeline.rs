@@ -1608,6 +1608,7 @@ async fn removed_settings_import_and_are_reported() {
     export["settings"]["advanced_settings"] = json!({
         "discover_queue_size": 12,
         "discover_queue_wildcard_slots": 2,
+        "discover_picks_count": 12,
         "discover_picks_genre_affinity_weight": 0.7,
         "http_timeout": 30,
         "batch_albums": 4,
@@ -1663,6 +1664,7 @@ async fn removed_settings_import_and_are_reported() {
             "_internal.brainzmash_consent_admin",
             "advanced_settings.batch_albums",
             "advanced_settings.cache_ttl_album_library",
+            "advanced_settings.discover_picks_count",
             "advanced_settings.discover_picks_genre_affinity_weight",
             "advanced_settings.discover_queue_wildcard_slots",
             "advanced_settings.frontend_ttl_home",

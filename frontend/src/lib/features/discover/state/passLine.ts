@@ -1,8 +1,8 @@
 // "No" on a pick, and the line after it. Passing on an album says "no" at
 // once; the line offers Undo, or one of "Know it already", "Not this
 // artist" and "Not now" instead, and then says what that choice did, with
-// an Undo that goes back one step. The deck and Top Picks share it, each
-// with its own way of taking picks away and back.
+// an Undo that goes back one step. The deck uses it, with its own way of
+// taking picks away and back.
 import {
 	type DiscoverFeedbackEntry,
 	type FeedbackItem,

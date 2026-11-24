@@ -371,31 +371,19 @@ impl Feedback {
     }
 
     /// A section without the rows this person hid. A shelf of several left
-    /// with no rows goes, as does a radio shelf or "because" shelf seeded
-    /// by an artist they hid.
+    /// with no rows goes, as does a radio shelf seeded by an artist they
+    /// hid.
     pub fn filter_content(&self, content: &mut SectionContent) {
         if self.albums.is_empty() && self.artists.is_empty() {
             return;
         }
         match content {
-            SectionContent::Picks { picks } => {
-                picks
-                    .items
-                    .retain(|pick| !self.hides_album_row(&pick.album));
-            }
             SectionContent::Weekly { weekly } => weekly.tracks.retain(|track| {
                 !self.hides_album(
                     track.release_group_mbid.as_deref(),
                     track.artist_mbid.as_deref(),
                 )
             }),
-            SectionContent::Because { entries } => {
-                entries.retain(|entry| !self.hides_artist(Some(&entry.seed_artist_mbid)));
-                for entry in entries.iter_mut() {
-                    entry.section.items.retain(|item| !self.hides_row(item));
-                }
-                entries.retain(|entry| !entry.section.items.is_empty());
-            }
             SectionContent::Shelves { shelves } => {
                 shelves.retain(|shelf| {
                     !(shelf.radio_seed_type == Some(RadioSeedKind::Artist)

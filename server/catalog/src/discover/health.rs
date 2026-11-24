@@ -1,7 +1,7 @@
 //! Health numbers for each discover build: how much of a page or deck is
-//! about the person, how much leaks what the library holds, how much
-//! repeats. Top Picks and the deck are dealt from the person's pool, whose
-//! every pick carries a reason, so a chart album has no way onto either.
+//! about the person, how much repeats. The deck is dealt from the
+//! person's pool, whose every pick carries a reason, so a chart album has
+//! no way onto it.
 //!
 //! Each build counts its page or deck with [`page_health`] or
 //! [`deck_health`], logs the numbers and keeps them with the saved row;
@@ -37,8 +37,6 @@ pub struct PageHealth {
     pub distinct_artists: usize,
     /// Cards in sections that claim to be about the person.
     pub personal_cards: usize,
-    /// Top Picks the library already holds.
-    pub owned_picks: usize,
     /// Ids shown in more than one section.
     pub duplicates: usize,
     /// Albums the page it replaced showed too.
@@ -110,18 +108,6 @@ fn known(id: Option<&String>) -> Option<&str> {
 /// Every card of one section.
 fn cards(content: &SectionContent) -> Vec<Card<'_>> {
     match content {
-        SectionContent::Picks { picks } => picks
-            .items
-            .iter()
-            .filter_map(|pick| {
-                let id = known(pick.album.musicbrainz_id.as_ref())?;
-                Some(Card {
-                    id,
-                    album: Some(id),
-                    artist: known(pick.album.artist_id.as_ref()),
-                })
-            })
-            .collect(),
         SectionContent::Weekly { weekly } => weekly
             .tracks
             .iter()
@@ -166,13 +152,10 @@ fn cards(content: &SectionContent) -> Vec<Card<'_>> {
     }
 }
 
-/// Whether a section's rows are on the page: the deck and the playlist
-/// tool are served by routes of their own.
+/// Whether a section's rows are on the page: the weekly set and the
+/// playlist tool are served by routes of their own.
 fn on_page(key: SectionKey) -> bool {
-    !matches!(
-        key,
-        SectionKey::DiscoverQueue | SectionKey::PlaylistDiscovery
-    )
+    !matches!(key, SectionKey::WeeklySet | SectionKey::PlaylistDiscovery)
 }
 
 /// The albums a page shows.
@@ -235,13 +218,6 @@ pub fn page_health(
             artist_ids.extend(card.artist);
             artist_cards.extend(card.artist);
         }
-        if let SectionContent::Picks { picks } = &section.content {
-            health.owned_picks += picks
-                .items
-                .iter()
-                .filter(|pick| pick.album.in_library)
-                .count();
-        }
     }
     health.distinct_albums = album_ids.len();
     health.distinct_artists = artist_ids.len();
@@ -285,7 +261,6 @@ pub fn log_page_health(user_id: &str, seconds: f64, health: &PageHealth) {
         distinct_albums = health.distinct_albums,
         distinct_artists = health.distinct_artists,
         personal_cards = health.personal_cards,
-        owned_picks = health.owned_picks,
         duplicates = health.duplicates,
         repeats = health.repeats,
         seeds_used = health.seeds_used,

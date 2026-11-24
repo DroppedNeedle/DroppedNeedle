@@ -87,13 +87,12 @@ pub enum RowMut<'a> {
 }
 
 impl SectionContent {
-    /// The section's shelves; none for Top Picks and the weekly playlist.
+    /// The section's shelves; none for the weekly playlist.
     pub fn shelves(&self) -> Vec<&ChartSection> {
         match self {
             Self::Shelf { shelf } => vec![shelf],
             Self::Shelves { shelves } => shelves.iter().collect(),
-            Self::Because { entries } => entries.iter().map(|entry| &entry.section).collect(),
-            Self::Picks { .. } | Self::Weekly { .. } => Vec::new(),
+            Self::Weekly { .. } => Vec::new(),
         }
     }
 
@@ -102,22 +101,12 @@ impl SectionContent {
         match self {
             Self::Shelf { shelf } => vec![shelf],
             Self::Shelves { shelves } => shelves.iter_mut().collect(),
-            Self::Because { entries } => {
-                entries.iter_mut().map(|entry| &mut entry.section).collect()
-            }
-            Self::Picks { .. } | Self::Weekly { .. } => Vec::new(),
+            Self::Weekly { .. } => Vec::new(),
         }
     }
 
-    /// Every album and artist row, Top Picks' albums included.
+    /// Every album and artist row.
     pub fn rows_mut(&mut self) -> Vec<RowMut<'_>> {
-        if let Self::Picks { picks } = self {
-            return picks
-                .items
-                .iter_mut()
-                .map(|pick| RowMut::Album(&mut pick.album))
-                .collect();
-        }
         self.shelves_mut()
             .into_iter()
             .flat_map(|shelf| shelf.items.iter_mut())
@@ -132,7 +121,6 @@ impl SectionContent {
     /// Whether it has nothing to show: no rows, and no shelf saying why.
     pub fn is_empty(&self) -> bool {
         match self {
-            Self::Picks { picks } => picks.items.is_empty(),
             Self::Weekly { weekly } => weekly.tracks.is_empty(),
             _ => self
                 .shelves()
@@ -144,11 +132,6 @@ impl SectionContent {
     /// Queue the covers and artist images it shows.
     pub fn warm(&self, targets: &mut WarmTargets) {
         match self {
-            Self::Picks { picks } => {
-                for pick in &picks.items {
-                    targets.cover(pick.album.musicbrainz_id.as_deref());
-                }
-            }
             Self::Weekly { weekly } => {
                 for track in &weekly.tracks {
                     targets.cover(track.release_group_mbid.as_deref());
@@ -191,7 +174,7 @@ pub fn shelf_of(sections: &[PageSection], key: SectionKey) -> Option<&ChartSecti
 }
 
 /// Prefer variety across album shelves: in rank order, drop albums a
-/// section of a lower rank (or Top Picks) already shows, unless that
+/// section of a lower rank already shows, unless that
 /// would leave a shelf with fewer than three of its albums, in which case
 /// the shelf stays as it was.
 pub fn dedupe_albums(page: &mut [PageSection]) {
@@ -208,18 +191,7 @@ pub fn dedupe_albums(page: &mut [PageSection]) {
     ranked.sort_unstable();
     let mut seen: HashSet<String> = HashSet::new();
     for (_, at) in ranked {
-        let content = &mut page[at].content;
-        if let SectionContent::Picks { picks } = content {
-            seen.extend(
-                picks
-                    .items
-                    .iter()
-                    .filter_map(|pick| pick.album.musicbrainz_id.as_deref())
-                    .map(str::to_lowercase),
-            );
-            continue;
-        }
-        for shelf in content.shelves_mut() {
+        for shelf in page[at].content.shelves_mut() {
             dedupe(shelf, &mut seen);
         }
     }

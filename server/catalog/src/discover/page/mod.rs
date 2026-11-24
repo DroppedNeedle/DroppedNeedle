@@ -94,7 +94,7 @@ pub fn empty_page() -> DiscoverResponse {
     DiscoverResponse {
         sections: Vec::new(),
         section_states: Vec::new(),
-        discover_queue_enabled: true,
+        weekly_set_enabled: true,
         integration_status: None,
         service_prompts: Vec::new(),
         genre_artwork: HashMap::new(),
@@ -153,7 +153,6 @@ struct Inner {
     advanced: Live<AdvancedSettings>,
     integrations: IntegrationSettings,
     warm: CoverWarm,
-    forgets: ForgetCounts,
 }
 
 /// The discover pages: their cache and their build.
@@ -190,40 +189,14 @@ impl DiscoverPages {
                 advanced: inputs.advanced,
                 integrations: inputs.integrations,
                 warm: inputs.warm,
-                forgets: inputs.forgets,
             }),
         }
     }
 
-    /// Home's discover teaser: the first "because you listen to" shelf of
-    /// the user's last built page, without what `feedback` hides and
-    /// without starting a build.
-    pub async fn teaser(&self, user_id: &str, feedback: &Feedback) -> Option<DiscoverPreview> {
-        let variant = Variant::for_user(&self.inner.listening, user_id).await;
-        let mut saved = self.inner.cache.load(user_id, &variant).await?.value;
-        feedback.filter_sections(Page::Discover, &mut saved.page.sections);
-        let entry = saved.page.sections.into_iter().find_map(|section| {
-            match (section.key, section.content) {
-                (SectionKey::BecauseYouListenTo, SectionContent::Because { entries }) => {
-                    entries.into_iter().next()
-                }
-                _ => None,
-            }
-        })?;
-        Some(DiscoverPreview {
-            seed_artist: entry.seed_artist,
-            seed_artist_mbid: entry.seed_artist_mbid,
-            items: entry
-                .section
-                .items
-                .into_iter()
-                .take(shelves::SHELF_SIZE)
-                .filter_map(|item| match item {
-                    SectionItem::Artist(artist) => Some(artist),
-                    _ => None,
-                })
-                .collect(),
-        })
+    /// Home's discover teaser: none, and nothing read for it, until it
+    /// shows the week's next pick. The shelf it copied has left the page.
+    pub async fn teaser(&self, _user_id: &str, _feedback: &Feedback) -> Option<DiscoverPreview> {
+        None
     }
 
     /// What the person told Discover, as it stands now.
@@ -242,7 +215,6 @@ impl DiscoverPages {
     fn settings(&self) -> Option<PageSettings> {
         let advanced = self.inner.advanced.read()?;
         Some(PageSettings {
-            picks_count: advanced.discover_picks_count.clamp(4, 30) as usize,
             queue: QueueSettings::from_advanced(&advanced),
             download_client: self.inner.integrations.download_client_ready(),
             lastfm_on: self.inner.integrations.status().lastfm,
@@ -306,7 +278,6 @@ impl DiscoverPages {
             memo: &self.inner.memo,
             variant,
             generation,
-            forgets: &self.inner.forgets,
             settings,
             today,
             year,
@@ -454,7 +425,7 @@ impl LiveDiscover {
                 page
             }
         };
-        page.discover_queue_enabled = !off.contains(&SectionKey::DiscoverQueue);
+        page.weekly_set_enabled = !off.contains(&SectionKey::WeeklySet);
         page.refreshing = building;
         page.refresh_started_at = started.map(|at| at / 1000);
         page.integration_status = Some(status);
@@ -603,14 +574,6 @@ fn settle(
 fn row_ids(content: &SectionContent) -> Vec<String> {
     let mut ids = Vec::new();
     match content {
-        SectionContent::Picks { picks } => {
-            ids.extend(
-                picks
-                    .items
-                    .iter()
-                    .filter_map(|pick| pick.album.musicbrainz_id.clone()),
-            );
-        }
         SectionContent::Weekly { .. } => {}
         _ => {
             for shelf in content.shelves() {
@@ -635,16 +598,7 @@ fn row_id(item: &SectionItem) -> Option<String> {
 fn drop_rows(content: &mut SectionContent, shown: &HashSet<String>) {
     let unseen = |id: Option<String>| id.is_none_or(|id| !shown.contains(&id.to_lowercase()));
     match content {
-        SectionContent::Picks { picks } => picks
-            .items
-            .retain(|pick| unseen(pick.album.musicbrainz_id.clone())),
         SectionContent::Weekly { .. } => {}
-        SectionContent::Because { entries } => {
-            for entry in entries.iter_mut() {
-                entry.section.items.retain(|item| unseen(row_id(item)));
-            }
-            entries.retain(|entry| !entry.section.items.is_empty());
-        }
         SectionContent::Shelves { shelves } => {
             for shelf in shelves.iter_mut() {
                 shelf.items.retain(|item| unseen(row_id(item)));
@@ -661,8 +615,6 @@ fn size(content: &SectionContent) -> usize {
     match content {
         SectionContent::Shelf { shelf } => shelf.items.len(),
         SectionContent::Shelves { shelves } => shelves.len(),
-        SectionContent::Because { entries } => entries.len(),
-        SectionContent::Picks { picks } => picks.items.len(),
         SectionContent::Weekly { weekly } => weekly.tracks.len(),
     }
 }

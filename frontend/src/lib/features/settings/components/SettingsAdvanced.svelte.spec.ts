@@ -16,7 +16,6 @@ const stored: AdvancedSettings = {
 	audiodb_name_search_fallback: false,
 	direct_remote_images_enabled: true,
 	discover_blend_listening_services: true,
-	discover_picks_count: 12,
 	discover_queue_auto_generate: true,
 	discover_queue_lastfm_mbid_max_lookups: 10,
 	discover_queue_size: 10,

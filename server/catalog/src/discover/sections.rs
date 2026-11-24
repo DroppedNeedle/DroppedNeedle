@@ -57,24 +57,14 @@ pub enum SectionKey {
     LibraryArtists,
     /// Home: library albums.
     LibraryAlbums,
-    /// Discover: the queue deck.
-    DiscoverQueue,
-    /// Discover: scored album picks.
-    TopPicks,
-    /// Discover: what similar listeners play.
-    ListenersLikeYou,
+    /// Discover: the person's weekly set.
+    WeeklySet,
     /// Discover: album suggestions from a playlist.
     PlaylistDiscovery,
     /// Discover: genre-clustered mixes.
     DailyMixes,
     /// Discover: album radios per seed artist.
     RadioSections,
-    /// Discover: similar artists per seed artist.
-    BecauseYouListenTo,
-    /// Discover: more similar artists.
-    ArtistsYouMightLike,
-    /// Discover: artists popular in the user's genres.
-    PopularInYourGenres,
     /// Discover: recent releases picked for the user.
     FreshReleases,
     /// Discover: releases from followed artists.
@@ -87,10 +77,6 @@ pub enum SectionKey {
     Anniversaries,
     /// Discover: the user's recent Last.fm scrobbles.
     LastfmRecentScrobbles,
-    /// Discover: genres the library barely has.
-    UnexploredGenres,
-    /// Discover: artists trending worldwide.
-    GloballyTrending,
     /// Discover: the user's Last.fm weekly artist chart.
     LastfmWeeklyArtistChart,
     /// Discover: the user's Last.fm weekly album chart.
@@ -123,12 +109,10 @@ pub enum SectionZone {
     YourLibrary,
     /// Genre tiles.
     BrowseGenres,
-    /// Discover: the queue, Top Picks, the lounge, the weekly playlist.
+    /// Discover: the weekly set, the weekly playlist, the playlist tool.
     Essentials,
     /// Discover: Daily Mixes and radio.
     MadeForYou,
-    /// Discover: similar artists.
-    BecauseYouListened,
     /// Discover: new releases.
     NewAndFresh,
     /// Discover: the user's own library and history.
@@ -147,7 +131,6 @@ impl SectionZone {
             Self::BrowseGenres => "Browse Genres",
             Self::Essentials => "Essentials",
             Self::MadeForYou => "Made For You",
-            Self::BecauseYouListened => "Because You Listened",
             Self::NewAndFresh => "New & Fresh",
             Self::FromYourLibrary => "From Your Library",
             Self::TrendingNow => "Trending Now",
@@ -183,10 +166,6 @@ impl Requires {
 pub enum Input {
     /// The user's top artists.
     Seeds,
-    /// Artists similar to each seed.
-    Similar,
-    /// The worldwide artist chart.
-    Trending,
     /// The user's Last.fm weekly artist chart.
     LastfmWeeklyArtists,
     /// The user's Last.fm weekly album chart.
@@ -197,8 +176,6 @@ pub enum Input {
     Fresh,
     /// The user's ListenBrainz genres.
     Genres,
-    /// The user's Last.fm top artists, whose tags stand for genres.
-    LastfmGenreArtists,
     /// The user's Jellyfin play counts.
     Jellyfin,
     /// The library's identified albums.
@@ -213,8 +190,7 @@ pub enum Dedupe {
     /// Built one after another in page order, it skips artists an
     /// earlier artist section already showed.
     Artists,
-    /// It drops albums a section of a lower rank already showed (Top
-    /// Picks, rank 0, only claims).
+    /// It drops albums a section of a lower rank already showed.
     Albums(u8),
 }
 
@@ -402,31 +378,13 @@ pub const SECTIONS: &[SectionDef] = &[
         B::Library,
     ),
     discover(
-        K::DiscoverQueue,
+        K::WeeklySet,
         Z::Essentials,
-        "Discover Queue",
-        "A personalised album-by-album discovery deck.",
+        "This week",
+        "Up to eight albums picked for you each week.",
         None,
         B::Personal,
     ),
-    discover(
-        K::TopPicks,
-        Z::Essentials,
-        "Top Picks for You",
-        "Albums we think you'd like, scored against your taste.",
-        None,
-        B::Personal,
-    )
-    .reading(&[], Dedupe::Albums(0)),
-    discover(
-        K::ListenersLikeYou,
-        Z::Essentials,
-        "Listening Lounge",
-        "Browse albums picked for you by ear - tap a cover to hear it.",
-        None,
-        B::Personal,
-    )
-    .reading(&[], Dedupe::Albums(4)),
     discover(
         K::WeeklyExploration,
         Z::Essentials,
@@ -461,33 +419,6 @@ pub const SECTIONS: &[SectionDef] = &[
         B::Personal,
     )
     .reading(&[I::Seeds, I::LibraryAlbums], Dedupe::Albums(6)),
-    discover(
-        K::BecauseYouListenTo,
-        Z::BecauseYouListened,
-        "Because You Listened",
-        "Artists similar to the ones you play most.",
-        None,
-        B::Personal,
-    )
-    .reading(&[I::Seeds, I::Similar], Dedupe::Artists),
-    discover(
-        K::ArtistsYouMightLike,
-        Z::BecauseYouListened,
-        "Artists You Might Like",
-        "A wider net of similar artists.",
-        None,
-        B::Personal,
-    )
-    .reading(&[I::Seeds, I::Similar], Dedupe::Artists),
-    discover(
-        K::PopularInYourGenres,
-        Z::BecauseYouListened,
-        "Popular in Your Genres",
-        "Big names in the genres you listen to.",
-        None,
-        B::Personal,
-    )
-    .reading(&[I::Genres, I::LastfmGenreArtists], Dedupe::Artists),
     discover(
         K::FreshReleases,
         Z::NewAndFresh,
@@ -545,15 +476,6 @@ pub const SECTIONS: &[SectionDef] = &[
     )
     .reading(&[I::LastfmRecent], Dedupe::Albums(8)),
     discover(
-        K::UnexploredGenres,
-        Z::BrowseGenres,
-        "Unexplored Genres",
-        "Genres adjacent to your taste you haven't dug into.",
-        None,
-        B::Personal,
-    )
-    .reading(&[I::Seeds, I::Similar], Dedupe::None),
-    discover(
         K::GenreList,
         Z::BrowseGenres,
         "Browse Genres",
@@ -562,15 +484,6 @@ pub const SECTIONS: &[SectionDef] = &[
         B::Library,
     )
     .reading(&[I::Genres], Dedupe::None),
-    discover(
-        K::GloballyTrending,
-        Z::TrendingNow,
-        "Globally Trending",
-        "Artists trending worldwide.",
-        None,
-        B::Chart,
-    )
-    .reading(&[I::Trending], Dedupe::Artists),
     discover(
         K::LastfmWeeklyArtistChart,
         Z::TrendingNow,

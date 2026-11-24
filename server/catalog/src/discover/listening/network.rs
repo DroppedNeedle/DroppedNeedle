@@ -127,12 +127,6 @@ pub trait ListeningNetwork: Send + Sync {
         count: u32,
         priority: RequestPriority,
     ) -> Read<'a, Vec<LovedTrack>>;
-    /// Users whose listening is like this user's, most similar first.
-    fn similar_users<'a>(
-        &'a self,
-        username: &'a str,
-        priority: RequestPriority,
-    ) -> Read<'a, Vec<String>>;
     /// The user's newest weekly exploration playlist (else the newest
     /// recommendation playlist).
     fn weekly_playlist<'a>(

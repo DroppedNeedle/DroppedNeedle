@@ -14,7 +14,7 @@
 	interface Props {
 		section: HomeSectionType;
 		headerLink?: string | null;
-		/** stable section key for batch attribution ("daily_mixes", "top_picks", ...) */
+		/** stable section key for batch attribution ("daily_mixes", "fresh_releases", ...) */
 		sectionKey?: string;
 		downloadable?: boolean;
 		/** Smaller tiles, for a shelf that shares its row. */

@@ -843,23 +843,6 @@ impl ListeningData {
         Ok(cut(rows, count as usize))
     }
 
-    /// Users whose listening is like this user's, most similar first.
-    pub async fn similar_users(&self, username: &str, ask: &Ask) -> ListeningResult<Vec<String>> {
-        if self.listenbrainz_off() {
-            return Ok(Default::default());
-        }
-        let key =
-            CacheKey::new(Source::ListenBrainz, &["similar_users", &lower(username)]).personal();
-        let name = username.to_owned();
-        self.list(
-            key,
-            LISTENING_SLOW,
-            ask,
-            move |network, priority| async move { network.similar_users(&name, priority).await },
-        )
-        .await
-    }
-
     /// The user's newest weekly exploration playlist, `None` when there is
     /// none.
     pub async fn weekly_playlist(

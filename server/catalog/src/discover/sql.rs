@@ -95,8 +95,6 @@ droppedneedle_kernel::sql! {
         genre_folded: String,
         cnt: i64,
     }
-    /// Credited artists of some genres, in `GenreCount`'s columns.
-    family GENRE_ARTIST_COUNTS = genre_artist_counts;
     /// Lowercased artist MBIDs of some genres.
     family ARTISTS_FOR_GENRES = artists_for_genres;
     pub(super) row GenreArtist for family [artists_for_genres] {
@@ -1125,14 +1123,6 @@ pub(super) fn owned_artists(ids: ListLen) -> String {
 /// The genre filter for the genre credits.
 fn genre_filter(genres: ListLen) -> String {
     format!("AND genre.folded_name IN ({})", marks(genres))
-}
-
-/// `GENRE_ARTIST_COUNTS`.
-pub(super) fn genre_artist_counts(genres: ListLen) -> String {
-    format!(
-        "{GENRE_CREDITS_START}{}{GENRE_CREDITS_END}{GENRE_COUNTS}",
-        genre_filter(genres)
-    )
 }
 
 /// `ARTISTS_FOR_GENRES`.

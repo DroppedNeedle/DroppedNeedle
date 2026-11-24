@@ -271,9 +271,6 @@ impl ListeningNetwork for Replay {
     ) -> Read<'a, Vec<LovedTrack>> {
         self.refuse(format!("loved {username} {count}"))
     }
-    fn similar_users<'a>(&'a self, username: &'a str, _: RequestPriority) -> Read<'a, Vec<String>> {
-        self.refuse(format!("similar_users {username}"))
-    }
     fn weekly_playlist<'a>(
         &'a self,
         _: &'a str,

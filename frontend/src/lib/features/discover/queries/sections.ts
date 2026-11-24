@@ -1,11 +1,9 @@
 import type {
-	BecauseYouListenTo,
 	ChartSection,
 	PageSection,
 	SectionKey,
 	SectionState,
 	SectionZone,
-	TopPicksSection,
 	WeeklyExploration
 } from './types';
 
@@ -35,16 +33,6 @@ export function shelfOf(sections: Sections, key: SectionKey): ChartSection | nul
 /** A section of several shelves (Daily Mixes, radio). */
 export function shelvesOf(sections: Sections, key: SectionKey): ChartSection[] {
 	return contentOf(sections, key, 'shelves')?.shelves ?? [];
-}
-
-/** The "because you listen to" shelves. */
-export function becauseOf(sections: Sections): BecauseYouListenTo[] {
-	return contentOf(sections, 'because_you_listen_to', 'because')?.entries ?? [];
-}
-
-/** Top Picks. */
-export function picksOf(sections: Sections): TopPicksSection | null {
-	return contentOf(sections, 'top_picks', 'picks')?.picks ?? null;
 }
 
 /** The weekly exploration playlist. */
