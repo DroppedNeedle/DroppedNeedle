@@ -57,13 +57,17 @@ pub async fn request_album_handler(
 }
 
 /// Ask for one exact recording. `POST /api/v3/requests/tracks`. Same
-/// approval gate as albums. Answers 202.
+/// approval gate as albums. Answers 202, or 409 when an indexed library
+/// track already is the recording.
 #[utoipa::path(
     post,
     tag = "requests",
     path = "/api/v3/requests/tracks",
     request_body = TrackIntake,
-    responses((status = 202, body = TrackIntakeResponse))
+    responses(
+        (status = 202, body = TrackIntakeResponse),
+        (status = 409, description = "Already in the library (ALREADY_IN_LIBRARY)"),
+    )
 )]
 pub async fn request_track_handler(
     State(state): State<RequestsState>,

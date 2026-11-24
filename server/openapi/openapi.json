@@ -27209,7 +27209,7 @@
             }
           },
           "409": {
-            "description": "No album yet (NO_ALBUM_YET), not on its album (SONG_NOT_ON_ALBUM) or already playable (ALREADY_PLAYABLE)",
+            "description": "No album yet (NO_ALBUM_YET), not on its album (SONG_NOT_ON_ALBUM), already playable (ALREADY_PLAYABLE) or already in the library (ALREADY_IN_LIBRARY)",
             "content": {
               "application/json": {
                 "schema": {
@@ -31718,7 +31718,7 @@
         "tags": [
           "requests"
         ],
-        "summary": "Ask for one exact recording. `POST /api/v3/requests/tracks`. Same\napproval gate as albums. Answers 202.",
+        "summary": "Ask for one exact recording. `POST /api/v3/requests/tracks`. Same\napproval gate as albums. Answers 202, or 409 when an indexed library\ntrack already is the recording.",
         "operationId": "request_track_handler",
         "requestBody": {
           "content": {
@@ -31737,6 +31737,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/TrackIntakeResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already in the library (ALREADY_IN_LIBRARY)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }

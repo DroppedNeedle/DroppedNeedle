@@ -4,7 +4,7 @@
 use axum::http::StatusCode;
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 
-use super::error::{QUOTA_EXCEEDED, RequestsError, STORAGE_FULL};
+use super::error::{ALREADY_IN_LIBRARY, QUOTA_EXCEEDED, RequestsError, STORAGE_FULL};
 use super::models::{ActionResponse, BatchCancelResponse};
 use super::service::{BatchCancelled, Decided, MixDecided};
 
@@ -26,6 +26,11 @@ impl From<RequestsError> for ApiError {
             RequestsError::StorageFull { message, details } => {
                 ApiError::new(StatusCode::FORBIDDEN, STORAGE_FULL, message).with_details(details)
             }
+            RequestsError::AlreadyInLibrary => ApiError::new(
+                StatusCode::CONFLICT,
+                ALREADY_IN_LIBRARY,
+                "Already in your library.",
+            ),
             RequestsError::Busy { operation } => ApiError::unavailable(
                 Unavailable::ServerBusy,
                 format_args!("database busy: {operation}"),

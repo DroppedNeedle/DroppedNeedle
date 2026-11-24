@@ -254,19 +254,29 @@ export function buildQueueItemsFromYouTube(
 	return tracks.map((t) => buildQueueItemFromYouTube(t, meta));
 }
 
-export function playlistTrackToQueueItem(track: PlaylistTrack): QueueItem | null {
-	const availableSources: SourceType[] = track.available_sources
-		? (track.available_sources as SourceType[])
-		: [track.source_type as SourceType];
+function rowSources(track: PlaylistTrack): SourceType[] {
+	return (track.available_sources ?? [track.source_type]) as SourceType[];
+}
 
-	// Local-first, mirroring selectBestSource: a resolved local file plays from
-	// the library while sourceIds keeps the imported source for manual switch.
-	// Healed/legacy linked rows may have an empty track_source_id with
-	// library_file_id + available_sources ['local']; fall back to local there.
-	const prefersLocal = Boolean(track.library_file_id) && availableSources.includes('local');
-	if (!track.track_source_id && !(prefersLocal && track.library_file_id)) return null;
-	const sourceType = (prefersLocal ? 'local' : track.source_type) as SourceType;
-	const trackSourceId = prefersLocal ? track.library_file_id! : track.track_source_id!;
+/**
+ * The source a playlist row plays from, which its source chip shows, or null
+ * when it has nothing to play. A row with a library file that lists local
+ * plays the file, whatever its own source; the source it came from stays in
+ * `sourceIds`.
+ */
+export function playlistRowSource(track: PlaylistTrack): SourceType | null {
+	if (track.library_file_id && rowSources(track).includes('local')) return 'local';
+	return track.track_source_id ? (track.source_type as SourceType) : null;
+}
+
+export function playlistTrackToQueueItem(track: PlaylistTrack): QueueItem | null {
+	const availableSources = rowSources(track);
+	const sourceType = playlistRowSource(track);
+	if (!sourceType) return null;
+	const trackSourceId =
+		sourceType === 'local' && track.library_file_id
+			? track.library_file_id
+			: track.track_source_id!;
 
 	const sourceIds: Partial<Record<SourceType, string>> = {};
 	if (track.track_source_id) sourceIds[track.source_type as SourceType] = track.track_source_id;

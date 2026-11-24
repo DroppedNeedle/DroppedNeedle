@@ -8356,7 +8356,8 @@ export interface paths {
         put?: never;
         /**
          * Ask for one exact recording. `POST /api/v3/requests/tracks`. Same
-         *     approval gate as albums. Answers 202.
+         *     approval gate as albums. Answers 202, or 409 when an indexed library
+         *     track already is the recording.
          */
         post: operations["request_track_handler"];
         delete?: never;
@@ -46600,7 +46601,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description No album yet (NO_ALBUM_YET), not on its album (SONG_NOT_ON_ALBUM) or already playable (ALREADY_PLAYABLE) */
+            /** @description No album yet (NO_ALBUM_YET), not on its album (SONG_NOT_ON_ALBUM), already playable (ALREADY_PLAYABLE) or already in the library (ALREADY_IN_LIBRARY) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -49309,6 +49310,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TrackIntakeResponse"];
+                };
+            };
+            /** @description Already in the library (ALREADY_IN_LIBRARY) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

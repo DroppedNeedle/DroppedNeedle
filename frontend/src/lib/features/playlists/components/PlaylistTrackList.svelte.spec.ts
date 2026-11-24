@@ -38,7 +38,14 @@ function track(id: string, name: string, overrides: Partial<Track> = {}): Track 
 	};
 }
 
-function playlist(): ReturnType<typeof toPageDetail> {
+function playlist(
+	tracks: Track[] = [
+		track('e1', 'Paper Lanterns'),
+		track('e2', 'Salt Road'),
+		track('e3', 'Lost Song', { album_id: null }),
+		track('e4', 'On Jellyfin', { source_type: 'jellyfin', available_sources: ['jellyfin'] })
+	]
+): ReturnType<typeof toPageDetail> {
 	return toPageDetail({
 		id: 'pl-1',
 		name: 'Road Trip',
@@ -56,12 +63,7 @@ function playlist(): ReturnType<typeof toPageDetail> {
 		can_delete: false,
 		owner_name: 'Ada',
 		is_redacted: false,
-		tracks: [
-			track('e1', 'Paper Lanterns'),
-			track('e2', 'Salt Road'),
-			track('e3', 'Lost Song', { album_id: null }),
-			track('e4', 'On Jellyfin', { source_type: 'jellyfin', available_sources: ['jellyfin'] })
-		]
+		tracks
 	});
 }
 
@@ -199,5 +201,25 @@ describe('missing songs on a playlist', () => {
 						?.params
 			)
 			.toEqual({ playlist_id: 'pl-1', track_id: 'e1' });
+	});
+});
+
+describe("a playlist song's source", () => {
+	it('shows Local, with nothing to switch to, on a song linked to the library', async () => {
+		fakeApi({});
+		const linked = track('e5', 'Night Drive', {
+			source_type: 'youtube',
+			track_source_id: 'yt-1',
+			available_sources: ['local', 'youtube'],
+			library_file_id: 'lt-1'
+		});
+		await renderWithQuery(PlaylistTrackList, {
+			playlist: playlist([linked]),
+			ontrackchange: () => {}
+		});
+
+		await expect.element(page.getByText('Local', { exact: true })).toBeInTheDocument();
+		await expect.element(page.getByText('YouTube', { exact: true })).not.toBeInTheDocument();
+		await expect.element(page.getByRole('button', { name: 'Local' })).not.toBeInTheDocument();
 	});
 });

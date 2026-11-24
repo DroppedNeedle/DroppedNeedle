@@ -9,6 +9,8 @@ use serde_json::Value;
 pub const QUOTA_EXCEEDED: &str = "QUOTA_EXCEEDED";
 /// Library or personal storage budget full. Maps to 403; details carry usage.
 pub const STORAGE_FULL: &str = "STORAGE_FULL";
+/// A song asked for that an indexed library track already is. Maps to 409.
+pub const ALREADY_IN_LIBRARY: &str = "ALREADY_IN_LIBRARY";
 
 /// What a requests operation can fail with.
 #[derive(Debug)]
@@ -27,6 +29,8 @@ pub enum RequestsError {
     QuotaExceeded { message: String, details: Value },
     /// Storage budget full.
     StorageFull { message: String, details: Value },
+    /// The song asked for is already in the library: nothing was filed.
+    AlreadyInLibrary,
     /// The database stayed locked past its busy timeout. Retryable.
     Busy { operation: String },
     /// Server fault. The cause is for the log only.

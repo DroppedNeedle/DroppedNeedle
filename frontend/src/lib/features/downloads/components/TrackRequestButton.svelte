@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Download } from 'lucide-svelte';
 
+	import { isAlreadyInLibrary } from '$lib/api/errors';
 	import { createRequestTrackMutation } from '$lib/features/downloads/queries/DownloadMutations.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 
@@ -41,7 +42,12 @@
 				artist_mbid: artistMbid,
 				release_id: releaseMbid
 			},
-			{ onSuccess: () => (requested = true) }
+			{
+				onSuccess: () => (requested = true),
+				onError: (err) => {
+					if (isAlreadyInLibrary(err)) requested = true;
+				}
+			}
 		);
 	}
 </script>

@@ -602,10 +602,14 @@ impl SpotifySync {
             artist_mbid: None,
             release_mbid: None,
         };
-        RequestsService::new(&self.requests)
+        match RequestsService::new(&self.requests)
             .request_track_granted(owner, &intake)
-            .await?;
-        Ok(Filed::Now(FiledKind::Track, recording))
+            .await
+        {
+            Ok(_) => Ok(Filed::Now(FiledKind::Track, recording)),
+            Err(RequestsError::AlreadyInLibrary) => Ok(Filed::Before),
+            Err(error) => Err(error),
+        }
     }
 
     /// The song's recording on `group`: the one its ISRC's recordings put

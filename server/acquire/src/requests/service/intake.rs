@@ -19,9 +19,11 @@ use crate::requests::models::{
     TrackIntake, TrackIntakeResponse, WaitingReason,
 };
 use crate::requests::quota::QuotaLedger;
+use crate::requests::sqlite::read;
 use droppedneedle_auth::Principal;
 use droppedneedle_catalog::discover::record::MadeFrom;
 use droppedneedle_kernel::events::{AutoDownloadEnqueued, UserNotice};
+use droppedneedle_library::identity::reads::recording_held;
 
 /// Batch row cap.
 const BATCH_MAX_ITEMS: usize = 500;
@@ -633,6 +635,9 @@ impl RequestsService {
                 .await?;
             return Ok(track_duplicate(&existing));
         }
+        if self.library_holds(&mbid).await? {
+            return Err(RequestsError::AlreadyInLibrary);
+        }
 
         let gate = self.quota.request_gate(principal.user_id(), role, 1)?;
         self.quota
@@ -697,6 +702,19 @@ impl RequestsService {
                 })
             }
         }
+    }
+
+    /// Whether the library holds the recording `mbid` on proof, as the
+    /// identity rules read it: a guessed match never refuses an ask. A read
+    /// that fails is never taken as no.
+    async fn library_holds(&self, mbid: &str) -> Result<bool, RequestsError> {
+        let recording = mbid.to_owned();
+        read(
+            &self.library,
+            "acquire.requests.recording_held",
+            move |conn| recording_held(conn, &recording),
+        )
+        .await
     }
 
     /// Ask for a batch of albums: raw dupes and

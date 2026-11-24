@@ -298,6 +298,20 @@ pub fn group_owned(conn: &Connection, release_group_mbid: &str) -> rusqlite::Res
         })
 }
 
+/// Whether an indexed track is `recording_mbid`, in any case, on proof: an
+/// accepted match names it, or a file with no match row is tagged with it.
+/// A guessed match holds nothing, so a wrong guess never stands in for the
+/// song. An empty id is held by nothing.
+pub fn recording_held(conn: &Connection, recording_mbid: &str) -> rusqlite::Result<bool> {
+    if recording_mbid.is_empty() {
+        return Ok(false);
+    }
+    conn.prepare_cached(sql::RECORDING_HELD.text())?.query_row(
+        params![recording_mbid.to_ascii_lowercase(), PROVIDER],
+        |row| row.get(0),
+    )
+}
+
 /// The title and album artist of a live album a local-only album titled
 /// `title_folded` by `artist_folded` would repeat: one of that name, one
 /// owning `tagged_group`, or one the scan keyed on `tagged_release`.

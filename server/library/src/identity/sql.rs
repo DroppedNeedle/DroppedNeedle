@@ -658,6 +658,22 @@ droppedneedle_kernel::sql! {
              WHERE b.id = (" + (copy_of_group!("= ?1")) + ")";
     /// Whether any album owns release group `?1` (lowered).
     pub(super) GROUP_OWNED = "SELECT EXISTS (" + (owns_group!("= ?1")) + ")";
+    /// Whether an indexed track is recording `?1` (lowered) on proof: its
+    /// match row (provider `?2`) names it on an album whose match is
+    /// accepted, or it has no match row and its file's own tags name it. A
+    /// guess's recording holds nothing.
+    pub(super) RECORDING_HELD = "SELECT EXISTS (SELECT 1 \
+             FROM local_track_external_identities i \
+             JOIN local_tracks t ON t.id = i.local_track_id \
+             JOIN local_album_external_identities e \
+             ON e.local_album_id = t.local_album_id AND e.provider = ?2 \
+             WHERE lower(i.recording_mbid) = ?1 AND i.provider = ?2 \
+             AND +t.availability = 'indexed' AND " + (accepted!("e")) + ") \
+             OR EXISTS (SELECT 1 FROM local_tracks t \
+             WHERE lower(COALESCE(t.embedded_recording_mbid, '')) = ?1 \
+             AND +t.availability = 'indexed' AND NOT EXISTS (SELECT 1 \
+             FROM local_track_external_identities x \
+             WHERE x.local_track_id = t.id AND x.provider = ?2))";
     /// The live album a local-only album would repeat: one titled `?1` by
     /// `?2` (both folded), one that owns release group `?3` (lowered), or
     /// one the scan keyed on its release, `?4` (`mbid:` and the lowered

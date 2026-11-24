@@ -103,7 +103,7 @@ pub async fn request_missing_handler(
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Storage full (STORAGE_FULL)"),
         (status = 404, description = "No such playlist or entry the caller may edit"),
-        (status = 409, description = "No album yet (NO_ALBUM_YET), not on its album (SONG_NOT_ON_ALBUM) or already playable (ALREADY_PLAYABLE)"),
+        (status = 409, description = "No album yet (NO_ALBUM_YET), not on its album (SONG_NOT_ON_ALBUM), already playable (ALREADY_PLAYABLE) or already in the library (ALREADY_IN_LIBRARY)"),
         (status = 429, description = "Request quota spent (QUOTA_EXCEEDED)"),
     )
 )]

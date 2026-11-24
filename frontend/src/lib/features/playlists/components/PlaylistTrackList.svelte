@@ -17,9 +17,13 @@
 	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import { createUuid } from '$lib/utils/uuid';
 	import { toPageTrack } from '$lib/features/playlists/queries/playlistV3Adapter';
-	import { playlistTrackToQueueItem } from '$lib/features/player/playback/queueHelpers';
+	import {
+		playlistRowSource,
+		playlistTrackToQueueItem
+	} from '$lib/features/player/playback/queueHelpers';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
+	import { isAlreadyInLibrary } from '$lib/api/errors';
 	import type { SourceType } from '$lib/features/player/playback/types';
 	import { formatDurationSec, isValidMbid } from '$lib/utils/formatting';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -129,7 +133,8 @@
 				type: 'success'
 			});
 		} catch (error) {
-			requestFailed(error, "Couldn't ask for that song");
+			if (isAlreadyInLibrary(error)) toastStore.show({ message: error.message, type: 'info' });
+			else requestFailed(error, "Couldn't ask for that song");
 		}
 	}
 
@@ -272,6 +277,12 @@
 			return;
 		}
 		playerStore.playNext(item);
+	}
+
+	/** The sources the row's chip offers: only Local while its library file plays. */
+	function chipSources(track: PlaylistTrack): string[] {
+		if (track.library_file_id && playlistRowSource(track) === 'local') return ['local'];
+		return track.available_sources ?? [track.source_type];
 	}
 
 	async function handleSourceChange(track: PlaylistTrack, newSourceType: string) {
@@ -648,8 +659,8 @@
 							<!-- A song with no source yet has none to show or switch. -->
 							{#if track.source_type}
 								<SourcePickerDropdown
-									currentSource={track.source_type}
-									availableSources={track.available_sources ?? [track.source_type]}
+									currentSource={playlistRowSource(track) ?? track.source_type}
+									availableSources={chipSources(track)}
 									onchange={(src) => void handleSourceChange(track, src)}
 								/>
 							{/if}

@@ -1,5 +1,6 @@
 import { v3 } from '$lib/api/v3/endpoint';
 import { api } from '$lib/api/client';
+import { isAlreadyInLibrary } from '$lib/api/errors';
 import type { components } from '$lib/api/v3/openapi';
 import type { IntakeResponse, TrackIntakeResponse } from '$lib/features/requests/queries/types';
 import { authStore } from '$lib/stores/authStore.svelte';
@@ -220,7 +221,11 @@ export function createRequestTrackMutation() {
 			});
 		},
 		onError: (err: unknown) =>
-			toastStore.show({ message: errorMessage(err, 'Track request failed'), type: 'error' })
+			toastStore.show(
+				isAlreadyInLibrary(err)
+					? { message: err.message, type: 'info' }
+					: { message: errorMessage(err, 'Track request failed'), type: 'error' }
+			)
 	}));
 }
 

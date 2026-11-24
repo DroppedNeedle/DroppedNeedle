@@ -523,6 +523,71 @@ async fn an_album_dispatches_once_however_it_is_asked() {
     assert_eq!(dispatch.take_calls().await.len(), 2, "{case}");
 }
 
+// A song the library already holds is not downloaded again: the ask
+// answers 409 ALREADY_IN_LIBRARY and files no row and no download. A
+// song held only under a guessed match is still asked for: a wrong guess
+// never stands in for it.
+#[tokio::test]
+async fn a_song_the_library_holds_files_nothing() {
+    let (state, db, dispatch) = setup().await;
+    seed_edition_album(&db).await;
+    db.write("test.seed_recording", |tx| {
+        tx.execute(
+            "UPDATE local_tracks SET embedded_recording_mbid = ?1 WHERE id = 't1'",
+            [MBID_B.to_uppercase()],
+        )?;
+        tx.execute_batch(&format!(
+            "INSERT INTO local_album_external_identities (local_album_id, release_group_mbid, \
+               release_mbid, decision_source, selected_at)
+               VALUES ('al1', '{MBID_A}', '{MBID_A}', 'automatic', 0);
+             INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+               updated_at) VALUES ('al1', 'unconfirmed', 'LOW_CONFIDENCE', 0);
+             INSERT INTO local_track_external_identities (local_track_id, recording_mbid, \
+               decision_source, selected_at) VALUES ('t3', '{MBID_C}', 'automatic', 0);"
+        ))?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    let guessed = json!({"recording_mbid": MBID_C, "artist_name": "A", "track_title": "T"});
+    let (status, body) = call(
+        &state,
+        Method::POST,
+        "/api/v3/requests/tracks",
+        Some(TRUSTED),
+        Some(guessed),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::ACCEPTED,
+        "a guess holds nothing: {body}"
+    );
+    assert_eq!(dispatch.take_calls().await.len(), 1);
+
+    let (status, body) = call(
+        &state,
+        Method::POST,
+        "/api/v3/requests/tracks",
+        Some(TRUSTED),
+        Some(json!({"recording_mbid": MBID_B, "artist_name": "A", "track_title": "T"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "ALREADY_IN_LIBRARY");
+    assert_eq!(body["error"]["message"], "Already in your library.");
+    assert!(
+        state
+            .store
+            .get(RequestKind::Track, MBID_B)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(dispatch.take_calls().await.is_empty());
+}
+
 /// Each asker's row matching `filter`, with where they asked.
 async fn places(db: &AcquireDb, filter: &str) -> Vec<(String, Option<String>)> {
     let query = format!(

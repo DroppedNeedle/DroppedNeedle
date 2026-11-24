@@ -17,6 +17,11 @@ export function isStaleRevision(error: unknown): error is ApiError {
 	return error instanceof ApiError && error.code === 'STALE_REVISION';
 }
 
+/** The server filed nothing because the song asked for is already in the library. */
+export function isAlreadyInLibrary(error: unknown): error is ApiError {
+	return error instanceof ApiError && error.code === 'ALREADY_IN_LIBRARY';
+}
+
 /**
  * Thrown when a request fails with 401 while a session was active. The client
  * has already cleared the store and triggered a hard redirect to /login;
