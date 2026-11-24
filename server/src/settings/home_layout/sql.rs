@@ -10,8 +10,7 @@ droppedneedle_kernel::sql! {
     pub(super) PUT_LAYOUT = "INSERT INTO app_home_layouts \
         (user_id, version, widgets, hidden, updated_at) \
         SELECT ?1, ?2, ?3, ?4, ?5 \
-        WHERE NOT EXISTS (SELECT 1 FROM app_home_layouts WHERE user_id = ?1) \
-          AND ?6 = 0 \
+        WHERE ?6 = 0 OR EXISTS (SELECT 1 FROM app_home_layouts WHERE user_id = ?1) \
         ON CONFLICT (user_id) DO UPDATE SET version = excluded.version, \
         widgets = excluded.widgets, hidden = excluded.hidden, \
         updated_at = excluded.updated_at \
