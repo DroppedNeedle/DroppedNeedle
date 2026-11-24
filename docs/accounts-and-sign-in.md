@@ -128,7 +128,7 @@ A token lasts 30 days from when it was issued, and there is no refresh. After th
 
 ### Wrapped API
 
-The Wrapped API lets an outside service, such as a newsletterr instance, read your users' year in review. An admin sets it up under Settings > Wrapped API: press "Generate new key", save, and paste the same key into the other service. While no key is saved, every Wrapped request is refused.
+The Wrapped API lets an outside service, such as a newsletterr instance, read your users' year in review. It is not the page each person sees for themselves ([Your year in review](year-in-review.md)): that one counts plays made here, and the key cannot read it. An admin sets it up under Settings > Wrapped API: press "Generate new key", save, and paste the same key into the other service. While no key is saved, every Wrapped request is refused.
 
 The service sends the key in an `X-Wrapped-API-Key` header and needs no account. It can read:
 

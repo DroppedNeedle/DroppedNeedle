@@ -15,6 +15,7 @@
 - [Your library](library.md): scans, formats, identification, unconfirmed matches, album organization, lyrics, ratings.
 - [Library Management](library-management.md): profiles, tags, artwork, previews and Apply, undo, editions.
 - [Requests and downloads](downloads.md): editions and single tracks, following artists, held files, upgrades, choosing a copy.
+- [Your year in review](year-in-review.md): what the page shows, what counts, and who sees it.
 - [Discovery](discovery.md): Home, Discover, radio, Weekly Mix, covers, Last.fm, ListenBrainz, Spotify import, music apps in depth.
 - [Connect your music app](connect-your-app.md): what to enter in Symfonium, Finamp, Feishin and other Subsonic or Jellyfin apps.
 - [Custom CSS](custom-css.md): restyling the app, and the style hooks that stay stable across releases.

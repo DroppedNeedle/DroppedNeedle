@@ -51,6 +51,7 @@
 	import ScrobblingDiscoveryCard from '$lib/features/profile/components/ScrobblingDiscoveryCard.svelte';
 	import SpotifyConnectionCard from '$lib/features/profile/components/SpotifyConnectionCard.svelte';
 	import ProfileConnectApps from '$lib/features/profile/components/ProfileConnectApps.svelte';
+	import YearReviewCard from '$lib/features/year/components/YearReviewCard.svelte';
 	import '$lib/features/profile/components/profile.css';
 	import SpotifyIcon from '$lib/media/icons/SpotifyIcon.svelte';
 	import JumpTabs, { type JumpSection } from '$lib/ui/JumpTabs.svelte';
@@ -308,6 +309,8 @@
 			</aside>
 
 			<div class="pf-sections stagger-fade-in">
+				<YearReviewCard />
+
 				<ProfileSection
 					id="account"
 					title="Account"

@@ -182,6 +182,6 @@
 		"queries/plugins/PluginSourceQueries.svelte.ts"
 	],
 	"upgrade": [],
-	"year": [],
+	"year": ["components/YearReviewCard.svelte"],
 	"youtube": ["components/AlbumYouTubeBar.svelte", "queries/types.ts", "queries/youtube.svelte.ts"]
 }

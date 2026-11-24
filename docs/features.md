@@ -20,6 +20,7 @@ Everything DroppedNeedle does, one row each, with links to the page that covers 
 | Library Management | Optional MusicBrainz Picard-style tags, artwork, and organization behind an admin preview with dry run and typed confirmation. A file whose tags a write could not keep whole, such as one holding a frame twice, is refused with the reason. Off until you enable it. See [Library Management](library-management.md) |
 | Appearance | Dark, Light, Midnight or System themes and your own CSS in a code editor with live preview, undo and history, kept on your account. Admins can add site CSS for everyone. See [Custom CSS](custom-css.md) |
 | Plugins | Add download sources, scrobble targets, purchase links and more from a GitHub repository, pinned to an exact commit. See [PLUGINS.md](../PLUGINS.md) |
+| Year in review | Your own year of plays made here and in the apps you connect: top albums, artists and songs, artists new to you, the year by month and a receipt of firsts and streaks, open all year and kept for past years. Only you see it. See [Your year in review](year-in-review.md) |
 | Wrapped API | Year-in-review stats from each user's ListenBrainz account, for an outside service such as newsletterr, behind a key an admin makes. See [Wrapped API](accounts-and-sign-in.md#wrapped-api) |
 
 ## What plugs in
