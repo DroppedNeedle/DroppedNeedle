@@ -284,13 +284,17 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       # Each image keeps its layers in its own cache scope, so a source-only
-      # change rebuilds only our crates.
+      # change rebuilds only our crates. This image is built with the
+      # quicker ci-e2e profile; the release workflow boots the shipping
+      # build before it publishes.
       - name: Build the image
         uses: docker/build-push-action@v7
         with:
           context: .
           load: true
           tags: droppedneedle-v3:e2e
+          build-args: |
+            CARGO_PROFILE=ci-e2e
           cache-from: type=gha,scope=e2e
           cache-to: type=gha,mode=max,scope=e2e
           provenance: false
