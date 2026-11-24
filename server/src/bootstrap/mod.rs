@@ -374,7 +374,7 @@ pub(crate) async fn build_on(
         prod_auth,
         &providers,
         Arc::new(ConfiguredPlexServer::new(
-            http.shared().clone(),
+            http.same_host_redirects().clone(),
             config_store.live(),
             InstallIds::new(config_store.clone()),
         )),
@@ -424,7 +424,7 @@ pub(crate) async fn build_on(
     let catalog_inputs = CatalogInputs {
         covers_dir: config.cache_dir.join("covers"),
         cover_cache_max_bytes: config.cover_cache_max_bytes,
-        http: http.shared().clone(),
+        http: http.same_host_redirects().clone(),
         providers: providers.clone(),
         listening: listening.clone(),
         youtube_quota_path: config.cache_dir.join(QUOTA_FILE_NAME),
@@ -614,7 +614,7 @@ pub(crate) async fn build_on(
             droppedneedle_media::remotes::refresh::SPEC,
             Arc::new(droppedneedle_media::remotes::refresh::RefreshJobs::new(
                 media.remotes.service.resolver().clone(),
-                http.shared().clone(),
+                http.same_host_redirects().clone(),
                 config_store.live(),
             )),
         )

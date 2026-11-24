@@ -107,10 +107,9 @@ impl SettingsSetup {
     }
 
     /// The Verify probes production uses: keys are checked through the
-    /// clients in `providers` and the platform's shared HTTP client.
+    /// clients in `providers` and the platform's HTTP clients.
     pub fn live_probes(platform: &Platform, providers: &Providers) -> Arc<dyn VerifyProbes> {
         Arc::new(LiveProbes::new(
-            platform.http.shared().clone(),
             platform.http.same_host_redirects().clone(),
             platform.http.no_redirect().clone(),
             providers,

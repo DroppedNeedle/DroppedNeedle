@@ -139,6 +139,8 @@ services:
 | Theme and your own CSS (kept on your account) | Profile > Appearance |
 | Site CSS for every signed-in page, and whether people may add their own (admin) | Settings > Appearance |
 
+A redirect from a Jellyfin, Navidrome or Plex server is followed only on the same host and port, never from https to http, so its token or password never goes anywhere else. A redirect anywhere else fails, and Test says so: use the address the server answers on.
+
 ### Deemix
 
 Settings > Download Client (admin) has the Deemix card, which saves three values:

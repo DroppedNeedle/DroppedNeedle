@@ -238,14 +238,12 @@ pub trait VerifyProbes: Send + Sync {
     fn oidc<'a>(&'a self, issuer: &'a str) -> BoxFuture<'a, ProbeVerdict>;
 }
 
-/// Live probes over one shared HTTP client and the provider clients.
+/// Live probes over the factory's HTTP clients and the provider clients.
 pub struct LiveProbes {
-    /// Outbound client.
-    pub http: reqwest::Client,
     /// The factory's client that follows a redirect only on the same host,
-    /// for slskd, SABnzbd, Prowlarr and NZBGet: their key or sign-in rides
-    /// in a header or the query, which a redirect elsewhere would carry to
-    /// another address.
+    /// for slskd, SABnzbd, Prowlarr, NZBGet and the media servers: their
+    /// key, token or sign-in rides in a header or the query, which a
+    /// redirect elsewhere would carry to another address.
     pub same_host: reqwest::Client,
     /// The factory's client that follows no redirect, which the SABnzbd
     /// and NZBGet clients fetch NZB links through.
@@ -270,19 +268,17 @@ pub struct LiveProbes {
 }
 
 impl LiveProbes {
-    /// Build over the shared client, the client that follows a redirect
-    /// only on the same host, the one that follows none and the providers'
-    /// clients, presenting this install's stored Plex client id from
-    /// `install`, as every other Plex call does.
+    /// Build over the client that follows a redirect only on the same
+    /// host, the one that follows none and the providers' clients,
+    /// presenting this install's stored Plex client id from `install`, as
+    /// every other Plex call does.
     pub fn new(
-        http: reqwest::Client,
         same_host: reqwest::Client,
         no_redirect: reqwest::Client,
         providers: &Providers,
         install: InstallIds,
     ) -> Self {
         Self {
-            http,
             same_host,
             no_redirect,
             musicbrainz: providers.musicbrainz.clone(),
@@ -299,7 +295,7 @@ impl LiveProbes {
     /// A client for submitted values, outside any user's read bound.
     fn client(&self, source: SourceName, url: &str, credential: &str) -> RemoteHandle {
         ConnectionResolver::unsaved_client(
-            &self.http,
+            &self.same_host,
             ResolvedConnection::unsaved(source, url.to_owned(), credential.to_owned()),
         )
     }
@@ -307,7 +303,7 @@ impl LiveProbes {
     /// A Plex client for submitted values, presenting the stored client id.
     fn plex_client(&self, url: &str, token: &str) -> RemoteHandle {
         ConnectionResolver::unsaved_client(
-            &self.http,
+            &self.same_host,
             ResolvedConnection {
                 client_id: self.install.plex_client_id(),
                 ..ResolvedConnection::unsaved(SourceName::Plex, url.to_owned(), token.to_owned())
@@ -496,7 +492,7 @@ impl VerifyProbes for LiveProbes {
     ) -> BoxFuture<'a, ProbeVerdict> {
         Box::pin(async move {
             let handle = ConnectionResolver::unsaved_client(
-                &self.http,
+                &self.same_host,
                 ResolvedConnection {
                     username: username.to_owned(),
                     ..ResolvedConnection::unsaved(

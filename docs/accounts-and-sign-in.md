@@ -95,7 +95,7 @@ Things worth knowing:
 
 Turn on **Allow login with Plex** on the Plex page, or both **Use Jellyfin** and **Sign in with Jellyfin** on the Jellyfin page, whose URL must be an http or https address. The login page then shows the matching tab, and the sign-in only works while the switch is on.
 
-- Jellyfin checks the username and password against your Jellyfin server.
+- Jellyfin checks the username and password against your Jellyfin server. A redirect from it to another host or port is not followed, so the password goes nowhere else, and the sign-in fails until the Jellyfin URL is the address the server answers on.
 - Plex sends the user to plex.tv to approve the sign-in. When a Plex server is set up, only accounts that can reach that server get in, and if DroppedNeedle cannot reach the server to check, nobody gets in until it can.
 - The check uses the Plex URL on the Plex settings page even while the Plex integration itself is switched off. Clear the URL if you want Plex login without the server check.
 - Careful: with "Allow login with Plex" on and no Plex server set up, anyone with a plex.tv account can create an account on your DroppedNeedle. Set up the server first, or keep the switch off.

@@ -985,7 +985,6 @@ async fn live_probes_answer_honest_verdicts() {
     let dir = ScratchDir::new("live-probes");
     let install = InstallIds::new(common::config_store(&dir));
     let probes = LiveProbes::new(
-        reqwest::Client::new(),
         http.same_host_redirects().clone(),
         http.no_redirect().clone(),
         &droppedneedle_providers::Providers::unpaced_at(
@@ -1002,7 +1001,6 @@ async fn live_probes_answer_honest_verdicts() {
     );
     let dead = "http://127.0.0.1:9";
     let unreachable = LiveProbes::new(
-        reqwest::Client::new(),
         http.same_host_redirects().clone(),
         http.no_redirect().clone(),
         &droppedneedle_providers::Providers::closed(),

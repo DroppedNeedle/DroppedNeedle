@@ -36,7 +36,7 @@ pub struct JellyfinHttp {
 }
 
 impl JellyfinHttp {
-    /// Build over the shared outbound client and the live settings.
+    /// Build over the factory's same-host client and the live settings.
     pub fn new(http: reqwest::Client, store: Arc<ConfigStore>) -> Self {
         Self {
             sign_in: SignInSettings::new(&store),
@@ -51,8 +51,9 @@ impl JellyfinHttp {
     /// `{"Username","Pw"}`. No configured server is
     /// `Authentication("Jellyfin is not configured on this server")`;
     /// timeouts and connect failures are `ProviderUnavailable`; 401 and 403
-    /// are `Authentication`; any other non-2xx, bad JSON, or a missing user
-    /// id or token is `ProviderUnavailable`.
+    /// are `Authentication`; a redirect off the server's host, any other
+    /// non-2xx, bad JSON, or a missing user id or token is
+    /// `ProviderUnavailable`.
     pub async fn authenticate_by_name(
         &self,
         username: &str,
@@ -98,6 +99,12 @@ impl JellyfinHttp {
                 ));
             }
             200 | 204 => {}
+            status @ 300..=399 => {
+                return Err(FederatedError::ProviderUnavailable(format!(
+                    "Jellyfin answered with a redirect to another address (HTTP {status}), \
+                     which is not followed: set its URL in Settings to the address it answers on"
+                )));
+            }
             status => {
                 tracing::debug!(status, "jellyfin AuthenticateByName answered an error");
                 return Err(FederatedError::ProviderUnavailable(

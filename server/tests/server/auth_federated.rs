@@ -871,6 +871,63 @@ async fn jellyfin_sign_in_links_the_media_account_and_feeds_the_import() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
+/// A 307 would send the sign-in password again to wherever it points, so
+/// a Jellyfin that answers sign-in with a redirect to another address gets
+/// nothing sent there: the sign-in fails, and says why.
+#[tokio::test]
+async fn a_jellyfin_sign_in_redirect_takes_no_password_elsewhere() {
+    use droppedneedle_auth::federated::FederatedError;
+    use droppedneedle_auth::federated::jellyfin_http::JellyfinHttp;
+    use droppedneedle_testkit::scripted::ScriptedStatuses;
+
+    let e2e = E2e::open("jellyfin-redirect").await;
+    let elsewhere = ScriptedStatuses::default();
+    let counted = elsewhere.clone();
+    let target = serve(move |_| counted.layer(jellyfin_router(String::new()))).await;
+    let server = serve(move |_| {
+        Router::new().fallback(move || {
+            let location = format!("{target}/Users/AuthenticateByName");
+            async move {
+                (
+                    StatusCode::TEMPORARY_REDIRECT,
+                    [(axum::http::header::LOCATION, location)],
+                )
+            }
+        })
+    })
+    .await;
+    e2e.store
+        .save_secret_blocking(JellyfinConnection {
+            jellyfin_url: server,
+            api_key: Secret::new(JELLYFIN_ADMIN_KEY),
+            user_id: String::new(),
+            enabled: true,
+            login_enabled: true,
+        })
+        .expect("jellyfin settings save");
+
+    let (status, body, _) = call(
+        e2e.router(),
+        "POST",
+        "/api/v3/auth/jellyfin/login",
+        &[],
+        Some(json!({"username": "jane", "password": "right-password", "transport": "bearer"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(elsewhere.requests(), 0, "the password went elsewhere");
+
+    let http = droppedneedle_kernel::http_client::HttpClientFactory::new().expect("http");
+    let refused = JellyfinHttp::new(http.same_host_redirects().clone(), e2e.store.clone())
+        .authenticate_by_name("jane", "right-password")
+        .await;
+    let Err(FederatedError::ProviderUnavailable(message)) = refused else {
+        panic!("a redirect signed in: {refused:?}");
+    };
+    assert!(message.contains("address it answers on"), "{message}");
+    assert_eq!(elsewhere.requests(), 0, "the password went elsewhere");
+}
+
 // ---------------------------------------------------------------------------
 // Plex against a mock plex.tv plus a mock media server
 // ---------------------------------------------------------------------------

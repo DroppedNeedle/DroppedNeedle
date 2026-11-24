@@ -121,9 +121,13 @@ impl AuthSetup {
         let sign_in = SignInSettings::with_password_login(config_store, password_login);
         warn_on_public_http_oidc(&sign_in);
         warn_on_password_login_off(&sign_in, password_login);
-        let http = platform.http.shared().clone();
         let plex_tv = PlexTv::new(providers.plextv.clone(), config_store.clone(), plex_server);
-        let jellyfin_http = JellyfinHttp::new(http.clone(), config_store.clone());
+        // The sign-in password rides in the body, which a 307 or 308 would
+        // carry to wherever it points: only a same-host hop is followed.
+        let jellyfin_http = JellyfinHttp::new(
+            platform.http.same_host_redirects().clone(),
+            config_store.clone(),
+        );
         let users = UsersDeps {
             users: auth.users.clone(),
             sessions: auth.sessions.clone(),

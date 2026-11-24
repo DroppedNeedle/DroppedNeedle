@@ -164,9 +164,8 @@ const SAME_HOST_HOPS: usize = 3;
 
 /// Whether a redirect stays where the request was sent, as a Newznab
 /// indexer's API redirects must (`providers::newznab`): the first URL's
-/// host, no credentials, never from https to http, and the same port, or
-/// each scheme's own default when http moves to https. At most
-/// [`SAME_HOST_HOPS`] are followed.
+/// host, no credentials, never from https to http, and the same port as
+/// [`same_port`] reads it. At most [`SAME_HOST_HOPS`] are followed.
 fn same_host_hop(attempt: &Attempt<'_>) -> bool {
     let to = attempt.url();
     let previous = attempt.previous();
@@ -184,14 +183,15 @@ fn same_host_hop(attempt: &Attempt<'_>) -> bool {
     !downgrade && same_port(first, to)
 }
 
-/// The same scheme on the same port, or http on its default port moving to
-/// https on its own.
+/// The same scheme on the same port, or http moving to https on the port
+/// it named (Plex's `http://host:32400` to `https://host:32400`) or from
+/// its default port to https's own.
 fn same_port(first: &Url, to: &Url) -> bool {
     match (first.scheme(), to.scheme()) {
         ("http", "http") | ("https", "https") => {
             first.port_or_known_default() == to.port_or_known_default()
         }
-        ("http", "https") => first.port().is_none() && to.port().is_none(),
+        ("http", "https") => first.port() == to.port(),
         _ => false,
     }
 }
@@ -373,6 +373,22 @@ mod tests {
         append_causes(&Outer(nested), &mut text);
         assert!(!text.contains("MARKERKEY7f3a91"), "{text}");
         assert!(text.contains("client error"), "{text}");
+    }
+
+    /// A same-host redirect keeps its port, except that http may move to
+    /// https on the port it named or from its default port to https's own.
+    #[test]
+    fn a_same_host_hop_keeps_its_port() {
+        let hop =
+            |from: &str, to: &str| same_port(&Url::parse(from).unwrap(), &Url::parse(to).unwrap());
+        assert!(hop("http://h:32400/", "https://h:32400/"));
+        assert!(hop("http://h/", "https://h/"));
+        assert!(!hop("http://h:32400/", "https://h:8443/"));
+        assert!(!hop("http://h:32400/", "https://h/"));
+        assert!(!hop("http://h/", "https://h:8443/"));
+        assert!(!hop("http://h:8080/", "http://h:8081/"));
+        assert!(!hop("https://h/", "http://h/"));
+        assert!(!hop("https://h:32400/", "http://h:32400/"));
     }
 
     #[tokio::test]

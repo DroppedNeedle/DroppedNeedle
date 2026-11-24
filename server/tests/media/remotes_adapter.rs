@@ -1883,3 +1883,95 @@ async fn request_ids_cannot_steer_plex_or_jellyfin_calls() {
     );
     task.abort();
 }
+
+/// A media server's token rides in a header or the query, so a redirect
+/// to another address is never followed: neither the settings Test of each
+/// server nor a browse over the saved connection sends anything where it
+/// points, and the Test says to set the URL the server answers on. Each
+/// redirect carries the request's own query, Navidrome's token included.
+/// The app is built through its own wiring.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_redirect_takes_no_media_token_elsewhere() {
+    use axum::http::{Uri, header};
+    use droppedneedle_testkit::scripted::ScriptedStatuses;
+    use serde_json::json;
+
+    let app = crate::common::TestApp::start("media-redirect").await;
+    let admin = app.login_admin().await;
+    let admin = [("authorization", admin.as_str())];
+    let elsewhere = ScriptedStatuses::default();
+    let (target, _elsewhere) = serve_fake(elsewhere.layer(Router::new())).await;
+    let asked = ScriptedStatuses::default();
+    let (origin, _origin) = serve_fake(asked.layer(Router::new().fallback(move |uri: Uri| {
+        let location = format!("{target}{uri}");
+        async move { (StatusCode::FOUND, [(header::LOCATION, location)]) }
+    })))
+    .await;
+
+    let servers = [
+        (
+            "jellyfin",
+            json!({
+                "jellyfin_url": origin,
+                "api_key": JELLYFIN_KEY,
+                "user_id": "jf-user",
+                "enabled": true,
+            }),
+        ),
+        (
+            "navidrome",
+            json!({
+                "navidrome_url": origin,
+                "username": NAVIDROME_USER,
+                "password": "pw",
+                "enabled": true,
+            }),
+        ),
+        (
+            "plex",
+            json!({"plex_url": origin, "plex_token": PLEX_TOKEN, "enabled": true}),
+        ),
+    ];
+    for (source, settings) in servers {
+        let (status, verdict) = app
+            .call(
+                "POST",
+                &format!("/api/v3/settings/{source}/verify"),
+                &admin,
+                Some(settings.clone()),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{source}: {verdict}");
+        assert_eq!(elsewhere.requests(), 0, "{source}'s Test went elsewhere");
+        let passed = verdict.get("valid").or_else(|| verdict.get("success"));
+        assert_eq!(passed, Some(&Value::Bool(false)), "{source}: {verdict}");
+        let message = verdict["message"].as_str().unwrap_or_default();
+        assert!(
+            message.contains("redirect") && message.contains("address it answers on"),
+            "{source}: {message}"
+        );
+
+        let (status, body) = app
+            .call(
+                "PUT",
+                &format!("/api/v3/settings/{source}"),
+                &admin,
+                Some(settings),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{source}: {body}");
+        asked.reset();
+        let (status, body) = app
+            .call(
+                "GET",
+                &format!("/api/v3/remotes/{source}/albums"),
+                &admin,
+                None,
+            )
+            .await;
+        assert!(!status.is_success(), "{source}: {status} {body}");
+        assert!(asked.requests() > 0, "{source}'s browse asked nobody");
+        assert_eq!(elsewhere.requests(), 0, "{source}'s browse went elsewhere");
+    }
+    app.stop().await;
+}

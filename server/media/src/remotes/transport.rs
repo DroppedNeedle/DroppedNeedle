@@ -134,12 +134,18 @@ pub(crate) fn transport(cause: reqwest::Error) -> AdapterError {
 }
 
 /// The failure a status stands for, `None` on success: 401 and 403 are a
-/// rejected credential, anything else an API error naming `what`.
+/// rejected credential, a 3xx a redirect the client would not follow (one
+/// off the host it was sent to), anything else an API error naming `what`.
 pub(crate) fn status_error(status: reqwest::StatusCode, what: &str) -> Option<AdapterError> {
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         Some(AdapterError::Auth)
     } else if status.is_success() {
         None
+    } else if status.is_redirection() {
+        Some(AdapterError::Api(format!(
+            "{what} answered with a redirect to another address ({status}), which is not \
+             followed: set its URL in Settings to the address it answers on"
+        )))
     } else {
         Some(AdapterError::Api(format!("{what} failed ({status})")))
     }

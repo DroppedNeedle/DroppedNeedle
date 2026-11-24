@@ -138,7 +138,10 @@ impl MediaSetup {
     ) -> Arc<ConnectionResolver> {
         Arc::new(ConnectionResolver::over(
             platform,
-            Arc::new(PlexTokenProbe::new(platform.http.shared().clone(), plextv)),
+            Arc::new(PlexTokenProbe::new(
+                platform.http.same_host_redirects().clone(),
+                plextv,
+            )),
         ))
     }
 
@@ -181,7 +184,9 @@ impl MediaSetup {
     ) -> Result<(Self, MediaWorkers), String> {
         let (db, app_config, config) = (&platform.db, &platform.config, &*platform.settings);
         let http_factory = &platform.http;
-        let http = http_factory.shared().clone();
+        // A media server token rides in a header or the query, so its
+        // clients follow a redirect only on the same host.
+        let http = http_factory.same_host_redirects().clone();
         crate::stream::plugin_url::sweep_stale_spools(&app_config.temp_dir);
         let library = LibraryFiles::new(db.clone(), library_roots);
         let download = DownloadState::new(library.clone(), config.live());
@@ -292,12 +297,12 @@ impl MediaSetup {
 
     /// What the jobs bundle reads from media: the presence registry the
     /// playback routes write, the bundle's connection resolver and MBID
-    /// index, and the platform's outbound client and clock.
+    /// index, the platform's same-host client and its clock.
     pub fn jobs(&self, platform: &Platform) -> MediaJobs {
         MediaJobs::new(
             self.playback.presence.clone(),
             self.remotes.service.resolver().clone(),
-            platform.http.shared().clone(),
+            platform.http.same_host_redirects().clone(),
             platform.clock.clone(),
             self.remotes.service.index().clone(),
         )
