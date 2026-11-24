@@ -1141,6 +1141,10 @@ async fn file_album_proof_by_isrc() {
     }
 }
 
+/// One listing case: the album's title, its artist, its songs, the group
+/// it proves (none for nothing found) and what the case shows.
+type ListingCase<'a> = (&'a str, &'a str, &'a [&'a str], Option<String>, &'a str);
+
 /// With no ISRC a playlist file's album is the one release group where a
 /// recording of each song, credited to the album's artist by exact name,
 /// sits on an official release of two or more tracks under the album's
@@ -1153,7 +1157,7 @@ async fn file_album_proof_by_isrc() {
 async fn file_album_proof_by_listing() {
     let group = |n: u64| format!("5907a1b0-0000-4000-8000-{n:012}");
     let (_auth, _musicbrainz, resolver) = file_album_resolver("file-album-listing").await;
-    let cases: [(&str, &str, &[&str], Option<String>, &str); 9] = [
+    let cases: [ListingCase; 9] = [
         (
             "Harbour Lights",
             "Willow Fen",
