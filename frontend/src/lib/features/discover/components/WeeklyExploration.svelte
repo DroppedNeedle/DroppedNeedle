@@ -57,7 +57,7 @@
 		{/snippet}
 	</SectionHead>
 
-	<HorizontalCarousel class="-mx-4 px-4 pb-2 sm:mx-0 sm:px-0">
+	<HorizontalCarousel class="pb-2">
 		{#each section.tracks as track (track.artist_name + track.title)}
 			<WeeklyExplorationCard {track} {madeFrom} />
 		{/each}
