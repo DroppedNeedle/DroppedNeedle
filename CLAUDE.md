@@ -79,9 +79,11 @@ Run from the repo root. `make help` lists every target.
 - A crate's unit tests: `cargo test -p droppedneedle-<crate>`;
   `cargo test --lib` runs only the server crate's.
 - CI is path-filtered: `v3-ci.yml` runs on code changes and adds
-  `cargo audit`, `cargo deny check` and a container boot test,
-  `frontend-ci.yml` runs on `frontend/` changes. Green locally never excuses
-  red CI.
+  `cargo audit`, `cargo deny check` and a container boot test of a quicker
+  build of the same code (the `ci-e2e` profile); the release workflow boots
+  the shipping build before it publishes, and the dev image is built only
+  after CI passes on main. `frontend-ci.yml` runs on `frontend/` changes.
+  Green locally never excuses red CI.
 - Clippy rejects `unwrap`, `expect` and `panic!` outside tests. Eslint rejects
   raw `fetch` and hand-built `/api/v3` strings.
 - `make contract-check` and `make contract-write` take the document from the
