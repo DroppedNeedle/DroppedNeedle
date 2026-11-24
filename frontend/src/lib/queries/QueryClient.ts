@@ -149,7 +149,9 @@ export const queryClient = new QueryClient({
 			staleTime: STALE_DEFAULT,
 			gcTime: 1000 * 60 * 5, // 5 min: keep results in memory so back-nav is instant (30s evicted before staleTime, forcing a skeleton + IDB rehydrate each return)
 			persister: queryPersister.persisterFn
-		}
+		},
+		// A finished mutation's closures hold the page that ran it; TanStack keeps it 5 min by default.
+		mutations: { gcTime: 1000 }
 	}
 });
 

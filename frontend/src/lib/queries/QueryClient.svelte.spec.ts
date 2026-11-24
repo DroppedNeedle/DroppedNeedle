@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { get, set } from 'idb-keyval';
 import { PERSISTER_KEY_PREFIX } from '@tanstack/svelte-query-persist-client';
 import { clearPersistedQueryCache } from './IndexedDbPersister.svelte';
+import { createAppMutation } from './effects';
 import {
 	invalidateMusicBrainzProviderQueries,
 	invalidateQueriesWithPersister,
@@ -218,4 +219,20 @@ it('drops answers from before a source switch, in memory and in the browser copy
 		queryFn: async () => ({ name: 'Current source' })
 	});
 	expect(fresh).toEqual({ name: 'Current source' });
+});
+
+it('drops a finished mutation once its component is gone', async () => {
+	let mutation!: ReturnType<typeof createAppMutation<string>>;
+	const dispose = $effect.root(() => {
+		mutation = createAppMutation(
+			() => ({ effects: () => [], mutationFn: async () => 'ok' }),
+			queryClient
+		);
+	});
+	mutation.mutate();
+	await vi.waitFor(() => expect(mutation.status).toBe('success'));
+	dispose();
+	await vi.waitFor(() => expect(queryClient.getMutationCache().getAll()).toHaveLength(0), {
+		timeout: 3000
+	});
 });
