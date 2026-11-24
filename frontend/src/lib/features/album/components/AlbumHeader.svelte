@@ -75,6 +75,12 @@
 		onfavorite?: (favorite: boolean) => void;
 		/** Plays the album from its first source with tracks; no Play without it. */
 		onplay?: () => void;
+		/** Whether the album is on the caller's Later pile. */
+		later?: boolean;
+		/** Put the album on the Later pile or take it off. The button shows only with this, on an album the library does not hold. */
+		onlater?: (later: boolean) => void;
+		/** A change to the Later pile is on its way. */
+		laterPending?: boolean;
 		/** The formats the files are in, e.g. "FLAC". */
 		formats?: string | null;
 		back?: Snippet;
@@ -110,6 +116,9 @@
 		favorite = false,
 		onfavorite,
 		onplay,
+		later = false,
+		onlater,
+		laterPending = false,
 		formats = null,
 		back,
 		onrequest,
@@ -372,6 +381,19 @@
 					<Disc3 class="size-4" />
 				{/if}
 				{headerSampling ? 'Stop sample' : 'Sample'}
+			</Button>
+		{/if}
+		{#if onlater && !owned}
+			<Button
+				variant="outline"
+				icon={later ? Check : Clock}
+				active={later}
+				aria-pressed={later}
+				disabled={laterPending}
+				title={later ? 'Take it off your Later pile' : 'Keep it on your Later pile for another day'}
+				onclick={() => onlater(!later)}
+			>
+				{later ? 'On Later pile' : 'Later'}
 			</Button>
 		{/if}
 		{#if menuItems.length > 0}

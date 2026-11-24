@@ -72,7 +72,7 @@ fn schema_rows(connection: &Connection) -> Vec<(String, String, String, Option<S
 fn fresh_migrate_marks_version_and_seeds() {
     let connection = migrated();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), latest_version());
-    assert_eq!(table_names(&connection).len(), 199);
+    assert_eq!(table_names(&connection).len(), 200);
     assert_eq!(
         scalar(
             &connection,
@@ -440,6 +440,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0167_request_batch_sources.sql",
         "077e5773856ebe6c8e02fa7997a9d6a09f3192076a6cdf3a96b4eb71623f9c0a",
+    ),
+    (
+        "0168_later_albums.sql",
+        "4f9aa6692cc7024c8fc2a0ae39b485de626cb4297844c77a26d0b43cc567f80e",
     ),
 ];
 
@@ -3440,6 +3444,86 @@ fn request_batch_sources_upgrade_reads_old_batches_as_discovers() {
     }
 }
 
+/// 0168 adds the Later pile, empty, and changes nothing else. A second row
+/// for one person and album, or a row for no account, is refused, and an
+/// account's pile goes with it.
+#[test]
+fn later_albums_upgrade_adds_one_empty_table() {
+    let dir = ScratchDir::new("later-albums-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 168)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 167);
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, created_at)
+                 VALUES ('u1', 'One', 1), ('u2', 'Two', 1);",
+        )
+        .unwrap();
+    let before_schema = schema_rows(&connection);
+    let users = table_rows(&connection, "auth_users", "rowid, *");
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 168);
+    assert_eq!(table_rows(&connection, "auth_users", "rowid, *"), users);
+    let mut after_schema = schema_rows(&connection);
+    let added = "catalog_later_albums";
+    let table_sql = after_schema
+        .iter()
+        .find(|(_, name, _, _)| name == added)
+        .and_then(|(_, _, _, sql)| sql.clone());
+    assert!(
+        table_sql
+            .as_deref()
+            .is_some_and(|sql| sql.ends_with("STRICT")),
+        "{table_sql:?}"
+    );
+    assert_eq!(
+        scalar(&connection, "SELECT COUNT(*) FROM catalog_later_albums"),
+        0,
+        "the pile starts empty"
+    );
+    after_schema.retain(|(_, _, table, _)| table != added);
+    assert_eq!(after_schema, before_schema, "nothing else changes");
+
+    connection
+        .execute_batch(
+            "PRAGMA foreign_keys = ON;
+             INSERT INTO catalog_later_albums (user_id, release_group_mbid_lower,
+                 release_group_mbid, title, artist_mbid, artist_name, added_at)
+                 VALUES ('u1', 'rg', 'RG', 'Album', NULL, 'Someone', 1),
+                        ('u2', 'rg', 'RG', 'Album', 'a', 'Someone', 1);",
+        )
+        .expect("the pile is stored");
+    for refused in [
+        "INSERT INTO catalog_later_albums (user_id, release_group_mbid_lower, \
+         release_group_mbid, title, artist_name, added_at) \
+         VALUES ('u1', 'rg', 'RG', 'Album', 'Someone', 2)",
+        "INSERT INTO catalog_later_albums (user_id, release_group_mbid_lower, \
+         release_group_mbid, title, artist_name, added_at) \
+         VALUES ('nobody', 'rg', 'RG', 'Album', 'Someone', 1)",
+    ] {
+        assert!(connection.execute_batch(refused).is_err(), "{refused}");
+    }
+    connection
+        .execute("DELETE FROM auth_users WHERE id = 'u1'", [])
+        .unwrap();
+    assert_eq!(
+        texts(&connection, "SELECT user_id FROM catalog_later_albums", []),
+        ["u2"],
+        "an account's pile goes with it, and only its own"
+    );
+}
+
 /// 0146 adds the table of recycle bin paths v2 used, empty, and changes
 /// nothing else: only an upgrade from v2 records a path in it.
 #[test]
@@ -3758,6 +3842,7 @@ const FOREIGN_KEYS: &[(&str, &str, &str, &str)] = &[
     ("catalog_event_cities", "user_id", "auth_users", "CASCADE"),
     ("catalog_event_seen_marks", "user_id", "auth_users", "CASCADE"),
     ("catalog_known_release_groups", "user_id", "auth_users", "CASCADE"),
+    ("catalog_later_albums", "user_id", "auth_users", "CASCADE"),
     ("catalog_new_release_seen_marks", "user_id", "auth_users", "CASCADE"),
     ("catalog_playlist_covers", "playlist_id", "catalog_playlists", "CASCADE"),
     ("catalog_playlist_members", "playlist_id", "catalog_playlists", "CASCADE"),

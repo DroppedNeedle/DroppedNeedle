@@ -31,6 +31,10 @@ export const DiscoverQueryKeyFactory = {
 			[...root(userId), 'queue-enrich', releaseGroupMbid] as const,
 		feedback: (userId: DiscoverV3UserId) => [...root(userId), 'feedback'] as const,
 		tunings: (userId: DiscoverV3UserId) => [...root(userId), 'tunings'] as const,
+		// The Later pile, and whether one album is on it, under the pile's prefix.
+		later: (userId: DiscoverV3UserId) => [...root(userId), 'later'] as const,
+		laterAlbum: (userId: DiscoverV3UserId, releaseGroupMbid: string) =>
+			[...root(userId), 'later', 'album', releaseGroupMbid] as const,
 		// What "Why this?" opens for one pick, and every pick's, as a prefix.
 		pickEvidence: (userId: DiscoverV3UserId, releaseGroupMbid: string) =>
 			[...root(userId), 'pick-evidence', releaseGroupMbid] as const,

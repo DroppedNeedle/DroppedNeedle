@@ -176,6 +176,7 @@ catalog_event_seen_marks
 catalog_fact_fetches
 catalog_genre_artwork_revisions
 catalog_known_release_groups
+catalog_later_albums
 catalog_live_event_feed
 catalog_mbid_resolutions
 catalog_new_release_seen_marks

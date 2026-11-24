@@ -9,6 +9,7 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { libraryStore } from '$lib/stores/library';
 	import { createDiscoveryBatchV3 } from '$lib/features/discover/queries/DiscoverV3Mutations.svelte';
+	import type { MadeFrom } from '$lib/features/downloads/queries/DownloadMutations.svelte';
 	import type { AlbumRef } from '$lib/features/discover/queries/types';
 
 	interface Props {
@@ -16,9 +17,17 @@
 		sectionTitle: string;
 		sectionKey: string;
 		albums: AlbumRef[];
+		/** Where the batch is made; a Discover shelf unless said. */
+		madeFrom?: MadeFrom;
 	}
 
-	let { open = $bindable(false), sectionTitle, sectionKey, albums }: Props = $props();
+	let {
+		open = $bindable(false),
+		sectionTitle,
+		sectionKey,
+		albums,
+		madeFrom = 'discover_shelf'
+	}: Props = $props();
 
 	let name = $state('');
 	let deselected = new SvelteSet<string>();
@@ -74,7 +83,7 @@
 			const created = await createDiscoveryBatchV3({
 				name: name.trim() || sectionTitle,
 				source_section: sectionKey,
-				made_from: 'discover_shelf',
+				made_from: madeFrom,
 				items
 			});
 			if (created) open = false;

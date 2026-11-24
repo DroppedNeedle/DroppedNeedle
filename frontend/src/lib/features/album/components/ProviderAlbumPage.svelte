@@ -39,6 +39,12 @@
 		createSetRatingMutation
 	} from '$lib/features/library/queries/ratings.svelte';
 	import { createSetFavoriteMutation } from '$lib/features/library/queries/FavoriteMutations.svelte';
+	import {
+		createMarkLaterMutation,
+		createRemoveLaterMutation,
+		getLaterAlbumQuery
+	} from '$lib/features/discover/queries/later.svelte';
+	import type { AlbumBasicInfo } from '../queries/types';
 
 	const integrations = useIntegrationStatus();
 
@@ -80,6 +86,27 @@
 	);
 	const rate = createSetRatingMutation();
 	const heart = createSetFavoriteMutation();
+	// Whether the album is on the Later pile, read only while the library
+	// does not hold it.
+	const owned = $derived(state.inLibrary || state.libraryInLibrary);
+	const laterAlbum = getLaterAlbumQuery(() =>
+		owned ? null : (state.album?.musicbrainz_id ?? null)
+	);
+	const markLater = createMarkLaterMutation();
+	const removeLater = createRemoveLaterMutation();
+	const onLaterPile = $derived((laterAlbum.data?.items.length ?? 0) > 0);
+	function setLater(album: AlbumBasicInfo, later: boolean) {
+		if (later) {
+			markLater.mutate({
+				mbid: album.musicbrainz_id,
+				title: album.title,
+				artist_name: album.artist_name,
+				artist_mbid: album.artist_id || null
+			});
+		} else {
+			removeLater.mutate(album.musicbrainz_id);
+		}
+	}
 	const editionNote = $derived.by(() => {
 		const rows = [...(state.editionRows?.values() ?? [])];
 		return noteOver(
@@ -203,6 +230,9 @@
 				? (favorited) => heart.mutate({ kind: 'album', itemId: localAlbumId, favorited })
 				: undefined}
 			onplay={heroPlay}
+			later={onLaterPile}
+			onlater={(later) => setLater(album, later)}
+			laterPending={markLater.isPending || removeLater.isPending || laterAlbum.isFetching}
 			formats={state.libraryInLibrary
 				? (state.localMatch?.primary_format?.toUpperCase() ?? null)
 				: null}

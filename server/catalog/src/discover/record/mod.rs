@@ -62,7 +62,7 @@ pub enum MadeFrom {
     /// Dig further, under the weekly set. Not written yet: the weekly set
     /// writes it.
     DigFurther,
-    /// The Later pile. Not written yet: the Later pile writes it.
+    /// The Later pile.
     Later,
     /// A thread's page. Not written yet: the thread pages write it.
     ThreadPage,

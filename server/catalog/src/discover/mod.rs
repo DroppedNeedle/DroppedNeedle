@@ -22,6 +22,7 @@ pub mod genre;
 pub mod handlers;
 pub mod health;
 pub mod home;
+pub mod later;
 pub mod listening;
 pub mod models;
 pub mod ownership;

@@ -29,6 +29,7 @@
 		"components/SampleButton.svelte",
 		"components/SimpleSourceSwitcher.svelte",
 		"queries/DiscoverDemand.svelte.ts",
+		"queries/later.svelte.ts",
 		"queries/types.ts",
 		"state/deckSampler.svelte.ts"
 	],

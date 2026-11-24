@@ -606,6 +606,8 @@ const CALLER_KEYED_OPERATIONS: &[(&str, &str)] = &[
     ("DELETE", "/api/v3/discover/feedback/{target}/{mbid}"),
     ("GET", "/api/v3/discover/picks/{release_group_mbid}/why"),
     ("DELETE", "/api/v3/discover/tunings/{kind}/{target}"),
+    ("PUT", "/api/v3/discover/later/{release_group_mbid}"),
+    ("DELETE", "/api/v3/discover/later/{release_group_mbid}"),
     ("PUT", "/api/v3/library/albums/{album_id}/looks-wrong"),
 ];
 
@@ -1995,6 +1997,41 @@ async fn caller_keyed_state_stays_with_its_caller() {
     let (status, body) = call(&app, &ada, "GET", tunings, None).await;
     ok(status, &body, "A reads A's tunings");
     assert_eq!(body["items"].as_array().map(Vec::len), Some(1), "{body}");
+
+    // A's Later pile: B and an admin see none of it, and marking or
+    // removing the same album touches only their own.
+    let pile = "/api/v3/discover/later";
+    let later_album = format!("{pile}/{hidden_album}");
+    let named = json!({"title": "Album", "artist_name": "Artist"});
+    let (status, body) = call(&app, &ada, "PUT", &later_album, Some(named.clone())).await;
+    ok(status, &body, "A marks an album Later");
+    for (who, what) in [(&bob, "B"), (&admin, "an admin")] {
+        let (status, body) = call(&app, who, "GET", pile, None).await;
+        ok(status, &body, &format!("{what} reads their pile"));
+        assert_eq!(
+            body["items"],
+            json!([]),
+            "{what} sees only their own: {body}"
+        );
+        let (status, body) = call(&app, who, "DELETE", &later_album, None).await;
+        ok(
+            status,
+            &body,
+            &format!("{what} removes their own, of which there is none"),
+        );
+    }
+    let (status, body) = call(&app, &bob, "PUT", &later_album, Some(named)).await;
+    ok(status, &body, "B marks the same album");
+    let (status, body) = call(&app, &bob, "DELETE", &later_album, None).await;
+    ok(status, &body, "B removes it again");
+    let (status, body) = call(&app, &ada, "GET", pile, None).await;
+    ok(status, &body, "A reads A's pile");
+    assert_eq!(
+        body["items"][0]["album"]["musicbrainz_id"],
+        json!(hidden_album),
+        "B's and the admin's changes took A's: {body}"
+    );
+    assert_eq!(body["total"], json!(1), "{body}");
 
     // A's listening history from ListenBrainz: B's and an admin's reads
     // show none of it.

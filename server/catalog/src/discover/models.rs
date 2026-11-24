@@ -974,6 +974,29 @@ pub struct DiscoverTuningsResponse {
     pub items: Vec<DiscoverTuningEntry>,
 }
 
+/// An album to put on the caller's Later pile, named for the list.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct LaterRequest {
+    /// The album's title.
+    pub title: String,
+    /// The album's artist.
+    pub artist_name: String,
+    /// The artist's MusicBrainz id, when known. One that is not an id is
+    /// left out.
+    #[serde(default)]
+    pub artist_mbid: Option<String>,
+}
+
+/// One album on the caller's Later pile.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct LaterAlbum {
+    /// The album, with whether an album request for it is open. The library
+    /// owns none of the pile's albums: one it comes to own leaves the list.
+    pub album: AlbumRef,
+    /// When it went on the pile (unix seconds).
+    pub added_at: i64,
+}
+
 /// What a pick's reason rests on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]

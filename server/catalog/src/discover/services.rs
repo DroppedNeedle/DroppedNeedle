@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use droppedneedle_auth::Admin;
+use droppedneedle_kernel::page::{Page, PageRequest};
 use droppedneedle_providers::ProviderError;
 
 use crate::discover::{
@@ -12,17 +13,18 @@ use crate::discover::{
     feedback::{self, FeedbackError},
     forget::{self, HistoryStores},
     genre::WithGenrePages,
+    later::{LaterError, LaterKey, LaterPile},
     models::{
         AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection,
         DiscoverActivityResponse, DiscoverFeedbackEntry, DiscoverFeedbackRequest,
         DiscoverFeedbackResponse, DiscoverHealthResponse, DiscoverPickEventRequest,
         DiscoverQueuePreview, DiscoverQueueResponse, DiscoverQueueStatusResponse, DiscoverResponse,
         DiscoverTuningEntry, DiscoverTuningRequest, DiscoverTuningsResponse, GenreDetailResponse,
-        HomeResponse, IntegrationStatus, ListenSource, PickEvidence, PlaylistSuggestionsRequest,
-        PlaylistSuggestionsResponse, QueueEnrichment, QueueGenerateRequest, QueueGenerateResponse,
-        QueueValidateRequest, QueueValidateResponse, RadioPlanRequest, RadioPlanResponse,
-        RadioRequest, RadioSeedKind, RefreshResponse, StatsRange, TrackPreviewResponse,
-        YouTubeSearchResponse,
+        HomeResponse, IntegrationStatus, LaterAlbum, LaterRequest, ListenSource, PickEvidence,
+        PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, QueueEnrichment,
+        QueueGenerateRequest, QueueGenerateResponse, QueueValidateRequest, QueueValidateResponse,
+        RadioPlanRequest, RadioPlanResponse, RadioRequest, RadioSeedKind, RefreshResponse,
+        StatsRange, TrackPreviewResponse, YouTubeSearchResponse,
     },
     ports::{ProviderFailure, QueueTrigger, RadioFailure},
     previews::LivePreviews,
@@ -125,6 +127,8 @@ pub struct DiscoverDeps {
     pub evidence: crate::discover::engine::evidence::Evidence,
     /// How people tuned what Discover offers them.
     pub tunings: Tunings,
+    /// Each person's Later pile.
+    pub later: LaterPile,
 }
 
 /// Clamp a limit into `1..=max`, defaulting when missing.
@@ -548,6 +552,54 @@ pub async fn undo_tuning(
         .undo(user_id, kind, &target)
         .await
         .map_err(tuning_failure)
+}
+
+fn later_failure(error: LaterError) -> ServiceError {
+    match error {
+        LaterError::Invalid(reason) => ServiceError::InvalidInput(reason),
+        LaterError::Store(error) => ServiceError::Internal(format!("later pile: {error}")),
+    }
+}
+
+/// Put one album on the user's Later pile. Nothing is requested.
+pub async fn mark_later(
+    deps: &DiscoverDeps,
+    user_id: &str,
+    release_group_mbid: &str,
+    body: &LaterRequest,
+) -> Result<(), ServiceError> {
+    check_name(&body.title, "title")?;
+    check_name(&body.artist_name, "artist_name")?;
+    deps.later
+        .mark(user_id, release_group_mbid, body)
+        .await
+        .map_err(later_failure)
+}
+
+/// Take one album off the user's Later pile.
+pub async fn remove_later(
+    deps: &DiscoverDeps,
+    user_id: &str,
+    release_group_mbid: &str,
+) -> Result<(), ServiceError> {
+    deps.later
+        .remove(user_id, release_group_mbid)
+        .await
+        .map_err(later_failure)
+}
+
+/// One page of the user's Later pile, newest first; only one album when
+/// `only` names it.
+pub async fn later_page(
+    deps: &DiscoverDeps,
+    user_id: &str,
+    paging: PageRequest<LaterKey>,
+    only: Option<&str>,
+) -> Result<Page<LaterAlbum>, ServiceError> {
+    deps.later
+        .page(user_id, paging, only)
+        .await
+        .map_err(later_failure)
 }
 
 /// The given cards whose albums the library already holds.

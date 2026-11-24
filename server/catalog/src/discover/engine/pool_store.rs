@@ -22,6 +22,7 @@ use super::sql;
 use super::taste_store::Kept;
 use crate::discover::cache::ForgetCounts;
 use crate::discover::feedback::Feedback;
+use crate::discover::later;
 use crate::discover::tunings;
 
 fn json(ids: &[String]) -> String {
@@ -577,13 +578,14 @@ pub(crate) async fn rebuild(
 
 /// `user_id`'s pool at `now_ms`, in its order, with the gates that move
 /// applied as it is read: an album the library now holds or is fetching,
-/// one the person hid or whose artist they turned down, and one with no
-/// reason that still holds ([`reason::reason`]: an artist it would name is
-/// no longer one of their seeds), is left out.
+/// one on the person's Later pile, one they hid or whose artist they turned
+/// down, and one with no reason that still holds ([`reason::reason`]: an
+/// artist it would name is no longer one of their seeds), is left out.
 ///
 /// # Errors
 ///
-/// A read's failure; what the person told Discover not reading is one.
+/// A read's failure; what the person told Discover or their Later pile not
+/// reading is one.
 pub async fn ranked(db: &Db, user_id: &str, now_ms: i64) -> Result<Vec<Candidate>, DbError> {
     let user = user_id.to_owned();
     let pool = db
@@ -609,6 +611,7 @@ pub async fn ranked(db: &Db, user_id: &str, now_ms: i64) -> Result<Vec<Candidate
         })
         .await?;
     let feedback = Feedback::load(db, user_id, now_ms).await?;
+    let later = later::albums(db, user_id).await?;
     let seeds = seed_ids(db, user_id).await?;
     Ok(pool
         .into_iter()
@@ -616,6 +619,7 @@ pub async fn ranked(db: &Db, user_id: &str, now_ms: i64) -> Result<Vec<Candidate
             let group = candidate.release_group_mbid.as_str();
             !owned.contains(group)
                 && !fetching.contains(group)
+                && !later.contains(group)
                 && !feedback.hides_album(Some(group), Some(&candidate.artist_mbid))
                 && reason::reason(candidate, &seeds).is_some()
         })

@@ -2,11 +2,11 @@
 //!
 //! Every input is that person's own: their plays, hearts and ratings in
 //! the app, the artists they follow, their own playlists, the albums they
-//! asked for, and the accounts they linked themselves (ListenBrainz,
-//! Last.fm, their own Jellyfin login, never a shared one). Each statement
-//! is filtered by their id, so nobody else's rows ever count. What the
-//! library holds, which is shared, only tops up a list that came out too
-//! short.
+//! asked for or put on their Later pile, and the accounts they linked
+//! themselves (ListenBrainz, Last.fm, their own Jellyfin login, never a
+//! shared one). Each statement is filtered by their id, so nobody else's
+//! rows ever count. What the library holds, which is shared, only tops up a
+//! list that came out too short.
 //!
 //! Artists are keyed by MusicBrainz id alone. A row without one,
 //! Various Artists and MusicBrainz's other special-purpose ids are dropped,
@@ -60,6 +60,9 @@ const RATING_LOW: f64 = -1.0;
 const RATINGS_MAX: f64 = 3.0;
 /// Following the artist.
 const FOLLOW: f64 = 2.0;
+/// An album of the artist on the Later pile, however many: what a follow
+/// gives.
+const LATER: f64 = FOLLOW;
 /// Playlist entries weigh `ln(1 + entries)` times this.
 const PLAYLIST_SCALE: f64 = 0.5;
 /// One album of the artist asked for.
@@ -116,6 +119,8 @@ pub(crate) enum SeedInput {
     Playlists,
     /// The albums they asked for.
     Requests,
+    /// The albums on their Later pile.
+    Later,
     /// An account they linked: ListenBrainz, Last.fm or their Jellyfin.
     Linked,
     /// What the library holds.
@@ -355,9 +360,10 @@ async fn top_up(ctx: &BuildContext<'_>, tallies: &mut Tallies) {
 
 /// Every artist the person's own rows and accounts name, weighed: their
 /// plays and imported listens in `history`, hearts, ratings, follows,
-/// playlists, requests, the albums they said they know already, and the
-/// accounts they linked. ListenBrainz's top artists are read only when
-/// `read_listenbrainz` says so. What the library holds is not added.
+/// playlists, requests, the albums they said they know already or put on
+/// their Later pile, and the accounts they linked. ListenBrainz's top
+/// artists are read only when `read_listenbrainz` says so. What the library
+/// holds is not added.
 pub(in crate::discover) async fn weigh(
     ctx: &BuildContext<'_>,
     user_id: &str,
@@ -367,7 +373,7 @@ pub(in crate::discover) async fn weigh(
     read_listenbrainz: bool,
 ) -> Tallies {
     let id = || (user_id.to_owned(),);
-    let (hearts, known, ratings, follows, playlists, requests, linked) = tokio::join!(
+    let (hearts, known, ratings, follows, playlists, requests, later, linked) = tokio::join!(
         rows(
             ctx,
             "discover.seeds.hearts",
@@ -413,6 +419,13 @@ pub(in crate::discover) async fn weigh(
             sql::SEED_REQUESTS.text(),
             id(),
             sql::SeedRequests::read
+        ),
+        rows(
+            ctx,
+            "discover.seeds.later",
+            sql::SEED_LATER.text(),
+            id(),
+            sql::SeedLater::read
         ),
         linked_artists(ctx, user_id, user, source, read_listenbrainz),
     );
@@ -477,6 +490,9 @@ pub(in crate::discover) async fn weigh(
     for row in requests {
         let weight = (REQUEST * row.albums as f64).min(REQUESTS_MAX);
         tallies.add(Some(&row.mbid), &row.name, SeedInput::Requests, weight);
+    }
+    for row in later {
+        tallies.add(Some(&row.mbid), &row.name, SeedInput::Later, LATER);
     }
     let named_this_year: HashSet<String> = linked
         .listenbrainz

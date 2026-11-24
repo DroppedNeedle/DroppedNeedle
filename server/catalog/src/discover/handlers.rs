@@ -13,9 +13,11 @@ use droppedneedle_auth::{Admin, User};
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::mount::{Routes, routes};
+use droppedneedle_kernel::page::{Page, PageRequest};
 use serde::Deserialize;
 
 use super::{
+    later,
     models::{
         AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection,
         DiscoverActivityRequest, DiscoverActivityResponse, DiscoverFeedbackEntry,
@@ -23,11 +25,11 @@ use super::{
         DiscoverPickEventRequest, DiscoverQueuePreview, DiscoverQueueResponse,
         DiscoverQueueStatusResponse, DiscoverResponse, DiscoverTuningEntry, DiscoverTuningRequest,
         DiscoverTuningsResponse, FeedbackTarget, GenreDetailResponse, HomeResponse,
-        IntegrationStatus, ListenSource, PickEvidence, PlaylistSuggestionsRequest,
-        PlaylistSuggestionsResponse, QueueEnrichment, QueueGenerateRequest, QueueGenerateResponse,
-        QueueValidateRequest, QueueValidateResponse, RadioPlanRequest, RadioPlanResponse,
-        RadioRequest, RefreshResponse, StatsRange, TrackPreviewResponse, TuningKind,
-        YouTubeSearchResponse,
+        IntegrationStatus, LaterAlbum, LaterRequest, ListenSource, PickEvidence,
+        PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, QueueEnrichment,
+        QueueGenerateRequest, QueueGenerateResponse, QueueValidateRequest, QueueValidateResponse,
+        RadioPlanRequest, RadioPlanResponse, RadioRequest, RefreshResponse, StatsRange,
+        TrackPreviewResponse, TuningKind, YouTubeSearchResponse,
     },
     services::{self, DiscoverDeps},
 };
@@ -54,6 +56,17 @@ pub struct ChartQuery {
     pub offset: Option<i64>,
     /// Provider preference (`listenbrainz` default).
     pub source: Option<ListenSource>,
+}
+
+/// `GET /discover/later` params.
+#[derive(Debug, Deserialize)]
+pub struct LaterQuery {
+    /// Albums per page, 1 to 100 (default 50); more is read as 100.
+    pub limit: Option<u32>,
+    /// `next_cursor` from the previous page.
+    pub cursor: Option<String>,
+    /// Only this album, by its release-group id: a page of one row or none.
+    pub release_group_mbid: Option<String>,
 }
 
 /// Genre detail params.
@@ -456,6 +469,103 @@ pub async fn undo_feedback(
         .await
         .map(|()| StatusCode::NO_CONTENT)
         .map_err(ApiError::from)
+}
+
+/// Put one album on the caller's Later pile; marking it again changes
+/// nothing. Nothing is requested, and it is not offered again as a pick
+/// while it is on the pile.
+#[utoipa::path(
+    put,
+    tag = "discover",
+    path = "/api/v3/discover/later/{release_group_mbid}",
+    params(
+        ("release_group_mbid" = String, Path, description = "The album's MusicBrainz release-group id"),
+    ),
+    request_body = LaterRequest,
+    responses(
+        (status = 204, description = "The album is on the pile"),
+        (status = 400, description = "Bad request body, or not a MusicBrainz id"),
+        (status = 401, description = "Not authenticated"),
+        (status = 500, description = "The change could not be saved"),
+    )
+)]
+pub async fn mark_later(
+    State(deps): State<DiscoverDeps>,
+    User(user): User,
+    Path(release_group_mbid): Path<String>,
+    ValidJson(body): ValidJson<LaterRequest>,
+) -> Result<StatusCode, ApiError> {
+    services::mark_later(&deps, user.user_id(), &release_group_mbid, &body)
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(ApiError::from)
+}
+
+/// Take one album off the caller's Later pile. Answers the same when it
+/// was not there.
+#[utoipa::path(
+    delete,
+    tag = "discover",
+    path = "/api/v3/discover/later/{release_group_mbid}",
+    params(
+        ("release_group_mbid" = String, Path, description = "The album's MusicBrainz release-group id"),
+    ),
+    responses(
+        (status = 204, description = "The album is not on the pile"),
+        (status = 400, description = "Not a MusicBrainz id"),
+        (status = 401, description = "Not authenticated"),
+        (status = 500, description = "The change could not be saved"),
+    )
+)]
+pub async fn remove_later(
+    State(deps): State<DiscoverDeps>,
+    User(user): User,
+    Path(release_group_mbid): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    services::remove_later(&deps, user.user_id(), &release_group_mbid)
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(ApiError::from)
+}
+
+/// The caller's Later pile, newest first, a page at a time. An album the
+/// library owns is not listed.
+#[utoipa::path(
+    get,
+    tag = "discover",
+    path = "/api/v3/discover/later",
+    params(
+        ("limit" = Option<u32>, Query, description = "Albums per page, 1 to 100; more is read as 100"),
+        ("cursor" = Option<String>, Query, description = "`next_cursor` from the previous page"),
+        ("release_group_mbid" = Option<String>, Query, description = "Only this album: a page of one row, or none when it is not on the pile"),
+    ),
+    responses(
+        (status = 200, description = "One page of the pile, newest first, with how many albums it lists", body = Page<LaterAlbum>),
+        (status = 400, description = "Bad cursor, or not a MusicBrainz id"),
+        (status = 401, description = "Not authenticated"),
+        (status = 500, description = "The pile could not be read"),
+    )
+)]
+pub async fn list_later(
+    State(deps): State<DiscoverDeps>,
+    User(user): User,
+    ValidQuery(query): ValidQuery<LaterQuery>,
+) -> Result<Json<Page<LaterAlbum>>, ApiError> {
+    let paging = PageRequest::read(
+        query.limit,
+        query.cursor.as_deref(),
+        later::PAGE_DEFAULT,
+        later::PAGE_MAX,
+    )?;
+    services::later_page(
+        &deps,
+        user.user_id(),
+        paging,
+        query.release_group_mbid.as_deref(),
+    )
+    .await
+    .map(Json)
+    .map_err(ApiError::from)
 }
 
 /// Record what the web UI saw happen to one of the caller's picks: shown
@@ -943,6 +1053,9 @@ pub fn routes() -> Routes<DiscoverDeps> {
         .user(routes!(save_tuning))
         .user(routes!(list_tunings))
         .user(routes!(undo_tuning))
+        .user(routes!(mark_later))
+        .user(routes!(remove_later))
+        .user(routes!(list_later))
         .user(routes!(forget_history))
         .user(routes!(validate_queue))
         .user(routes!(youtube_track_search))

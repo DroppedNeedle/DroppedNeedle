@@ -1789,6 +1789,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/discover/later": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The caller's Later pile, newest first, a page at a time. An album the
+         *     library owns is not listed.
+         */
+        get: operations["list_later"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/later/{release_group_mbid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Put one album on the caller's Later pile; marking it again changes
+         *     nothing. Nothing is requested, and it is not offered again as a pick
+         *     while it is on the pile.
+         */
+        put: operations["mark_later"];
+        post?: never;
+        /**
+         * Take one album off the caller's Later pile. Answers the same when it
+         *     was not there.
+         */
+        delete: operations["remove_later"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/discover/picks/events": {
         parameters: {
             query?: never;
@@ -16868,6 +16913,31 @@ export interface components {
             /** @description Single-use token for the session exchange. */
             token: string;
         };
+        /** @description One album on the caller's Later pile. */
+        LaterAlbum: {
+            /**
+             * Format: int64
+             * @description When it went on the pile (unix seconds).
+             */
+            added_at: number;
+            /**
+             * @description The album, with whether an album request for it is open. The library
+             *     owns none of the pile's albums: one it comes to own leaves the list.
+             */
+            album: components["schemas"]["AlbumRef"];
+        };
+        /** @description An album to put on the caller's Later pile, named for the list. */
+        LaterRequest: {
+            /**
+             * @description The artist's MusicBrainz id, when known. One that is not an id is
+             *     left out.
+             */
+            artist_mbid?: string | null;
+            /** @description The album's artist. */
+            artist_name: string;
+            /** @description The album's title. */
+            title: string;
+        };
         /** @description Leave the album unmanaged. */
         LeaveUnmanagedBody: {
             /**
@@ -19949,6 +20019,28 @@ export interface components {
                 id: string;
                 /** @description The first copy's title, to name the group by. */
                 title: string;
+            }[];
+            /** @description Pass back as `cursor` for the next page; null on the last. */
+            next_cursor: string | null;
+            /**
+             * Format: int64
+             * @description Rows in the whole list, for lists that count them.
+             */
+            total: number | null;
+        };
+        /** @description One page of a list. */
+        Page_LaterAlbum: {
+            items: {
+                /**
+                 * Format: int64
+                 * @description When it went on the pile (unix seconds).
+                 */
+                added_at: number;
+                /**
+                 * @description The album, with whether an album request for it is open. The library
+                 *     owns none of the pile's albums: one it comes to own leaves the list.
+                 */
+                album: components["schemas"]["AlbumRef"];
             }[];
             /** @description Pass back as `cursor` for the next page; null on the last. */
             next_cursor: string | null;
@@ -30742,6 +30834,160 @@ export interface operations {
                 };
             };
             /** @description Not all of it could be removed; asking again finishes it */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_later: {
+        parameters: {
+            query?: {
+                /** @description Albums per page, 1 to 100; more is read as 100 */
+                limit?: number;
+                /** @description `next_cursor` from the previous page */
+                cursor?: string;
+                /** @description Only this album: a page of one row, or none when it is not on the pile */
+                release_group_mbid?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of the pile, newest first, with how many albums it lists */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_LaterAlbum"];
+                };
+            };
+            /** @description Bad cursor, or not a MusicBrainz id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The pile could not be read */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    mark_later: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The album's MusicBrainz release-group id */
+                release_group_mbid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LaterRequest"];
+            };
+        };
+        responses: {
+            /** @description The album is on the pile */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad request body, or not a MusicBrainz id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The change could not be saved */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    remove_later: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The album's MusicBrainz release-group id */
+                release_group_mbid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The album is not on the pile */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not a MusicBrainz id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The change could not be saved */
             500: {
                 headers: {
                     [name: string]: unknown;

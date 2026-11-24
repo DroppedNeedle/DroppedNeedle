@@ -187,6 +187,7 @@ function routes(): FakeApi {
 			params.id === localAlbumId ? localAlbum() : apiError(404, 'NOT_FOUND', 'Unknown album'),
 		'GET /api/v3/library/albums/{id}/copies': { items: [], total: 0, next: null },
 		'GET /api/v3/library/albums/unlinked-copies': { copies: [] },
+		'GET /api/v3/discover/later': { items: [], next_cursor: null, total: 0 },
 		'GET /api/v3/library/albums/{album_id}/edition': () => ({
 			album_id: localAlbumId,
 			candidates: [],

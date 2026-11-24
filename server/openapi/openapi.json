@@ -5479,6 +5479,227 @@
         ]
       }
     },
+    "/api/v3/discover/later": {
+      "get": {
+        "tags": [
+          "discover"
+        ],
+        "summary": "The caller's Later pile, newest first, a page at a time. An album the\nlibrary owns is not listed.",
+        "operationId": "list_later",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Albums per page, 1 to 100; more is read as 100",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` from the previous page",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "release_group_mbid",
+            "in": "query",
+            "description": "Only this album: a page of one row, or none when it is not on the pile",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the pile, newest first, with how many albums it lists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_LaterAlbum"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad cursor, or not a MusicBrainz id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The pile could not be read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/discover/later/{release_group_mbid}": {
+      "put": {
+        "tags": [
+          "discover"
+        ],
+        "summary": "Put one album on the caller's Later pile; marking it again changes\nnothing. Nothing is requested, and it is not offered again as a pick\nwhile it is on the pile.",
+        "operationId": "mark_later",
+        "parameters": [
+          {
+            "name": "release_group_mbid",
+            "in": "path",
+            "description": "The album's MusicBrainz release-group id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LaterRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "The album is on the pile"
+          },
+          "400": {
+            "description": "Bad request body, or not a MusicBrainz id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The change could not be saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "discover"
+        ],
+        "summary": "Take one album off the caller's Later pile. Answers the same when it\nwas not there.",
+        "operationId": "remove_later",
+        "parameters": [
+          {
+            "name": "release_group_mbid",
+            "in": "path",
+            "description": "The album's MusicBrainz release-group id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The album is not on the pile"
+          },
+          "400": {
+            "description": "Not a MusicBrainz id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The change could not be saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/discover/picks/events": {
       "post": {
         "tags": [
@@ -51849,6 +52070,50 @@
           }
         }
       },
+      "LaterAlbum": {
+        "type": "object",
+        "description": "One album on the caller's Later pile.",
+        "required": [
+          "album",
+          "added_at"
+        ],
+        "properties": {
+          "added_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it went on the pile (unix seconds)."
+          },
+          "album": {
+            "$ref": "#/components/schemas/AlbumRef",
+            "description": "The album, with whether an album request for it is open. The library\nowns none of the pile's albums: one it comes to own leaves the list."
+          }
+        }
+      },
+      "LaterRequest": {
+        "type": "object",
+        "description": "An album to put on the caller's Later pile, named for the list.",
+        "required": [
+          "title",
+          "artist_name"
+        ],
+        "properties": {
+          "artist_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The artist's MusicBrainz id, when known. One that is not an id is\nleft out."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "The album's artist."
+          },
+          "title": {
+            "type": "string",
+            "description": "The album's title."
+          }
+        }
+      },
       "LeaveUnmanagedBody": {
         "type": "object",
         "description": "Leave the album unmanaged.",
@@ -58392,6 +58657,55 @@
                 "title": {
                   "type": "string",
                   "description": "The first copy's title, to name the group by."
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass back as `cursor` for the next page; null on the last."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Rows in the whole list, for lists that count them.",
+            "minimum": 0
+          }
+        }
+      },
+      "Page_LaterAlbum": {
+        "type": "object",
+        "description": "One page of a list.",
+        "required": [
+          "items",
+          "next_cursor",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One album on the caller's Later pile.",
+              "required": [
+                "album",
+                "added_at"
+              ],
+              "properties": {
+                "added_at": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "When it went on the pile (unix seconds)."
+                },
+                "album": {
+                  "$ref": "#/components/schemas/AlbumRef",
+                  "description": "The album, with whether an album request for it is open. The library\nowns none of the pile's albums: one it comes to own leaves the list."
                 }
               }
             }

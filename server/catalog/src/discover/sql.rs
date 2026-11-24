@@ -13,7 +13,9 @@ use super::facts::{FactKind, FactSource};
 use super::feedback::{FeedbackKind, FeedbackTarget};
 
 use crate::artwork::local::art_tracks_column;
-use crate::local::sql::{live_album, musicbrainz, owned_album, owned_artist, track_codec};
+use crate::local::sql::{
+    OPEN_REQUEST, live_album, musicbrainz, owned_album, owned_artist, track_codec,
+};
 use droppedneedle_library::identity::asked_groups;
 use droppedneedle_library::{all_owners, not_yet_identified, owns_group, recording_mbid};
 
@@ -689,6 +691,72 @@ droppedneedle_kernel::sql! {
     pub(super) PRUNE_FEEDBACK = "DELETE FROM catalog_discover_feedback \
          WHERE expires_at <= ?1 \
             OR (kind = ?3 AND expires_at IS NOT NULL AND created_at < ?2)";
+
+    // -- the Later pile ----------------------------------------------------------
+
+    /// Put album ?2 (as sent; keyed lowercased) on person ?1's pile at ?6,
+    /// while they exist. An album already there keeps its row.
+    pub(super) LATER_MARK = "INSERT INTO catalog_later_albums (user_id, \
+             release_group_mbid_lower, release_group_mbid, title, artist_mbid, artist_name, \
+             added_at) \
+         SELECT ?1, lower(?2), ?2, ?3, ?4, ?5, ?6 \
+         WHERE EXISTS (SELECT 1 FROM auth_users WHERE id = ?1) \
+         ON CONFLICT(user_id, release_group_mbid_lower) DO NOTHING";
+    /// Take album ?2 (lowercased) off person ?1's pile.
+    pub(super) LATER_REMOVE = "DELETE FROM catalog_later_albums \
+         WHERE user_id = ?1 AND release_group_mbid_lower = ?2";
+    /// Take every album the library now owns off person ?1's pile.
+    pub(super) LATER_DROP_OWNED = "DELETE FROM catalog_later_albums \
+         WHERE user_id = ?1 AND EXISTS ("
+        + (owns_group!("= +catalog_later_albums.release_group_mbid_lower"))
+        + ")";
+    /// Person ?1's pile as listed: the albums the library does not own.
+    fragment LATER_LISTED = " FROM catalog_later_albums l WHERE l.user_id = ?1 \
+         AND NOT EXISTS ("
+        + (owns_group!("= +l.release_group_mbid_lower"))
+        + ")";
+    /// One page of person ?1's pile, newest first, starting after the row
+    /// added at ?2 with key ?3 (none: the first page), ?4 rows, only album
+    /// ?5 (lowercased) when one is named; each with whether an album request
+    /// for it is open.
+    pub(super) LATER_PAGE = "SELECT l.release_group_mbid_lower AS release_group_mbid_lower, \
+         l.release_group_mbid AS release_group_mbid, l.title AS title, \
+         l.artist_mbid AS artist_mbid, l.artist_name AS artist_name, l.added_at AS added_at, \
+         EXISTS (SELECT 1 FROM request_history \
+             WHERE musicbrainz_id_lower = l.release_group_mbid_lower AND "
+        + OPEN_REQUEST
+        + ") AS requested"
+        + LATER_LISTED
+        + " AND (?5 IS NULL OR l.release_group_mbid_lower = ?5) \
+         AND (?2 IS NULL OR l.added_at < ?2 \
+             OR (l.added_at = ?2 AND l.release_group_mbid_lower < ?3)) \
+         ORDER BY l.added_at DESC, l.release_group_mbid_lower DESC LIMIT ?4";
+    pub(super) row LaterRow for [LATER_PAGE] {
+        release_group_mbid_lower: String,
+        release_group_mbid: String,
+        title: String,
+        artist_mbid: Option<String>,
+        artist_name: String,
+        added_at: Millis,
+        requested: bool,
+    }
+    /// How many albums person ?1's pile lists, only album ?2 (lowercased)
+    /// when one is named.
+    pub(super) LATER_COUNT = "SELECT COUNT(*)"
+        + LATER_LISTED
+        + " AND (?2 IS NULL OR l.release_group_mbid_lower = ?2)";
+    /// Every album on person ?1's pile, lowercased.
+    pub(super) LATER_GROUPS = "SELECT release_group_mbid_lower FROM catalog_later_albums \
+         WHERE user_id = ?1";
+    /// The artists of the albums person ?1's pile lists, one row an artist.
+    pub(super) SEED_LATER = "SELECT lower(l.artist_mbid) AS mbid, MIN(l.artist_name) AS name"
+        + LATER_LISTED
+        + " AND l.artist_mbid IS NOT NULL GROUP BY lower(l.artist_mbid)";
+    pub(super) row SeedLater for [SEED_LATER] {
+        mbid: String,
+        name: String,
+    }
+
     /// Known release to release-group answers.
     family RESOLUTIONS = resolutions;
     pub(super) row ResolutionColumns for family [resolutions] {

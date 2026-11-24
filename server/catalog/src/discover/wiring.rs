@@ -11,8 +11,8 @@ use std::sync::Arc;
 use crate::discover::listening::{ListeningData, ListeningNetwork, LiveNetwork};
 use crate::discover::services::DiscoverDeps;
 use crate::discover::{
-    cache, charts, content, due, engine, facts, forget, home, page, previews, queue, radio, record,
-    scheduler, tunings, youtube,
+    cache, charts, content, due, engine, facts, forget, home, later, page, previews, queue, radio,
+    record, scheduler, tunings, youtube,
 };
 use crate::metadata::library::LocalCatalog;
 use crate::metadata::ports::{NoDetails, NoFollows, NoPurchaseLinks};
@@ -254,6 +254,7 @@ fn deps_with(
         pool,
         evidence: engine::evidence::Evidence::new(inputs.db.clone()),
         tunings: tunings::Tunings::new(inputs.db.clone(), Arc::clone(&inputs.clock), due),
+        later: later::LaterPile::new(inputs.db.clone(), Arc::clone(&inputs.clock)),
     }
 }
 

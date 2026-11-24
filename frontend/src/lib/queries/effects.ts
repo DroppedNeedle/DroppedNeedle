@@ -161,6 +161,14 @@ export const EFFECTS = {
 		{ key: DiscoverQueryKeyFactory.v3.tunings(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.allPickEvidence(userId) }
 	],
+	/**
+	 * The caller put an album on their Later pile or took one off: the pile
+	 * and the Discover page that deals picks around it.
+	 */
+	laterChanged: (userId: UserId): Sweep[] => [
+		{ key: DiscoverQueryKeyFactory.v3.later(userId) },
+		{ key: DiscoverQueryKeyFactory.v3.home(userId) }
+	],
 	/** The admin's artist duplicate groups. */
 	artistDuplicatesChanged: (): Sweep[] => [{ everyScope: ['library', 'artist-reconciliation'] }],
 	/**
@@ -560,6 +568,7 @@ export const concertsChanged = fact('concertsChanged');
 export const wantedChanged = fact('wantedChanged');
 export const recommendationsChanged = fact('recommendationsChanged');
 export const tuningsChanged = fact('tuningsChanged');
+export const laterChanged = fact('laterChanged');
 export const artistDuplicatesChanged = fact('artistDuplicatesChanged');
 export const usersChanged = fact('usersChanged');
 export const userImportCandidatesChanged = fact('userImportCandidatesChanged');
