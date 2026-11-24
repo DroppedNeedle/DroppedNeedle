@@ -15,6 +15,7 @@
 	import BarcodeTicket from '$lib/ui/BarcodeTicket.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
+	import SaveImageButton from './SaveImageButton.svelte';
 	import YearFewPlays from './YearFewPlays.svelte';
 	import YearHero from './YearHero.svelte';
 	import YearMonths from './YearMonths.svelte';
@@ -87,6 +88,7 @@
 					{/if}
 					<YearReceipt {review} />
 					<footer class="yr-page__foot">
+						<SaveImageButton {review} look="outline" />
 						{#if others.length > 0}
 							<nav aria-label="Other years" class="yr-page__years">
 								{#each others as other (other)}

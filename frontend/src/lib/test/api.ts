@@ -52,7 +52,10 @@ export interface FakeRequest {
 
 const replyBrand = Symbol('fakeApiReply');
 
-/** A non-2xx answer, built by `apiError` or `textReply`. A string body is sent as text. */
+/**
+ * An answer that is not plain JSON, built by `apiError`, `textReply` or
+ * `binaryReply`. A string body is sent as text, a Blob as its bytes.
+ */
 export interface FakeReply {
 	readonly [replyBrand]: true;
 	status: number;
@@ -72,6 +75,11 @@ export function apiError(
 /** A non-2xx answer with a plain text body, as a proxy in front of the server sends. */
 export function textReply(status: number, text: string): FakeReply {
 	return { [replyBrand]: true, status, body: text };
+}
+
+/** A 200 with binary bytes under the blob's own content type, as an image route sends. */
+export function binaryReply(bytes: Blob): FakeReply {
+	return { [replyBrand]: true, status: 200, body: bytes };
 }
 
 type Answer<K extends RouteKey> = RouteData<K> | FakeReply;
@@ -255,6 +263,12 @@ export function fakeApi(routes: FakeRoutes): FakeApi {
 			const handler = handlers.get(route.key);
 			const answer = typeof handler === 'function' ? await handler(fake) : handler;
 			if (!isReply(answer)) return jsonResponse(200, answer);
+			if (answer.body instanceof Blob) {
+				return new Response(answer.body, {
+					status: answer.status,
+					headers: { 'Content-Type': answer.body.type }
+				});
+			}
 			return typeof answer.body === 'string'
 				? new Response(answer.body, { status: answer.status })
 				: jsonResponse(answer.status, answer.body);

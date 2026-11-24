@@ -8,6 +8,7 @@ Your year in review is one long page of your own listening for a calendar year: 
 - [What counts](#what-counts)
 - [The calendar](#the-calendar)
 - [Who sees it](#who-sees-it)
+- [Saving an image](#saving-an-image)
 - [Forgetting and deleting](#forgetting-and-deleting)
 
 ## What the page shows
@@ -43,6 +44,10 @@ The year runs from 1 January to 31 December in your device's time zone, so a pla
 Only you. Nobody else can open your year, an admin included, and nothing on the page compares you with anyone else on the server.
 
 The Wrapped API an admin can set up for outside services is a separate thing (see [Wrapped API](accounts-and-sign-in.md#wrapped-api)).
+
+## Saving an image
+
+Save image, at the top of the page and at its foot, draws a picture of your year on your own device in one of two shapes: Story (1080 by 1920) and Square (1080 by 1080, your top album covers with the year and your hours). The story shows the year, your No. 1 album, your top five artists and albums, your hours and how many artists were new to you. It never shows your name, your user name or your server's address. Save downloads it as a PNG. Share opens your device's share sheet where the browser can share files, as on most phones; elsewhere there is only Save. It is always drawn in the dark look, whatever theme you use, and nothing is uploaded.
 
 ## Forgetting and deleting
 

@@ -10,6 +10,7 @@
 	import Tape from '$lib/ui/Tape.svelte';
 	import VinylSleeve from '$lib/ui/VinylSleeve.svelte';
 	import { albumHref } from '$lib/utils/entityRoutes';
+	import SaveImageButton from './SaveImageButton.svelte';
 	import YearSwitch from './YearSwitch.svelte';
 	import { count, day, hours, plays } from './yearFormat';
 
@@ -41,6 +42,7 @@
 		</p>
 		<StatRow {stats} label="Your year in numbers" class="yr-hero__stats" />
 		<div class="yr-hero__actions">
+			<SaveImageButton {review} look="primary" />
 			<YearSwitch {years} year={review.year} />
 		</div>
 	</div>
