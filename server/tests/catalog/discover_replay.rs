@@ -739,9 +739,12 @@ fn imported_listens(db: &Path, user: &str) -> Vec<Listen> {
         .collect()
 }
 
+/// One play: when, artist id, artist name, track name, recording id.
+type PlayRow = (i64, Option<String>, String, String, Option<String>);
+
 /// The person's plays in the app, their artist by its MusicBrainz id.
 fn app_plays(db: &Path, user: &str) -> Vec<Listen> {
-    let rows: Vec<(i64, Option<String>, String, String, Option<String>)> = db.rows(
+    let rows: Vec<PlayRow> = db.rows(
         "SELECT h.played_at, (SELECT lower(ai.provider_artist_id) \
          FROM local_artist_external_identities ai WHERE ai.local_artist_id = h.local_artist_id \
          AND ai.provider = 'musicbrainz' LIMIT 1), h.artist_name, h.track_name, \
