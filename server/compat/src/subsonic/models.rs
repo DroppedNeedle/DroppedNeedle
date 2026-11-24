@@ -454,7 +454,8 @@ pub struct SPlaylist {
     /// Comment.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
-    /// Owner username.
+    /// The caller's username on their own playlists, else the owner's
+    /// chosen display name or empty.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
     /// Public flag.

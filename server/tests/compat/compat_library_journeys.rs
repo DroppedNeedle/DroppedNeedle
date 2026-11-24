@@ -1759,7 +1759,7 @@ async fn cover_type(rig: &CompatApp, id: &str, auth: &str) -> String {
 /// public playlist opens by id, cover included, with the switch on or off,
 /// and a private one not shared with the user never does. An editor
 /// changes a shared playlist's songs from an app, and nothing else, and
-/// the answer names the playlist's owner.
+/// the answer names the playlist's owner only by a name they chose.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn apps_list_other_peoples_public_playlists_only_on_request() {
     let (rig, [_, _, song]) = covered_album("compat-public-playlists").await;
@@ -1979,7 +1979,7 @@ async fn apps_list_other_peoples_public_playlists_only_on_request() {
     assert_eq!(read["playlist"]["songCount"], 2, "{read}");
     let renamed = bob_call(format!("updatePlaylist?playlistId={shared_id}&name=Taken")).await;
     assert_eq!(renamed["status"], "failed", "{renamed}");
-    // Saving its songs whole from bob's app answers with ada as the owner.
+    // Saving its songs whole from bob's app names the owner as the read does.
     let saved = bob_call(format!(
         "createPlaylist?playlistId={shared_id}&songId={song}"
     ))
@@ -2009,6 +2009,108 @@ async fn apps_list_other_peoples_public_playlists_only_on_request() {
     assert_eq!(
         names(&subsonic_playlists(&rig, &ada_subsonic).await),
         ["AdaPrivate", "AdaPublic"]
+    );
+    rig.stop().await;
+}
+
+/// Apps show another user's playlist owner only by the name the owner
+/// chose, else an empty owner. The owner's own lists keep their username.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn other_peoples_playlists_name_their_owner_only_by_a_chosen_name() {
+    let rig = CompatApp::start("compat-playlist-owner").await;
+    let app = &rig.app;
+
+    let ada = app.login_user("ada").await;
+    let bob = app.login_user("bob").await;
+    let ada_headers = [("authorization", ada.authorization.as_str())];
+    let bob_headers = [("authorization", bob.authorization.as_str())];
+    let ada_secret = rig.app_password(&ada.authorization).await;
+    let bob_secret = rig.app_password(&bob.authorization).await;
+    let ada_subsonic = format!("u=ada&p={ada_secret}&v=1.16.1&c=two&f=json");
+    let bob_subsonic = format!("u=bob&p={bob_secret}&v=1.16.1&c=two&f=json");
+
+    let (status, made) = app
+        .call_through_busy(
+            "GET",
+            &rest("createPlaylist?name=AdaPublic", &ada_subsonic),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{made}");
+    let id = made["subsonic-response"]["playlist"]["id"]
+        .as_str()
+        .expect("playlist id")
+        .to_owned();
+    let (status, body) = app
+        .call_through_busy(
+            "GET",
+            &rest(
+                &format!("updatePlaylist?playlistId={id}&public=true"),
+                &ada_subsonic,
+            ),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, saved) = app
+        .call_through_busy(
+            "PUT",
+            "/api/v3/me/connect-apps",
+            &bob_headers,
+            Some(json!({"include_public_playlists": true})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+
+    // The owner an app shows for the playlist: in its list, then by its id.
+    let owner_read_by = async |auth: &str| {
+        let (status, listed) = app
+            .call_through_busy("GET", &rest("getPlaylists", auth), &[], None)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{listed}");
+        let (status, detail) = app
+            .call_through_busy(
+                "GET",
+                &rest(&format!("getPlaylist?id={id}"), auth),
+                &[],
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{detail}");
+        let rows = &listed["subsonic-response"]["playlists"]["playlist"];
+        let in_list = named(rows, "name", "AdaPublic")["owner"].clone();
+        let by_id = detail["subsonic-response"]["playlist"]["owner"].clone();
+        (in_list, by_id)
+    };
+    assert_eq!(
+        owner_read_by(ada_subsonic.as_str()).await,
+        (json!("ada"), json!("ada"))
+    );
+    assert_eq!(
+        owner_read_by(bob_subsonic.as_str()).await,
+        (json!(""), json!(""))
+    );
+
+    // Ada chooses a name under Profile: bob reads it, and her own lists still
+    // carry her username.
+    let (status, renamed) = app
+        .call_through_busy(
+            "PATCH",
+            "/api/v3/me",
+            &ada_headers,
+            Some(json!({"display_name": "Ada Lovelace"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{renamed}");
+    assert_eq!(
+        owner_read_by(ada_subsonic.as_str()).await,
+        (json!("ada"), json!("ada"))
+    );
+    assert_eq!(
+        owner_read_by(bob_subsonic.as_str()).await,
+        (json!("Ada Lovelace"), json!("Ada Lovelace"))
     );
     rig.stop().await;
 }

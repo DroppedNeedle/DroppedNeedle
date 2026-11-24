@@ -44,7 +44,7 @@ pub struct PlaylistRow {
     /// Owning user id. A playlist from v2 with no owner has none.
     pub owner_id: Option<String>,
     /// Owner display name, else username, when the owner still exists:
-    /// what the owner reads, and what compat's playlist owner sends.
+    /// what the owner reads.
     pub owner_name: Option<String>,
     /// The owner's display name when they chose it: the only name of
     /// theirs another user may see.

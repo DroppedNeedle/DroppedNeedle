@@ -79,7 +79,8 @@ pub struct PlaylistSummary {
     pub is_owner: bool,
     /// True when the caller may change its songs.
     pub can_edit: bool,
-    /// Owner display name.
+    /// The owner's display name if they chose it, else empty: all another
+    /// user may see. The caller's own playlists send their username instead.
     pub owner_name: String,
     /// Entries pointing at a library file (#181).
     pub song_count: i64,
@@ -98,7 +99,8 @@ pub struct PlaylistDetail {
     pub is_owner: bool,
     /// True when the caller may change its songs.
     pub can_edit: bool,
-    /// Owner display name.
+    /// The owner's display name if they chose it, else empty: all another
+    /// user may see. The caller's own playlists send their username instead.
     pub owner_name: String,
 }
 

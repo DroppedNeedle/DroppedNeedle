@@ -868,6 +868,8 @@ impl SubsonicStore {
     }
 
     /// The playlists the user may read, with streamable counts (#181).
+    /// `owner_name` is the owner's chosen name, the only one another user
+    /// may see; the owner's own reads use their username.
     pub async fn get_all_playlists(
         &self,
         user_id: &str,
@@ -881,15 +883,16 @@ impl SubsonicStore {
                 record: record(visible),
                 is_owner: visible.is_owner,
                 can_edit: visible.is_owner || visible.row.shared_to_edit,
-                owner_name: visible.row.owner_name.clone().unwrap_or_default(),
+                owner_name: visible.row.owner_listed_name.clone().unwrap_or_default(),
                 song_count: visible.row.streamable_count as i64,
                 duration: visible.row.streamable_duration.round() as i64,
             })
             .collect())
     }
 
-    /// The display name of a playlist's owner when it is someone else's
-    /// the user may read; None when it is theirs or they may not read it.
+    /// The chosen name of the owner of a playlist that is someone else's
+    /// and the user may read, empty when they chose none; None when it is
+    /// the user's own or they may not read it.
     pub async fn other_owner_name(
         &self,
         playlist_id: &str,
@@ -900,10 +903,10 @@ impl SubsonicStore {
             .playlist(user_id, playlist_id)
             .await?
             .filter(|visible| !visible.is_owner)
-            .map(|visible| visible.row.owner_name.unwrap_or_default()))
+            .map(|visible| visible.row.owner_listed_name.unwrap_or_default()))
     }
 
-    /// Playlist detail, or None.
+    /// Playlist detail, or None. `owner_name` is as in `get_all_playlists`.
     pub async fn get_playlist_with_tracks(
         &self,
         playlist_id: &str,
@@ -924,7 +927,7 @@ impl SubsonicStore {
             tracks,
             is_owner: visible.is_owner,
             can_edit: visible.is_owner || visible.row.shared_to_edit,
-            owner_name: visible.row.owner_name.clone().unwrap_or_default(),
+            owner_name: visible.row.owner_listed_name.clone().unwrap_or_default(),
         }))
     }
 
