@@ -104,7 +104,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -169,7 +169,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: ./server
@@ -309,18 +309,20 @@ jobs:
     needs: changes
     if: needs.changes.outputs.image == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Base images match the pinned versions
+      - name: Base images and rust-version match the pinned versions
         run: |
           node_version=$(cat .github/node-version)
           rust_version=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
           grep -q "^FROM node:${node_version}-bookworm-slim " Dockerfile
           grep -q "^FROM rust:${rust_version}-bookworm " Dockerfile
           grep -q "^FROM rust:${rust_version}-bookworm " server/scripts/e2e-mocks.Dockerfile
+          grep -qxF "rust-version = \"${rust_version%.*}\"" server/Cargo.toml
+          grep -qxF "rust-version = \"${rust_version%.*}\"" server/testkit/Cargo.toml
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4

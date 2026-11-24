@@ -30,6 +30,9 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    # The Rust toolchain is bumped by hand, in rust-toolchain.toml.
+    ignore:
+      - dependency-name: "rust"
 
   - package-ecosystem: "github-actions"
     directory: "/"
