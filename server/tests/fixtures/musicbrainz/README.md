@@ -126,3 +126,15 @@ unchanged except re-indented (12 KB in 0.5 s):
 The same `url` include set for `https://en.wikipedia.org/wiki/OK_Computer`
 answered 404 on 2026-10-21. Its body is not kept: the Discogs lookup above is
 the recorded `url` answer.
+
+`sync_isrc_bohemian_rhapsody.json` is a recorded answer, fetched read-only
+from musicbrainz.org on 2026-11-24 with the app's User-Agent
+(`DroppedNeedleApp/v3.1.0 (contact@droppedneedle.com;
+https://www.droppedneedle.com)`): `recording?query=isrc:GBUM71029604&limit=25`,
+410 KB, two recordings with 1 and 356 releases. Every release carried its
+`artist-credit` and its release group, and every group but one its
+`primary-type`. The second recording's releases are cut to six (two
+various-artists compilations, one in a group with no primary type, _A
+Night at the Opera_ twice, a 1975 single and a Queen compilation), each
+kept as it came. A second probe, a title search, was refused with 503 and
+not retried.

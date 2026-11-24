@@ -18,7 +18,8 @@
 //! most [`PASS_LOOKS`] albums up and reads MusicBrainz to file at most
 //! [`PASS_CHECKS`] songs; a song whose album was asked for before is
 //! followed up from the database alone. Albums are looked for whether or
-//! not the owner holds the grant; without it nothing is filed. A full quota or storage ends the walk and is kept as the sync's
+//! not the owner holds the grant; without it nothing is filed and no song
+//! moves. A full quota or storage ends the walk and is kept as the sync's
 //! hold; the song waits for the next pass. A request refused for a reason
 //! that would hold next time has the song looked at again on the look
 //! schedule.
@@ -33,11 +34,12 @@ use droppedneedle_catalog::collections::models::{AlbumPick, FiledKind};
 use droppedneedle_catalog::collections::store::playlists::OpenSourceSong;
 use droppedneedle_catalog::local::stores::StoreError as LibraryStoreError;
 use droppedneedle_kernel::jobs::queue::JobCtx;
+use droppedneedle_providers::ProviderError;
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
 use super::SpotifySync;
 use super::models::SyncHold;
-use crate::imports::spotify_albums::SpotifyAlbum;
+use crate::imports::spotify_albums::{SpotifyAlbum, filed_as_compilation};
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::RequestStatus;
 use crate::requests::models::{AlbumIntake, RequestKind, TrackIntake};
@@ -48,7 +50,7 @@ pub const PASS_SONGS: usize = 25;
 /// Albums one pass looks up, at most.
 pub const PASS_LOOKS: usize = 25;
 /// Songs one pass reads MusicBrainz for to file them, at most: the
-/// song's recording.
+/// compilation rule's ISRC read and the song's recording.
 pub const PASS_CHECKS: usize = 25;
 /// Songs whose library copies are checked in one read.
 const OWNED_CHUNK: usize = 50;
@@ -96,6 +98,18 @@ fn group_of(song: &OpenSourceSong) -> Option<String> {
         .as_deref()
         .map(|group| group.trim().to_ascii_lowercase())
         .filter(|group| is_valid_mbid(group))
+}
+
+/// Spotify's filing of `song`'s album, as the compilation rule reads it.
+fn spotify_filing(song: &OpenSourceSong) -> SpotifyAlbum {
+    SpotifyAlbum {
+        title: song.album.title.clone(),
+        artist: song.album.artist.clone(),
+        kind: song.album.kind.map(|kind| kind.as_str().to_owned()),
+        total_tracks: song.album.tracks,
+        songs: Default::default(),
+        isrcs: Default::default(),
+    }
 }
 
 /// Why a database read stopped the walk.
@@ -265,10 +279,25 @@ impl SpotifySync {
                     done.push(song.song_id.clone());
                     continue;
                 }
-                if checks >= PASS_CHECKS {
+                if checks >= PASS_CHECKS
+                    || (musicbrainz_down && song.isrc.is_some() && song.pick.is_none())
+                {
                     continue;
                 }
                 checks += 1;
+                let group = match self.own_album(playlist_id, song, group).await? {
+                    Owned::Group(group) => group,
+                    Owned::Down => {
+                        musicbrainz_down = true;
+                        continue;
+                    }
+                    Owned::Unreadable => {
+                        self.playlists
+                            .look_again(playlist_id, &song.song_id, next_look(now, song.looks + 1))
+                            .await?;
+                        continue;
+                    }
+                };
                 let filed = if whole_albums {
                     self.file_album(owner, &group, song).await
                 } else {
@@ -349,9 +378,10 @@ impl SpotifySync {
         Ok(walked)
     }
 
-    /// Whether `song`, on Spotify's album `group`, was asked for before:
-    /// its album was asked for, or, with whole albums on, the library owns
-    /// its album. Reads only the database.
+    /// Whether `song`, on Spotify's album `group`, was asked for before
+    /// under a key the compilation rule cannot change: its album was asked
+    /// for, or, with whole albums on and Spotify not filing it as a
+    /// compilation, the library owns its album. Reads only the database.
     async fn covered_before(
         &self,
         song: &OpenSourceSong,
@@ -361,7 +391,10 @@ impl SpotifySync {
         if self.asked_before(RequestKind::Album, group, song).await? {
             return Ok(true);
         }
-        if !whole_albums {
+        let fixed = song.pick.is_some()
+            || song.isrc.is_none()
+            || !filed_as_compilation(&spotify_filing(song));
+        if !(whole_albums && fixed) {
             return Ok(false);
         }
         let groups = vec![group.to_owned()];
@@ -371,6 +404,50 @@ impl SpotifySync {
             .await
             .map_err(|error| RequestsError::internal(&error))?;
         Ok(owned.contains(group))
+    }
+
+    /// The album to ask for `song` on: the artist's own album when Spotify
+    /// files it on a compilation and its ISRC's recording is there
+    /// ([`AlbumResolver::own_group`](crate::imports::spotify_albums::AlbumResolver::own_group)),
+    /// moved on the entry, else `group`. A song a person kept on Spotify's
+    /// album, or one moved before, stays. MusicBrainz out of reach stops
+    /// the pass's MusicBrainz reads; an answer for this song alone that
+    /// could not be read has it looked at again later.
+    async fn own_album(
+        &self,
+        playlist_id: &str,
+        song: &OpenSourceSong,
+        group: String,
+    ) -> Result<Owned, WalkStop> {
+        let Some(isrc) = song.isrc.as_deref().filter(|_| song.pick.is_none()) else {
+            return Ok(Owned::Group(group));
+        };
+        let own = match self.resolver.own_group(&spotify_filing(song), isrc).await {
+            Ok(Some(own)) if own.group != group => own,
+            Ok(_) => return Ok(Owned::Group(group)),
+            Err(error)
+                if error.is_retriable() || matches!(error, ProviderError::NotConfigured { .. }) =>
+            {
+                tracing::warn!(%error, "spotify sync stopped checking compilations this pass");
+                return Ok(Owned::Down);
+            }
+            Err(error) => {
+                tracing::warn!(%error, "spotify sync could not check a compilation's song");
+                return Ok(Owned::Unreadable);
+            }
+        };
+        let moved = self
+            .playlists
+            .move_to_own_album(
+                playlist_id,
+                &song.song_id,
+                &song.entry_id,
+                (&group, &own.group),
+                &own.title,
+                own.recording.as_deref(),
+            )
+            .await?;
+        Ok(Owned::Group(if moved { own.group } else { group }))
     }
 
     /// The ISRCs and recordings among `songs` a library track carries.
@@ -550,6 +627,15 @@ impl SpotifySync {
             }
         }
     }
+}
+
+/// The album a song is asked for on, or why it waits.
+enum Owned {
+    Group(String),
+    /// MusicBrainz is out of reach: no more of its reads this pass.
+    Down,
+    /// MusicBrainz's answer for this song could not be read.
+    Unreadable,
 }
 
 /// What a look for an album found.

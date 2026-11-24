@@ -5,7 +5,9 @@
 //! removed, moved or added back.
 
 use axum::http::StatusCode;
+use droppedneedle_acquire::imports::spotify_albums::{SpotifyAlbum, pick_own_group};
 use droppedneedle_acquire::imports::spotify_oauth::SpotifyConnection;
+use droppedneedle_providers::musicbrainz::models::RecordingSearchHit;
 use droppedneedle_testkit::imports::{
     MockRecorder, MockServer, SPOTIFY_LIKED_DEFAULT, SPOTIFY_REFRESH, SPOTIFY_SCOPES,
     SPOTIFY_TOKEN, SPOTIFY_USER_ID, serve_spotify, spotify_track,
@@ -1005,4 +1007,123 @@ async fn a_waiting_pass_visits_only_songs_without_an_album() {
     assert_eq!(followed, 0, "the song that plays waits for the grant too");
 
     rig.app.stop().await;
+}
+
+/// The recordings MusicBrainz finds for _Bohemian Rhapsody_'s ISRC,
+/// recorded on 2026-11-24 and cut to six releases: two various-artists
+/// compilations (one in an untyped group), _A Night at the Opera_ twice,
+/// a 1975 single and a Queen compilation.
+const BOHEMIAN: &str = include_str!("../fixtures/musicbrainz/sync_isrc_bohemian_rhapsody.json");
+const NIGHT_AT_THE_OPERA: &str = "6b47c9a0-b9e1-3df9-a5e8-50a6ce0dbdbd";
+const THE_1975_SINGLE: &str = "361a28b7-4588-44a6-8c96-86c1efb8258f";
+const ON_THE_ALBUM: &str = "b1a9c0e9-d987-4042-ae91-78d6a3267d69";
+const VARIOUS_ARTISTS: &str = "89ad4ac3-39f7-470e-963a-56509c546377";
+
+/// The fixture's hits, changed by `edit` first.
+fn hits(edit: impl FnOnce(&mut Value)) -> Vec<RecordingSearchHit> {
+    let mut document: Value = serde_json::from_str(BOHEMIAN).expect("the fixture reads");
+    edit(&mut document["recordings"]);
+    serde_json::from_value(document["recordings"].take()).expect("the hits decode")
+}
+
+/// Spotify's filing of the song.
+fn filed(title: &str, artist: &str, kind: &str) -> SpotifyAlbum {
+    SpotifyAlbum {
+        title: title.to_owned(),
+        artist: artist.to_owned(),
+        kind: Some(kind.to_owned()),
+        total_tracks: Some(20),
+        songs: Default::default(),
+        isrcs: Default::default(),
+    }
+}
+
+/// Each release of the fixture's second recording, the one on the album.
+fn releases(recordings: &mut Value) -> &mut Vec<Value> {
+    recordings[1]["releases"].as_array_mut().expect("releases")
+}
+
+/// A song Spotify files on a compilation is asked for on the artist's own
+/// album when its ISRC's recording is there, and only then.
+#[test]
+fn a_compilation_song_moves_to_the_artists_own_album_only_on_proof() {
+    let compilation = filed("Pop Classics", "Various Artists", "compilation");
+    let moved = pick_own_group(&compilation, &hits(|_| {})).expect("moved");
+    assert_eq!(moved.group, NIGHT_AT_THE_OPERA, "album beats single");
+    assert_eq!(moved.title, "A Night at the Opera");
+    assert_eq!(moved.recording.as_deref(), Some(ON_THE_ALBUM));
+
+    let tied = hits(|recordings| {
+        let mut twin = releases(recordings)[2].clone();
+        twin["release-group"]["id"] = json!("a0000000-0000-4000-8000-000000000001");
+        releases(recordings).push(twin);
+    });
+    assert_eq!(
+        pick_own_group(&compilation, &tied),
+        None,
+        "two albums on one date refuse"
+    );
+
+    let coarse = hits(|recordings| {
+        let mut twin = releases(recordings)[2].clone();
+        twin["date"] = json!("1975");
+        twin["release-group"]["id"] = json!("a0000000-0000-4000-8000-000000000003");
+        releases(recordings).push(twin);
+    });
+    assert_eq!(
+        pick_own_group(&compilation, &coarse),
+        None,
+        "a year and a full date in it may be one day: a tie"
+    );
+
+    let credited_elsewhere = hits(|recordings| {
+        for release in releases(recordings).iter_mut() {
+            if release["release-group"]["id"] == NIGHT_AT_THE_OPERA {
+                release["artist-credit"][0]["artist"]["id"] = json!(VARIOUS_ARTISTS);
+            }
+        }
+    });
+    assert_eq!(
+        pick_own_group(&compilation, &credited_elsewhere).map(|own| own.group),
+        Some(THE_1975_SINGLE.to_owned()),
+        "a group credited to another artist is not the artist's own"
+    );
+
+    let special = hits(|recordings| {
+        for recording in recordings.as_array_mut().expect("recordings") {
+            recording["artist-credit"][0]["artist"]["id"] = json!(VARIOUS_ARTISTS);
+        }
+    });
+    assert_eq!(
+        pick_own_group(&compilation, &special),
+        None,
+        "a special-purpose artist refuses"
+    );
+
+    let disagree = hits(|recordings| {
+        recordings[0]["artist-credit"][0]["artist"]["id"] =
+            json!("a0000000-0000-4000-8000-000000000002");
+    });
+    assert_eq!(
+        pick_own_group(&compilation, &disagree),
+        None,
+        "artists that disagree refuse"
+    );
+
+    let soundtrack_only = hits(|recordings| {
+        releases(recordings)
+            .retain(|release| release["artist-credit"][0]["artist"]["id"] == VARIOUS_ARTISTS);
+    });
+    assert_eq!(
+        pick_own_group(&compilation, &soundtrack_only),
+        None,
+        "a recording only on compilations stays as filed"
+    );
+
+    let album = filed("A Night at the Opera", "Queen", "album");
+    assert_eq!(
+        pick_own_group(&album, &hits(|_| {})),
+        None,
+        "an album Spotify files as the artist's own is left alone"
+    );
 }

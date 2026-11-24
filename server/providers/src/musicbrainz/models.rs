@@ -703,6 +703,15 @@ pub struct RecordingSearchRelease {
     /// Release date: the only date a hit has.
     #[serde(default)]
     pub date: Option<String>,
+    /// The release's own artist credit. Verified against
+    /// musicbrainz.org/ws/2/recording on 2026-11-24 with the app's
+    /// User-Agent: a search for `isrc:GBUM71029604` listed 357 releases,
+    /// every one with its `artist-credit`, and every release group with
+    /// its `primary-type` (null on one) and, where it has any, its
+    /// `secondary-types`; cut to six releases in
+    /// tests/fixtures/musicbrainz/sync_isrc_bohemian_rhapsody.json.
+    #[serde(rename = "artist-credit", default)]
+    pub artist_credit: Vec<ArtistCreditName>,
     /// Release-group facet.
     #[serde(rename = "release-group", default)]
     pub release_group: Option<ReleaseGroupRef>,

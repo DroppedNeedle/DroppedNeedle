@@ -828,6 +828,18 @@ Run from the repo root. `make help` lists every target.
   `AlbumResolver`; a song nothing proves shows "No album found yet" and is
   looked for again 1, 3, 7, 14 and 30 days after each look, then every 30
   days. It is never requested by name.
+- A song a Spotify sync asks for whose album Spotify files as a
+  compilation (its type, a "Various Artists" album artist, or MusicBrainz
+  groups under that title all typed Compilation or Soundtrack) is asked
+  for on the artist's own album when MusicBrainz shows a recording with its
+  ISRC there: an official release credited first to the recording's first
+  artist with an id that is not special-purpose, in a group typed Album, EP
+  or Single with no secondary type. Album beats EP beats Single, then the
+  earliest release; a tie, artists that disagree or a credit that can't be
+  read leave the song as Spotify files it. It is worked out in
+  `acquire/src/imports/spotify_albums.rs` (`pick_own_group`) and written
+  onto the playlist entry, whose source row keeps Spotify's album. Names
+  never decide it.
 
 **Discover**
 - Discover's seed artists come from one function, `weighted_seeds`

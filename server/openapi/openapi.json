@@ -49177,6 +49177,13 @@
             "type": "string",
             "description": "The playlist entry."
           },
+          "listed_on": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The album Spotify lists the song on, when a sync asks for it on the\nartist's own album instead."
+          },
           "state": {
             "$ref": "#/components/schemas/PlaylistEntryState",
             "description": "What it waits for."

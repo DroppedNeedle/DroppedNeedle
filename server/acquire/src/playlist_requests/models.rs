@@ -85,6 +85,9 @@ pub struct EntryRequestState {
     pub entry_id: String,
     /// What it waits for.
     pub state: PlaylistEntryState,
+    /// The album Spotify lists the song on, when a sync asks for it on the
+    /// artist's own album instead.
+    pub listed_on: Option<String>,
 }
 
 /// What a playlist's missing songs wait for. Songs with a file or a

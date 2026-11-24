@@ -31,9 +31,10 @@ use serde::{Deserialize, Serialize};
 
 use droppedneedle_kernel::db::fold_text;
 use droppedneedle_kernel::runtime_config::{Live, sections::MusicBrainzSettings};
+use droppedneedle_library::identify::artist_links::placeholder;
 use droppedneedle_providers::cache::{CacheKey, Fetched, Policy, ProviderCacheStore, Source};
 use droppedneedle_providers::musicbrainz::models::{
-    MbRelease, RecordingSearchHit, ReleaseGroupRef, ReleaseSearchHit, Track,
+    ArtistCreditName, MbRelease, RecordingSearchHit, ReleaseGroupRef, ReleaseSearchHit, Track,
 };
 use droppedneedle_providers::musicbrainz::{
     Criticality, MusicBrainzClient, MusicBrainzView, SOURCE, escape_lucene_phrase, is_valid_mbid,
@@ -273,6 +274,25 @@ impl AlbumResolver {
             ),
             cache: self.cache.clone(),
         })
+    }
+
+    /// The artist's own album or single that a song Spotify files on
+    /// `album` is on, by its ISRC ([`pick_own_group`]); none when the rule
+    /// does not move it.
+    ///
+    /// # Errors
+    ///
+    /// A MusicBrainz failure, or settings that cannot be read.
+    pub async fn own_group(
+        &self,
+        album: &SpotifyAlbum,
+        isrc: &str,
+    ) -> Result<Option<OwnGroup>, ProviderError> {
+        let Some(isrc) = clean_isrc(isrc) else {
+            return Ok(None);
+        };
+        let hits = self.isrc_reads()?.hits(&isrc).await?;
+        Ok(pick_own_group(album, &hits))
     }
 
     /// The one recording an ISRC names on release group `group`, when
@@ -848,6 +868,194 @@ fn lists_the_album(
             let song_forms = non_empty_forms(song);
             !song_forms.is_empty() && !song_forms.is_disjoint(&on_release)
         })
+}
+
+/// The artist's own album or single a compilation's song is on, by its
+/// ISRC: the release group, the title of its earliest release among the
+/// hits, and the recording on it when only one hit recording is there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnGroup {
+    /// The release group, lowercased.
+    pub group: String,
+    /// The title of its earliest release among the hits.
+    pub title: String,
+    /// The recording on it, when exactly one of the hits is.
+    pub recording: Option<String>,
+}
+
+/// How an own album ranks: an album before an EP before a single.
+fn own_kind_rank(group: &ReleaseGroupRef) -> Option<u8> {
+    if !group.secondary_types.is_empty() {
+        return None;
+    }
+    match group.primary_type.as_deref() {
+        Some("Album") => Some(0),
+        Some("EP") => Some(1),
+        Some("Single") => Some(2),
+        _ => None,
+    }
+}
+
+/// Whether a group carries the secondary type `want`.
+fn has_secondary(group: &ReleaseGroupRef, want: &str) -> bool {
+    group
+        .secondary_types
+        .iter()
+        .any(|secondary| secondary.eq_ignore_ascii_case(want))
+}
+
+/// The first credited artist with a real MusicBrainz id, lowercased; a
+/// special-purpose artist (Various Artists, unknown) counts as none.
+fn first_real_artist(credit: &[ArtistCreditName]) -> Option<String> {
+    let id = credit
+        .iter()
+        .map(|name| normalize_mb_id(&name.artist.id))
+        .find(|id| is_valid_mbid(id))?;
+    (!placeholder(&id)).then_some(id)
+}
+
+/// Whether Spotify itself files `album` as a compilation: its type, or a
+/// "Various Artists" album artist.
+#[must_use]
+pub fn filed_as_compilation(album: &SpotifyAlbum) -> bool {
+    album
+        .kind
+        .as_deref()
+        .is_some_and(|kind| kind.eq_ignore_ascii_case("compilation"))
+        || title_key(&album.artist) == "various artists"
+}
+
+/// The compilation rule, on the recordings an ISRC search found. A song
+/// Spotify files on `album` as a compilation (its type, a "Various
+/// Artists" album artist, or every group the hits list under the album's
+/// title typed Compilation or Soundtrack) is on the artist's own album
+/// when the hits put the same recording on an official release in a group
+/// typed Album, EP or Single with no secondary type, credited first to the
+/// recordings' first artist, and not one of the groups Spotify's filing
+/// is. Album beats EP beats Single, then the earliest release; two groups
+/// on the earliest date, a group of the best kind with no dated release,
+/// artists that disagree or no artist leave the song as Spotify files it.
+/// Names never decide it: the ISRC is the proof of the same recording.
+pub fn pick_own_group(album: &SpotifyAlbum, hits: &[RecordingSearchHit]) -> Option<OwnGroup> {
+    let forms = non_empty_forms(&album.title);
+    let filing: BTreeMap<String, &ReleaseGroupRef> = hits
+        .iter()
+        .flat_map(|hit| &hit.releases)
+        .filter(|release| {
+            release
+                .title
+                .as_deref()
+                .is_some_and(|title| !non_empty_forms(title).is_disjoint(&forms))
+        })
+        .filter_map(|release| release.release_group.as_ref())
+        .map(|group| (normalize_mb_id(&group.id), group))
+        .collect();
+    let compilation = filed_as_compilation(album)
+        || (!filing.is_empty()
+            && filing.values().all(|group| {
+                has_secondary(group, "Compilation") || has_secondary(group, "Soundtrack")
+            }));
+    if !compilation {
+        return None;
+    }
+    let artists: BTreeSet<Option<String>> = hits
+        .iter()
+        .map(|hit| first_real_artist(&hit.artist_credit))
+        .collect();
+    let artist = match artists.into_iter().collect::<Vec<_>>().as_slice() {
+        [Some(artist)] => artist.clone(),
+        _ => return None,
+    };
+    // Group, rank, its earliest dated release's date and title, whether
+    // any of its releases is undated, and the recordings on it.
+    struct Candidate {
+        rank: u8,
+        earliest: Option<(String, String)>,
+        recordings: BTreeSet<String>,
+    }
+    let mut candidates: BTreeMap<String, Candidate> = BTreeMap::new();
+    for hit in hits {
+        for release in &hit.releases {
+            let Some(group) = release.release_group.as_ref() else {
+                continue;
+            };
+            let id = normalize_mb_id(&group.id);
+            let Some(rank) = own_kind_rank(group) else {
+                continue;
+            };
+            let official = release
+                .status
+                .as_deref()
+                .is_some_and(|status| status.eq_ignore_ascii_case("Official"));
+            if !official
+                || !is_valid_mbid(&id)
+                || filing.contains_key(&id)
+                || first_real_artist(&release.artist_credit).as_deref() != Some(artist.as_str())
+            {
+                continue;
+            }
+            let candidate = candidates.entry(id).or_insert(Candidate {
+                rank,
+                earliest: None,
+                recordings: BTreeSet::new(),
+            });
+            candidate.recordings.insert(normalize_mb_id(&hit.id));
+            let dated = release
+                .date
+                .as_deref()
+                .map(str::trim)
+                .filter(|date| !date.is_empty());
+            if let Some(date) = dated {
+                let title = release.title.clone().unwrap_or_default();
+                if candidate
+                    .earliest
+                    .as_ref()
+                    .is_none_or(|(earliest, _)| date < earliest.as_str())
+                {
+                    candidate.earliest = Some((date.to_owned(), title));
+                }
+            }
+        }
+    }
+    let best = candidates.values().map(|candidate| candidate.rank).min()?;
+    let mut kind: Vec<(&String, &Candidate)> = candidates
+        .iter()
+        .filter(|(_, candidate)| candidate.rank == best)
+        .collect();
+    if kind
+        .iter()
+        .any(|(_, candidate)| candidate.earliest.is_none())
+    {
+        return None;
+    }
+    kind.sort_by(|a, b| a.1.earliest.cmp(&b.1.earliest));
+    let (group, chosen) = kind.first()?;
+    let date = chosen
+        .earliest
+        .as_ref()
+        .map_or("", |(date, _)| date.as_str());
+    // A year and a full date in that year may be the same day: a tie.
+    if kind.get(1).is_some_and(|(_, next)| {
+        next.earliest
+            .as_ref()
+            .is_some_and(|(at, _)| at.starts_with(date))
+    }) {
+        return None;
+    }
+    let mut recordings = chosen.recordings.iter();
+    let recording = match (recordings.next(), recordings.next()) {
+        (Some(recording), None) => Some(recording.clone()),
+        _ => None,
+    };
+    Some(OwnGroup {
+        group: (*group).clone(),
+        title: chosen
+            .earliest
+            .as_ref()
+            .map(|(_, title)| title.clone())
+            .unwrap_or_default(),
+        recording,
+    })
 }
 
 /// A title as the proof compares it, and the key a found album's

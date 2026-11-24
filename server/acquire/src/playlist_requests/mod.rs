@@ -503,6 +503,7 @@ impl PlaylistRequests {
         let (row, tracks) = self.editable(caller, playlist_id).await?;
         let import = self.import_state(&row).await?;
         let queued = self.sync_queue(&row).await?;
+        let mut listed_on = self.playlists.listed_on(playlist_id).await?;
         let finding_albums = self
             .queue
             .latest(IDENTIFY, &identify_key(playlist_id))
@@ -565,6 +566,7 @@ impl PlaylistRequests {
                 }
             };
             entries.push(EntryRequestState {
+                listed_on: listed_on.remove(&track.id),
                 entry_id: track.id.clone(),
                 state,
             });

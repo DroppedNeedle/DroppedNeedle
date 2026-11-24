@@ -1,0 +1,767 @@
+{
+ "created": "2026-11-24T00:45:27.799Z",
+ "count": 2,
+ "offset": 0,
+ "recordings": [
+  {
+   "id": "759d23d2-f48b-4197-a364-d9e00aa27bed",
+   "score": 100,
+   "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+   "title": "Bohemian Rhapsody",
+   "length": 354320,
+   "video": null,
+   "artist-credit": [
+    {
+     "name": "Queen",
+     "artist": {
+      "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+      "name": "Queen",
+      "sort-name": "Queen",
+      "disambiguation": "UK rock group",
+      "aliases": [
+       {
+        "sort-name": "Queen",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "Queen",
+        "locale": "en",
+        "type": "Artist name",
+        "primary": true,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "皇后乐队",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "皇后乐队",
+        "locale": "zh_Hans_CN",
+        "type": "Artist name",
+        "primary": true,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "クイーン",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "クイーン",
+        "locale": "ja",
+        "type": "Artist name",
+        "primary": true,
+        "begin-date": null,
+        "end-date": null
+       }
+      ]
+     }
+    }
+   ],
+   "first-release-date": "2024-10-29",
+   "releases": [
+    {
+     "id": "0cad5787-6259-44d1-8146-16b57592c386",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "949a7fd5-fe73-3e8f-922e-01ff4ca958f7",
+     "count": 1,
+     "title": "Halloween 2026",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "Various Artists",
+       "artist": {
+        "id": "89ad4ac3-39f7-470e-963a-56509c546377",
+        "name": "Various Artists",
+        "sort-name": "Various Artists",
+        "disambiguation": "add compilations to this artist"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "7e489503-f3f2-42b3-9345-6d48f9f9daa2",
+      "type-id": "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "Halloween 2026",
+      "primary-type": "Album",
+      "secondary-types": [
+       "Compilation"
+      ],
+      "secondary-type-ids": [
+       "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ]
+     },
+     "track-count": 51,
+     "media": [
+      {
+       "id": "23d984bc-b44b-49f9-907c-a81b639cb102",
+       "position": 1,
+       "format": "Digital Media",
+       "track": [
+        {
+         "id": "607bd0cb-8979-4527-8bac-fa1af3287b37",
+         "number": "27",
+         "title": "Bohemian Rhapsody",
+         "length": 354320
+        }
+       ],
+       "track-count": 51,
+       "track-offset": 26
+      }
+     ]
+    }
+   ],
+   "isrcs": [
+    "GBUM71029604"
+   ]
+  },
+  {
+   "id": "b1a9c0e9-d987-4042-ae91-78d6a3267d69",
+   "score": 100,
+   "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+   "title": "Bohemian Rhapsody",
+   "length": 355106,
+   "video": null,
+   "artist-credit": [
+    {
+     "name": "Queen",
+     "artist": {
+      "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+      "name": "Queen",
+      "sort-name": "Queen",
+      "disambiguation": "UK rock group",
+      "aliases": [
+       {
+        "sort-name": "Queen",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "Queen",
+        "locale": "en",
+        "type": "Artist name",
+        "primary": true,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "皇后乐队",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "皇后乐队",
+        "locale": "zh_Hans_CN",
+        "type": "Artist name",
+        "primary": true,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "クイーン",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "クイーン",
+        "locale": "ja",
+        "type": "Artist name",
+        "primary": true,
+        "begin-date": null,
+        "end-date": null
+       }
+      ]
+     }
+    }
+   ],
+   "first-release-date": "1975-11-21",
+   "releases": [
+    {
+     "id": "bda7dae2-1212-40e6-83f6-ebbca5e2e569",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "949a7fd5-fe73-3e8f-922e-01ff4ca958f7",
+     "count": 2,
+     "title": "Pop Classics",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "Various Artists",
+       "artist": {
+        "id": "89ad4ac3-39f7-470e-963a-56509c546377",
+        "name": "Various Artists",
+        "sort-name": "Various Artists",
+        "disambiguation": "add compilations to this artist"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "5679aa05-3efc-4bdf-ac5b-084800a5f14f",
+      "title": "Pop Classics",
+      "secondary-types": [
+       "Compilation"
+      ],
+      "secondary-type-ids": [
+       "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ]
+     },
+     "date": "1987",
+     "country": "BE",
+     "release-events": [
+      {
+       "date": "1987",
+       "area": {
+        "id": "5b8a5ee5-0bb3-34cf-9a75-c27c44e341fc",
+        "name": "Belgium",
+        "sort-name": "Belgium",
+        "iso-3166-1-codes": [
+         "BE"
+        ]
+       }
+      },
+      {
+       "date": "1987",
+       "area": {
+        "id": "563d21b7-4a8e-35e2-83a7-7804baefbfa7",
+        "name": "Luxembourg",
+        "sort-name": "Luxembourg",
+        "iso-3166-1-codes": [
+         "LU"
+        ]
+       }
+      },
+      {
+       "date": "1987",
+       "area": {
+        "id": "ef1b7cc0-cd26-36f4-8ea0-04d9623786c7",
+        "name": "Netherlands",
+        "sort-name": "Netherlands",
+        "iso-3166-1-codes": [
+         "NL"
+        ]
+       }
+      }
+     ],
+     "track-count": 24,
+     "media": [
+      {
+       "id": "b87b6a8e-1965-423d-a48c-14b861adefd2",
+       "position": 1,
+       "format": "12\" Vinyl",
+       "track": [
+        {
+         "id": "1bdc76a8-e402-4e1f-b052-7bb6a7d2af84",
+         "number": "A1",
+         "title": "Bohemian Rhapsody"
+        }
+       ],
+       "track-count": 12,
+       "track-offset": 0
+      }
+     ]
+    },
+    {
+     "id": "026309a7-04f2-4966-9c03-4b626040636b",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "949a7fd5-fe73-3e8f-922e-01ff4ca958f7",
+     "count": 3,
+     "title": "The Nation's Favourite 70s Number Ones",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "Various Artists",
+       "artist": {
+        "id": "89ad4ac3-39f7-470e-963a-56509c546377",
+        "name": "Various Artists",
+        "sort-name": "Various Artists",
+        "disambiguation": "add compilations to this artist"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "9ff00f3c-2e4c-4ac0-9b53-b59d415d1a33",
+      "type-id": "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "The Nation’s Favourite 70s Number Ones",
+      "primary-type": "Album",
+      "secondary-types": [
+       "Compilation"
+      ],
+      "secondary-type-ids": [
+       "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ]
+     },
+     "date": "2015",
+     "country": "GB",
+     "release-events": [
+      {
+       "date": "2015",
+       "area": {
+        "id": "8a754a16-0027-3a29-b6d7-2b40ea0481ed",
+        "name": "United Kingdom",
+        "sort-name": "United Kingdom",
+        "iso-3166-1-codes": [
+         "GB"
+        ]
+       }
+      }
+     ],
+     "track-count": 68,
+     "media": [
+      {
+       "id": "376bac81-0bef-4eba-82b8-0a03f82a1937",
+       "position": 1,
+       "format": "CD",
+       "track": [
+        {
+         "id": "45e1fb89-0771-4555-8999-6e5a794e8870",
+         "number": "1",
+         "title": "Bohemian Rhapsody",
+         "length": 356000
+        }
+       ],
+       "track-count": 21,
+       "track-offset": 0
+      }
+     ]
+    },
+    {
+     "id": "492511c2-bc58-4f0c-ba73-7de3befc9710",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+     "count": 1,
+     "title": "A Night at the Opera",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "Queen",
+       "artist": {
+        "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+        "name": "Queen",
+        "sort-name": "Queen",
+        "disambiguation": "UK rock group"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "6b47c9a0-b9e1-3df9-a5e8-50a6ce0dbdbd",
+      "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "A Night at the Opera",
+      "primary-type": "Album"
+     },
+     "date": "1975-11-21",
+     "country": "NL",
+     "release-events": [
+      {
+       "date": "1975-11-21",
+       "area": {
+        "id": "ef1b7cc0-cd26-36f4-8ea0-04d9623786c7",
+        "name": "Netherlands",
+        "sort-name": "Netherlands",
+        "iso-3166-1-codes": [
+         "NL"
+        ]
+       }
+      }
+     ],
+     "track-count": 12,
+     "media": [
+      {
+       "id": "dd8d2e0f-c52d-3b7c-83a2-90ca2da4a7a3",
+       "position": 1,
+       "format": "12\" Vinyl",
+       "track": [
+        {
+         "id": "a25d83e7-6d95-4106-b88a-8d549402e9d5",
+         "number": "B4",
+         "title": "Bohemian Rhapsody",
+         "length": 332000
+        }
+       ],
+       "track-count": 12,
+       "track-offset": 10
+      }
+     ]
+    },
+    {
+     "id": "65263734-d3a6-49d7-af49-03480581ab1c",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+     "count": 1,
+     "title": "A Night at the Opera",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "Queen",
+       "artist": {
+        "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+        "name": "Queen",
+        "sort-name": "Queen",
+        "disambiguation": "UK rock group"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "6b47c9a0-b9e1-3df9-a5e8-50a6ce0dbdbd",
+      "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "A Night at the Opera",
+      "primary-type": "Album"
+     },
+     "date": "1975-11-21",
+     "country": "CA",
+     "release-events": [
+      {
+       "date": "1975-11-21",
+       "area": {
+        "id": "71bbafaa-e825-3e15-8ca9-017dcad1748b",
+        "name": "Canada",
+        "sort-name": "Canada",
+        "iso-3166-1-codes": [
+         "CA"
+        ]
+       }
+      }
+     ],
+     "track-count": 12,
+     "media": [
+      {
+       "id": "34b1e162-6cc7-3a5d-aeb6-cb29bda778ea",
+       "position": 1,
+       "format": "12\" Vinyl",
+       "track": [
+        {
+         "id": "34f06eba-b449-4d8d-858d-1e6068f66fdd",
+         "number": "B4",
+         "title": "Bohemian Rhapsody",
+         "length": 355000
+        }
+       ],
+       "track-count": 12,
+       "track-offset": 10
+      }
+     ]
+    },
+    {
+     "id": "fecc857d-61fd-4ecf-8b3c-d101952c202d",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+     "count": 1,
+     "title": "Bohemian Rhapsody / I’m in Love With My Car",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "Queen",
+       "artist": {
+        "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+        "name": "Queen",
+        "sort-name": "Queen",
+        "disambiguation": "UK rock group"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "361a28b7-4588-44a6-8c96-86c1efb8258f",
+      "type-id": "d6038452-8ee0-3f68-affc-2de9a1ede0b9",
+      "primary-type-id": "d6038452-8ee0-3f68-affc-2de9a1ede0b9",
+      "title": "Bohemian Rhapsody",
+      "primary-type": "Single"
+     },
+     "date": "1975",
+     "country": "NL",
+     "release-events": [
+      {
+       "date": "1975",
+       "area": {
+        "id": "ef1b7cc0-cd26-36f4-8ea0-04d9623786c7",
+        "name": "Netherlands",
+        "sort-name": "Netherlands",
+        "iso-3166-1-codes": [
+         "NL"
+        ]
+       }
+      }
+     ],
+     "track-count": 2,
+     "media": [
+      {
+       "id": "801900ad-c488-34d3-9ddd-de714d73ef65",
+       "position": 1,
+       "format": "7\" Vinyl",
+       "track": [
+        {
+         "id": "a7c3184c-b757-437f-860f-8b5f98833434",
+         "number": "A",
+         "title": "Bohemian Rhapsody",
+         "length": 355893
+        }
+       ],
+       "track-count": 2,
+       "track-offset": 0
+      }
+     ]
+    },
+    {
+     "id": "cbf15d11-119b-4719-ac36-0735952e0e0f",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+     "count": 1,
+     "title": "Absolute Greatest",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "Queen",
+       "artist": {
+        "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+        "name": "Queen",
+        "sort-name": "Queen",
+        "disambiguation": "UK rock group"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "042601ef-61f2-4877-b214-e9e18b1b571e",
+      "type-id": "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "Absolute Greatest",
+      "primary-type": "Album",
+      "secondary-types": [
+       "Compilation"
+      ],
+      "secondary-type-ids": [
+       "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ]
+     },
+     "date": "2015-12-01",
+     "country": "AT",
+     "release-events": [
+      {
+       "date": "2015-12-01",
+       "area": {
+        "id": "caac77d1-a5c8-3e6e-8e27-90b44dcc1446",
+        "name": "Austria",
+        "sort-name": "Austria",
+        "iso-3166-1-codes": [
+         "AT"
+        ]
+       }
+      },
+      {
+       "date": "2015-12-01",
+       "area": {
+        "id": "85752fda-13c4-31a3-bee5-0e5cb1f51dad",
+        "name": "Germany",
+        "sort-name": "Germany",
+        "iso-3166-1-codes": [
+         "DE"
+        ]
+       }
+      },
+      {
+       "date": "2015-12-01",
+       "area": {
+        "id": "1333ff06-8e3d-3c8e-9f3a-13a2a38b41df",
+        "name": "Switzerland",
+        "sort-name": "Switzerland",
+        "iso-3166-1-codes": [
+         "CH"
+        ]
+       }
+      }
+     ],
+     "track-count": 20,
+     "media": [
+      {
+       "id": "c0fc3ee0-93ef-4ae2-a829-04ce40170050",
+       "position": 1,
+       "format": "CD",
+       "track": [
+        {
+         "id": "4f064296-952e-4989-89c6-04a18f365361",
+         "number": "20",
+         "title": "Bohemian Rhapsody",
+         "length": 356626
+        }
+       ],
+       "track-count": 20,
+       "track-offset": 19
+      }
+     ]
+    }
+   ],
+   "isrcs": [
+    "GBCEE7500015",
+    "GBCEE0100112",
+    "GBCEE0900148",
+    "GBCEE9300005",
+    "GBCEE9800022",
+    "GBCEE0500364",
+    "GBUM71029604"
+   ],
+   "tags": [
+    {
+     "count": 13,
+     "name": "rock"
+    },
+    {
+     "count": 1,
+     "name": "pop"
+    },
+    {
+     "count": 1,
+     "name": "alternative rock"
+    },
+    {
+     "count": 8,
+     "name": "progressive rock"
+    },
+    {
+     "count": 1,
+     "name": "heavy metal"
+    },
+    {
+     "count": 0,
+     "name": "band"
+    },
+    {
+     "count": 9,
+     "name": "hard rock"
+    },
+    {
+     "count": 3,
+     "name": "glam rock"
+    },
+    {
+     "count": 4,
+     "name": "art rock"
+    },
+    {
+     "count": 1,
+     "name": "avant-pop"
+    },
+    {
+     "count": 2,
+     "name": "baroque pop"
+    },
+    {
+     "count": 4,
+     "name": "classic rock"
+    },
+    {
+     "count": 5,
+     "name": "album rock"
+    },
+    {
+     "count": 2,
+     "name": "pop rock"
+    },
+    {
+     "count": 0,
+     "name": "symphonic rock"
+    },
+    {
+     "count": 1,
+     "name": "arena rock"
+    },
+    {
+     "count": 1,
+     "name": "beach"
+    },
+    {
+     "count": 2,
+     "name": "rock opera"
+    },
+    {
+     "count": 3,
+     "name": "rock music"
+    },
+    {
+     "count": 1,
+     "name": "glam"
+    },
+    {
+     "count": 1,
+     "name": "eclectic"
+    },
+    {
+     "count": 2,
+     "name": "british metal"
+    },
+    {
+     "count": 1,
+     "name": "rain"
+    },
+    {
+     "count": 1,
+     "name": "calm"
+    },
+    {
+     "count": 1,
+     "name": "dreamy"
+    },
+    {
+     "count": 1,
+     "name": "party"
+    },
+    {
+     "count": 1,
+     "name": "upbeat"
+    },
+    {
+     "count": 1,
+     "name": "summer"
+    },
+    {
+     "count": 1,
+     "name": "emotional"
+    },
+    {
+     "count": 1,
+     "name": "rockin"
+    },
+    {
+     "count": 1,
+     "name": "energetic"
+    },
+    {
+     "count": 3,
+     "name": "classic hard rock"
+    },
+    {
+     "count": 1,
+     "name": "pop music"
+    },
+    {
+     "count": 1,
+     "name": "hanging out"
+    },
+    {
+     "count": 1,
+     "name": "sing along"
+    },
+    {
+     "count": 1,
+     "name": "work"
+    },
+    {
+     "count": 0,
+     "name": "best songs ever"
+    },
+    {
+     "count": 1,
+     "name": "road"
+    },
+    {
+     "count": 0,
+     "name": "rock & roll"
+    },
+    {
+     "count": 0,
+     "name": "pop/rock"
+    },
+    {
+     "count": 0,
+     "name": "contemporary pop/rock"
+    },
+    {
+     "count": 0,
+     "name": "dance-rock"
+    },
+    {
+     "count": 2,
+     "name": "remark/catchy"
+    },
+    {
+     "count": 2,
+     "name": "remark/well-known"
+    }
+   ]
+  }
+ ]
+}

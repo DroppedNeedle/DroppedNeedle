@@ -343,6 +343,25 @@ droppedneedle_kernel::sql! {
     /// The entries of playlist `?1` a sync has not followed up.
     pub(super) OPEN_SOURCE_ENTRIES = "SELECT entry_id FROM catalog_playlist_source_songs \
          WHERE playlist_id = ?1 AND followed_up_at IS NULL AND entry_id IS NOT NULL";
+    /// Give entry `?2` of playlist `?1`, still on release group `?3` with
+    /// no file and no source, the artist's own album `?4`: its cover `?5`,
+    /// its title `?6` and, when known, the recording `?7` on it.
+    pub(super) MOVE_TO_OWN_ALBUM = "UPDATE catalog_playlist_tracks SET album_id = ?4, \
+         cover_url = ?5, album_name = ?6, recording_mbid = ?7 \
+         WHERE id = ?2 AND playlist_id = ?1 AND lower(album_id) = ?3 AND source_type = '' \
+         AND library_file_id IS NULL";
+    /// Playlist `?1`'s source song `?2` was moved off the source's filing.
+    pub(super) PICK_OWN_ALBUM = "UPDATE catalog_playlist_source_songs \
+         SET album_pick = 'own_album' WHERE playlist_id = ?1 AND source_song_id = ?2";
+    /// The source's album of each of playlist `?1`'s entries a sync moved
+    /// to the artist's own album.
+    pub(super) LISTED_ON = "SELECT entry_id, album_title FROM catalog_playlist_source_songs \
+         WHERE playlist_id = ?1 AND album_pick = 'own_album' AND entry_id IS NOT NULL";
+    /// An entry and the album its source lists it on.
+    pub(super) row ListedOn for [LISTED_ON] {
+        entry_id: String,
+        album_title: String,
+    }
     /// A sync followed up playlist `?1`'s source song `?2` at `?3`.
     pub(super) FOLLOW_UP_SOURCE_SONG = "UPDATE catalog_playlist_source_songs \
          SET followed_up_at = ?3 WHERE playlist_id = ?1 AND source_song_id = ?2 \

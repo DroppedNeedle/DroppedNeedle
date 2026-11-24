@@ -15538,6 +15538,11 @@ export interface components {
         EntryRequestState: {
             /** @description The playlist entry. */
             entry_id: string;
+            /**
+             * @description The album Spotify lists the song on, when a sync asks for it on the
+             *     artist's own album instead.
+             */
+            listed_on?: string | null;
             /** @description What it waits for. */
             state: components["schemas"]["PlaylistEntryState"];
         };

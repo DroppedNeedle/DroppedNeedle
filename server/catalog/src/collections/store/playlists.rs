@@ -1061,6 +1061,63 @@ impl PlaylistStore {
             .await
     }
 
+    /// Move `playlist_id`'s entry `entry_id` (source song `song_id`) from
+    /// release group `from` to the artist's own album `to`, titled `title`,
+    /// with `recording` when known, and keep that the sync moved it, in one
+    /// write. An entry that has meanwhile gained a file or a source, or
+    /// another album, is left alone. Answers whether it moved.
+    pub async fn move_to_own_album(
+        &self,
+        playlist_id: &str,
+        song_id: &str,
+        entry_id: &str,
+        (from, to): (&str, &str),
+        title: &str,
+        recording: Option<&str>,
+    ) -> Result<bool, StoreError> {
+        let (playlist_id, song_id, entry_id) = (
+            playlist_id.to_owned(),
+            song_id.to_owned(),
+            entry_id.to_owned(),
+        );
+        let (from, to) = (from.to_ascii_lowercase(), to.to_ascii_lowercase());
+        let cover = entry_cover(&format!("/api/v3/covers/release-group/{to}?size=250"));
+        let (title, recording) = (title.to_owned(), recording.map(str::to_ascii_lowercase));
+        let now = self.db.now_ms();
+        self.db
+            .write("playlists.move_to_own_album", move |tx| {
+                let moved = tx.execute(
+                    sql::MOVE_TO_OWN_ALBUM.text(),
+                    params![playlist_id, entry_id, from, to, cover, title, recording],
+                )? > 0;
+                if moved {
+                    tx.execute(sql::PICK_OWN_ALBUM.text(), params![playlist_id, song_id])?;
+                    tx.execute(sql::STAMP.text(), params![now, playlist_id])?;
+                }
+                Ok(moved)
+            })
+            .await
+    }
+
+    /// The album the source lists each of `playlist_id`'s entries on that
+    /// a sync moved to the artist's own album, by entry.
+    pub async fn listed_on(
+        &self,
+        playlist_id: &str,
+    ) -> Result<std::collections::HashMap<String, String>, StoreError> {
+        let playlist_id = playlist_id.to_owned();
+        self.db
+            .read("playlists.listed_on", move |conn| {
+                let rows = conn
+                    .prepare(sql::LISTED_ON.text())?
+                    .query_map(params![playlist_id], sql::ListedOn::read)?
+                    .map(|row| row.map(|row| (row.entry_id, row.album_title)))
+                    .collect::<rusqlite::Result<_>>()?;
+                Ok(rows)
+            })
+            .await
+    }
+
     /// The owner of `playlist_id` and where it came from, when it has an
     /// owner.
     pub async fn source_of(
