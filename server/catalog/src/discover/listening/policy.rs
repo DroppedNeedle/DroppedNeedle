@@ -89,16 +89,6 @@ impl SourcePolicy {
         self.user.lastfm && self.popularity_down
     }
 
-    /// Where sitewide charts come from: Last.fm for a user who follows it
-    /// and can read it, ListenBrainz (no account needed) otherwise.
-    pub fn sitewide(&self) -> ListenSource {
-        if self.user.lastfm && self.listening() == ListenSource::Lastfm {
-            ListenSource::Lastfm
-        } else {
-            ListenSource::Listenbrainz
-        }
-    }
-
     /// The service that stands in after a ListenBrainz read failed with
     /// `error`: Last.fm, when ListenBrainz is down or limiting and the
     /// user can read Last.fm.

@@ -594,11 +594,7 @@ async fn discover_reads_no_listenbrainz_while_it_is_off() {
     content.trigger_refresh(&user.id).await.expect("refresh");
     let on = settled().await;
     assert!(
-        asked
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|path| path.ends_with("/1/stats/sitewide/artists")),
+        !asked.lock().unwrap().is_empty(),
         "the build read ListenBrainz again"
     );
     assert!(!on.sections.is_empty(), "the shelves fill");
