@@ -288,6 +288,26 @@ pub fn save_slskd(settings: &ConfigStore, url: &str) {
         .expect("slskd connection saves");
 }
 
+/// Save a SABnzbd connection at `url`, turned on, with its downloads
+/// mount at `mount`.
+pub fn save_sabnzbd(settings: &ConfigStore, url: &str, mount: &Path) {
+    use droppedneedle_kernel::runtime_config::secret_sections::{
+        DownloadClients, SabnzbdConnection,
+    };
+    settings
+        .save_secret_blocking(DownloadClients {
+            sabnzbd: SabnzbdConnection {
+                enabled: true,
+                url: url.to_owned(),
+                api_key: "SABKEY".into(),
+                downloads_mount: mount.display().to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .expect("download clients save");
+}
+
 /// As [`worker_over`], on `platform` with plugins on `plugins`, its own
 /// targets and landing, the cleanup warning shown on `health`, and live
 /// progress sent to `events`.
@@ -304,7 +324,6 @@ pub fn worker_with(
     events: droppedneedle_kernel::events::EventHub,
 ) -> Arc<DownloadWorker> {
     let clients = Arc::new(LiveClients::new(
-        platform.http.shared().clone(),
         platform.http.no_redirect().clone(),
         platform.http.same_host_redirects().clone(),
         droppedneedle_providers::Providers::closed().newznab,

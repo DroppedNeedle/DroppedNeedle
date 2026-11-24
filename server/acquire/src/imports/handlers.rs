@@ -36,8 +36,7 @@ use super::error::ImportsError;
 use super::health::{DeemixStatusResponse, HealthProbes};
 use super::jobs::SpotifyImports;
 use super::lidarr::{
-    LIDARR_NOT_CONNECTED, LidarrClient, LidarrError, LidarrImportService, ServiceError,
-    normalize_lidarr_url,
+    LIDARR_NOT_CONNECTED, LidarrClient, LidarrImportService, ServiceError, normalize_lidarr_url,
 };
 use super::models::{
     LidarrArtistListResponse, LidarrConnectionSettings, LidarrImportRequest, LidarrImportResponse,
@@ -51,6 +50,7 @@ use super::spotify_client::{SpotifyClient, SpotifyError, now_unix_secs};
 use super::spotify_oauth::{PendingAuth, SPOTIFY_CALLBACK_PATH, SpotifyConnection, redirect_uri};
 use super::spotify_store::{CollectionsPlaylistBridge, SqliteSpotifyLinks, SqliteSpotifyStates};
 use super::{LIKED_SONGS_NAME, LIKED_SONGS_REF};
+use crate::client_error::ClientError;
 use crate::follows::Follows;
 use crate::requests::error::RequestsError;
 use crate::settings::{ConfigLidarrSettings, ConfigSpotifySettings, settings_failed};
@@ -147,11 +147,19 @@ fn lidarr_failed(error: ServiceError) -> ImportsError {
         ServiceError::NotConnected => ImportsError::NotConfigured {
             message: LIDARR_NOT_CONNECTED.to_owned(),
         },
-        ServiceError::Lidarr(LidarrError::Auth) => ImportsError::AuthFailed {
-            cause: "Lidarr rejected the stored API key".to_owned(),
-        },
-        ServiceError::Lidarr(LidarrError::Unavailable(detail)) => ImportsError::Unavailable {
-            cause: format!("lidarr import failed: {detail}"),
+        ServiceError::Lidarr(
+            error @ (ClientError::Auth { .. }
+            | ClientError::NotFound { .. }
+            | ClientError::BadRequest { .. }
+            | ClientError::Redirected { .. }),
+        ) => {
+            tracing::warn!(%error, "lidarr import refused");
+            ImportsError::LidarrMisconfigured {
+                message: lidarr_message(&error),
+            }
+        }
+        ServiceError::Lidarr(error) => ImportsError::Unavailable {
+            cause: format!("lidarr import failed: {error}"),
         },
         ServiceError::Follows(RequestsError::Busy { operation }) => ImportsError::Busy {
             cause: format!("lidarr import follows: {operation}"),
@@ -159,6 +167,30 @@ fn lidarr_failed(error: ServiceError) -> ImportsError {
         ServiceError::Follows(cause) => ImportsError::internal(&format_args!(
             "lidarr import follow write failed: {cause:?}"
         )),
+    }
+}
+
+/// What a person reads when a Lidarr call failed: one fixed sentence per
+/// kind of failure, never the URL, the key or Lidarr's own words.
+fn lidarr_message(error: &ClientError) -> String {
+    match error {
+        ClientError::Auth { .. } => "Lidarr rejected the API key. Check Settings -> General -> Security -> API Key in Lidarr.".to_owned(),
+        ClientError::NotFound { .. } => {
+            "Lidarr's API isn't at that address. Check the URL and any URL Base.".to_owned()
+        }
+        ClientError::BadRequest { .. } => {
+            "Lidarr refused the request. Check that the URL points at Lidarr.".to_owned()
+        }
+        ClientError::Redirected { .. } => error.to_string(),
+        ClientError::RateLimited { .. } => {
+            "Lidarr is limiting requests. Try again in a minute.".to_owned()
+        }
+        ClientError::Decode { .. } => {
+            "That address didn't answer as Lidarr does. Check the URL and any URL Base.".to_owned()
+        }
+        ClientError::Unavailable { .. } => {
+            "Couldn't reach Lidarr. Check the URL and that Lidarr is running.".to_owned()
+        }
     }
 }
 
@@ -207,22 +239,21 @@ pub async fn test_lidarr(
     }
     let url = normalize_lidarr_url(&body.url);
     let verdict = match deps.lidarr.system_status(&url, &api_key).await {
-        Err(LidarrError::Auth) => Json(LidarrTestResponse {
-            valid: false,
-            version: None,
-            message: "Lidarr rejected the API key. Check Settings -> General -> Security -> API Key in Lidarr.".to_owned(),
-        }),
-        Err(LidarrError::Unavailable(detail)) => {
-            tracing::warn!(%detail, "lidarr test probe failed");
+        Err(error) => {
+            tracing::warn!(%error, "lidarr test probe failed");
             Json(LidarrTestResponse {
                 valid: false,
                 version: None,
-                message: "Couldn't reach Lidarr. Check the URL and that Lidarr is running.".to_owned(),
+                message: lidarr_message(&error),
             })
         }
         Ok(status) => Json(LidarrTestResponse {
             valid: true,
-            version: if status.version.is_empty() { None } else { Some(status.version.clone()) },
+            version: if status.version.is_empty() {
+                None
+            } else {
+                Some(status.version.clone())
+            },
             message: if status.version.is_empty() {
                 "Connected".to_owned()
             } else {
@@ -235,7 +266,10 @@ pub async fn test_lidarr(
 
 /// Monitored Lidarr artists annotated for the caller.
 #[utoipa::path(get, tag = "imports", path = "/api/v3/acquire/lidarr-import/artists",
-    responses((status = 200, description = "Import candidates", body = LidarrArtistListResponse)))]
+    responses(
+        (status = 200, description = "Import candidates", body = LidarrArtistListResponse),
+        (status = 409, description = "Lidarr refused the key or the request, or is not at that address (LIDARR_MISCONFIGURED)"),
+    ))]
 pub async fn list_lidarr_artists(
     State(deps): State<ImportsDeps>,
     admin: Admin,
@@ -251,7 +285,10 @@ pub async fn list_lidarr_artists(
 /// Import selected Lidarr artists into the caller's follows.
 #[utoipa::path(post, tag = "imports", path = "/api/v3/acquire/lidarr-import/import",
     request_body = LidarrImportRequest,
-    responses((status = 200, description = "Import summary", body = LidarrImportResponse)))]
+    responses(
+        (status = 200, description = "Import summary", body = LidarrImportResponse),
+        (status = 409, description = "Lidarr refused the key or the request, or is not at that address (LIDARR_MISCONFIGURED)"),
+    ))]
 pub async fn import_lidarr(
     State(deps): State<ImportsDeps>,
     admin: Admin,

@@ -1,9 +1,11 @@
 //! Import route errors and their one mapping onto [`ApiError`].
 //!
 //! 4xx answers keep their codes and user-safe messages; 401 carries the
-//! `Bearer` challenge. An upstream failure keeps its 502 with the fixed
-//! body, a busy database is `SERVER_BUSY`, and every cause goes to the log
-//! only, written once by the request boundary.
+//! `Bearer` challenge. A Lidarr that refused the key or the request, or
+//! is not at its address, is a 409 with a fixed sentence saying which.
+//! Any other upstream failure keeps its 502 with the fixed body, a busy
+//! database is `SERVER_BUSY`, and every cause goes to the log only,
+//! written once by the request boundary.
 
 use axum::http::StatusCode;
 use droppedneedle_kernel::error::ApiError;
@@ -12,6 +14,8 @@ use droppedneedle_kernel::error::ApiError;
 pub const IMPORT_NOT_CONFIGURED: &str = "IMPORT_NOT_CONFIGURED";
 /// The Spotify link was made before Liked Songs could be read.
 pub const SPOTIFY_RECONNECT_NEEDED: &str = "SPOTIFY_RECONNECT_NEEDED";
+/// Lidarr refused the stored key or the request, or is not at its address.
+pub const LIDARR_MISCONFIGURED: &str = "LIDARR_MISCONFIGURED";
 
 /// Every failure the imports routes can return to a caller.
 #[derive(Debug)]
@@ -35,11 +39,12 @@ pub enum ImportsError {
         /// Which import is missing, e.g. "Lidarr is not connected".
         message: String,
     },
-    /// Upstream rejected the stored credential (502). Reconfigure, do not
-    /// retry. The caller is signed in, so no Bearer challenge.
-    AuthFailed {
-        /// Which import rejected, for the log only.
-        cause: String,
+    /// Lidarr refused the stored key or the request, or is not at the
+    /// stored address (409). Reconfigure, do not retry. The caller is
+    /// signed in, so no Bearer challenge.
+    LidarrMisconfigured {
+        /// The fixed sentence saying what to check.
+        message: String,
     },
     /// Upstream error or unreachable (502).
     Unavailable {
@@ -87,9 +92,10 @@ impl From<ImportsError> for ApiError {
             ImportsError::NotConfigured { message } => {
                 ApiError::new(StatusCode::BAD_REQUEST, IMPORT_NOT_CONFIGURED, message)
             }
-            ImportsError::AuthFailed { cause } | ImportsError::Unavailable { cause } => {
-                ApiError::fault(StatusCode::BAD_GATEWAY, cause)
+            ImportsError::LidarrMisconfigured { message } => {
+                ApiError::new(StatusCode::CONFLICT, LIDARR_MISCONFIGURED, message)
             }
+            ImportsError::Unavailable { cause } => ApiError::fault(StatusCode::BAD_GATEWAY, cause),
             ImportsError::SpotifyPaced { retry_after } => ApiError::unavailable(
                 droppedneedle_kernel::error::Unavailable::Provider {
                     provider: droppedneedle_providers::spotify::SOURCE,

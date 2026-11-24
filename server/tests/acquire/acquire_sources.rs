@@ -372,7 +372,6 @@ async fn a_usenet_job_stays_with_the_client_that_took_it() {
     let rig = UsenetRig::new(&dir).await;
     let http = droppedneedle_kernel::http_client::HttpClientFactory::new().expect("http");
     let clients = LiveClients::new(
-        http.shared().clone(),
         http.no_redirect().clone(),
         http.same_host_redirects().clone(),
         newznab_indexers(),
@@ -959,12 +958,12 @@ async fn indexers_conform() {
     limited("prowlarr", &indexer, || mock.calls().len()).await;
 }
 
-/// slskd and Prowlarr take their key in a header, which a redirect to
-/// another address would carry there. A redirect on the same host (a path
+/// slskd and Prowlarr take their key in a header and SABnzbd in the query,
+/// which a redirect to another address would carry there. A redirect on the same host (a path
 /// moved) is followed with the key; one to another host or port is an
 /// error that names the URL to set, and nothing is sent where it points.
-/// slskd is built as the acquisition clients build it from the saved
-/// settings, Prowlarr over the factory's same-host client.
+/// slskd and SABnzbd are built as the acquisition clients build them from
+/// the saved settings, Prowlarr over the factory's same-host client.
 #[tokio::test]
 async fn a_redirect_takes_no_key_elsewhere() {
     use droppedneedle_acquire::client_error::ClientError;
@@ -992,9 +991,11 @@ async fn a_redirect_takes_no_key_elsewhere() {
     let settings = droppedneedle_acquire::test_support::scratch_settings(&dir.join("settings"))
         .expect("settings open");
     crate::common::acquire::save_slskd(&settings, &slskd.base_url());
+    let sab = SabnzbdMock::new();
+    let (sab_base, _sab_server) = serve_loopback(sab.router()).await.expect("sab serves");
+    crate::common::acquire::save_sabnzbd(&settings, &sab_base, &dir.join("sab"));
     let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
     let clients = LiveClients::new(
-        http.shared().clone(),
         http.no_redirect().clone(),
         http.same_host_redirects().clone(),
         Providers::closed().newznab,
@@ -1025,6 +1026,21 @@ async fn a_redirect_takes_no_key_elsewhere() {
         slskd.statuses().redirect_next(&target);
         let health = repo.health_check().await;
         assert!(!health.ok, "{target}: {}", health.message);
+        assert!(health.message.contains("redirect"), "{}", health.message);
+    }
+
+    let queue = clients
+        .current()
+        .probe_inputs
+        .sabnzbd
+        .clone()
+        .expect("SABnzbd is set up");
+    let health = queue.health_check().await;
+    assert_eq!(health.status, "ok", "SABnzbd answers: {}", health.message);
+    for target in away(&sab_base, "/api") {
+        sab.statuses().redirect_next(&target);
+        let health = queue.health_check().await;
+        assert_ne!(health.status, "ok", "{target}: {}", health.message);
         assert!(health.message.contains("redirect"), "{}", health.message);
     }
 

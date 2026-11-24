@@ -27628,6 +27628,15 @@ export interface operations {
                     "application/json": components["schemas"]["LidarrArtistListResponse"];
                 };
             };
+            /** @description Lidarr refused the key or the request, or is not at that address (LIDARR_MISCONFIGURED) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     get_lidarr_config: {
@@ -27694,6 +27703,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LidarrImportResponse"];
+                };
+            };
+            /** @description Lidarr refused the key or the request, or is not at that address (LIDARR_MISCONFIGURED) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

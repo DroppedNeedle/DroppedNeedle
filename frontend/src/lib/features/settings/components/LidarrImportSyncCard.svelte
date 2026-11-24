@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { ArrowDownToLine, CircleCheck, Lock, RefreshCw } from 'lucide-svelte';
 
+	import { ApiError } from '$lib/api/errors';
 	import ArtistImage from '$lib/media/ArtistImage.svelte';
 	import { getLidarrImportCandidatesQuery } from '$lib/features/settings/queries/lidarr-import.svelte';
 	import { createImportFromLidarrMutation } from '$lib/features/settings/queries/lidarr-import.svelte';
@@ -27,6 +28,15 @@
 	const newCount = $derived(selectable.length);
 	const allSelected = $derived(selectable.length > 0 && selected.length === selectable.length);
 	const importMutation = createImportFromLidarrMutation();
+
+	// A 4xx carries the server's sentence on what to fix; anything else is Lidarr out of reach.
+	const candidatesFailure = $derived.by(() => {
+		const error = candidatesQuery.error;
+		if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+			return error.message;
+		}
+		return "Couldn't reach Lidarr - check the connection above.";
+	});
 
 	// Seed key: the candidate list identity. Reset the pre-check when the list
 	// identity changes (fresh fetch, connection change), but never re-seed once
@@ -97,9 +107,7 @@
 					{/each}
 				</div>
 			{:else if candidatesQuery.isError}
-				<div class="alert alert-error py-2 text-sm">
-					Couldn't reach Lidarr - check the connection above.
-				</div>
+				<div class="alert alert-error py-2 text-sm">{candidatesFailure}</div>
 				<Button size="sm" onclick={() => void candidatesQuery.refetch()}>Retry</Button>
 			{:else if total === 0}
 				<p class="py-6 text-center text-sm text-muted">No monitored artists in Lidarr.</p>

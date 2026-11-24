@@ -23,6 +23,7 @@ use axum::{
 };
 use serde_json::{Value, json};
 
+use crate::scripted::ScriptedStatuses;
 use crate::usenet::ServerGuard;
 
 /// API key the Lidarr mock accepts.
@@ -121,9 +122,16 @@ pub struct MockRecorder {
     limit_playlists: Arc<std::sync::atomic::AtomicBool>,
     refuse_refresh: Arc<Mutex<Option<(u16, &'static str)>>>,
     library: Arc<Mutex<MockLibrary>>,
+    lidarr_statuses: ScriptedStatuses,
 }
 
 impl MockRecorder {
+    /// Statuses the Lidarr mock answers its next requests with, ahead of
+    /// its routes, and the requests it saw.
+    pub fn lidarr_statuses(&self) -> &ScriptedStatuses {
+        &self.lidarr_statuses
+    }
+
     /// Answer every refresh with `status` and the OAuth error `error`:
     /// 400 `invalid_grant` is how Spotify answers a refresh token it no
     /// longer honours, `invalid_client` a wrong app id or secret (with 401
@@ -267,6 +275,7 @@ pub async fn serve_lidarr_with(
         .route("/api/v1/artist", get(lidarr_artists))
         .fallback(lidarr_fallback)
         .with_state(state);
+    let app = recorder.lidarr_statuses().layer(app);
     Ok((serve(app).await?, recorder))
 }
 

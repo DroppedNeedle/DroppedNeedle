@@ -926,7 +926,6 @@ async fn a_rebuild_of_the_clients_keeps_what_the_deezer_source_remembers() {
     ));
     let http = droppedneedle_kernel::http_client::HttpClientFactory::new().expect("http");
     let clients = LiveClients::new(
-        http.shared().clone(),
         http.no_redirect().clone(),
         http.same_host_redirects().clone(),
         Providers::closed().newznab,

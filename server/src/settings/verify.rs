@@ -243,8 +243,9 @@ pub struct LiveProbes {
     /// Outbound client.
     pub http: reqwest::Client,
     /// The factory's client that follows a redirect only on the same host,
-    /// for slskd, Prowlarr and NZBGet: their key or sign-in rides in a
-    /// header a redirect elsewhere would carry to another address.
+    /// for slskd, SABnzbd, Prowlarr and NZBGet: their key or sign-in rides
+    /// in a header or the query, which a redirect elsewhere would carry to
+    /// another address.
     pub same_host: reqwest::Client,
     /// The factory's client that follows no redirect, which the SABnzbd
     /// and NZBGet clients fetch NZB links through.
@@ -712,7 +713,7 @@ impl VerifyProbes for LiveProbes {
                 ..UsenetPolicy::default()
             };
             let client = SabnzbdClient::new(
-                self.http.clone(),
+                self.same_host.clone(),
                 self.no_redirect.clone(),
                 url,
                 key,

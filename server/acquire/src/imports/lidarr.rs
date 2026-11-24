@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use super::models::{LidarrArtistCandidate, LidarrArtistListResponse, LidarrImportResponse};
+use crate::client_error::{ClientError, Service, retry_after};
 use crate::follows::{Follows, ImportArtist};
 use crate::requests::error::RequestsError;
 use crate::settings::ConfigLidarrSettings;
@@ -22,6 +23,9 @@ use droppedneedle_kernel::runtime_config::ConfigError;
 /// artist with its overview and images, so a large library runs to tens
 /// of megabytes.
 const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
+
+/// Largest error answer read, for the short line kept for the log.
+const ERROR_BODY_BYTES: usize = 8 * 1024;
 
 /// True for a well-formed MusicBrainz id: `8-4-4-4-12` lowercase-or-upper
 /// hex, surrounding whitespace ignored, `unknown_` ids rejected.
@@ -65,21 +69,26 @@ pub fn normalize_lidarr_url(raw: &str) -> String {
     url
 }
 
-/// One Lidarr artist row (camelCase, tolerant defaults).
-/// `foreign_artist_id` is the MBID join key; Lidarr's `mbId` is never
-/// populated live and is ignored entirely.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
+/// One Lidarr artist row (camelCase). `foreign_artist_id` is the MBID join
+/// key and required, so a row without it fails the decode; the other
+/// fields default. Lidarr's `mbId` is never populated live and is ignored
+/// entirely.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LidarrArtist {
     /// MusicBrainz artist MBID.
     pub foreign_artist_id: String,
     /// Artist name as Lidarr reports it.
+    #[serde(default)]
     pub artist_name: String,
     /// Monitored in Lidarr.
+    #[serde(default)]
     pub monitored: bool,
     /// `none` or `all`.
+    #[serde(default)]
     pub monitor_new_items: String,
     /// `continuing`, `ended`, ... Imported regardless of status.
+    #[serde(default)]
     pub status: String,
 }
 
@@ -91,17 +100,6 @@ pub struct LidarrSystemStatus {
     pub version: String,
 }
 
-/// Classified Lidarr failure. Transports and decodes collapse to
-/// unreachable; only 401/403 reads as auth.
-#[derive(Debug, Clone, PartialEq)]
-pub enum LidarrError {
-    /// Lidarr rejected the API key (HTTP 401/403).
-    Auth,
-    /// Unreachable, non-2xx, or undecodable. The detail reaches the log
-    /// only; callers render a fixed user-safe summary.
-    Unavailable(String),
-}
-
 /// Read-only Lidarr client: exactly the two sanctioned GETs.
 #[derive(Debug, Clone)]
 pub struct LidarrClient {
@@ -109,9 +107,11 @@ pub struct LidarrClient {
 }
 
 impl LidarrClient {
-    /// Build over a shared outbound client.
-    pub fn new(http: reqwest::Client) -> Self {
-        Self { http }
+    /// Over `same_host`, the factory's client that follows a redirect only
+    /// on the same host: the key rides in a header a redirect elsewhere
+    /// would carry to another address.
+    pub fn new(same_host: reqwest::Client) -> Self {
+        Self { http: same_host }
     }
 
     /// Probe `system/status` with submitted-or-stored credentials.
@@ -119,11 +119,10 @@ impl LidarrClient {
         &self,
         base_url: &str,
         api_key: &str,
-    ) -> Result<LidarrSystemStatus, LidarrError> {
+    ) -> Result<LidarrSystemStatus, ClientError> {
         let body = self.get(base_url, api_key, "/system/status").await?;
-        serde_json::from_slice::<LidarrSystemStatus>(&body).map_err(|cause| {
-            LidarrError::Unavailable(format!("lidarr status decode failed: {cause}"))
-        })
+        serde_json::from_slice::<LidarrSystemStatus>(&body)
+            .map_err(|cause| ClientError::decode(Service::Lidarr, cause.to_string()))
     }
 
     /// Fetch the whole artist catalog for the import.
@@ -131,14 +130,13 @@ impl LidarrClient {
         &self,
         base_url: &str,
         api_key: &str,
-    ) -> Result<Vec<LidarrArtist>, LidarrError> {
+    ) -> Result<Vec<LidarrArtist>, ClientError> {
         let body = self.get(base_url, api_key, "/artist").await?;
-        serde_json::from_slice::<Vec<LidarrArtist>>(&body).map_err(|cause| {
-            LidarrError::Unavailable(format!("lidarr artist decode failed: {cause}"))
-        })
+        serde_json::from_slice::<Vec<LidarrArtist>>(&body)
+            .map_err(|cause| ClientError::decode(Service::Lidarr, cause.to_string()))
     }
 
-    async fn get(&self, base_url: &str, api_key: &str, path: &str) -> Result<Vec<u8>, LidarrError> {
+    async fn get(&self, base_url: &str, api_key: &str, path: &str) -> Result<Vec<u8>, ClientError> {
         let endpoint = format!("{}/api/v1{path}", base_url.trim_end_matches('/'));
         let response = self
             .http
@@ -146,31 +144,31 @@ impl LidarrClient {
             .header("X-Api-Key", api_key)
             .send()
             .await
-            .map_err(|cause| {
-                LidarrError::Unavailable(format!(
-                    "lidarr request failed: {}",
-                    transport_error(cause)
-                ))
-            })?;
+            .map_err(|cause| ClientError::transport(Service::Lidarr, transport_error(cause)))?;
         let status = response.status();
-        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-            return Err(LidarrError::Auth);
-        }
         if !status.is_success() {
-            return Err(LidarrError::Unavailable(format!(
-                "lidarr returned HTTP {}",
-                status.as_u16()
-            )));
+            let wait = retry_after(response.headers());
+            let body = read_capped(response, ERROR_BODY_BYTES)
+                .await
+                .unwrap_or_default();
+            let mut text = String::from_utf8_lossy(&body).into_owned();
+            if !api_key.is_empty() {
+                text = text.replace(api_key, "<redacted>");
+            }
+            return Err(ClientError::for_status(
+                Service::Lidarr,
+                status.as_u16(),
+                wait,
+                text.as_bytes(),
+            ));
         }
         read_capped(response, MAX_BODY_BYTES)
             .await
             .map_err(|cause| match cause {
                 BodyError::TooLarge => {
-                    LidarrError::Unavailable("lidarr answer exceeded the size limit".to_owned())
+                    ClientError::decode(Service::Lidarr, "the answer exceeded the size limit")
                 }
-                BodyError::Transport(cause) => {
-                    LidarrError::Unavailable(format!("lidarr read failed: {cause}"))
-                }
+                BodyError::Transport(cause) => ClientError::transport(Service::Lidarr, cause),
             })
     }
 }
@@ -312,7 +310,7 @@ pub enum ServiceError {
     /// No Lidarr connection configured. User-safe 400.
     NotConnected,
     /// Lidarr fetch failed.
-    Lidarr(LidarrError),
+    Lidarr(ClientError),
     /// The follow write or read failed.
     Follows(RequestsError),
 }

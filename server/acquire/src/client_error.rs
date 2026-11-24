@@ -1,10 +1,12 @@
 //! The one error every download client and indexer maps its HTTP failures
-//! into: slskd, SABnzbd, NZBGet, Newznab and Prowlarr.
+//! into: slskd, SABnzbd, NZBGet, Newznab and Prowlarr, and Lidarr's
+//! import client.
 //!
-//! Statuses map the same way for each: a 3xx is a redirect, which is never
-//! followed, 401 and 403 a refused key, 404 and 410 a missing item, 429 a
-//! rate limit with the server's `Retry-After`, any other 4xx a refused
-//! request, and 5xx or no answer at all an unavailable service. A body
+//! Statuses map the same way for each: a 3xx is a redirect off the host the
+//! request went to, which is never followed, 401 and 403 a refused key, 404
+//! and 410 a missing item, 429 a rate limit with the server's
+//! `Retry-After`, any other 4xx a refused request, and 5xx or no answer at
+//! all an unavailable service. A body
 //! that does not decode is `Decode`. Details never hold a request URL, a
 //! key or a header.
 
@@ -19,6 +21,7 @@ pub enum Service {
     Nzbget,
     Newznab,
     Prowlarr,
+    Lidarr,
 }
 
 impl Service {
@@ -39,6 +42,7 @@ impl fmt::Display for Service {
             Self::Nzbget => "NZBGet",
             Self::Newznab => "Newznab indexer",
             Self::Prowlarr => "Prowlarr",
+            Self::Lidarr => "Lidarr",
         })
     }
 }
@@ -59,7 +63,7 @@ pub enum ClientError {
     /// HTTP 3xx the client did not follow (one off the host the request
     /// went to), so the key sent with the request went to no other address.
     #[error(
-        "{service} answered with a redirect (HTTP {status}), which is not followed: set its URL in Settings to the address it answers on"
+        "{service} answered with a redirect to another address (HTTP {status}), which is not followed: set its URL in Settings to the address it answers on"
     )]
     Redirected { service: Service, status: u16 },
     /// HTTP 404 or 410.

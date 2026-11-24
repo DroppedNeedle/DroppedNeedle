@@ -827,13 +827,11 @@ impl AcquireSetup {
             platform.ids.clone(),
             platform.settings.clone(),
         );
-        let http = platform.http.shared().clone();
         let staging_root = config.imports_dir();
         let quota = Arc::new(QuotaLedger::new(config_store.live(), db.clone()));
         let deemix = DeemixWiring::build(platform, ports.providers.previews.clone());
         let deemix_checks = deemix.checks().clone();
         let clients = Arc::new(LiveClients::new(
-            http.clone(),
             platform.http.no_redirect().clone(),
             platform.http.same_host_redirects().clone(),
             ports.providers.newznab.clone(),
@@ -945,7 +943,7 @@ impl AcquireSetup {
         ));
         let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
         let imports = ImportsDeps {
-            lidarr: LidarrClient::new(http.clone()),
+            lidarr: LidarrClient::new(platform.http.same_host_redirects().clone()),
             lidarr_settings,
             follows: core.requests.follows.clone(),
             spotify: spotify_client,

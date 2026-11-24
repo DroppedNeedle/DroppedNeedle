@@ -55,6 +55,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Lidarr refused the key or the request, or is not at that address (LIDARR_MISCONFIGURED)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -154,6 +164,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/LidarrImportResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Lidarr refused the key or the request, or is not at that address (LIDARR_MISCONFIGURED)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }

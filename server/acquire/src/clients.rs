@@ -71,15 +71,14 @@ struct Built {
 /// after a section it was built from changes, so per-client caches survive
 /// between uses while a saved setting takes effect on the next use.
 pub struct LiveClients {
-    /// The shared client, for SABnzbd.
-    http: reqwest::Client,
     /// The factory's client that follows no redirect, for SABnzbd's client
     /// to fetch an NZB straight from a Prowlarr or plugin release's link,
     /// which checks each hop itself.
     no_redirect: reqwest::Client,
     /// The factory's client that follows a redirect only on the same host,
-    /// for slskd, Prowlarr and NZBGet: their key or sign-in rides in a
-    /// header a redirect elsewhere would carry to another address.
+    /// for slskd, SABnzbd, Prowlarr and NZBGet: their key or sign-in rides
+    /// in a header or the query, which a redirect elsewhere would carry to
+    /// another address.
     same_host: reqwest::Client,
     /// Newznab indexers, called through the providers' executor.
     newznab: NewznabIndexers,
@@ -104,7 +103,6 @@ impl LiveClients {
     /// Deemix session every Deezer source shares.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        http: reqwest::Client,
         no_redirect: reqwest::Client,
         same_host: reqwest::Client,
         newznab: NewznabIndexers,
@@ -116,7 +114,6 @@ impl LiveClients {
         deemix: DeemixWiring,
     ) -> Self {
         Self {
-            http,
             no_redirect,
             same_host,
             newznab,
@@ -193,7 +190,6 @@ impl LiveClients {
     }
 
     fn build(&self, settings: &ClientSettings) -> ClientSet {
-        let http = &self.http;
         // The probes still see the saved clients while the download policy
         // does not read; nothing searches or downloads.
         let readable = settings.policy.is_some();
@@ -211,7 +207,12 @@ impl LiveClients {
             &self.slskd_downloads,
             slskd_policy,
         );
-        let sab_queue = sabnzbd_queue(http, &self.no_redirect, &settings.sabnzbd, &usenet_policy);
+        let sab_queue = sabnzbd_queue(
+            &self.same_host,
+            &self.no_redirect,
+            &settings.sabnzbd,
+            &usenet_policy,
+        );
         let newznab = Arc::new(newznab_indexer(&self.newznab, &settings.indexers));
         let prowlarr = Arc::new(prowlarr_indexer(&self.same_host, &settings.prowlarr));
         let mut sources: Vec<Arc<dyn DownloadSource>> = Vec::new();
@@ -344,7 +345,7 @@ fn slskd_repository(
 }
 
 /// SABnzbd queue, when the section configures one. Its API goes through
-/// `http`, and an NZB fetched from its link through `no_redirect`.
+/// `same_host`, and an NZB fetched from its link through `no_redirect`.
 fn sabnzbd_queue(
     http: &reqwest::Client,
     no_redirect: &reqwest::Client,

@@ -427,7 +427,8 @@ fn looks_like_key(segment: &[u8]) -> bool {
 /// queue/history/delete) and is never logged. Debug is hand-written: the
 /// key never appears in debug output.
 pub struct SabnzbdClient {
-    /// The shared client, for SABnzbd's API.
+    /// The factory's client that follows a redirect only on the same host,
+    /// for SABnzbd's API: the key rides in the query.
     http: Client,
     /// The factory's client that follows no redirect, for an NZB fetched
     /// straight from its link: [`Self::fetch_nzb`] checks each hop.
@@ -450,8 +451,9 @@ impl std::fmt::Debug for SabnzbdClient {
 }
 
 impl SabnzbdClient {
-    /// Build over the injected clients: `http` for the API and `nzb_http`,
-    /// which follows no redirect, for NZB links. `base_url` is the SABnzbd
+    /// Build over the injected clients: `http`, which follows a redirect
+    /// only on the same host, for the API and `nzb_http`, which follows no
+    /// redirect, for NZB links. `base_url` is the SABnzbd
     /// origin (`/api` is appended per call).
     pub fn new(
         http: Client,
@@ -724,7 +726,8 @@ impl SabnzbdClient {
         response: reqwest::Response,
     ) -> Result<serde_json::Value, SabnzbdError> {
         let status = response.status().as_u16();
-        // A 3xx here is a redirect the client did not follow, not an answer.
+        // A 3xx here is a redirect off the host the client refused to
+        // follow, not an answer.
         if status >= 300 {
             let wait = retry_after(response.headers());
             let snippet = response_snippet(response).await;
@@ -1230,6 +1233,11 @@ impl SabnzbdQueue {
                 } else {
                     format!("SABnzbd {version}")
                 },
+            },
+            Err(SabnzbdError::Client(error @ ClientError::Redirected { .. })) => Health {
+                status: "error".to_owned(),
+                version: None,
+                message: error.to_string(),
             },
             Err(err) => {
                 // Health surfaces a plain summary; the technical detail

@@ -153,8 +153,8 @@ There is no quality setting: the quality comes from your quality list and your D
 
 Settings > Lidarr Import (admin) adds the artists your Lidarr monitors to your follows, so their new releases reach you as they would for any [followed artist](downloads.md#following-artists).
 
-1. Enter your Lidarr address and its API key (in Lidarr under Settings > General > Security), Test, then save.
-2. Under Artist sync, every artist Lidarr monitors is listed, except any without a valid MusicBrainz id. Those you already follow are marked Following; the rest are ticked. Untick any you don't want and press Import.
+1. Enter your Lidarr address and its API key (in Lidarr under Settings > General > Security), Test, then save. Include any URL Base you set in Lidarr (for example `http://lidarr:8686/lidarr`). A redirect from Lidarr is followed only on the same host and port, never from https to http, so its key never goes anywhere else: use the address Lidarr answers on.
+2. Under Artist sync, every artist Lidarr monitors is listed, except any whose MusicBrainz id is not a valid one. If Lidarr sends an artist with no MusicBrainz id at all, the list does not load. Those you already follow are marked Following; the rest are ticked. Untick any you don't want and press Import.
 
 When Lidarr monitors every new album of an artist, the list marks it Auto-download, and the new follow gets auto-download turned on. An artist you already follow keeps its own auto-download setting. The follows go to the admin who runs the import. DroppedNeedle only reads Lidarr's status and artist list and changes nothing in Lidarr. It does not sync by itself: open the tab again and import to pick up artists added to Lidarr since.
 

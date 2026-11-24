@@ -78,10 +78,6 @@ impl droppedneedle_kernel::ids::IdGenerator for FixedIdGenerator {
     }
 }
 
-fn http_client() -> reqwest::Client {
-    reqwest::Client::new()
-}
-
 /// The shared providers over the real wire, with Spotify at the given
 /// loopback mocks and every other provider closed.
 fn providers_at(
@@ -142,7 +138,6 @@ fn rig_with(
     plugins: Option<Arc<PluginHost>>,
     job_settings: Option<Arc<droppedneedle_kernel::runtime_config::ConfigStore>>,
 ) -> Rig {
-    let http = http_client();
     let platform = &auth.platform;
     let db = AcquireDb::new(platform.db.clone(), platform.clock.clone());
     let playlists = PlaylistStore::new(CollectionsDb::new(
@@ -188,7 +183,6 @@ fn rig_with(
         )
     });
     let clients = Arc::new(LiveClients::new(
-        platform.http.shared().clone(),
         platform.http.no_redirect().clone(),
         platform.http.same_host_redirects().clone(),
         droppedneedle_providers::Providers::closed().newznab,
@@ -212,7 +206,7 @@ fn rig_with(
     let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
     let worker_settings = Arc::new(WorkerSettings::new(&platform.settings, clients.clone()));
     let deps = ImportsDeps {
-        lidarr: LidarrClient::new(http),
+        lidarr: LidarrClient::new(platform.http.same_host_redirects().clone()),
         lidarr_settings,
         follows,
         spotify: spotify_client,
@@ -412,13 +406,75 @@ async fn lidarr_transport_errors_never_carry_the_url() {
     drop(listener);
     let base = format!("http://127.0.0.1:{port}/{MARKER}");
 
-    let err = LidarrClient::new(http_client())
+    let http = droppedneedle_kernel::http_client::HttpClientFactory::new().expect("http");
+    let err = LidarrClient::new(http.same_host_redirects().clone())
         .system_status(&base, "key")
         .await
         .expect_err("refused");
     let shown = format!("{err:?}");
     assert!(shown.contains("Unavailable"), "{shown}");
     assert!(!shown.contains(MARKER), "{shown}");
+}
+
+/// Lidarr's key stays on Lidarr's host: a redirect to another host or port
+/// is not followed and the Test names it. A base where Lidarr's API isn't
+/// says so on Test, and the candidate list answers that sentence as a 409,
+/// not a 502.
+#[tokio::test]
+async fn lidarr_keeps_its_key_on_its_host_and_says_what_failed() {
+    let (auth, admin_id, _) = seed_rig().await;
+    let (server, recorder) = serve_lidarr().await.expect("mock serves");
+    let (elsewhere, elsewhere_calls) = serve_lidarr().await.expect("mock serves");
+    let bundle = rig_for(&auth, "http://127.0.0.1:1", "http://127.0.0.1:1", None);
+    let test = |url: String| {
+        post_json(
+            authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
+            "/api/v3/acquire/lidarr-import/test",
+            json!({"url": url, "api_key": LIDARR_KEY}),
+        )
+    };
+    let port = reqwest::Url::parse(&server.base_url)
+        .expect("base parses")
+        .port()
+        .expect("port");
+    // The same server under another host name, and another server.
+    for target in [
+        format!("http://localhost:{port}/api/v1/system/status"),
+        format!("{}/api/v1/system/status", elsewhere.base_url),
+    ] {
+        recorder.lidarr_statuses().redirect_next(&target);
+        let (status, body) = test(server.base_url.clone()).await;
+        assert_eq!(status, StatusCode::OK, "{target}: {body}");
+        assert_eq!(body["valid"], false, "{target}: {body}");
+        let message = body["message"].as_str().unwrap_or_default();
+        assert!(message.contains("redirect"), "{target}: {message}");
+    }
+    assert!(
+        recorder.snapshot().lidarr_keys.is_empty(),
+        "the key never reached the mock under another name"
+    );
+    assert_eq!(
+        elsewhere_calls.lidarr_statuses().requests(),
+        0,
+        "no request followed a redirect to another port"
+    );
+
+    const NOT_THERE: &str = "Lidarr's API isn't at that address. Check the URL and any URL Base.";
+    let wrong = format!("{}/wrong", server.base_url);
+    let (status, body) = test(wrong.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["valid"], false, "{body}");
+    assert_eq!(body["message"], NOT_THERE, "{body}");
+
+    seed_lidarr(&auth, &wrong).await;
+    let (status, body) = get_json(
+        authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
+        "/api/v3/acquire/lidarr-import/artists",
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "LIDARR_MISCONFIGURED", "{body}");
+    assert_eq!(body["error"]["message"], NOT_THERE, "{body}");
 }
 
 /// One mock Lidarr: an admin's import follows once and a re-import never
