@@ -120,6 +120,10 @@ struct LinkDocument {
     username: String,
     #[serde(default)]
     spotify_user_id: String,
+    /// The scopes Spotify granted; absent on links made before they were
+    /// kept.
+    #[serde(default)]
+    scopes: String,
 }
 
 impl From<&SpotifyConnection> for LinkDocument {
@@ -130,6 +134,7 @@ impl From<&SpotifyConnection> for LinkDocument {
             expires_at: to_iso(link.expires_at_unix),
             username: link.username.clone(),
             spotify_user_id: link.spotify_user_id.clone(),
+            scopes: link.scopes.clone(),
         }
     }
 }
@@ -233,6 +238,7 @@ impl SqliteSpotifyLinks {
             expires_at_unix: parse_iso(&document.expires_at).unwrap_or(0),
             username: document.username,
             spotify_user_id: document.spotify_user_id,
+            scopes: document.scopes,
         }))
     }
 

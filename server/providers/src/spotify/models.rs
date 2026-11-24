@@ -30,6 +30,12 @@ pub struct TokenAnswer {
     /// Lifetime in seconds.
     #[serde(default)]
     pub expires_in: Option<i64>,
+    /// The scopes granted, space separated. Spotify's authorization code
+    /// and refreshing tokens guides show it on both answers (read
+    /// 2026-11-23; to be checked live). A grant without it keeps the
+    /// scopes stored before.
+    #[serde(default)]
+    pub scope: Option<String>,
 }
 
 /// The current user, `GET /me`.
@@ -131,6 +137,50 @@ pub struct PlaylistInfo {
     /// Cover images, null when none.
     #[serde(default)]
     pub images: Option<Vec<Image>>,
+}
+
+/// A playlist's version, `GET /playlists/{id}?fields=snapshot_id`. The
+/// filter answers only the fields named, so no id comes with it. Read from
+/// Spotify's Get Playlist reference on 2026-11-23 ("the version identifier
+/// for the current playlist"); to be checked live. A missing version reads
+/// as a change, so the songs are read.
+///
+/// Checked against the Spotify mock's `spotify_playlist`.
+#[derive(Debug, Deserialize)]
+pub struct PlaylistVersion {
+    /// Spotify's version of the playlist.
+    #[serde(default)]
+    pub snapshot_id: Option<String>,
+}
+
+/// One page of the caller's Liked Songs, `GET /me/tracks`. Read from
+/// Spotify's Get User's Saved Tracks reference on 2026-11-23 (`items` of
+/// `{added_at, track}`, `next`, `total`; the order is not stated there,
+/// newest first as the app shows it); to be checked live. A page without
+/// its `items` fails, as a playlist page does.
+///
+/// Checked against the Spotify mock's `spotify_saved_tracks`.
+#[derive(Debug, Deserialize)]
+pub struct SavedTrackPage {
+    /// The songs on this page.
+    pub items: Vec<SavedTrack>,
+    /// Address of the next page; null on the last.
+    #[serde(default)]
+    pub next: Option<String>,
+    /// Liked Songs across every page.
+    #[serde(default)]
+    pub total: Option<i64>,
+}
+
+/// One liked song.
+#[derive(Debug, Deserialize)]
+pub struct SavedTrack {
+    /// When it was liked, ISO 8601.
+    #[serde(default)]
+    pub added_at: Option<String>,
+    /// The track. Its `id` key is required, as on a playlist entry.
+    #[serde(default)]
+    pub track: Option<EntryTrack>,
 }
 
 /// One page of a playlist's entries, `GET /playlists/{id}/items`.

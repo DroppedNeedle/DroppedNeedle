@@ -68,6 +68,11 @@ pub enum SpotifyError {
     /// Upstream or network failure, or an answer that does not decode. The
     /// detail reaches the log only.
     Unavailable(String),
+    /// Spotify refused the read (403): a permission the link was not
+    /// granted, or a playlist the user no longer owns or joined.
+    Forbidden,
+    /// Spotify has no such playlist (404).
+    NotFound,
     /// Spotify asked us to slow down.
     RateLimited {
         /// Whole seconds Spotify asked for, when it said.
@@ -85,6 +90,8 @@ fn unavailable(what: &str, error: &ProviderError) -> SpotifyError {
         ProviderError::RateLimited { .. } => SpotifyError::RateLimited {
             retry_after: error.retry_after_secs(),
         },
+        ProviderError::Forbidden { .. } => SpotifyError::Forbidden,
+        ProviderError::NotFound { .. } => SpotifyError::NotFound,
         _ => SpotifyError::Unavailable(format!("{what}: {error}")),
     }
 }
@@ -160,10 +167,17 @@ impl SpotifyClient {
         if refresh_token.is_empty() {
             return Err(SpotifyError::NotLinked);
         }
+        // Spotify answers a refresh token it no longer honours (revoked,
+        // or the app's access removed) with 400 `invalid_grant`, as RFC
+        // 6749 section 5.2 has it (Spotify's refreshing tokens guide, read
+        // 2026-11-23; to be checked live): the link is gone, not Spotify.
         self.api
             .refresh(client_id, client_secret, refresh_token, priority)
             .await
-            .map_err(|error| unavailable("token refresh", &error))
+            .map_err(|error| match error {
+                ProviderError::BadRequest { status: 400, .. } => SpotifyError::NotLinked,
+                error => unavailable("token refresh", &error),
+            })
     }
 
     /// One call with the refresher's token: refresh-then-once on a 401.
@@ -262,6 +276,75 @@ impl SpotifyClient {
         .await
     }
 
+    /// A playlist's version, `None` when Spotify sends none.
+    pub async fn playlist_snapshot(
+        &self,
+        refresher: &TokenRefresher<'_>,
+        playlist_id: &str,
+    ) -> Result<Option<String>, SpotifyError> {
+        let priority = refresher.priority;
+        let version = self
+            .authed(refresher, "playlist version", |token| async move {
+                self.api
+                    .playlist_version(&token, playlist_id, priority)
+                    .await
+            })
+            .await?;
+        Ok(version
+            .snapshot_id
+            .filter(|snapshot| (1..=128).contains(&snapshot.len())))
+    }
+
+    /// One page of Liked Songs from `offset`, newest first, with the same
+    /// skips as a playlist's entries.
+    pub async fn saved_tracks_page(
+        &self,
+        refresher: &TokenRefresher<'_>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<SavedPage, SpotifyError> {
+        let priority = refresher.priority;
+        let page = self
+            .authed(refresher, "liked songs", |token| async move {
+                self.api
+                    .saved_tracks_page(&token, offset, limit, priority)
+                    .await
+            })
+            .await?;
+        let read = page.items.len();
+        let tracks = page
+            .items
+            .into_iter()
+            .filter_map(|saved| saved.track)
+            .filter(importable)
+            .collect();
+        Ok(SavedPage {
+            tracks,
+            more: read > 0 && page.next.is_some(),
+            total: page.total,
+        })
+    }
+
+    /// Every Liked Song, newest first, page by page.
+    pub async fn saved_tracks(
+        &self,
+        refresher: &TokenRefresher<'_>,
+    ) -> Result<Vec<EntryTrack>, SpotifyError> {
+        let mut tracks = Vec::new();
+        let mut offset = 0;
+        loop {
+            let page = self
+                .saved_tracks_page(refresher, offset, LIKED_PAGE)
+                .await?;
+            tracks.extend(page.tracks);
+            if !page.more {
+                break;
+            }
+            offset += LIKED_PAGE;
+        }
+        Ok(tracks)
+    }
+
     /// Playlist tracks, page by page. Each entry carries the track under
     /// `item` (new) or `track` (legacy alias); locals, id-less rows, and
     /// non-track types are skipped.
@@ -289,15 +372,9 @@ impl SpotifyClient {
                 let Some(track) = entry.track.or(entry.item) else {
                     continue;
                 };
-                // Spotify's ids are 22 characters; one past 64 is not a
-                // track id a later read can name again.
-                if !(1..=64).contains(&track.id.as_deref().unwrap_or("").len()) {
-                    continue;
+                if importable(&track) {
+                    tracks.push(track);
                 }
-                if track.kind.as_deref().unwrap_or("track") != "track" {
-                    continue;
-                }
-                tracks.push(track);
             }
             if page_len == 0 || page.next.is_none() {
                 break;
@@ -321,6 +398,28 @@ impl SpotifyClient {
             .await
             .map_err(|error| unavailable("cover fetch", &error))
     }
+}
+
+/// Liked Songs read per page (Spotify's maximum).
+pub const LIKED_PAGE: i64 = 50;
+
+/// One page of Liked Songs.
+#[derive(Debug)]
+pub struct SavedPage {
+    /// Its songs, newest first.
+    pub tracks: Vec<EntryTrack>,
+    /// Another page follows.
+    pub more: bool,
+    /// Liked Songs across every page, when Spotify says.
+    pub total: Option<i64>,
+}
+
+/// Whether a track can be imported: a track (not an episode) with an id.
+/// Spotify's ids are 22 characters; one past 64 is not a track id a later
+/// read can name again.
+fn importable(track: &EntryTrack) -> bool {
+    (1..=64).contains(&track.id.as_deref().unwrap_or("").len())
+        && track.kind.as_deref().unwrap_or("track") == "track"
 }
 
 /// Refreshing token holder behind the authed calls, at the priority of the
@@ -395,6 +494,7 @@ impl<'a> TokenRefresher<'a> {
                 + grant.expires_in_secs,
             username: connection.username,
             spotify_user_id: connection.spotify_user_id,
+            scopes: grant.scope.unwrap_or(connection.scopes),
         };
         let kept = self
             .connections

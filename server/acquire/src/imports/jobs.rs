@@ -225,6 +225,12 @@ impl JobHandler for SpotifyImportJobs {
                     tracing::warn!(%cause, "spotify import fetch failed");
                     UNAVAILABLE
                 }
+                Err(ImportFailure::Spotify(
+                    error @ (SpotifyError::Forbidden | SpotifyError::NotFound),
+                )) => {
+                    tracing::warn!(?error, "spotify import refused");
+                    UNAVAILABLE
+                }
                 // The wait Spotify named decides the next try.
                 Err(ImportFailure::Spotify(SpotifyError::RateLimited { retry_after })) => {
                     return Outcome::Retry {

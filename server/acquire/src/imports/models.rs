@@ -145,6 +145,51 @@ pub struct SpotifyPlaylistItem {
 pub struct SpotifyPlaylistListResponse {
     /// Playlists owned by the caller's Spotify account.
     pub playlists: Vec<SpotifyPlaylistItem>,
+    /// The caller's Liked Songs.
+    pub liked_songs: SpotifyLikedSongs,
+}
+
+/// Whether a Spotify link may read Liked Songs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LikedSongsAccess {
+    /// The link was granted Liked Songs.
+    Ready,
+    /// The link was made before Liked Songs could be read: connect again.
+    NeedsReconnect,
+}
+
+impl LikedSongsAccess {
+    /// What `link` may do.
+    pub fn of(link: &super::spotify_oauth::SpotifyConnection) -> Self {
+        if link.reads_liked_songs() {
+            Self::Ready
+        } else {
+            Self::NeedsReconnect
+        }
+    }
+}
+
+/// The caller's Liked Songs, as the Import page lists them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct SpotifyLikedSongs {
+    /// Whether the link may read them.
+    pub access: LikedSongsAccess,
+    /// How many there are, when the link may read them.
+    pub track_count: Option<i64>,
+    /// Internal playlist id when already imported, else null.
+    pub imported_playlist_id: Option<String>,
+}
+
+/// The caller's own Spotify link.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct SpotifyLink {
+    /// A link is stored.
+    pub linked: bool,
+    /// The Spotify account's display name, when linked.
+    pub username: Option<String>,
+    /// Whether the link may read Liked Songs; null when not linked.
+    pub liked_songs: Option<LikedSongsAccess>,
 }
 
 /// Import start.

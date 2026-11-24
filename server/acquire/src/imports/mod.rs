@@ -19,6 +19,15 @@
 //! [`handlers::routes`]: the OAuth callback in the public group, the rest
 //! behind the session gate.
 
+/// The Spotify ref a Liked Songs import runs under, and the source of its
+/// playlist (`spotify:liked`). Spotify's playlist ids are 22 base-62
+/// characters, so it never names a playlist; the playlist import refuses
+/// it.
+pub const LIKED_SONGS_REF: &str = "liked";
+
+/// The name of the Liked Songs playlist.
+pub const LIKED_SONGS_NAME: &str = "Liked Songs";
+
 pub mod error;
 pub mod handlers;
 pub mod health;

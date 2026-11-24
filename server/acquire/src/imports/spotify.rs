@@ -7,8 +7,12 @@
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
+use super::LIKED_SONGS_REF;
 use super::error::ImportsError;
-use super::models::{SpotifyAuthUrlResponse, SpotifyPlaylistItem, SpotifyPlaylistListResponse};
+use super::models::{
+    LikedSongsAccess, SpotifyAuthUrlResponse, SpotifyLikedSongs, SpotifyPlaylistItem,
+    SpotifyPlaylistListResponse,
+};
 use super::spotify_albums::{AlbumResolver, SpotifyAlbum, clean_isrc};
 use super::spotify_client::{
     SpotifyClient, SpotifyError, TokenRefresher, best_image_url, playlist_track_count,
@@ -234,6 +238,7 @@ impl SpotifyImportService {
         user_id: &str,
     ) -> Result<SpotifyPlaylistListResponse, ImportFailure> {
         let stored = self.link(user_id).await?;
+        let liked_access = LikedSongsAccess::of(&stored);
         let mut spotify_user_id = stored.spotify_user_id.clone();
         // The listing answers a person waiting on the page.
         let refresher = self.refresher(user_id, stored, RequestPriority::UserInitiated)?;
@@ -241,6 +246,19 @@ impl SpotifyImportService {
             spotify_user_id = self.client.current_user(&refresher).await?.id;
         }
         let listed = self.client.user_playlists(&refresher).await?;
+        // One song is enough for the count.
+        let liked_count = match liked_access {
+            LikedSongsAccess::Ready => {
+                match self.client.saved_tracks_page(&refresher, 0, 1).await {
+                    Ok(page) => page.total,
+                    Err(error) => {
+                        tracing::warn!(?error, "spotify liked songs count unavailable");
+                        None
+                    }
+                }
+            }
+            LikedSongsAccess::NeedsReconnect => None,
+        };
 
         let mut imported: HashMap<String, String> = HashMap::new();
         let refs = self
@@ -254,6 +272,11 @@ impl SpotifyImportService {
             }
         }
 
+        let liked_songs = SpotifyLikedSongs {
+            access: liked_access,
+            track_count: liked_count,
+            imported_playlist_id: imported.get(LIKED_SONGS_REF).cloned(),
+        };
         let playlists = listed
             .into_iter()
             .filter(|playlist| playlist.owner.id == spotify_user_id || playlist.collaborative)
@@ -267,7 +290,10 @@ impl SpotifyImportService {
                 id: playlist.id,
             })
             .collect();
-        Ok(SpotifyPlaylistListResponse { playlists })
+        Ok(SpotifyPlaylistListResponse {
+            playlists,
+            liked_songs,
+        })
     }
 
     /// Ensure the internal record for one Spotify playlist: the
@@ -301,7 +327,9 @@ impl SpotifyImportService {
 
     /// Populate one playlist: fetch metadata + tracks, resolve MBIDs,
     /// replace the track rows wholesale, then persist the cover
-    /// best-effort. Returns the tracks written.
+    /// best-effort. Liked Songs ([`LIKED_SONGS_REF`]) reads every page of
+    /// the user's liked songs, newest first, and has no cover. Returns the
+    /// tracks written.
     pub async fn populate_playlist(
         &self,
         user_id: &str,
@@ -316,12 +344,15 @@ impl SpotifyImportService {
             self.link(user_id).await?,
             RequestPriority::BackgroundSync,
         )?;
-        let (info, tracks) = tokio::join!(
-            self.client.playlist(&refresher, spotify_playlist_id),
-            self.client.playlist_tracks(&refresher, spotify_playlist_id)
-        );
-        let info = info?;
-        let tracks = tracks?;
+        let (info, tracks) = if spotify_playlist_id == LIKED_SONGS_REF {
+            (None, self.client.saved_tracks(&refresher).await?)
+        } else {
+            let (info, tracks) = tokio::join!(
+                self.client.playlist(&refresher, spotify_playlist_id),
+                self.client.playlist_tracks(&refresher, spotify_playlist_id)
+            );
+            (Some(info?), tracks?)
+        };
 
         let album_mbid = self.resolve_albums(&tracks).await;
 
@@ -340,9 +371,10 @@ impl SpotifyImportService {
         self.playlists
             .replace_tracks(user_id, playlist_id, &rows)
             .await?;
-        if let CoverOutcome::Skipped(reason) = self
-            .persist_cover(user_id, spotify_playlist_id, playlist_id, &info)
-            .await
+        if let Some(info) = &info
+            && let CoverOutcome::Skipped(reason) = self
+                .persist_cover(user_id, spotify_playlist_id, playlist_id, info)
+                .await
         {
             tracing::debug!(%reason, "spotify playlist imported without a cover");
         }

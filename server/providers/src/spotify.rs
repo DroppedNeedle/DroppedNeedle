@@ -24,7 +24,10 @@ use crate::executor::{Backoff, Executor, Request, Spec, Url, standard_classify};
 
 pub mod models;
 
-use models::{EntryPage, EntryTrack, PlaylistInfo, PlaylistPage, Profile, TokenAnswer};
+use models::{
+    EntryPage, EntryTrack, PlaylistInfo, PlaylistPage, PlaylistVersion, Profile, SavedTrackPage,
+    TokenAnswer,
+};
 
 /// The provider name errors carry, and its rate row.
 pub const SOURCE: &str = "spotify";
@@ -32,8 +35,12 @@ pub const SOURCE: &str = "spotify";
 pub const API_BASE: &str = "https://api.spotify.com/v1";
 /// Spotify accounts origin: the authorize page and the token grants.
 pub const ACCOUNTS_BASE: &str = "https://accounts.spotify.com";
-/// OAuth scopes the import asks for.
-pub const SCOPES: &str = "playlist-read-private playlist-read-collaborative user-read-private";
+/// OAuth scopes the import asks for. `user-library-read` reads Liked
+/// Songs.
+pub const SCOPES: &str =
+    "playlist-read-private playlist-read-collaborative user-read-private user-library-read";
+/// The scope that reads Liked Songs.
+pub const LIKED_SONGS_SCOPE: &str = "user-library-read";
 /// Largest Web API or accounts answer read.
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 /// Playlists read per page of the caller's list (Spotify's maximum).
@@ -76,6 +83,8 @@ pub struct TokenGrant {
     pub refresh_token: Option<String>,
     /// Lifetime in seconds (default 3600).
     pub expires_in_secs: i64,
+    /// The scopes granted, space separated, when the grant names them.
+    pub scope: Option<String>,
 }
 
 impl std::fmt::Debug for TokenGrant {
@@ -87,6 +96,7 @@ impl std::fmt::Debug for TokenGrant {
                 &self.refresh_token.as_ref().map(|_| "<redacted>"),
             )
             .field("expires_in_secs", &self.expires_in_secs)
+            .field("scope", &self.scope)
             .finish()
     }
 }
@@ -97,6 +107,7 @@ impl From<TokenAnswer> for TokenGrant {
             access_token: answer.access_token,
             refresh_token: answer.refresh_token,
             expires_in_secs: answer.expires_in.unwrap_or(3600),
+            scope: answer.scope,
         }
     }
 }
@@ -363,6 +374,52 @@ impl SpotifyClient {
             access_token,
             &["playlists", playlist_id],
             &[("fields", "id,name,images,tracks.total")],
+            priority,
+        )
+        .await
+    }
+
+    /// A playlist's version (`GET /playlists/{id}?fields=snapshot_id`),
+    /// which changes when its songs do. Snapshot check from Meliadolin's
+    /// PR 832.
+    ///
+    /// # Errors
+    ///
+    /// As [`SpotifyClient::me`].
+    pub async fn playlist_version(
+        &self,
+        access_token: &str,
+        playlist_id: &str,
+        priority: RequestPriority,
+    ) -> Result<PlaylistVersion, ProviderError> {
+        self.get(
+            access_token,
+            &["playlists", playlist_id],
+            &[("fields", "snapshot_id")],
+            priority,
+        )
+        .await
+    }
+
+    /// One page of the caller's Liked Songs (`GET /me/tracks`), from
+    /// `offset`, `limit` (1 to 50) at a time. Needs the
+    /// [`LIKED_SONGS_SCOPE`]; without it Spotify answers 403.
+    ///
+    /// # Errors
+    ///
+    /// As [`SpotifyClient::me`].
+    pub async fn saved_tracks_page(
+        &self,
+        access_token: &str,
+        offset: i64,
+        limit: i64,
+        priority: RequestPriority,
+    ) -> Result<SavedTrackPage, ProviderError> {
+        let (limit, offset) = (limit.clamp(1, 50).to_string(), offset.to_string());
+        self.get(
+            access_token,
+            &["me", "tracks"],
+            &[("limit", &limit), ("offset", &offset)],
             priority,
         )
         .await

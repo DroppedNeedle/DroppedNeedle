@@ -10,6 +10,8 @@ use droppedneedle_kernel::error::ApiError;
 
 /// No connection or settings stored for this import (Lidarr/Spotify).
 pub const IMPORT_NOT_CONFIGURED: &str = "IMPORT_NOT_CONFIGURED";
+/// The Spotify link was made before Liked Songs could be read.
+pub const SPOTIFY_RECONNECT_NEEDED: &str = "SPOTIFY_RECONNECT_NEEDED";
 
 /// Every failure the imports routes can return to a caller.
 #[derive(Debug)]
@@ -26,6 +28,8 @@ pub enum ImportsError {
         /// What was wrong.
         message: String,
     },
+    /// The Spotify link cannot read Liked Songs: connect again.
+    ReconnectNeeded,
     /// Import has no stored connection.
     NotConfigured {
         /// Which import is missing, e.g. "Lidarr is not connected".
@@ -75,6 +79,11 @@ impl From<ImportsError> for ApiError {
             ImportsError::NotFound => ApiError::not_found(),
             ImportsError::InvalidInput { message } => ApiError::invalid_input(message),
             ImportsError::Conflict { message } => ApiError::conflict(message),
+            ImportsError::ReconnectNeeded => ApiError::new(
+                StatusCode::CONFLICT,
+                SPOTIFY_RECONNECT_NEEDED,
+                "Reconnect Spotify on your Profile to import Liked Songs.",
+            ),
             ImportsError::NotConfigured { message } => {
                 ApiError::new(StatusCode::BAD_REQUEST, IMPORT_NOT_CONFIGURED, message)
             }

@@ -374,6 +374,102 @@
         ]
       }
     },
+    "/api/v3/acquire/spotify/liked-songs/import": {
+      "post": {
+        "tags": [
+          "imports"
+        ],
+        "summary": "Import the caller's Liked Songs as a playlist named \"Liked Songs\":\nensure the record, queue the import unless one is queued or running,\nand answer the id at once. A link made before Liked Songs could be read\nis refused until the caller reconnects.",
+        "operationId": "import_liked_songs",
+        "responses": {
+          "200": {
+            "description": "Import acknowledgement",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpotifyImportResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Spotify is not linked (IMPORT_NOT_CONFIGURED)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The link cannot read Liked Songs (SPOTIFY_RECONNECT_NEEDED)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/acquire/spotify/link": {
+      "get": {
+        "tags": [
+          "imports"
+        ],
+        "summary": "The caller's own Spotify link: whether there is one, and whether it may\nread Liked Songs. Asks Spotify nothing.",
+        "operationId": "get_spotify_link",
+        "responses": {
+          "200": {
+            "description": "The caller's link",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpotifyLink"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/acquire/spotify/playlists": {
       "get": {
         "tags": [
@@ -54080,6 +54176,14 @@
           }
         }
       },
+      "LikedSongsAccess": {
+        "type": "string",
+        "description": "Whether a Spotify link may read Liked Songs.",
+        "enum": [
+          "ready",
+          "needs_reconnect"
+        ]
+      },
       "LinkedAccount": {
         "type": "object",
         "description": "One account the caller linked, on any service. Never carries the\nstored secret.",
@@ -70011,6 +70115,65 @@
           }
         }
       },
+      "SpotifyLikedSongs": {
+        "type": "object",
+        "description": "The caller's Liked Songs, as the Import page lists them.",
+        "required": [
+          "access"
+        ],
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/LikedSongsAccess",
+            "description": "Whether the link may read them."
+          },
+          "imported_playlist_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Internal playlist id when already imported, else null."
+          },
+          "track_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "How many there are, when the link may read them."
+          }
+        }
+      },
+      "SpotifyLink": {
+        "type": "object",
+        "description": "The caller's own Spotify link.",
+        "required": [
+          "linked"
+        ],
+        "properties": {
+          "liked_songs": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LikedSongsAccess"
+              }
+            ],
+            "description": "Whether the link may read Liked Songs; null when not linked."
+          },
+          "linked": {
+            "type": "boolean",
+            "description": "A link is stored."
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Spotify account's display name, when linked."
+          }
+        }
+      },
       "SpotifyPlaylistItem": {
         "type": "object",
         "description": "One owned Spotify playlist.",
@@ -70063,9 +70226,14 @@
         "type": "object",
         "description": "Owned playlists.",
         "required": [
-          "playlists"
+          "playlists",
+          "liked_songs"
         ],
         "properties": {
+          "liked_songs": {
+            "$ref": "#/components/schemas/SpotifyLikedSongs",
+            "description": "The caller's Liked Songs."
+          },
           "playlists": {
             "type": "array",
             "items": {

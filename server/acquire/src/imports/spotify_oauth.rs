@@ -54,6 +54,19 @@ pub struct SpotifyConnection {
     pub username: String,
     /// Spotify user id, seeding the owner filter.
     pub spotify_user_id: String,
+    /// The scopes Spotify granted, space separated. Empty on a link made
+    /// before they were kept, which was granted the older list without
+    /// Liked Songs.
+    pub scopes: String,
+}
+
+impl SpotifyConnection {
+    /// Whether the link may read the user's Liked Songs.
+    pub fn reads_liked_songs(&self) -> bool {
+        self.scopes
+            .split_whitespace()
+            .any(|scope| scope == droppedneedle_providers::spotify::LIKED_SONGS_SCOPE)
+    }
 }
 
 impl std::fmt::Debug for SpotifyConnection {
@@ -64,6 +77,7 @@ impl std::fmt::Debug for SpotifyConnection {
             .field("expires_at_unix", &self.expires_at_unix)
             .field("username", &self.username)
             .field("spotify_user_id", &self.spotify_user_id)
+            .field("scopes", &self.scopes)
             .finish()
     }
 }

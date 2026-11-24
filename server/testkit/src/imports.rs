@@ -83,14 +83,97 @@ pub struct RecordedCalls {
 pub const SPOTIFY_REGISTERED_REDIRECT: &str =
     "http://app.test/api/v3/acquire/spotify/auth/callback";
 
+/// The scopes the mock's token answers name: every scope the app asks for.
+pub const SPOTIFY_SCOPES: &str =
+    "playlist-read-private playlist-read-collaborative user-read-private user-library-read";
+
+/// Liked Songs the mock lists until a test sets its own: more than one
+/// page of 50.
+pub const SPOTIFY_LIKED_DEFAULT: usize = 52;
+
+/// What a test sets on the mock's Spotify library: Liked Songs, newest
+/// first, and playlists whose version and songs it changes as it goes.
+#[derive(Debug, Default)]
+struct MockLibrary {
+    liked: Option<Vec<Value>>,
+    playlists: HashMap<String, (String, Vec<Value>)>,
+}
+
+/// One Spotify track in the shape the Web API sends, on an album of its
+/// own artist.
+pub fn spotify_track(id: &str, name: &str, artist: &str, album: (&str, &str), isrc: &str) -> Value {
+    json!({
+        "id": id, "type": "track", "name": name,
+        "artists": [{"name": artist}],
+        "album": {
+            "id": album.0, "name": album.1, "images": [],
+            "artists": [{"name": artist}], "album_type": "album", "total_tracks": 10,
+        },
+        "external_ids": {"isrc": isrc},
+        "track_number": 1, "disc_number": 1, "duration_ms": 200_000,
+    })
+}
+
 /// Cloneable recorder handle shared by a mock app and its test.
 #[derive(Debug, Clone, Default)]
 pub struct MockRecorder {
     inner: Arc<Mutex<RecordedCalls>>,
     limit_playlists: Arc<std::sync::atomic::AtomicBool>,
+    refuse_refresh: Arc<std::sync::atomic::AtomicBool>,
+    library: Arc<Mutex<MockLibrary>>,
 }
 
 impl MockRecorder {
+    /// Answer every refresh with 400 `invalid_grant`, as Spotify answers a
+    /// refresh token it no longer honours.
+    pub fn refuse_refresh(&self) {
+        self.refuse_refresh
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// List `tracks` as the Liked Songs, newest first.
+    pub fn set_liked(&self, tracks: Vec<Value>) {
+        if let Ok(mut library) = self.library.lock() {
+            library.liked = Some(tracks);
+        }
+    }
+
+    /// Serve playlist `id` at version `snapshot` with `tracks`, in order.
+    pub fn set_playlist(&self, id: &str, snapshot: &str, tracks: Vec<Value>) {
+        if let Ok(mut library) = self.library.lock() {
+            library
+                .playlists
+                .insert(id.to_owned(), (snapshot.to_owned(), tracks));
+        }
+    }
+
+    fn liked(&self) -> Vec<Value> {
+        self.library
+            .lock()
+            .ok()
+            .and_then(|library| library.liked.clone())
+            .unwrap_or_else(|| {
+                (0..SPOTIFY_LIKED_DEFAULT)
+                    .map(|n| {
+                        spotify_track(
+                            &format!("sp-liked-{n}"),
+                            &format!("Liked {n}"),
+                            "Aurora Current",
+                            ("sp-album-liked", "Liked Album"),
+                            &format!("QZLIK26{n:05}"),
+                        )
+                    })
+                    .collect()
+            })
+    }
+
+    fn playlist(&self, id: &str) -> Option<(String, Vec<Value>)> {
+        self.library
+            .lock()
+            .ok()
+            .and_then(|library| library.playlists.get(id).cloned())
+    }
+
     /// Answer `/me/playlists` with a 429 asking for seven seconds from now on.
     pub fn limit_playlists(&self) {
         self.limit_playlists
@@ -260,6 +343,7 @@ pub async fn serve_spotify()
     let api = axum::Router::new()
         .route("/me", get(spotify_me))
         .route("/me/playlists", get(spotify_playlists))
+        .route("/me/tracks", get(spotify_saved_tracks))
         .route("/playlists/{id}", get(spotify_playlist))
         .route("/playlists/{id}/items", get(spotify_items))
         .route("/playlists/{id}/tracks", get(spotify_tracks_tombstone))
@@ -391,16 +475,68 @@ async fn spotify_playlists(
     Json(json!({"items": items, "total": total, "limit": limit, "offset": offset})).into_response()
 }
 
+async fn spotify_saved_tracks(
+    State(state): State<SpotifyState>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    state
+        .recorder
+        .record(|calls| calls.spotify_paths.push("/me/tracks".to_owned()));
+    if !spotify_authed(&headers) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let offset: usize = params
+        .get("offset")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0);
+    let limit: usize = params
+        .get("limit")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(20);
+    let all = state.recorder.liked();
+    let total = all.len();
+    let items: Vec<Value> = all
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .map(|track| json!({"added_at": "2026-11-20T10:00:00Z", "track": track}))
+        .collect();
+    let next = (offset + limit < total).then(|| {
+        format!(
+            "https://api.spotify.com/v1/me/tracks?offset={}&limit={limit}",
+            offset + limit
+        )
+    });
+    Json(json!({"items": items, "next": next, "total": total, "limit": limit, "offset": offset}))
+        .into_response()
+}
+
 async fn spotify_playlist(
     State(state): State<SpotifyState>,
     headers: HeaderMap,
     Path(id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Response {
     state
         .recorder
         .record(|calls| calls.spotify_paths.push(format!("/playlists/{id}")));
     if !spotify_authed(&headers) {
         return StatusCode::UNAUTHORIZED.into_response();
+    }
+    // The `fields` filter answers only the version, with no id.
+    if params
+        .get("fields")
+        .is_some_and(|fields| fields == "snapshot_id")
+    {
+        return match state.recorder.playlist(&id) {
+            Some((snapshot, _)) => Json(json!({"snapshot_id": snapshot})).into_response(),
+            None if id == "sp-playlist-1" => Json(json!({"snapshot_id": "snap-1"})).into_response(),
+            None => StatusCode::NOT_FOUND.into_response(),
+        };
+    }
+    if state.recorder.playlist(&id).is_some() {
+        return Json(json!({"id": id, "name": "Synced", "images": []})).into_response();
     }
     if id != "sp-playlist-1" && id != SPOTIFY_PLAYLIST_NO_TRACK_ID {
         return StatusCode::NOT_FOUND.into_response();
@@ -427,6 +563,13 @@ async fn spotify_items(
         .record(|calls| calls.spotify_paths.push(format!("/playlists/{id}/items")));
     if !spotify_authed(&headers) {
         return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if let Some((_, tracks)) = state.recorder.playlist(&id) {
+        let items: Vec<Value> = tracks
+            .into_iter()
+            .map(|track| json!({"item": track}))
+            .collect();
+        return Json(json!({"items": items, "next": null})).into_response();
     }
     if id == SPOTIFY_PLAYLIST_NO_TRACK_ID {
         return Json(json!({
@@ -513,8 +656,23 @@ async fn spotify_token(
                 "access_token": SPOTIFY_TOKEN,
                 "refresh_token": SPOTIFY_REFRESH,
                 "expires_in": 3600,
+                "scope": SPOTIFY_SCOPES,
             }))
             .into_response()
+        }
+        "refresh_token"
+            if state
+                .recorder
+                .refuse_refresh
+                .load(std::sync::atomic::Ordering::SeqCst) =>
+        {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(
+                    json!({"error": "invalid_grant", "error_description": "Refresh token revoked"}),
+                ),
+            )
+                .into_response()
         }
         "refresh_token"
             if params
@@ -524,6 +682,7 @@ async fn spotify_token(
             Json(json!({
                 "access_token": SPOTIFY_TOKEN,
                 "expires_in": 3600,
+                "scope": SPOTIFY_SCOPES,
             }))
             .into_response()
         }

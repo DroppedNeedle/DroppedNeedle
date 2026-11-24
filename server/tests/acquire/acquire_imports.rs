@@ -48,8 +48,8 @@ use droppedneedle_providers::images::check_spotify_cover_url;
 use droppedneedle_providers::spotify::TokenGrant;
 use droppedneedle_providers::{ProviderEndpoints, Providers, RequestPriority, ReqwestWire};
 use droppedneedle_testkit::imports::{
-    LIDARR_KEY, LIDARR_MBID_ALL, LIDARR_MBID_NONE, MockRecorder, SPOTIFY_PLAYLIST_NO_TRACK_ID,
-    SPOTIFY_TOKEN, serve_lidarr, serve_spotify,
+    LIDARR_KEY, LIDARR_MBID_ALL, LIDARR_MBID_NONE, MockRecorder, SPOTIFY_LIKED_DEFAULT,
+    SPOTIFY_PLAYLIST_NO_TRACK_ID, SPOTIFY_TOKEN, serve_lidarr, serve_spotify,
 };
 use droppedneedle_testkit::musicbrainz::MockMusicBrainz;
 use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
@@ -1623,6 +1623,133 @@ async fn spotify_track_without_id_fails_the_import() {
     );
 }
 
+/// A link made with the scopes asked for reads Liked Songs: the listing
+/// counts them, and their import fills a "Liked Songs" playlist newest
+/// first from both of Spotify's pages, keeping each song. A link made
+/// before Liked Songs could be read is told to reconnect and its import is
+/// refused, and the playlist import never takes Liked Songs' reserved ref.
+#[tokio::test]
+async fn spotify_liked_songs_import_needs_the_scope_and_reads_every_page() {
+    let (auth, admin_id, user_id) = seed_rig().await;
+    let (api, accounts, covers, recorder) = serve_spotify().await.expect("mock serves");
+    let bundle = rig_for(
+        &auth,
+        &api.base_url,
+        &accounts.base_url,
+        Some(&covers.base_url),
+    );
+    seed_spotify_app(bundle.deps.clone(), &admin_id).await;
+    link_spotify(bundle.deps.clone(), &recorder, &user_id).await;
+    let app = || authed_app(bundle.deps.clone(), &user_id, Role::User);
+
+    let (status, body) = get_json(app(), "/api/v3/acquire/spotify/link").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["linked"], true);
+    assert_eq!(body["liked_songs"], "ready", "{body}");
+    let (status, body) = get_json(app(), "/api/v3/acquire/spotify/playlists").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["liked_songs"]["access"], "ready");
+    assert_eq!(body["liked_songs"]["track_count"], SPOTIFY_LIKED_DEFAULT);
+
+    let (status, body) = post_json(
+        app(),
+        "/api/v3/acquire/spotify/liked-songs/import",
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let playlist_id = body["playlist_id"]
+        .as_str()
+        .expect("playlist id")
+        .to_owned();
+    assert_eq!(
+        poll_job_done(&bundle, &user_id, "liked").await,
+        ImportState::Done
+    );
+    let rows = playlist_rows(&bundle.playlists, &user_id, &playlist_id).await;
+    assert_eq!(rows.len(), SPOTIFY_LIKED_DEFAULT, "both pages land");
+    assert_eq!(rows[0].track_name, "Liked 0", "newest first");
+    assert_eq!(
+        bundle.db.one::<i64>(
+            "SELECT COUNT(*) FROM catalog_playlist_source_songs WHERE playlist_id = ?1",
+            [&playlist_id],
+        ),
+        i64::try_from(SPOTIFY_LIKED_DEFAULT).unwrap(),
+    );
+    assert_eq!(
+        bundle.db.one::<String>(
+            "SELECT name || '|' || source_ref FROM catalog_playlists WHERE id = ?1",
+            [&playlist_id],
+        ),
+        "Liked Songs|spotify:liked"
+    );
+    let (status, body) = get_json(app(), "/api/v3/acquire/spotify/playlists").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["liked_songs"]["imported_playlist_id"], playlist_id);
+
+    let (status, _) = post_json(
+        app(),
+        "/api/v3/acquire/spotify/playlists/liked/import",
+        json!({"name": "Sneaky"}),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "the reserved ref is not a playlist"
+    );
+
+    let mut old = linked(&bundle.spotify_links, &user_id).await;
+    old.scopes = String::new();
+    bundle
+        .spotify_links
+        .upsert(&user_id, &old)
+        .await
+        .expect("store writes");
+    let (status, body) = get_json(app(), "/api/v3/acquire/spotify/link").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["liked_songs"], "needs_reconnect", "{body}");
+    let (status, body) = post_json(
+        app(),
+        "/api/v3/acquire/spotify/liked-songs/import",
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "SPOTIFY_RECONNECT_NEEDED");
+}
+
+/// A refresh token Spotify no longer honours reads as no link, not as
+/// Spotify being down.
+#[tokio::test]
+async fn spotify_refused_refresh_reads_as_not_linked() {
+    let (auth, admin_id, user_id) = seed_rig().await;
+    let (api, accounts, covers, recorder) = serve_spotify().await.expect("mock serves");
+    let bundle = rig_for(
+        &auth,
+        &api.base_url,
+        &accounts.base_url,
+        Some(&covers.base_url),
+    );
+    seed_spotify_app(bundle.deps.clone(), &admin_id).await;
+    link_spotify(bundle.deps.clone(), &recorder, &user_id).await;
+    let mut link = linked(&bundle.spotify_links, &user_id).await;
+    link.expires_at_unix = 1;
+    bundle
+        .spotify_links
+        .upsert(&user_id, &link)
+        .await
+        .expect("store writes");
+    recorder.refuse_refresh();
+
+    let (status, body) = get_json(
+        authed_app(bundle.deps.clone(), &user_id, Role::User),
+        "/api/v3/acquire/spotify/playlists",
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], "IMPORT_NOT_CONFIGURED");
+}
 /// One user's stored link, which must exist.
 async fn linked(links: &SqliteSpotifyLinks, user_id: &str) -> SpotifyConnection {
     links
@@ -1776,6 +1903,7 @@ async fn spotify_sqlite_stores_persist_and_expire() {
         expires_at_unix: 1_900_000_000,
         username: "Una".to_owned(),
         spotify_user_id: "una-sp".to_owned(),
+        scopes: droppedneedle_providers::spotify::SCOPES.to_owned(),
     };
     links.upsert("u1", &link).await.expect("store writes");
     assert_eq!(
@@ -2109,6 +2237,7 @@ fn import_secrets_never_logged() {
         expires_at_unix: 1,
         username: "u".to_owned(),
         spotify_user_id: "s".to_owned(),
+        scopes: String::new(),
     };
     let debug = format!("{connection:?}");
     assert!(!debug.contains("SUPERSECRET"), "{debug}");
@@ -2117,6 +2246,7 @@ fn import_secrets_never_logged() {
         access_token: "ACCESS-SUPERSECRET".to_owned(),
         refresh_token: Some("REFRESH-SUPERSECRET".to_owned()),
         expires_in_secs: 3600,
+        scope: None,
     };
     let debug = format!("{grant:?}");
     assert!(!debug.contains("SUPERSECRET"), "{debug}");

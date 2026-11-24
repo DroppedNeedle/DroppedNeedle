@@ -188,6 +188,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/acquire/spotify/liked-songs/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import the caller's Liked Songs as a playlist named "Liked Songs":
+         *     ensure the record, queue the import unless one is queued or running,
+         *     and answer the id at once. A link made before Liked Songs could be read
+         *     is refused until the caller reconnects.
+         */
+        post: operations["import_liked_songs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/acquire/spotify/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The caller's own Spotify link: whether there is one, and whether it may
+         *     read Liked Songs. Asks Spotify nothing.
+         */
+        get: operations["get_spotify_link"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/acquire/spotify/playlists": {
         parameters: {
             query?: never;
@@ -18005,6 +18047,11 @@ export interface components {
             ended?: boolean | null;
         };
         /**
+         * @description Whether a Spotify link may read Liked Songs.
+         * @enum {string}
+         */
+        LikedSongsAccess: "ready" | "needs_reconnect";
+        /**
          * @description One account the caller linked, on any service. Never carries the
          *     stored secret.
          */
@@ -25005,6 +25052,27 @@ export interface components {
             /** @description Internal playlist id. */
             playlist_id: string;
         };
+        /** @description The caller's Liked Songs, as the Import page lists them. */
+        SpotifyLikedSongs: {
+            /** @description Whether the link may read them. */
+            access: components["schemas"]["LikedSongsAccess"];
+            /** @description Internal playlist id when already imported, else null. */
+            imported_playlist_id?: string | null;
+            /**
+             * Format: int64
+             * @description How many there are, when the link may read them.
+             */
+            track_count?: number | null;
+        };
+        /** @description The caller's own Spotify link. */
+        SpotifyLink: {
+            /** @description Whether the link may read Liked Songs; null when not linked. */
+            liked_songs?: null | components["schemas"]["LikedSongsAccess"];
+            /** @description A link is stored. */
+            linked: boolean;
+            /** @description The Spotify account's display name, when linked. */
+            username?: string | null;
+        };
         /** @description One owned Spotify playlist. */
         SpotifyPlaylistItem: {
             /** @description Picked cover URL, smallest image at least 250 wide. */
@@ -25027,6 +25095,8 @@ export interface components {
         };
         /** @description Owned playlists. */
         SpotifyPlaylistListResponse: {
+            /** @description The caller's Liked Songs. */
+            liked_songs: components["schemas"]["SpotifyLikedSongs"];
             /** @description Playlists owned by the caller's Spotify account. */
             playlists: components["schemas"]["SpotifyPlaylistItem"][];
         };
@@ -27263,6 +27333,82 @@ export interface operations {
             };
             /** @description Spotify is not set up, or no Redirect Origin is set and the request names no address to build one from */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    import_liked_songs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Import acknowledgement */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpotifyImportResponse"];
+                };
+            };
+            /** @description Spotify is not linked (IMPORT_NOT_CONFIGURED) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The link cannot read Liked Songs (SPOTIFY_RECONNECT_NEEDED) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_spotify_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's link */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpotifyLink"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

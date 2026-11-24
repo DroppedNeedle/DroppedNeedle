@@ -41,15 +41,16 @@ use super::lidarr::{
 };
 use super::models::{
     LidarrArtistListResponse, LidarrConnectionSettings, LidarrImportRequest, LidarrImportResponse,
-    LidarrTestResponse, SlskdStatusResponse, SpotifyAuthUrlResponse, SpotifyImportRequest,
-    SpotifyImportResponse, SpotifyPlaylistListResponse, SpotifyRedirectUri, SpotifySettings,
-    UsenetStatusResponse,
+    LidarrTestResponse, LikedSongsAccess, SlskdStatusResponse, SpotifyAuthUrlResponse,
+    SpotifyImportRequest, SpotifyImportResponse, SpotifyLink, SpotifyPlaylistListResponse,
+    SpotifyRedirectUri, SpotifySettings, UsenetStatusResponse,
 };
 use super::spotify::{ImportFailure, SpotifyImportService};
 use super::spotify_albums::AlbumResolver;
 use super::spotify_client::{SpotifyClient, SpotifyError, now_unix_secs};
 use super::spotify_oauth::{PendingAuth, SPOTIFY_CALLBACK_PATH, SpotifyConnection, redirect_uri};
 use super::spotify_store::{CollectionsPlaylistBridge, SqliteSpotifyLinks, SqliteSpotifyStates};
+use super::{LIKED_SONGS_NAME, LIKED_SONGS_REF};
 use crate::follows::Follows;
 use crate::requests::error::RequestsError;
 use crate::settings::{ConfigLidarrSettings, ConfigSpotifySettings, settings_failed};
@@ -124,6 +125,8 @@ pub fn routes() -> Routes<ImportsDeps> {
         .public(routes!(spotify_callback))
         .user(routes!(list_spotify_playlists))
         .user(routes!(import_spotify_playlist))
+        .user(routes!(import_liked_songs))
+        .user(routes!(get_spotify_link))
         .user(routes!(disconnect_spotify))
         .user(routes!(get_slskd_status))
         .admin(routes!(get_sabnzbd_status))
@@ -437,12 +440,17 @@ async fn finish_spotify_link(deps: &ImportsDeps, query: SpotifyCallbackQuery) ->
         Some(me) => (me.display_name.unwrap_or_else(|| me.id.clone()), me.id),
         None => ("Spotify".to_owned(), String::new()),
     };
+    // Spotify gives every scope asked for or none, so a code grant that
+    // names none was granted the list asked for.
     let link = SpotifyConnection {
         access_token: grant.access_token,
         refresh_token: grant.refresh_token.unwrap_or_default(),
         expires_at_unix: now_unix_secs(deps.spotify_links.clock().as_ref()) + grant.expires_in_secs,
         username,
         spotify_user_id,
+        scopes: grant
+            .scope
+            .unwrap_or_else(|| droppedneedle_providers::spotify::SCOPES.to_owned()),
     };
     if let Err(cause) = deps.spotify_links.upsert(&pending.user_id, &link).await {
         tracing::error!(%cause, "spotify link write failed");
@@ -505,6 +513,12 @@ fn spotify_failed(error: SpotifyError) -> ImportsError {
         SpotifyError::Unavailable(detail) => ImportsError::Unavailable {
             cause: format!("spotify playlist list failed: {detail}"),
         },
+        SpotifyError::Forbidden => ImportsError::Unavailable {
+            cause: "spotify refused the read (403)".to_owned(),
+        },
+        SpotifyError::NotFound => ImportsError::Unavailable {
+            cause: "spotify has no such playlist (404)".to_owned(),
+        },
         SpotifyError::RateLimited { retry_after } => ImportsError::SpotifyPaced { retry_after },
         SpotifyError::Store(cause) => ImportsError::internal(&cause),
         SpotifyError::Busy => ImportsError::Busy {
@@ -542,7 +556,7 @@ pub async fn import_spotify_playlist(
     Path(id): Path<String>,
     ValidJson(body): ValidJson<SpotifyImportRequest>,
 ) -> Result<Json<SpotifyImportResponse>, ApiError> {
-    if id.trim().is_empty() || id.chars().count() > MAX_SPOTIFY_ID {
+    if id.trim().is_empty() || id.chars().count() > MAX_SPOTIFY_ID || id == LIKED_SONGS_REF {
         return Err(ImportsError::InvalidInput {
             message: "Spotify playlist id is not valid".to_owned(),
         }
@@ -561,6 +575,73 @@ pub async fn import_spotify_playlist(
         .await
         .map_err(job_failed)?;
     Ok(Json(SpotifyImportResponse { playlist_id }))
+}
+
+/// Import the caller's Liked Songs as a playlist named "Liked Songs":
+/// ensure the record, queue the import unless one is queued or running,
+/// and answer the id at once. A link made before Liked Songs could be read
+/// is refused until the caller reconnects.
+#[utoipa::path(post, tag = "imports", path = "/api/v3/acquire/spotify/liked-songs/import",
+    responses(
+        (status = 200, description = "Import acknowledgement", body = SpotifyImportResponse),
+        (status = 400, description = "Spotify is not linked (IMPORT_NOT_CONFIGURED)"),
+        (status = 401, description = "Not authenticated"),
+        (status = 409, description = "The link cannot read Liked Songs (SPOTIFY_RECONNECT_NEEDED)"),
+    ))]
+pub async fn import_liked_songs(
+    State(deps): State<ImportsDeps>,
+    User(principal): User,
+) -> Result<Json<SpotifyImportResponse>, ApiError> {
+    deps.spotify_settings.get_raw().map_err(settings_failed)?;
+    let link = deps
+        .spotify_links
+        .get(principal.user_id())
+        .await
+        .map_err(spotify_failed)?
+        .ok_or_else(|| spotify_failed(SpotifyError::NotLinked))?;
+    if !link.reads_liked_songs() {
+        return Err(ImportsError::ReconnectNeeded.into());
+    }
+    let playlist_id = deps
+        .spotify_service()
+        .ensure_playlist_record(principal.user_id(), LIKED_SONGS_REF, LIKED_SONGS_NAME)
+        .await
+        .map_err(spotify_failed)?;
+    deps.spotify_imports
+        .start(principal.user_id(), LIKED_SONGS_REF, &playlist_id)
+        .await
+        .map_err(job_failed)?;
+    Ok(Json(SpotifyImportResponse { playlist_id }))
+}
+
+/// The caller's own Spotify link: whether there is one, and whether it may
+/// read Liked Songs. Asks Spotify nothing.
+#[utoipa::path(get, tag = "imports", path = "/api/v3/acquire/spotify/link",
+    responses(
+        (status = 200, description = "The caller's link", body = SpotifyLink),
+        (status = 401, description = "Not authenticated"),
+    ))]
+pub async fn get_spotify_link(
+    State(deps): State<ImportsDeps>,
+    User(principal): User,
+) -> Result<Json<SpotifyLink>, ApiError> {
+    let link = deps
+        .spotify_links
+        .get(principal.user_id())
+        .await
+        .map_err(spotify_failed)?;
+    Ok(Json(match link {
+        Some(link) => SpotifyLink {
+            linked: true,
+            liked_songs: Some(LikedSongsAccess::of(&link)),
+            username: Some(link.username),
+        },
+        None => SpotifyLink {
+            linked: false,
+            username: None,
+            liked_songs: None,
+        },
+    }))
 }
 
 /// Live slskd client status (any signed-in user may read it).
