@@ -4,15 +4,18 @@
 //! queued through them, never by a loop of its own:
 //!
 //! - [`Due::clock_pass`], from the 90-second demand tick: the kept facts'
-//!   refresh whenever it has work and room in the day, a taste build for
-//!   each person seen in seven days who is due one, the ListenBrainz
-//!   history work media decides is due ([`HistoryStore::tick`]), and once
-//!   per UTC day each person's daily work. Nothing while the warm cycle is
-//!   switched off (`DISCOVER_WARMER_ENABLED`).
+//!   refresh whenever it has work and room in the day, a taste or pool
+//!   build for each person seen in seven days who is due one, a weekly set
+//!   for each person seen in thirty days whose week is due one, the
+//!   ListenBrainz history work media decides is due
+//!   ([`HistoryStore::tick`]), and once per UTC day each person's daily
+//!   work. Nothing while the warm cycle is switched off
+//!   (`DISCOVER_WARMER_ENABLED`).
 //! - [`Due::visit`], where the page records a person's activity: the kept
-//!   facts' refresh when it has work, their taste build when it is due,
-//!   their ListenBrainz history ([`HistoryStore::visit`]), and that
-//!   person's own work, whether the warm cycle runs or not.
+//!   facts' refresh when it has work, their ListenBrainz history
+//!   ([`HistoryStore::visit`]), their taste or pool build or weekly set
+//!   when one is due, and that person's own work, whether the warm cycle
+//!   runs or not.
 //! - [`Due::queue_now`], inside another write: one kind for one key (a
 //!   person's id, or the install's one key), due now.
 //!
@@ -179,16 +182,19 @@ impl Due {
     }
 
     /// A person's visit: the kept facts' refresh when it has work, their
-    /// taste build when it is due, their ListenBrainz history, and their
-    /// outcomes job, when they have rows in the pick record and it was not
-    /// queued today. Runs whether the warm cycle is on or not. A failed
+    /// ListenBrainz history, their taste or pool build or weekly set when
+    /// one is due (a person with no picks yet included), and their outcomes
+    /// job, when they have rows in the pick record and it was not queued
+    /// today. Runs whether the warm cycle is on or not. A failed
     /// write is logged; the next visit or pass tries again.
     pub async fn visit(&self, user_id: &str) {
         self.facts_pass().await;
+        // The history first: a first visit starts the import, which the
+        // person's first set then waits on.
+        self.history.visit(user_id).await;
         self.taste
             .visit(&self.db, &self.queue, user_id, self.clock.now_ms())
             .await;
-        self.history.visit(user_id).await;
         let today = self.today();
         if lock(&self.queued).get(user_id) == Some(&today) {
             return;

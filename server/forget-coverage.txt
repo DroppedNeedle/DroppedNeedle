@@ -21,6 +21,8 @@ catalog_known_release_groups forgotten
 catalog_taste_artists forgotten
 catalog_taste_builds forgotten
 catalog_taste_groups forgotten
+catalog_weekly_set_picks forgotten
+catalog_weekly_sets forgotten
 # media_history_imports is cleared to a forgotten mark, so nothing is
 # imported until they add a file.
 media_history_imports forgotten
@@ -29,6 +31,7 @@ media_playback_events forgotten
 
 # What the person told Discover.
 catalog_discover_feedback kept: what the person told Discover, listed and undone by them
+catalog_discover_prefs kept: the day their weekly set comes out, which they chose; when their first set began waiting is cleared
 catalog_discover_tunings kept: how the person tuned Discover, listed and undone by them
 catalog_later_albums kept: albums the person put on their Later pile, listed and removed by them
 

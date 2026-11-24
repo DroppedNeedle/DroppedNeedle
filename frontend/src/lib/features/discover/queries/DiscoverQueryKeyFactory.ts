@@ -35,6 +35,11 @@ export const DiscoverQueryKeyFactory = {
 		later: (userId: DiscoverV3UserId) => [...root(userId), 'later'] as const,
 		laterAlbum: (userId: DiscoverV3UserId, releaseGroupMbid: string) =>
 			[...root(userId), 'later', 'album', releaseGroupMbid] as const,
+		// The week's set, and "dig further" past it, under the week's prefix.
+		week: (userId: DiscoverV3UserId) => [...root(userId), 'week'] as const,
+		weekMore: (userId: DiscoverV3UserId) => [...root(userId), 'week', 'more'] as const,
+		// The caller's set day.
+		prefs: (userId: DiscoverV3UserId) => [...root(userId), 'prefs'] as const,
 		// What "Why this?" opens for one pick, and every pick's, as a prefix.
 		pickEvidence: (userId: DiscoverV3UserId, releaseGroupMbid: string) =>
 			[...root(userId), 'pick-evidence', releaseGroupMbid] as const,

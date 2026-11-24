@@ -213,6 +213,15 @@ fn deps_with(
         listening: listening.clone(),
         forgets: forgets.clone(),
     }));
+    let weekly = Arc::new(engine::weekly::WeeklySets::new(
+        engine::weekly::WeeklyInputs {
+            db: inputs.db.clone(),
+            clock: Arc::clone(&inputs.clock),
+            listening: listening.clone(),
+            forgets: forgets.clone(),
+            due: Arc::clone(&due),
+        },
+    ));
     let warm_scheduler = Arc::new(scheduler::WarmScheduler::new(
         scheduler::activity::ActivityDb::new(inputs.db.clone()),
         listening,
@@ -255,6 +264,7 @@ fn deps_with(
         evidence: engine::evidence::Evidence::new(inputs.db.clone()),
         tunings: tunings::Tunings::new(inputs.db.clone(), Arc::clone(&inputs.clock), due),
         later: later::LaterPile::new(inputs.db.clone(), Arc::clone(&inputs.clock)),
+        weekly,
     }
 }
 

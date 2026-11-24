@@ -2055,6 +2055,74 @@ async fn caller_keyed_state_stays_with_its_caller() {
     );
     assert_eq!(body["total"], json!(1), "{body}");
 
+    // A's weekly set and set day: B and an admin read no set, no "dig
+    // further" and no evidence of A's pick, and choosing their own day
+    // leaves A's.
+    let set_album = "8f7c3e0a-4b2d-4f9c-9d9a-5b3f4e6c7d93";
+    let evidence = json!({
+        "release_group_mbid": set_album, "title": "Set album", "artist_name": "Artist",
+        "reason": {"kind": "your_artists", "line": "Close to Seed.", "artists": []},
+        "seeds": [], "new_to_you": {"no_plays": true, "not_in_library": true},
+        "found_by": "co_listening", "source": "listenbrainz"
+    });
+    app.seed(&format!(
+        "INSERT INTO catalog_weekly_sets (user_id, week_start_at, built_at, plays_counted, \
+         seeds, shelf_artists, shelf_albums, linked, tastes) VALUES ('{id}', 1000, 1000, 3, \
+         1, 0, 0, 0, '{{\"version\":1,\"tastes\":[]}}'); \
+         INSERT INTO catalog_weekly_set_picks (user_id, week_start_at, pick_no, \
+         release_group_mbid_lower, release_group_mbid, title, artist_mbid, artist_name, \
+         reason_line, evidence) VALUES ('{id}', 1000, 1, '{set_album}', \
+         '{set_album}', 'Set album', '{hidden_artist}', 'Artist', \
+         'Close to Seed.', '{evidence}')",
+        id = ada.id
+    ))
+    .await;
+    let week = "/api/v3/discover/week";
+    let more = "/api/v3/discover/week/more";
+    let prefs = "/api/v3/discover/prefs";
+    let set_why = format!("/api/v3/discover/picks/{set_album}/why");
+    for (who, what) in [(&bob, "B"), (&admin, "an admin")] {
+        let (status, body) = call(&app, who, "GET", week, None).await;
+        ok(status, &body, &format!("{what} reads their week"));
+        assert_eq!(
+            body["set"],
+            Value::Null,
+            "{what} sees no set of A's: {body}"
+        );
+        let (status, body) = call(&app, who, "GET", more, None).await;
+        ok(status, &body, &format!("{what} digs further"));
+        assert_eq!(
+            body["items"],
+            json!([]),
+            "{what} sees none of A's pool: {body}"
+        );
+        let (status, body) = call(&app, who, "GET", &set_why, None).await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "{what} read A's set pick: {body}"
+        );
+        let (status, body) =
+            call(&app, who, "PUT", prefs, Some(json!({"set_day": "monday"}))).await;
+        ok(status, &body, &format!("{what} chooses their own day"));
+    }
+    let (status, body) = call(&app, &ada, "GET", week, None).await;
+    ok(status, &body, "A reads A's week");
+    assert_eq!(
+        body["set"]["picks"][0]["album"]["musicbrainz_id"],
+        json!(set_album),
+        "{body}"
+    );
+    let (status, body) = call(&app, &ada, "GET", &set_why, None).await;
+    ok(status, &body, "A reads A's set pick");
+    assert_eq!(body["reason"]["line"], "Close to Seed.", "{body}");
+    let (status, body) = call(&app, &ada, "GET", prefs, None).await;
+    ok(status, &body, "A reads A's set day");
+    assert_eq!(
+        body["set_day"], "friday",
+        "B's and the admin's days left A's: {body}"
+    );
+
     // A's listening history from ListenBrainz: B's and an admin's reads
     // show none of it.
     app.seed(format!(

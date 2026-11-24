@@ -171,6 +171,7 @@ catalog_discover_candidates
 catalog_discover_feedback
 catalog_discover_picks
 catalog_discover_pool_builds
+catalog_discover_prefs
 catalog_discover_tunings
 catalog_event_cities
 catalog_event_seen_marks
@@ -195,6 +196,8 @@ catalog_user_favorite_names
 catalog_user_favorites
 catalog_user_play_marks
 catalog_user_ratings
+catalog_weekly_set_picks
+catalog_weekly_sets
 catalog_youtube_links
 catalog_youtube_track_links
 library_artist_album_credits

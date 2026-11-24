@@ -457,6 +457,10 @@ const SHIPPED: &[(&str, &str)] = &[
         "0171_app_connect_sessions.sql",
         "45ac54c0a284d83543aa4461071aed1a25b3e1d23e7a976fcd18b5352ac266fd",
     ),
+    (
+        "0172_weekly_sets.sql",
+        "2e0175f71ab051a9d139be0c8d4250d091179552c786a738496b524071f68f86",
+    ),
 ];
 
 /// Upgrading an instance keeps existing sessions valid and outside the
@@ -3758,6 +3762,159 @@ fn playlist_syncs_upgrade_adds_an_empty_table() {
     );
 }
 
+/// 0172 adds the weekly sets, their picks and the set day, empty, and
+/// changes nothing else. A week holds one set, a pick needs its set and
+/// goes with it, the closed lists hold only their enums' values, and an
+/// account's rows go with it.
+#[test]
+fn weekly_sets_upgrade_adds_three_empty_tables() {
+    let dir = ScratchDir::new("weekly-sets-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 172)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 171);
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, created_at)
+                 VALUES ('u1', 'One', 1), ('u2', 'Two', 1);",
+        )
+        .unwrap();
+    let before_schema = schema_rows(&connection);
+    let users = table_rows(&connection, "auth_users", "rowid, *");
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON")
+        .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 172);
+    assert_eq!(table_rows(&connection, "auth_users", "rowid, *"), users);
+    let added = [
+        "catalog_weekly_sets",
+        "catalog_weekly_set_picks",
+        "catalog_discover_prefs",
+    ];
+    let mut after_schema = schema_rows(&connection);
+    for table in added {
+        let table_sql = after_schema
+            .iter()
+            .find(|(_, name, _, _)| name == table)
+            .and_then(|(_, _, _, sql)| sql.clone());
+        assert!(
+            table_sql
+                .as_deref()
+                .is_some_and(|sql| sql.ends_with("STRICT")),
+            "{table}: {table_sql:?}"
+        );
+        assert_eq!(
+            scalar(&connection, &format!("SELECT COUNT(*) FROM {table}")),
+            0,
+            "{table} starts empty"
+        );
+    }
+    after_schema.retain(|(_, _, table, _)| !added.contains(&table.as_str()));
+    assert_eq!(after_schema, before_schema, "nothing else changes");
+
+    let set = |user: &str| {
+        format!(
+            "INSERT INTO catalog_weekly_sets (user_id, week_start_at, built_at, short_reason,
+                 plays_counted, seeds, shelf_artists, shelf_albums, linked, tastes)
+                 VALUES ('{user}', 1, 2, 'rest_known', 3, 1, 0, 0, 0, '{{}}');"
+        )
+    };
+    let pick = |user: &str, no: i64| {
+        format!(
+            "INSERT INTO catalog_weekly_set_picks (user_id, week_start_at, pick_no,
+                 release_group_mbid_lower, release_group_mbid, title, artist_mbid, artist_name,
+                 reason_line, evidence)
+                 VALUES ('{user}', 1, {no}, 'rg', 'RG', 'Album', 'a', 'Someone',
+                 'Close to Someone.', '{{}}');"
+        )
+    };
+    connection
+        .execute_batch(
+            &[
+                set("u1"),
+                set("u2"),
+                pick("u1", 1),
+                pick("u2", 1),
+                "INSERT INTO catalog_discover_prefs (user_id, set_day, updated_at)
+                     VALUES ('u1', 'monday', 1);
+                 INSERT INTO catalog_discover_prefs (user_id, updated_at) VALUES ('u2', 1);"
+                    .to_owned(),
+            ]
+            .concat(),
+        )
+        .expect("sets, picks and set days are stored");
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT set_day FROM catalog_discover_prefs ORDER BY user_id",
+            []
+        ),
+        ["monday", "friday"],
+        "no day chosen is Friday"
+    );
+    for refused in [
+        set("u1"),
+        pick("u1", 1),
+        pick("u1", 9),
+        pick("nobody", 2),
+        "INSERT INTO catalog_weekly_set_picks (user_id, week_start_at, pick_no,
+             release_group_mbid_lower, release_group_mbid, title, artist_mbid, artist_name,
+             reason_line, evidence)
+             VALUES ('u1', 7, 1, 'rg', 'RG', 'Album', 'a', 'Someone', 'x', '{}')"
+            .to_owned(),
+        "UPDATE catalog_weekly_sets SET short_reason = 'tired'".to_owned(),
+        "UPDATE catalog_discover_prefs SET set_day = 'someday'".to_owned(),
+        "UPDATE catalog_weekly_sets SET linked = 2".to_owned(),
+    ] {
+        assert!(connection.execute_batch(&refused).is_err(), "{refused}");
+    }
+    connection
+        .execute("DELETE FROM catalog_weekly_sets WHERE user_id = 'u2'", [])
+        .unwrap();
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT user_id FROM catalog_weekly_set_picks",
+            []
+        ),
+        ["u1"],
+        "a pick goes with its set"
+    );
+    connection
+        .execute("DELETE FROM auth_users WHERE id = 'u1'", [])
+        .unwrap();
+    for table in added {
+        assert_eq!(
+            scalar(
+                &connection,
+                &format!("SELECT COUNT(*) FROM {table} WHERE user_id = 'u1'")
+            ),
+            0,
+            "{table}: an account's rows go with it"
+        );
+    }
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT user_id FROM catalog_discover_prefs",
+            []
+        ),
+        ["u2"],
+        "and only its own"
+    );
+}
+
 /// 0146 adds the table of recycle bin paths v2 used, empty, and changes
 /// nothing else: only an upgrade from v2 records a path in it.
 #[test]
@@ -4074,6 +4231,7 @@ const FOREIGN_KEYS: &[(&str, &str, &str, &str)] = &[
     ("catalog_discover_feedback", "user_id", "auth_users", "CASCADE"),
     ("catalog_discover_picks", "user_id", "auth_users", "CASCADE"),
     ("catalog_discover_pool_builds", "user_id", "auth_users", "CASCADE"),
+    ("catalog_discover_prefs", "user_id", "auth_users", "CASCADE"),
     ("catalog_discover_tunings", "user_id", "auth_users", "CASCADE"),
     ("catalog_event_cities", "user_id", "auth_users", "CASCADE"),
     ("catalog_event_seen_marks", "user_id", "auth_users", "CASCADE"),
@@ -4095,6 +4253,9 @@ const FOREIGN_KEYS: &[(&str, &str, &str, &str)] = &[
     ("catalog_user_play_marks", "local_track_id", "local_tracks", "CASCADE"),
     ("catalog_user_play_marks", "user_id", "auth_users", "CASCADE"),
     ("catalog_user_ratings", "user_id", "auth_users", "CASCADE"),
+    ("catalog_weekly_set_picks", "user_id", "auth_users", "CASCADE"),
+    ("catalog_weekly_set_picks", "user_id, week_start_at", "catalog_weekly_sets", "CASCADE"),
+    ("catalog_weekly_sets", "user_id", "auth_users", "CASCADE"),
     ("compat_bookmarks", "user_id", "auth_users", "CASCADE"),
     ("compat_play_queue_items", "user_id", "compat_play_queues", "CASCADE"),
     ("compat_play_queues", "user_id", "auth_users", "CASCADE"),
@@ -4661,6 +4822,7 @@ fn state_columns() -> Vec<StateColumn> {
     use droppedneedle_catalog::discover::facts::{FactKind, FactSource, ListSource, MeteredSource, Outcome};
     use droppedneedle_catalog::discover::record::MadeFrom;
     use droppedneedle_catalog::discover::tunings::TuningKind;
+    use droppedneedle_catalog::discover::engine::weekly::{SetDay, ShortReason};
     use droppedneedle_catalog::discover::scheduler::Feature;
     use droppedneedle_compat::jellyfin::ids::IdKind;
     use droppedneedle_kernel::db::durable::JobState as LoopState;
@@ -4756,6 +4918,7 @@ fn state_columns() -> Vec<StateColumn> {
         state("catalog_discover_picks", "feedback_kind", &FeedbackKind::ALL, FeedbackKind::as_str),
         state("catalog_discover_picks", "first_surface", &MadeFrom::ALL, MadeFrom::as_str),
         state("catalog_discover_picks", "requested_from", &MadeFrom::ALL, MadeFrom::as_str),
+        state("catalog_discover_prefs", "set_day", &SetDay::ALL, SetDay::as_str),
         state("catalog_discover_tunings", "kind", &TuningKind::ALL, TuningKind::as_str),
         state("catalog_fact_fetches", "kind", &FactKind::ALL, FactKind::as_str),
         state("catalog_fact_fetches", "outcome", &Outcome::ALL, Outcome::as_str),
@@ -4769,6 +4932,7 @@ fn state_columns() -> Vec<StateColumn> {
         state("catalog_taste_groups", "trend", &Trend::ALL, Trend::as_str),
         state("catalog_user_favorites", "item_kind", &FavoriteKind::ALL, FavoriteKind::as_str),
         state("catalog_user_ratings", "item_kind", &RatedKind::ALL, RatedKind::as_str),
+        state("catalog_weekly_sets", "short_reason", &ShortReason::ALL, ShortReason::as_str),
         // compat
         state("compat_jellyfin_ids", "kind", &IdKind::ALL, IdKind::as_str),
         // kernel

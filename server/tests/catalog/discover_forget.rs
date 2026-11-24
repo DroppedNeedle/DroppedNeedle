@@ -162,6 +162,21 @@ fn forgotten_row(table: &str, user: &str, at: i64) -> (String, &'static str) {
             ),
             "0",
         ),
+        // A pick needs its set; each is written once whichever comes first.
+        "catalog_weekly_sets" | "catalog_weekly_set_picks" => (
+            format!(
+                "INSERT OR IGNORE INTO catalog_weekly_sets (user_id, week_start_at, built_at, \
+                 plays_counted, seeds, shelf_artists, shelf_albums, linked, tastes) \
+                 VALUES ('{user}', {at}, {at}, 1, 1, 0, 0, 0, '{{}}'); \
+                 INSERT OR IGNORE INTO catalog_weekly_set_picks (user_id, week_start_at, \
+                 pick_no, release_group_mbid_lower, release_group_mbid, title, artist_mbid, \
+                 artist_name, reason_line, evidence) VALUES ('{user}', {at}, 1, \
+                 'eeeeeeee-0000-4000-8000-000000000005', 'eeeeeeee-0000-4000-8000-000000000005', \
+                 'Album', 'cccccccc-0000-4000-8000-000000000002', 'Someone else', \
+                 'Close to Someone.', '{{}}');"
+            ),
+            "week_start_at",
+        ),
         other => panic!("{other} is listed as forgotten: give it a row here and a step"),
     }
 }
@@ -277,7 +292,9 @@ async fn forgetting_takes_the_callers_history_and_nothing_else() {
          VALUES ('play-1', 'user-1', 'Song', 'Someone', 1); \
          INSERT INTO catalog_discover_feedback (user_id, target, target_mbid_lower, kind, \
          created_at) VALUES ('user-1', 'album', 'dddddddd-0000-4000-8000-000000000001', \
-         'no', 1);",
+         'no', 1); \
+         INSERT INTO catalog_discover_prefs (user_id, set_day, updated_at, \
+         history_wait_from_at) VALUES ('user-1', 'monday', 1, 1);",
     );
     insert(&db, seed).await;
     let kept = listed("kept");
@@ -341,6 +358,16 @@ async fn forgetting_takes_the_callers_history_and_nothing_else() {
     assert_eq!(kept_counts(), kept_before, "every kept table is as it was");
     assert_eq!(user_rows("library_play_history", "user-1"), 1);
     assert_eq!(user_rows("catalog_discover_feedback", "user-1"), 1);
+    let prefs: (String, Option<i64>) = db.row(
+        "SELECT set_day, history_wait_from_at FROM catalog_discover_prefs \
+         WHERE user_id = 'user-1'",
+        [],
+    );
+    assert_eq!(
+        prefs,
+        ("monday".to_owned(), None),
+        "the set day stays, the note of a first visit goes"
+    );
 
     // Asking once more, with nothing left of before, is still a success.
     assert_eq!(forget(&app).await, StatusCode::NO_CONTENT);

@@ -8,8 +8,12 @@
 
 use droppedneedle_kernel::db::time::Millis;
 use droppedneedle_library::owns_group;
+use droppedneedle_media::history::HistoryImportState;
 
 use super::candidate::{CandidateKind, PathKind, PathSource};
+use super::weekly::{SetDay, ShortReason};
+use crate::discover::facts::FactSource;
+use crate::discover::models::PickState;
 use crate::discover::tunings::TuningKind;
 use crate::local::sql::{OPEN_REQUEST, musicbrainz, owned_album};
 
@@ -446,14 +450,262 @@ droppedneedle_kernel::sql! {
 
     // -- who is due a pool build -------------------------------------------------
 
-    /// Of the people in the JSON list `?1`, the ones whose pool was built
-    /// waiting for album facts of which at least one has arrived since: an
-    /// artist's album list (kind `?2` from `?3`) or its albums' counts (kind
-    /// `?4` from `?5`).
+    /// Of the people in the JSON list `?1` with a taste build, the ones due
+    /// a pool build: none yet, one built before their latest taste build,
+    /// or one built waiting for album facts of which at least one has
+    /// arrived since: an artist's album list (kind `?2` from `?3`) or its
+    /// albums' counts (kind `?4` from `?5`).
     pub(in crate::discover) POOL_DUE = "SELECT u.value FROM json_each(?1) u \
-         JOIN catalog_discover_pool_builds b ON b.user_id = u.value \
-         WHERE b.incomplete = 1 AND EXISTS (SELECT 1 FROM json_each(b.waiting_for) w \
+         JOIN catalog_taste_builds t ON t.user_id = u.value \
+         LEFT JOIN catalog_discover_pool_builds b ON b.user_id = u.value \
+         WHERE b.user_id IS NULL OR b.built_at < t.built_at \
+          OR (b.incomplete = 1 AND EXISTS (SELECT 1 FROM json_each(b.waiting_for) w \
            JOIN catalog_fact_fetches f ON f.artist_mbid = w.value \
            WHERE ((f.kind = ?2 AND f.source = ?3) OR (f.kind = ?4 AND f.source = ?5)) \
-             AND f.fetched_at > b.built_at)";
+             AND f.fetched_at > b.built_at))";
+
+    // -- the weekly set ----------------------------------------------------------
+
+    /// What a person's weekly set is built from and when: their set day and
+    /// when their first set began waiting for their history, their newest
+    /// set's week, their taste build's counts, their pool build's, and
+    /// their history import's state. No row for no account.
+    pub(in crate::discover) WEEK_CONTEXT = "SELECT p.set_day AS set_day, \
+         p.history_wait_from_at AS wait_from_at, \
+         (SELECT MAX(s.week_start_at) FROM catalog_weekly_sets s WHERE s.user_id = a.id) \
+           AS last_week_at, \
+         t.built_at AS taste_built_at, \
+         t.plays_counted + t.imported_listens_counted AS plays_counted, \
+         t.history_from_at AS history_from_at, t.history_to_at AS history_to_at, \
+         t.seeds AS seeds, b.built_at AS pool_built_at, b.incomplete AS pool_incomplete, \
+         b.waiting_for AS waiting_for, b.neighbours_found AS neighbours_found, \
+         b.known_left_out AS known_left_out, b.hubs_left_out AS hubs_left_out, \
+         i.state AS import_state \
+         FROM auth_users a LEFT JOIN catalog_discover_prefs p ON p.user_id = a.id \
+         LEFT JOIN catalog_taste_builds t ON t.user_id = a.id \
+         LEFT JOIN catalog_discover_pool_builds b ON b.user_id = a.id \
+         LEFT JOIN media_history_imports i ON i.user_id = a.id \
+         WHERE a.id = ?1";
+    pub(in crate::discover) row WeekContext for [WEEK_CONTEXT] {
+        set_day: Option<SetDay>,
+        wait_from_at: Option<Millis>,
+        last_week_at: Option<Millis>,
+        taste_built_at: Option<Millis>,
+        plays_counted: Option<i64>,
+        history_from_at: Option<Millis>,
+        history_to_at: Option<Millis>,
+        seeds: Option<i64>,
+        pool_built_at: Option<Millis>,
+        pool_incomplete: Option<bool>,
+        waiting_for: Option<String>,
+        neighbours_found: Option<i64>,
+        known_left_out: Option<i64>,
+        hubs_left_out: Option<i64>,
+        import_state: Option<HistoryImportState>,
+    }
+    /// Of the people in the JSON list `?1` with an account, each one's set
+    /// day, newest set's week, taste and pool build times and first set's
+    /// wait for their history: who may be due a set.
+    pub(in crate::discover) WEEK_DUE = "SELECT u.value AS user_id, p.set_day AS set_day, \
+         (SELECT MAX(s.week_start_at) FROM catalog_weekly_sets s WHERE s.user_id = u.value) \
+           AS last_week_at, \
+         t.built_at AS taste_built_at, b.built_at AS pool_built_at, \
+         p.history_wait_from_at AS wait_from_at \
+         FROM json_each(?1) u JOIN auth_users a ON a.id = u.value \
+         LEFT JOIN catalog_taste_builds t ON t.user_id = u.value \
+         LEFT JOIN catalog_discover_prefs p ON p.user_id = u.value \
+         LEFT JOIN catalog_discover_pool_builds b ON b.user_id = u.value";
+    pub(in crate::discover) row WeekDue for [WEEK_DUE] {
+        user_id: String,
+        set_day: Option<SetDay>,
+        last_week_at: Option<Millis>,
+        taste_built_at: Option<Millis>,
+        pool_built_at: Option<Millis>,
+        wait_from_at: Option<Millis>,
+    }
+    /// Person `?1`'s first set began waiting for their history at `?2`:
+    /// kept only while they have no set and their import is in one of the
+    /// states `?3`, `?4` and `?5`, and only the first time.
+    pub(in crate::discover) WEEK_HISTORY_WAIT = "INSERT INTO catalog_discover_prefs \
+         (user_id, updated_at, history_wait_from_at) SELECT ?1, ?2, ?2 \
+         WHERE EXISTS (SELECT 1 FROM auth_users WHERE id = ?1) \
+           AND NOT EXISTS (SELECT 1 FROM catalog_weekly_sets WHERE user_id = ?1) \
+           AND EXISTS (SELECT 1 FROM media_history_imports WHERE user_id = ?1 \
+             AND state IN (?3, ?4, ?5)) \
+         ON CONFLICT (user_id) DO UPDATE SET \
+           history_wait_from_at = excluded.history_wait_from_at \
+         WHERE catalog_discover_prefs.history_wait_from_at IS NULL";
+    /// A person's set day; no row while they have not chosen one.
+    pub(in crate::discover) PREFS_SET_DAY = "SELECT set_day FROM catalog_discover_prefs \
+         WHERE user_id = ?1";
+    /// Keep person `?1`'s set day `?2`, chosen at `?3`.
+    pub(in crate::discover) PREFS_SAVE = "INSERT INTO catalog_discover_prefs \
+         (user_id, set_day, updated_at) VALUES (?1, ?2, ?3) \
+         ON CONFLICT (user_id) DO UPDATE SET set_day = excluded.set_day, \
+           updated_at = excluded.updated_at";
+    /// A person's taste groups with their anchors and shares.
+    pub(in crate::discover) SET_TASTE_GROUPS = "SELECT group_no, anchor_artist_mbid, \
+         anchor_name, share FROM catalog_taste_groups WHERE user_id = ?1 ORDER BY group_no";
+    pub(in crate::discover) row SetTasteGroup for [SET_TASTE_GROUPS] {
+        group_no: i64,
+        anchor_artist_mbid: String,
+        anchor_name: String,
+        share: f64,
+    }
+    /// The library's shelves: how many albums it holds, and how many
+    /// artists are credited on them, placeholder rows left out by kind.
+    pub(in crate::discover) SET_SHELVES = "SELECT \
+         (SELECT COUNT(*) FROM local_albums ob WHERE "
+        + (owned_album!("ob"))
+        + ") AS albums, (SELECT COUNT(DISTINCT oc.local_artist_id) FROM local_album_artists oc \
+           JOIN local_albums ob ON ob.id = oc.local_album_id \
+           JOIN local_artists r ON r.id = oc.local_artist_id \
+           WHERE r.kind NOT IN ('various_artists', 'unknown') \
+             AND r.retired_into_artist_id IS NULL AND "
+        + (owned_album!("ob"))
+        + ") AS artists";
+    pub(in crate::discover) row SetShelves for [SET_SHELVES] {
+        albums: i64,
+        artists: i64,
+    }
+    /// The picks of a person's sets built at `?2` or later: each album and
+    /// artist, when its set was built, whether it was sampled and whether
+    /// the person asked for it.
+    pub(in crate::discover) SET_EARLIER_PICKS = "SELECT k.release_group_mbid_lower \
+         AS release_group, lower(k.artist_mbid) AS artist_mbid, s.built_at AS built_at, \
+         EXISTS (SELECT 1 FROM catalog_discover_picks d WHERE d.user_id = k.user_id \
+           AND d.release_group_mbid_lower = k.release_group_mbid_lower \
+           AND d.sampled_at IS NOT NULL) AS sampled, \
+         EXISTS (SELECT 1 FROM request_history_requesters r WHERE r.user_id = k.user_id \
+           AND r.musicbrainz_id_lower = k.release_group_mbid_lower) AS requested \
+         FROM catalog_weekly_set_picks k JOIN catalog_weekly_sets s \
+           ON s.user_id = k.user_id AND s.week_start_at = k.week_start_at \
+         WHERE k.user_id = ?1 AND s.built_at >= ?2";
+    pub(in crate::discover) row SetEarlierPick for [SET_EARLIER_PICKS] {
+        release_group: String,
+        artist_mbid: String,
+        built_at: Millis,
+        sampled: bool,
+        requested: bool,
+    }
+    /// The first failure, and its service, among the fetch rows of the
+    /// artists in the JSON list `?1` that answer `?2` (failed).
+    pub(in crate::discover) SET_FAILING = "SELECT source, MIN(failing_since_at) AS since \
+         FROM catalog_fact_fetches WHERE outcome = ?2 AND failing_since_at IS NOT NULL \
+           AND artist_mbid IN (SELECT value FROM json_each(?1)) \
+         GROUP BY source ORDER BY since, source LIMIT 1";
+    pub(in crate::discover) row SetFailing for [SET_FAILING] {
+        source: FactSource,
+        since: Millis,
+    }
+    /// Keep a person's set for a week, unless that week has one.
+    pub(in crate::discover) SET_INSERT = "INSERT INTO catalog_weekly_sets (user_id, \
+         week_start_at, built_at, short_reason, plays_counted, history_from_at, history_to_at, \
+         seeds, neighbours_found, known_left_out, hubs_left_out, shelf_artists, shelf_albums, \
+         linked, tastes) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, \
+         ?15) ON CONFLICT (user_id, week_start_at) DO NOTHING";
+    /// Keep one pick of a person's set.
+    pub(in crate::discover) SET_PICK_INSERT = "INSERT INTO catalog_weekly_set_picks (user_id, \
+         week_start_at, pick_no, release_group_mbid_lower, release_group_mbid, title, \
+         artist_mbid, artist_name, primary_type, first_release_date, taste_no, reason_line, \
+         evidence) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)";
+    /// A person's newest set.
+    pub(in crate::discover) SET_LATEST = "SELECT week_start_at, built_at, short_reason, \
+         plays_counted, history_from_at, history_to_at, seeds, neighbours_found, known_left_out, \
+         hubs_left_out, shelf_artists, shelf_albums, linked, tastes FROM catalog_weekly_sets \
+         WHERE user_id = ?1 ORDER BY week_start_at DESC LIMIT 1";
+    pub(in crate::discover) row SetRow for [SET_LATEST] {
+        week_start_at: Millis,
+        built_at: Millis,
+        short_reason: Option<ShortReason>,
+        plays_counted: i64,
+        history_from_at: Option<Millis>,
+        history_to_at: Option<Millis>,
+        seeds: i64,
+        neighbours_found: Option<i64>,
+        known_left_out: Option<i64>,
+        hubs_left_out: Option<i64>,
+        shelf_artists: i64,
+        shelf_albums: i64,
+        linked: bool,
+        tastes: String,
+    }
+    /// The picks of a person's set for the week starting `?2`, in order,
+    /// each with what became of it: arrived when the library holds it,
+    /// else what their request for it says (statuses read as the pick
+    /// states), else on their Later pile, else what they told Discover in
+    /// effect at `?3` about the album (target `?4`) or its artist (target
+    /// `?5`), else open; and whether they heard its sample.
+    pub(in crate::discover) SET_PICKS = "SELECT k.pick_no AS pick_no, \
+         k.release_group_mbid AS release_group_mbid, k.title AS title, \
+         k.artist_mbid AS artist_mbid, k.artist_name AS artist_name, \
+         k.primary_type AS primary_type, k.first_release_date AS first_release_date, \
+         k.taste_no AS taste_no, k.reason_line AS reason_line, k.evidence AS evidence, \
+         CASE WHEN EXISTS (SELECT 1 FROM ("
+        + (owns_group!("= +k.release_group_mbid_lower"))
+        + ")) THEN 'arrived' \
+         ELSE COALESCE((SELECT CASE \
+             WHEN r.status IN ('pending', 'queued', 'downloading') THEN 'asked' \
+             WHEN r.status = 'awaiting_approval' THEN 'awaiting_approval' \
+             WHEN r.status = 'rejected' THEN 'refused' \
+             WHEN r.status IN ('failed', 'cancelling', 'cancelled', 'incomplete') \
+               THEN 'failed' END \
+           FROM request_history_requesters q JOIN request_history r \
+             ON r.musicbrainz_id_lower = q.musicbrainz_id_lower \
+           WHERE q.user_id = k.user_id AND q.musicbrainz_id_lower = k.release_group_mbid_lower \
+             AND r.request_kind = 'album'), \
+         CASE WHEN EXISTS (SELECT 1 FROM catalog_later_albums l WHERE l.user_id = k.user_id \
+             AND l.release_group_mbid_lower = k.release_group_mbid_lower) THEN 'later' END, \
+         (SELECT CASE f.kind WHEN 'no' THEN 'no' WHEN 'know_it' THEN 'known' \
+             WHEN 'not_now' THEN 'not_now' END \
+           FROM catalog_discover_feedback f WHERE f.user_id = k.user_id AND f.target = ?4 \
+             AND f.target_mbid_lower = k.release_group_mbid_lower \
+             AND (f.expires_at IS NULL OR f.expires_at > ?3)), \
+         CASE WHEN EXISTS (SELECT 1 FROM catalog_discover_feedback f \
+             WHERE f.user_id = k.user_id AND f.target = ?5 AND k.artist_mbid <> '' \
+               AND f.target_mbid_lower = lower(k.artist_mbid) \
+               AND (f.expires_at IS NULL OR f.expires_at > ?3)) THEN 'not_artist' END, \
+         'open') END AS state, \
+         EXISTS (SELECT 1 FROM catalog_discover_picks d WHERE d.user_id = k.user_id \
+           AND d.release_group_mbid_lower = k.release_group_mbid_lower \
+           AND d.sampled_at IS NOT NULL) AS heard \
+         FROM catalog_weekly_set_picks k WHERE k.user_id = ?1 AND k.week_start_at = ?2 \
+         ORDER BY k.pick_no";
+    pub(in crate::discover) row SetPickRow for [SET_PICKS] {
+        pick_no: i64,
+        release_group_mbid: String,
+        title: String,
+        artist_mbid: String,
+        artist_name: String,
+        primary_type: Option<String>,
+        first_release_date: Option<String>,
+        taste_no: Option<i64>,
+        reason_line: String,
+        evidence: String,
+        state: PickState,
+        heard: bool,
+    }
+    /// The albums of a person's newest set and their artists, lowercased.
+    pub(in crate::discover) SET_LATEST_PICKS = "SELECT release_group_mbid_lower, \
+         lower(artist_mbid) AS artist_mbid FROM catalog_weekly_set_picks \
+         WHERE user_id = ?1 AND week_start_at = \
+           (SELECT MAX(week_start_at) FROM catalog_weekly_sets WHERE user_id = ?1)";
+    pub(in crate::discover) row SetLatestPick for [SET_LATEST_PICKS] {
+        release_group_mbid_lower: String,
+        artist_mbid: String,
+    }
+    /// The evidence of the newest kept pick of person `?1` for the release
+    /// group `?2` (lowercased), as it was built.
+    pub(in crate::discover) SET_EVIDENCE = "SELECT evidence FROM catalog_weekly_set_picks \
+         WHERE user_id = ?1 AND release_group_mbid_lower = ?2 \
+         ORDER BY week_start_at DESC LIMIT 1";
+    /// A person's set picks.
+    pub(in crate::discover) SET_PICKS_DELETE = "DELETE FROM catalog_weekly_set_picks \
+         WHERE user_id = ?1";
+    /// A person's sets.
+    pub(in crate::discover) SETS_DELETE = "DELETE FROM catalog_weekly_sets WHERE user_id = ?1";
+    /// Clear when person `?1`'s first set began waiting for their history.
+    pub(in crate::discover) PREFS_WAIT_CLEARED = "UPDATE catalog_discover_prefs \
+         SET history_wait_from_at = NULL WHERE user_id = ?1 \
+           AND history_wait_from_at IS NOT NULL";
 }

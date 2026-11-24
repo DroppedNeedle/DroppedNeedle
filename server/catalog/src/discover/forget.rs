@@ -1,13 +1,13 @@
 //! "Forget my history": a person removes what the app keeps about their
 //! listening and what Discover did for them, and everything built from it:
-//! the copy of their ListenBrainz history, and their taste and candidate
-//! pool among it. Their next taste build makes both again from what is
-//! left.
+//! the copy of their ListenBrainz history, their taste and candidate pool
+//! among it, and their weekly sets. Their next taste build makes the taste
+//! and pool again from what is left; their sets are gone for good.
 //!
 //! One function runs every step, each deleting the person's rows by their
 //! id and safe to run again, so a forget cut off part way is finished by
 //! asking again. It leaves their plays and play counts, the library, their
-//! requests and what they told Discover. Every table with a person's id is
+//! requests, what they told Discover and their set day. Every table with a person's id is
 //! named in `server/forget-coverage.txt` with what this does to it, and a
 //! table listed there as forgotten has its step here.
 
@@ -18,7 +18,7 @@ use droppedneedle_media::history::{self, HistoryStore};
 use droppedneedle_media::playback::{events, sqlite::PlaybackStore};
 
 use crate::discover::cache::{self, ForgetCounts};
-use crate::discover::engine::{pool_store, taste_store};
+use crate::discover::engine::{pool_store, taste_store, weekly_store};
 use crate::discover::{record, scheduler::activity::ActivityDb, services::DiscoverDeps};
 
 /// The stores a forget deletes from.
@@ -67,6 +67,8 @@ pub struct Forgotten {
     pub taste: usize,
     /// Their candidate pool: the build, the candidates and their paths.
     pub pool: usize,
+    /// Their weekly sets and the sets' picks.
+    pub weekly_sets: usize,
     /// Their saved Discover, home and queue pages.
     pub pages: usize,
 }
@@ -103,15 +105,15 @@ fn at<E: Into<StepError>>(step: &'static str) -> impl FnOnce(E) -> ForgetError {
 /// ListenBrainz history (its import is marked forgotten and its jobs
 /// cancelled in the same write, so an import running across the forget
 /// keeps nothing), the pick record, their Discover activity, their taste,
-/// their candidate pool and their saved pages, in that order, then start
-/// one rebuild of their Discover page. Their forget count moves on before
-/// the first step and again inside the taste, the pool and the pages steps'
-/// writes, so a build of theirs claimed before those commits keeps no
-/// taste, no pool, no page and records no pick. A built deck not yet written
-/// is dropped too. While such a build runs no rebuild starts here: their
-/// next visit builds the page, which is due because its row is gone. Fails
-/// at the first step that fails; the rebuild is asked for only once every
-/// step ran.
+/// their candidate pool, their weekly sets and their saved pages, in that
+/// order, then start one rebuild of their Discover page. Their forget count
+/// moves on before the first step and again inside the taste, the pool, the
+/// sets' and the pages steps' writes, so a build of theirs claimed before
+/// those commits keeps no taste, no pool, no set, no page and records no
+/// pick. A built deck not yet written is dropped too. While such a build
+/// runs no rebuild starts here: their next visit builds the page, which is
+/// due because its row is gone. Fails at the first step that fails; the
+/// rebuild is asked for only once every step ran.
 pub async fn forget(deps: &DiscoverDeps, user_id: &str) -> Result<Forgotten, ForgetError> {
     let stores = &deps.history;
     stores.forgets.bump(user_id);
@@ -135,6 +137,9 @@ pub async fn forget(deps: &DiscoverDeps, user_id: &str) -> Result<Forgotten, For
     let pool = pool_store::forget(&stores.db, &stores.forgets, user_id)
         .await
         .map_err(at("pool"))?;
+    let weekly_sets = weekly_store::forget(&stores.db, &stores.forgets, user_id)
+        .await
+        .map_err(at("weekly sets"))?;
     let pages = cache::forget_user(&stores.db, &stores.forgets, user_id)
         .await
         .map_err(at("saved pages"))?;
@@ -149,6 +154,7 @@ pub async fn forget(deps: &DiscoverDeps, user_id: &str) -> Result<Forgotten, For
         activity,
         taste,
         pool,
+        weekly_sets,
         pages,
     })
 }

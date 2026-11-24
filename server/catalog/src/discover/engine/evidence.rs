@@ -1,15 +1,17 @@
 //! One pick's evidence: what "Why this?" opens, assembled from stored rows
 //! alone. The pick's own paths give its line, its artists and how it was
 //! found; the person's taste rows, their tunings and the library say what
-//! is true of it now. Nothing here asks a provider.
+//! is true of it now. Nothing here asks a provider. A pick a weekly set
+//! held keeps the evidence it was built with.
+
+use std::collections::HashSet;
 
 use droppedneedle_kernel::db::{Db, DbError};
 use rusqlite::params;
 
 use super::candidate::{Candidate, PathKind, PathSource};
-use super::pool_store;
 use super::reason::{reason, seed_paths};
-use super::sql;
+use super::{pool_store, sql, weekly_store};
 use crate::discover::models::{
     EvidenceSeed, EvidenceSource, FoundBy, NewToYou, PickEvidence, PickReason, PickReasonKind,
 };
@@ -57,9 +59,10 @@ impl Evidence {
         Self { db }
     }
 
-    /// The evidence behind `release_group` (lowercased) in `user_id`'s pool;
-    /// `None` when their pool holds no such album, or it has no reason that
-    /// still holds.
+    /// The evidence behind `release_group` (lowercased) for `user_id`: as
+    /// it was built for the newest of their weekly sets that held it, else
+    /// as their pool holds it now. `None` when neither does, or the pool's
+    /// has no reason that still holds.
     ///
     /// # Errors
     ///
@@ -70,18 +73,38 @@ impl Evidence {
         release_group: &str,
     ) -> Result<Option<PickEvidence>, DbError> {
         let db = &self.db;
+        if let Some(kept) = weekly_store::stored_evidence(db, user_id, release_group).await? {
+            return Ok(Some(kept));
+        }
         let Some(candidate) = pool_store::candidate(db, user_id, release_group).await? else {
             return Ok(None);
         };
         let seeds = pool_store::seed_ids(db, user_id).await?;
-        let Some(reason) = reason(&candidate, &seeds) else {
+        self.of_candidate(user_id, &candidate, &seeds).await
+    }
+
+    /// The evidence behind `candidate` of `user_id`'s pool now, with
+    /// `seeds` their seeds now (lowercased); `None` when it has no reason
+    /// that still holds.
+    ///
+    /// # Errors
+    ///
+    /// A read's failure.
+    pub(crate) async fn of_candidate(
+        &self,
+        user_id: &str,
+        candidate: &Candidate,
+        seeds: &HashSet<String>,
+    ) -> Result<Option<PickEvidence>, DbError> {
+        let db = &self.db;
+        let Some(reason) = reason(candidate, seeds) else {
             return Ok(None);
         };
-        let Some((found_by, source, source_read_at)) = found(&candidate, &reason) else {
+        let Some((found_by, source, source_read_at)) = found(candidate, &reason) else {
             return Ok(None);
         };
         let turned_down = tunings::less_from(db, user_id).await?;
-        let evidence_seeds = seed_paths(&candidate)
+        let evidence_seeds = seed_paths(candidate)
             .into_iter()
             .filter_map(|path| Some((path.artist.as_ref()?, path.link.as_ref()?)))
             .filter(|(artist, _)| seeds.contains(&artist.mbid))
@@ -95,7 +118,7 @@ impl Evidence {
                 turned_down: turned_down.contains(&artist.mbid),
             })
             .collect();
-        let new_to_you = self.new_to_you(user_id, &candidate).await?;
+        let new_to_you = self.new_to_you(user_id, candidate).await?;
         Ok(Some(PickEvidence {
             release_group_mbid: candidate.release_group_mbid.clone(),
             title: candidate.title.clone(),

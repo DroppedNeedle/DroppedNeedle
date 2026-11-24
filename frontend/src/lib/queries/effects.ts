@@ -112,8 +112,11 @@ export const EFFECTS = {
 	downloadsChanged: (userId: UserId): Sweep[] => [
 		{ key: DownloadQueryKeyFactory.tasksPrefix(userId) }
 	],
-	/** The caller's requests. */
-	requestsChanged: (userId: UserId): Sweep[] => [{ key: RequestQueryKeyFactory.all(userId) }],
+	/** The caller's requests, and their week, whose picks read them as their state. */
+	requestsChanged: (userId: UserId): Sweep[] => [
+		{ key: RequestQueryKeyFactory.all(userId) },
+		{ key: DiscoverQueryKeyFactory.v3.week(userId) }
+	],
 	/** One manual album search moved. */
 	searchJobChanged: (userId: UserId, jobId: string): Sweep[] => [
 		{ key: DownloadQueryKeyFactory.searchJob(userId, jobId) }
@@ -142,10 +145,12 @@ export const EFFECTS = {
 	wantedChanged: (userId: UserId): Sweep[] => [{ key: WantedQueryKeyFactory.list(userId) }],
 	/**
 	 * The caller told Discover something about an album or an artist, or took
-	 * it back: every list that leaves out what they hid.
+	 * it back: every list that leaves out what they hid, and their week,
+	 * whose picks read it as their state.
 	 */
 	recommendationsChanged: (userId: UserId): Sweep[] => [
 		{ key: DiscoverQueryKeyFactory.v3.feedback(userId) },
+		{ key: DiscoverQueryKeyFactory.v3.week(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.home(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.radios(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.radioPlans(userId) },
@@ -163,12 +168,19 @@ export const EFFECTS = {
 		{ key: DiscoverQueryKeyFactory.v3.allPickEvidence(userId) }
 	],
 	/**
-	 * The caller put an album on their Later pile or took one off: the pile
-	 * and the Discover page that deals picks around it.
+	 * The caller put an album on their Later pile or took one off: the pile,
+	 * the Discover page that deals picks around it, and their week, whose
+	 * picks read Later as their state.
 	 */
 	laterChanged: (userId: UserId): Sweep[] => [
 		{ key: DiscoverQueryKeyFactory.v3.later(userId) },
-		{ key: DiscoverQueryKeyFactory.v3.home(userId) }
+		{ key: DiscoverQueryKeyFactory.v3.home(userId) },
+		{ key: DiscoverQueryKeyFactory.v3.week(userId) }
+	],
+	/** The caller chose their set day: the day, and the week that shows it. */
+	discoverPrefsChanged: (userId: UserId): Sweep[] => [
+		{ key: DiscoverQueryKeyFactory.v3.prefs(userId) },
+		{ key: DiscoverQueryKeyFactory.v3.week(userId) }
 	],
 	/** The admin's artist duplicate groups. */
 	artistDuplicatesChanged: (): Sweep[] => [{ everyScope: ['library', 'artist-reconciliation'] }],
@@ -580,6 +592,7 @@ export const wantedChanged = fact('wantedChanged');
 export const recommendationsChanged = fact('recommendationsChanged');
 export const tuningsChanged = fact('tuningsChanged');
 export const laterChanged = fact('laterChanged');
+export const discoverPrefsChanged = fact('discoverPrefsChanged');
 export const artistDuplicatesChanged = fact('artistDuplicatesChanged');
 export const usersChanged = fact('usersChanged');
 export const userImportCandidatesChanged = fact('userImportCandidatesChanged');

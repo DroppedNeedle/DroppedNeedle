@@ -18,6 +18,9 @@
 //!   tables and the pool read back.
 //! - [`reason`]: a pick's one line, pure, from its paths; [`evidence`]
 //!   what "Why this?" opens, from stored rows.
+//! - [`weekly`]: the `discover.weekly_set` job kind and the routes' answers,
+//!   and [`weekly_store`] its tables: each person's weekly sets, kept as a
+//!   record once built, and their set day.
 //! - [`schedule`]: who is due a build, asked by
 //!   [`Due`](crate::discover::due::Due).
 //!
@@ -38,3 +41,5 @@ pub(crate) mod sources;
 pub(crate) mod sql;
 pub mod taste;
 pub(crate) mod taste_store;
+pub mod weekly;
+pub(crate) mod weekly_store;

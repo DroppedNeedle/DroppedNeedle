@@ -15,16 +15,16 @@ use crate::discover::{
     genre::WithGenrePages,
     later::{LaterError, LaterKey, LaterPile},
     models::{
-        AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection,
+        AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection, DigFurtherPick,
         DiscoverActivityResponse, DiscoverFeedbackEntry, DiscoverFeedbackRequest,
-        DiscoverFeedbackResponse, DiscoverHealthResponse, DiscoverPickEventRequest,
+        DiscoverFeedbackResponse, DiscoverHealthResponse, DiscoverPickEventRequest, DiscoverPrefs,
         DiscoverQueuePreview, DiscoverQueueResponse, DiscoverQueueStatusResponse, DiscoverResponse,
         DiscoverTuningEntry, DiscoverTuningRequest, DiscoverTuningsResponse, GenreDetailResponse,
         HomeResponse, IntegrationStatus, LaterAlbum, LaterRequest, ListenSource, PickEvidence,
         PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, QueueEnrichment,
         QueueGenerateRequest, QueueGenerateResponse, QueueValidateRequest, QueueValidateResponse,
         RadioPlanRequest, RadioPlanResponse, RadioRequest, RadioSeedKind, RefreshResponse,
-        StatsRange, TrackPreviewResponse, YouTubeSearchResponse,
+        StatsRange, TrackPreviewResponse, WeekResponse, YouTubeSearchResponse,
     },
     ports::{ProviderFailure, QueueTrigger, RadioFailure},
     previews::LivePreviews,
@@ -129,6 +129,8 @@ pub struct DiscoverDeps {
     pub tunings: Tunings,
     /// Each person's Later pile.
     pub later: LaterPile,
+    /// Each person's weekly sets: the job kind and the routes' answers.
+    pub weekly: Arc<crate::discover::engine::weekly::WeeklySets>,
 }
 
 /// Clamp a limit into `1..=max`, defaulting when missing.
@@ -468,6 +470,7 @@ pub async fn forget_history(deps: &DiscoverDeps, user_id: &str) -> Result<(), Se
         activity = forgotten.activity,
         taste = forgotten.taste,
         pool = forgotten.pool,
+        weekly_sets = forgotten.weekly_sets,
         pages = forgotten.pages,
         "a person's history forgotten"
     );
@@ -487,9 +490,9 @@ pub async fn list_feedback(
     Ok(DiscoverFeedbackResponse { items })
 }
 
-/// The evidence behind one of the user's picks, from their pool's stored
-/// rows. Not found unless their pool holds the album with a reason that
-/// still holds.
+/// The evidence behind one of the user's picks: as built for the newest of
+/// their weekly sets that held it, else from their pool's stored rows. Not
+/// found when neither holds it, or the pool's reason no longer holds.
 pub async fn pick_evidence(
     deps: &DiscoverDeps,
     user_id: &str,
@@ -600,6 +603,49 @@ pub async fn later_page(
         .page(user_id, paging, only)
         .await
         .map_err(later_failure)
+}
+
+/// The user's week: where it stands and the set to show.
+pub async fn week(deps: &DiscoverDeps, user_id: &str) -> Result<WeekResponse, ServiceError> {
+    deps.weekly
+        .week(user_id)
+        .await
+        .map_err(|error| ServiceError::Internal(format!("weekly set: {error}")))
+}
+
+/// One page of "dig further" past the user's set.
+pub async fn week_more(
+    deps: &DiscoverDeps,
+    user_id: &str,
+    paging: PageRequest<u64>,
+) -> Result<Page<DigFurtherPick>, ServiceError> {
+    deps.weekly
+        .more(user_id, paging)
+        .await
+        .map_err(|error| ServiceError::Internal(format!("dig further: {error}")))
+}
+
+/// The user's set day.
+pub async fn discover_prefs(
+    deps: &DiscoverDeps,
+    user_id: &str,
+) -> Result<DiscoverPrefs, ServiceError> {
+    deps.weekly
+        .prefs(user_id)
+        .await
+        .map_err(|error| ServiceError::Internal(format!("discover prefs: {error}")))
+}
+
+/// Keep the user's set day; the week running keeps its set.
+pub async fn save_discover_prefs(
+    deps: &DiscoverDeps,
+    user_id: &str,
+    prefs: DiscoverPrefs,
+) -> Result<DiscoverPrefs, ServiceError> {
+    deps.weekly
+        .save_prefs(user_id, prefs)
+        .await
+        .map_err(|error| ServiceError::Internal(format!("discover prefs: {error}")))
 }
 
 /// The given cards whose albums the library already holds.

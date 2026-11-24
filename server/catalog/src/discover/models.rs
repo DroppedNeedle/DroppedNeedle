@@ -1108,6 +1108,222 @@ pub struct PickEvidence {
     pub source_read_at: Option<i64>,
 }
 
+// ---------------------------------------------------------------------------
+// The weekly set
+// ---------------------------------------------------------------------------
+
+pub use super::engine::weekly::{SetDay, ShortReason};
+
+/// Where the person's week stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WeekStatus {
+    /// This week's set is out: `set` is it.
+    Ready,
+    /// This week's set is being chosen while facts it needs come in;
+    /// `found_so_far` says how many picks are found. `set` is the last
+    /// one, when there is one.
+    BeingSetOut,
+    /// The person's first set waits for their ListenBrainz history to be
+    /// read, six hours at most.
+    ReadingHistory,
+    /// This week's set is not built yet and the last one stays, as `set`:
+    /// while a service it waits on is not answering (`failing` says which
+    /// and since when), or, for someone away a while, until their next
+    /// visit (`failing` is null).
+    KeptLastWeek,
+    /// Nothing to make a set from yet.
+    NothingYet,
+}
+
+/// A service a set waits on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SetSource {
+    /// ListenBrainz.
+    Listenbrainz,
+    /// MusicBrainz.
+    Musicbrainz,
+    /// Last.fm.
+    Lastfm,
+}
+
+/// A service that stopped answering, and since when.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct SourceFailing {
+    /// The service.
+    pub source: SetSource,
+    /// When it first failed (unix ms).
+    pub since: i64,
+}
+
+/// What became of one pick, read from the person's request for it, the
+/// library, their Later pile and what they told Discover.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PickState {
+    /// They asked for it, and it is on its way.
+    Asked,
+    /// They asked for it, and the request waits for an admin.
+    AwaitingApproval,
+    /// They asked for it, and the request was turned down.
+    Refused,
+    /// They asked for it, and the download failed or was stopped.
+    Failed,
+    /// The library holds it.
+    Arrived,
+    /// It is on their Later pile.
+    Later,
+    /// They said no.
+    No,
+    /// They said they know it already.
+    Known,
+    /// They said not now.
+    NotNow,
+    /// They turned its artist down.
+    NotArtist,
+    /// Nothing yet.
+    Open,
+}
+
+droppedneedle_kernel::spelled!(PickState {
+    Asked => "asked",
+    AwaitingApproval => "awaiting_approval",
+    Refused => "refused",
+    Failed => "failed",
+    Arrived => "arrived",
+    Later => "later",
+    No => "no",
+    Known => "known",
+    NotNow => "not_now",
+    NotArtist => "not_artist",
+    Open => "open",
+});
+
+/// One taste a set's picks are filed under.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct SetTaste {
+    /// "Around" its heaviest artist.
+    pub name: String,
+    /// That artist's MusicBrainz id.
+    pub anchor_artist_mbid: String,
+    /// Its share of the person's taste; null for a person with no plays.
+    #[serde(default)]
+    pub share: Option<f64>,
+    /// How many of the set's picks are filed under it.
+    pub picks: i64,
+}
+
+/// What a set was made from, as counted when it was built.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct SetCounts {
+    /// Plays in the app and imported listens counted.
+    pub plays_counted: i64,
+    /// The first of them (unix ms); null with none.
+    #[serde(default)]
+    pub history_from_at: Option<i64>,
+    /// The latest of them (unix ms); null with none.
+    #[serde(default)]
+    pub history_to_at: Option<i64>,
+    /// The person's artists the set started from.
+    pub seeds: i64,
+    /// Artists those point at; null when no pool was built.
+    #[serde(default)]
+    pub neighbours_found: Option<i64>,
+    /// Of those, the ones the person knows or the library holds.
+    #[serde(default)]
+    pub known_left_out: Option<i64>,
+    /// Artists everybody likes, left out; null when that rule did not run.
+    #[serde(default)]
+    pub hubs_left_out: Option<i64>,
+    /// Artists on the library's shelves.
+    pub shelf_artists: i64,
+    /// Albums on the library's shelves.
+    pub shelf_albums: i64,
+    /// Whether the person's ListenBrainz history had been read in full.
+    pub linked: bool,
+}
+
+/// One pick of a set.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct SetPick {
+    /// Its place in the set, from 1.
+    pub pick_no: i64,
+    /// The album, with its year and type.
+    pub album: AlbumRef,
+    /// Why it is in the set, as shown when the set was built.
+    pub reason: PickReason,
+    /// The entry of the set's `tastes` it is filed under; null is "further
+    /// out".
+    #[serde(default)]
+    pub taste_no: Option<i64>,
+    /// What became of it.
+    pub state: PickState,
+    /// Whether the person has heard its sample.
+    pub heard: bool,
+}
+
+/// One week's set.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct WeeklySet {
+    /// When its week starts (unix ms): 00:00 server time on the set day.
+    pub week_start_at: i64,
+    /// The ISO week number of that day.
+    pub week_number: i64,
+    /// When it was built (unix ms).
+    pub built_at: i64,
+    /// When the next set comes out (unix ms).
+    pub next_set_at: i64,
+    /// Why it holds fewer than eight; null for a full set.
+    #[serde(default)]
+    pub short_reason: Option<ShortReason>,
+    /// The line shown after "Only {n} this week."; null for a full set.
+    #[serde(default)]
+    pub short_line: Option<String>,
+    /// What it was made from.
+    pub counts: SetCounts,
+    /// The tastes its picks are filed under, largest share first.
+    pub tastes: Vec<SetTaste>,
+    /// Its picks, in order.
+    pub picks: Vec<SetPick>,
+}
+
+/// The person's week: where it stands, and the set to show.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct WeekResponse {
+    /// Where it stands.
+    pub status: WeekStatus,
+    /// While `being_set_out`: how many picks are found so far.
+    #[serde(default)]
+    pub found_so_far: Option<i64>,
+    /// While `kept_last_week` because a service is not answering: which,
+    /// and since when. Null otherwise, `kept_last_week` for someone away a
+    /// while included.
+    #[serde(default)]
+    pub failing: Option<SourceFailing>,
+    /// This week's set when `ready`, else the newest one kept; null when
+    /// there is none.
+    #[serde(default)]
+    pub set: Option<WeeklySet>,
+}
+
+/// One album past the week's set, from the person's pool.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct DigFurtherPick {
+    /// The album, with its year and type.
+    pub album: AlbumRef,
+    /// Why it is offered.
+    pub reason: PickReason,
+}
+
+/// How the person's weekly set is made.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct DiscoverPrefs {
+    /// The day their set comes out, from 00:00 server time. Friday unless
+    /// they chose another; a new day counts from the next week.
+    pub set_day: SetDay,
+}
+
 /// Body checking which cards already landed in the library.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct QueueValidateRequest {

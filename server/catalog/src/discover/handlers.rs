@@ -17,19 +17,20 @@ use droppedneedle_kernel::page::{Page, PageRequest};
 use serde::Deserialize;
 
 use super::{
+    engine::weekly,
     later,
     models::{
-        AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection,
+        AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection, DigFurtherPick,
         DiscoverActivityRequest, DiscoverActivityResponse, DiscoverFeedbackEntry,
         DiscoverFeedbackRequest, DiscoverFeedbackResponse, DiscoverHealthResponse,
-        DiscoverPickEventRequest, DiscoverQueuePreview, DiscoverQueueResponse,
+        DiscoverPickEventRequest, DiscoverPrefs, DiscoverQueuePreview, DiscoverQueueResponse,
         DiscoverQueueStatusResponse, DiscoverResponse, DiscoverTuningEntry, DiscoverTuningRequest,
         DiscoverTuningsResponse, FeedbackTarget, GenreDetailResponse, HomeResponse,
         IntegrationStatus, LaterAlbum, LaterRequest, ListenSource, PickEvidence,
         PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, QueueEnrichment,
         QueueGenerateRequest, QueueGenerateResponse, QueueValidateRequest, QueueValidateResponse,
         RadioPlanRequest, RadioPlanResponse, RadioRequest, RefreshResponse, StatsRange,
-        TrackPreviewResponse, TuningKind, YouTubeSearchResponse,
+        TrackPreviewResponse, TuningKind, WeekResponse, YouTubeSearchResponse,
     },
     services::{self, DiscoverDeps},
 };
@@ -67,6 +68,15 @@ pub struct LaterQuery {
     pub cursor: Option<String>,
     /// Only this album, by its release-group id: a page of one row or none.
     pub release_group_mbid: Option<String>,
+}
+
+/// `GET /discover/week/more` params.
+#[derive(Debug, Deserialize)]
+pub struct WeekMoreQuery {
+    /// Albums per page, 1 to 50 (default 20); more is read as 50.
+    pub limit: Option<u32>,
+    /// `next_cursor` from the previous page.
+    pub cursor: Option<String>,
 }
 
 /// Genre detail params.
@@ -568,6 +578,110 @@ pub async fn list_later(
     .map_err(ApiError::from)
 }
 
+/// The caller's week: whether this week's set is out, being set out,
+/// waiting for their history or kept from last week while a service is
+/// down, and the set to show with what became of each pick. Read from the
+/// caller's own rows alone.
+#[utoipa::path(
+    get,
+    tag = "discover",
+    path = "/api/v3/discover/week",
+    responses(
+        (status = 200, description = "The caller's week", body = WeekResponse),
+        (status = 401, description = "Not authenticated"),
+        (status = 500, description = "The week could not be read"),
+    )
+)]
+pub async fn get_week(
+    State(deps): State<DiscoverDeps>,
+    User(user): User,
+) -> Result<Json<WeekResponse>, ApiError> {
+    services::week(&deps, user.user_id())
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+/// "Dig further": the caller's pool past their newest set, in the order
+/// the set was dealt from, a page at a time.
+#[utoipa::path(
+    get,
+    tag = "discover",
+    path = "/api/v3/discover/week/more",
+    params(
+        ("limit" = Option<u32>, Query, description = "Albums per page, 1 to 50; more is read as 50"),
+        ("cursor" = Option<String>, Query, description = "`next_cursor` from the previous page"),
+    ),
+    responses(
+        (status = 200, description = "One page past the set, with how many there are", body = Page<DigFurtherPick>),
+        (status = 400, description = "Bad cursor"),
+        (status = 401, description = "Not authenticated"),
+        (status = 500, description = "The pool could not be read"),
+    )
+)]
+pub async fn week_more(
+    State(deps): State<DiscoverDeps>,
+    User(user): User,
+    ValidQuery(query): ValidQuery<WeekMoreQuery>,
+) -> Result<Json<Page<DigFurtherPick>>, ApiError> {
+    let paging = PageRequest::read(
+        query.limit,
+        query.cursor.as_deref(),
+        weekly::MORE_PAGE_DEFAULT,
+        weekly::MORE_PAGE_MAX,
+    )?;
+    services::week_more(&deps, user.user_id(), paging)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+/// The caller's set day.
+#[utoipa::path(
+    get,
+    tag = "discover",
+    path = "/api/v3/discover/prefs",
+    responses(
+        (status = 200, description = "The caller's set day", body = DiscoverPrefs),
+        (status = 401, description = "Not authenticated"),
+        (status = 500, description = "The set day could not be read"),
+    )
+)]
+pub async fn get_discover_prefs(
+    State(deps): State<DiscoverDeps>,
+    User(user): User,
+) -> Result<Json<DiscoverPrefs>, ApiError> {
+    services::discover_prefs(&deps, user.user_id())
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+/// Keep the caller's set day. This week's set stays as it is; the new day
+/// counts from the first such day after it.
+#[utoipa::path(
+    put,
+    tag = "discover",
+    path = "/api/v3/discover/prefs",
+    request_body = DiscoverPrefs,
+    responses(
+        (status = 200, description = "The set day as kept", body = DiscoverPrefs),
+        (status = 400, description = "Bad request body"),
+        (status = 401, description = "Not authenticated"),
+        (status = 500, description = "The set day could not be saved"),
+    )
+)]
+pub async fn save_discover_prefs(
+    State(deps): State<DiscoverDeps>,
+    User(user): User,
+    ValidJson(body): ValidJson<DiscoverPrefs>,
+) -> Result<Json<DiscoverPrefs>, ApiError> {
+    services::save_discover_prefs(&deps, user.user_id(), body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
 /// Record what the web UI saw happen to one of the caller's picks: shown
 /// (counted once a UTC day), its sample started, or its album page opened
 /// from the card. An album Discover never offered the caller is left alone.
@@ -596,7 +710,9 @@ pub async fn record_pick_event(
 
 /// Everything behind one of the caller's picks: its line, the caller's
 /// artists that led to it, whether it is new to them, how well known it is
-/// and how it was found. Read from the caller's own pool alone.
+/// and how it was found. A pick of one of the caller's weekly sets answers
+/// as it was built for that set; any other is read from the caller's own
+/// pool.
 #[utoipa::path(
     get,
     tag = "discover",
@@ -1056,6 +1172,10 @@ pub fn routes() -> Routes<DiscoverDeps> {
         .user(routes!(mark_later))
         .user(routes!(remove_later))
         .user(routes!(list_later))
+        .user(routes!(get_week))
+        .user(routes!(week_more))
+        .user(routes!(get_discover_prefs))
+        .user(routes!(save_discover_prefs))
         .user(routes!(forget_history))
         .user(routes!(validate_queue))
         .user(routes!(youtube_track_search))

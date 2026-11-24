@@ -5861,7 +5861,7 @@
         "tags": [
           "discover"
         ],
-        "summary": "Everything behind one of the caller's picks: its line, the caller's\nartists that led to it, whether it is new to them, how well known it is\nand how it was found. Read from the caller's own pool alone.",
+        "summary": "Everything behind one of the caller's picks: its line, the caller's\nartists that led to it, whether it is new to them, how well known it is\nand how it was found. A pick of one of the caller's weekly sets answers\nas it was built for that set; any other is read from the caller's own\npool.",
         "operationId": "pick_why",
         "parameters": [
           {
@@ -5995,6 +5995,120 @@
           },
           "503": {
             "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/discover/prefs": {
+      "get": {
+        "tags": [
+          "discover"
+        ],
+        "summary": "The caller's set day.",
+        "operationId": "get_discover_prefs",
+        "responses": {
+          "200": {
+            "description": "The caller's set day",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoverPrefs"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The set day could not be read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "discover"
+        ],
+        "summary": "Keep the caller's set day. This week's set stays as it is; the new day\ncounts from the first such day after it.",
+        "operationId": "save_discover_prefs",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoverPrefs"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The set day as kept",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoverPrefs"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The set day could not be saved",
             "content": {
               "application/json": {
                 "schema": {
@@ -6952,6 +7066,134 @@
           },
           "500": {
             "description": "The change could not be saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/discover/week": {
+      "get": {
+        "tags": [
+          "discover"
+        ],
+        "summary": "The caller's week: whether this week's set is out, being set out,\nwaiting for their history or kept from last week while a service is\ndown, and the set to show with what became of each pick. Read from the\ncaller's own rows alone.",
+        "operationId": "get_week",
+        "responses": {
+          "200": {
+            "description": "The caller's week",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeekResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The week could not be read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/discover/week/more": {
+      "get": {
+        "tags": [
+          "discover"
+        ],
+        "summary": "\"Dig further\": the caller's pool past their newest set, in the order\nthe set was dealt from, a page at a time.",
+        "operationId": "week_more",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Albums per page, 1 to 50; more is read as 50",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` from the previous page",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page past the set, with how many there are",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_DigFurtherPick"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad cursor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The pool could not be read",
             "content": {
               "application/json": {
                 "schema": {
@@ -45279,6 +45521,24 @@
           }
         }
       },
+      "DigFurtherPick": {
+        "type": "object",
+        "description": "One album past the week's set, from the person's pool.",
+        "required": [
+          "album",
+          "reason"
+        ],
+        "properties": {
+          "album": {
+            "$ref": "#/components/schemas/AlbumRef",
+            "description": "The album, with its year and type."
+          },
+          "reason": {
+            "$ref": "#/components/schemas/PickReason",
+            "description": "Why it is offered."
+          }
+        }
+      },
       "DiscogsArtistCredit": {
         "type": "object",
         "required": [
@@ -45952,6 +46212,19 @@
           "release_group_mbid": {
             "type": "string",
             "description": "MusicBrainz release-group id of the pick."
+          }
+        }
+      },
+      "DiscoverPrefs": {
+        "type": "object",
+        "description": "How the person's weekly set is made.",
+        "required": [
+          "set_day"
+        ],
+        "properties": {
+          "set_day": {
+            "$ref": "#/components/schemas/SetDay",
+            "description": "The day their set comes out, from 00:00 server time. Friday unless\nthey chose another; a new day counts from the next week."
           }
         }
       },
@@ -59211,6 +59484,54 @@
           }
         }
       },
+      "Page_DigFurtherPick": {
+        "type": "object",
+        "description": "One page of a list.",
+        "required": [
+          "items",
+          "next_cursor",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One album past the week's set, from the person's pool.",
+              "required": [
+                "album",
+                "reason"
+              ],
+              "properties": {
+                "album": {
+                  "$ref": "#/components/schemas/AlbumRef",
+                  "description": "The album, with its year and type."
+                },
+                "reason": {
+                  "$ref": "#/components/schemas/PickReason",
+                  "description": "Why it is offered."
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass back as `cursor` for the next page; null on the last."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Rows in the whole list, for lists that count them.",
+            "minimum": 0
+          }
+        }
+      },
       "Page_DuplicateGroupView": {
         "type": "object",
         "description": "One page of a list.",
@@ -61050,6 +61371,23 @@
             "type": "string"
           }
         }
+      },
+      "PickState": {
+        "type": "string",
+        "description": "What became of one pick, read from the person's request for it, the\nlibrary, their Later pile and what they told Discover.",
+        "enum": [
+          "asked",
+          "awaiting_approval",
+          "refused",
+          "failed",
+          "arrived",
+          "later",
+          "no",
+          "known",
+          "not_now",
+          "not_artist",
+          "open"
+        ]
       },
       "PlayEnd": {
         "type": "string",
@@ -70366,6 +70704,96 @@
           }
         }
       },
+      "SetCounts": {
+        "type": "object",
+        "description": "What a set was made from, as counted when it was built.",
+        "required": [
+          "plays_counted",
+          "seeds",
+          "shelf_artists",
+          "shelf_albums",
+          "linked"
+        ],
+        "properties": {
+          "history_from_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The first of them (unix ms); null with none."
+          },
+          "history_to_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The latest of them (unix ms); null with none."
+          },
+          "hubs_left_out": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Artists everybody likes, left out; null when that rule did not run."
+          },
+          "known_left_out": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Of those, the ones the person knows or the library holds."
+          },
+          "linked": {
+            "type": "boolean",
+            "description": "Whether the person's ListenBrainz history had been read in full."
+          },
+          "neighbours_found": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Artists those point at; null when no pool was built."
+          },
+          "plays_counted": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Plays in the app and imported listens counted."
+          },
+          "seeds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The person's artists the set started from."
+          },
+          "shelf_albums": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Albums on the library's shelves."
+          },
+          "shelf_artists": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Artists on the library's shelves."
+          }
+        }
+      },
+      "SetDay": {
+        "type": "string",
+        "description": "The day a person's weekly set comes out.",
+        "enum": [
+          "monday",
+          "tuesday",
+          "wednesday",
+          "thursday",
+          "friday",
+          "saturday",
+          "sunday"
+        ]
+      },
       "SetFavoriteBody": {
         "type": "object",
         "description": "Set-favorite body.",
@@ -70386,6 +70814,48 @@
           }
         }
       },
+      "SetPick": {
+        "type": "object",
+        "description": "One pick of a set.",
+        "required": [
+          "pick_no",
+          "album",
+          "reason",
+          "state",
+          "heard"
+        ],
+        "properties": {
+          "album": {
+            "$ref": "#/components/schemas/AlbumRef",
+            "description": "The album, with its year and type."
+          },
+          "heard": {
+            "type": "boolean",
+            "description": "Whether the person has heard its sample."
+          },
+          "pick_no": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Its place in the set, from 1."
+          },
+          "reason": {
+            "$ref": "#/components/schemas/PickReason",
+            "description": "Why it is in the set, as shown when the set was built."
+          },
+          "state": {
+            "$ref": "#/components/schemas/PickState",
+            "description": "What became of it."
+          },
+          "taste_no": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The entry of the set's `tastes` it is filed under; null is \"further\nout\"."
+          }
+        }
+      },
       "SetRatingBody": {
         "type": "object",
         "description": "Set-rating body.",
@@ -70398,6 +70868,47 @@
             "format": "int32",
             "description": "1 to 5 stars, or 0 to clear the rating.",
             "minimum": 0
+          }
+        }
+      },
+      "SetSource": {
+        "type": "string",
+        "description": "A service a set waits on.",
+        "enum": [
+          "listenbrainz",
+          "musicbrainz",
+          "lastfm"
+        ]
+      },
+      "SetTaste": {
+        "type": "object",
+        "description": "One taste a set's picks are filed under.",
+        "required": [
+          "name",
+          "anchor_artist_mbid",
+          "picks"
+        ],
+        "properties": {
+          "anchor_artist_mbid": {
+            "type": "string",
+            "description": "That artist's MusicBrainz id."
+          },
+          "name": {
+            "type": "string",
+            "description": "\"Around\" its heaviest artist."
+          },
+          "picks": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many of the set's picks are filed under it."
+          },
+          "share": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Its share of the person's taste; null for a person with no plays."
           }
         }
       },
@@ -70510,6 +71021,16 @@
           "musicbrainz",
           "library",
           "local"
+        ]
+      },
+      "ShortReason": {
+        "type": "string",
+        "description": "Why a set holds fewer than [`SET_SIZE`] picks.",
+        "enum": [
+          "short_history",
+          "shelves_only",
+          "rest_known",
+          "not_checked"
         ]
       },
       "SimilarAlbumsResponse": {
@@ -70711,6 +71232,25 @@
               "null"
             ],
             "description": "slskd version, when the probe reached it."
+          }
+        }
+      },
+      "SourceFailing": {
+        "type": "object",
+        "description": "A service that stopped answering, and since when.",
+        "required": [
+          "source",
+          "since"
+        ],
+        "properties": {
+          "since": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it first failed (unix ms)."
+          },
+          "source": {
+            "$ref": "#/components/schemas/SetSource",
+            "description": "The service."
           }
         }
       },
@@ -74636,6 +75176,60 @@
           "fulfilled"
         ]
       },
+      "WeekResponse": {
+        "type": "object",
+        "description": "The person's week: where it stands, and the set to show.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "failing": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SourceFailing"
+              }
+            ],
+            "description": "While `kept_last_week` because a service is not answering: which,\nand since when. Null otherwise, `kept_last_week` for someone away a\nwhile included."
+          },
+          "found_so_far": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "While `being_set_out`: how many picks are found so far."
+          },
+          "set": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/WeeklySet"
+              }
+            ],
+            "description": "This week's set when `ready`, else the newest one kept; null when\nthere is none."
+          },
+          "status": {
+            "$ref": "#/components/schemas/WeekStatus",
+            "description": "Where it stands."
+          }
+        }
+      },
+      "WeekStatus": {
+        "type": "string",
+        "description": "Where the person's week stands.",
+        "enum": [
+          "ready",
+          "being_set_out",
+          "reading_history",
+          "kept_last_week",
+          "nothing_yet"
+        ]
+      },
       "WeeklyExploration": {
         "type": "object",
         "description": "The weekly exploration playlist shelf.",
@@ -74664,6 +75258,77 @@
               "$ref": "#/components/schemas/WeeklyTrack"
             },
             "description": "Playlist tracks in order."
+          }
+        }
+      },
+      "WeeklySet": {
+        "type": "object",
+        "description": "One week's set.",
+        "required": [
+          "week_start_at",
+          "week_number",
+          "built_at",
+          "next_set_at",
+          "counts",
+          "tastes",
+          "picks"
+        ],
+        "properties": {
+          "built_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it was built (unix ms)."
+          },
+          "counts": {
+            "$ref": "#/components/schemas/SetCounts",
+            "description": "What it was made from."
+          },
+          "next_set_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the next set comes out (unix ms)."
+          },
+          "picks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SetPick"
+            },
+            "description": "Its picks, in order."
+          },
+          "short_line": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The line shown after \"Only {n} this week.\"; null for a full set."
+          },
+          "short_reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ShortReason"
+              }
+            ],
+            "description": "Why it holds fewer than eight; null for a full set."
+          },
+          "tastes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SetTaste"
+            },
+            "description": "The tastes its picks are filed under, largest share first."
+          },
+          "week_number": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The ISO week number of that day."
+          },
+          "week_start_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When its week starts (unix ms): 00:00 server time on the set day."
           }
         }
       },

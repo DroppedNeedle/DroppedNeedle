@@ -36,7 +36,7 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 	],
 	localChanged: [every('local')],
 	downloadsChanged: [key(U, 'downloads', 'tasks')],
-	requestsChanged: [key(U, 'requests')],
+	requestsChanged: [key(U, 'requests'), key(U, 'discover', 'week')],
 	searchJobChanged: [key(U, 'downloads', 'search', 'job')],
 	searchJobsChanged: [key(U, 'downloads', 'search')],
 	dropImportsChanged: [every('drop-import'), { key: [U, 'downloads', 'tasks', 'anon', 0, 'held'] }],
@@ -46,6 +46,7 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 	wantedChanged: [key(U, 'wanted', 'list')],
 	recommendationsChanged: [
 		key(U, 'discover', 'feedback'),
+		key(U, 'discover', 'week'),
 		key(U, 'discover', 'home'),
 		key(U, 'discover', 'radio'),
 		key(U, 'discover', 'radio-plan'),
@@ -55,7 +56,12 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 		key(U, 'artist')
 	],
 	tuningsChanged: [key(U, 'discover', 'tunings'), key(U, 'discover', 'pick-evidence')],
-	laterChanged: [key(U, 'discover', 'later'), key(U, 'discover', 'home')],
+	laterChanged: [
+		key(U, 'discover', 'later'),
+		key(U, 'discover', 'home'),
+		key(U, 'discover', 'week')
+	],
+	discoverPrefsChanged: [key(U, 'discover', 'prefs'), key(U, 'discover', 'week')],
 	artistDuplicatesChanged: [every('library', 'artist-reconciliation')],
 	usersChanged: [key(U, 'auth', 'admin-users')],
 	userImportCandidatesChanged: [key(U, 'auth', 'import', 'job')],

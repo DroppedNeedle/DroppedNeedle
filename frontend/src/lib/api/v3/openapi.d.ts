@@ -1908,7 +1908,9 @@ export interface paths {
         /**
          * Everything behind one of the caller's picks: its line, the caller's
          *     artists that led to it, whether it is new to them, how well known it is
-         *     and how it was found. Read from the caller's own pool alone.
+         *     and how it was found. A pick of one of the caller's weekly sets answers
+         *     as it was built for that set; any other is read from the caller's own
+         *     pool.
          */
         get: operations["pick_why"];
         put?: never;
@@ -1930,6 +1932,27 @@ export interface paths {
         put?: never;
         /** Suggest rows extending one playlist. */
         post: operations["playlist_suggestions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/prefs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's set day. */
+        get: operations["get_discover_prefs"];
+        /**
+         * Keep the caller's set day. This week's set stays as it is; the new day
+         *     counts from the first such day after it.
+         */
+        put: operations["save_discover_prefs"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2173,6 +2196,48 @@ export interface paths {
          *     Answers the same when there was no such tuning.
          */
         delete: operations["undo_tuning"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/week": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The caller's week: whether this week's set is out, being set out,
+         *     waiting for their history or kept from last week while a service is
+         *     down, and the set to show with what became of each pick. Read from the
+         *     caller's own rows alone.
+         */
+        get: operations["get_week"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/week/more": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * "Dig further": the caller's pool past their newest set, in the order
+         *     the set was dealt from, a page at a time.
+         */
+        get: operations["week_more"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -13800,6 +13865,13 @@ export interface components {
             /** @description Raw Bearer token. Shown once. */
             token: string;
         };
+        /** @description One album past the week's set, from the person's pool. */
+        DigFurtherPick: {
+            /** @description The album, with its year and type. */
+            album: components["schemas"]["AlbumRef"];
+            /** @description Why it is offered. */
+            reason: components["schemas"]["PickReason"];
+        };
         DiscogsArtistCredit: {
             artist_id: string | null;
             canonical_url: string | null;
@@ -13996,6 +14068,14 @@ export interface components {
             event: components["schemas"]["PickEvent"];
             /** @description MusicBrainz release-group id of the pick. */
             release_group_mbid: string;
+        };
+        /** @description How the person's weekly set is made. */
+        DiscoverPrefs: {
+            /**
+             * @description The day their set comes out, from 00:00 server time. Friday unless
+             *     they chose another; a new day counts from the next week.
+             */
+            set_day: components["schemas"]["SetDay"];
         };
         /** @description A discover teaser on home: one seed artist plus similar artists. */
         DiscoverPreview: {
@@ -20192,6 +20272,22 @@ export interface components {
             total: number | null;
         };
         /** @description One page of a list. */
+        Page_DigFurtherPick: {
+            items: {
+                /** @description The album, with its year and type. */
+                album: components["schemas"]["AlbumRef"];
+                /** @description Why it is offered. */
+                reason: components["schemas"]["PickReason"];
+            }[];
+            /** @description Pass back as `cursor` for the next page; null on the last. */
+            next_cursor: string | null;
+            /**
+             * Format: int64
+             * @description Rows in the whole list, for lists that count them.
+             */
+            total: number | null;
+        };
+        /** @description One page of a list. */
         Page_DuplicateGroupView: {
             items: {
                 /** @description The first copy's artist. */
@@ -20897,6 +20993,12 @@ export interface components {
         PickResponse: {
             task_id: string;
         };
+        /**
+         * @description What became of one pick, read from the person's request for it, the
+         *     library, their Later pile and what they told Discover.
+         * @enum {string}
+         */
+        PickState: "asked" | "awaiting_approval" | "refused" | "failed" | "arrived" | "later" | "no" | "known" | "not_now" | "not_artist" | "open";
         /**
          * @description How a playback ended.
          * @enum {string}
@@ -25076,12 +25178,89 @@ export interface components {
             /** @description The MusicBrainz artist id. */
             musicbrainz_artist_id: string;
         };
+        /** @description What a set was made from, as counted when it was built. */
+        SetCounts: {
+            /**
+             * Format: int64
+             * @description The first of them (unix ms); null with none.
+             */
+            history_from_at?: number | null;
+            /**
+             * Format: int64
+             * @description The latest of them (unix ms); null with none.
+             */
+            history_to_at?: number | null;
+            /**
+             * Format: int64
+             * @description Artists everybody likes, left out; null when that rule did not run.
+             */
+            hubs_left_out?: number | null;
+            /**
+             * Format: int64
+             * @description Of those, the ones the person knows or the library holds.
+             */
+            known_left_out?: number | null;
+            /** @description Whether the person's ListenBrainz history had been read in full. */
+            linked: boolean;
+            /**
+             * Format: int64
+             * @description Artists those point at; null when no pool was built.
+             */
+            neighbours_found?: number | null;
+            /**
+             * Format: int64
+             * @description Plays in the app and imported listens counted.
+             */
+            plays_counted: number;
+            /**
+             * Format: int64
+             * @description The person's artists the set started from.
+             */
+            seeds: number;
+            /**
+             * Format: int64
+             * @description Albums on the library's shelves.
+             */
+            shelf_albums: number;
+            /**
+             * Format: int64
+             * @description Artists on the library's shelves.
+             */
+            shelf_artists: number;
+        };
+        /**
+         * @description The day a person's weekly set comes out.
+         * @enum {string}
+         */
+        SetDay: "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
         /** @description Set-favorite body. */
         SetFavoriteBody: {
             /** @description True favorites the item; false unfavorites it. */
             favorited: boolean;
             /** @description Display name to keep, when favoriting. */
             name?: string | null;
+        };
+        /** @description One pick of a set. */
+        SetPick: {
+            /** @description The album, with its year and type. */
+            album: components["schemas"]["AlbumRef"];
+            /** @description Whether the person has heard its sample. */
+            heard: boolean;
+            /**
+             * Format: int64
+             * @description Its place in the set, from 1.
+             */
+            pick_no: number;
+            /** @description Why it is in the set, as shown when the set was built. */
+            reason: components["schemas"]["PickReason"];
+            /** @description What became of it. */
+            state: components["schemas"]["PickState"];
+            /**
+             * Format: int64
+             * @description The entry of the set's `tastes` it is filed under; null is "further
+             *     out".
+             */
+            taste_no?: number | null;
         };
         /** @description Set-rating body. */
         SetRatingBody: {
@@ -25090,6 +25269,28 @@ export interface components {
              * @description 1 to 5 stars, or 0 to clear the rating.
              */
             rating: number;
+        };
+        /**
+         * @description A service a set waits on.
+         * @enum {string}
+         */
+        SetSource: "listenbrainz" | "musicbrainz" | "lastfm";
+        /** @description One taste a set's picks are filed under. */
+        SetTaste: {
+            /** @description That artist's MusicBrainz id. */
+            anchor_artist_mbid: string;
+            /** @description "Around" its heaviest artist. */
+            name: string;
+            /**
+             * Format: int64
+             * @description How many of the set's picks are filed under it.
+             */
+            picks: number;
+            /**
+             * Format: double
+             * @description Its share of the person's taste; null for a person with no plays.
+             */
+            share?: number | null;
         };
         /** @description First-admin setup body. Runs only against an empty user table. */
         SetupBody: {
@@ -25135,6 +25336,11 @@ export interface components {
          * @enum {string}
          */
         ShelfSource: "listenbrainz" | "lastfm" | "blended" | "jellyfin" | "musicbrainz" | "library" | "local";
+        /**
+         * @description Why a set holds fewer than [`SET_SIZE`] picks.
+         * @enum {string}
+         */
+        ShortReason: "short_history" | "shelves_only" | "rest_known" | "not_checked";
         /** @description `GET /albums/{album_id}/similar`. */
         SimilarAlbumsResponse: {
             /** @description Albums by similar artists. */
@@ -25239,6 +25445,16 @@ export interface components {
             slskd_downloads_dir?: string | null;
             /** @description slskd version, when the probe reached it. */
             version?: string | null;
+        };
+        /** @description A service that stopped answering, and since when. */
+        SourceFailing: {
+            /**
+             * Format: int64
+             * @description When it first failed (unix ms).
+             */
+            since: number;
+            /** @description The service. */
+            source: components["schemas"]["SetSource"];
         };
         /**
          * @description Which remote source a view or id belongs to.
@@ -26918,6 +27134,32 @@ export interface components {
          * @enum {string}
          */
         WatchState: "watching" | "stopped" | "fulfilled";
+        /** @description The person's week: where it stands, and the set to show. */
+        WeekResponse: {
+            /**
+             * @description While `kept_last_week` because a service is not answering: which,
+             *     and since when. Null otherwise, `kept_last_week` for someone away a
+             *     while included.
+             */
+            failing?: null | components["schemas"]["SourceFailing"];
+            /**
+             * Format: int64
+             * @description While `being_set_out`: how many picks are found so far.
+             */
+            found_so_far?: number | null;
+            /**
+             * @description This week's set when `ready`, else the newest one kept; null when
+             *     there is none.
+             */
+            set?: null | components["schemas"]["WeeklySet"];
+            /** @description Where it stands. */
+            status: components["schemas"]["WeekStatus"];
+        };
+        /**
+         * @description Where the person's week stands.
+         * @enum {string}
+         */
+        WeekStatus: "ready" | "being_set_out" | "reading_history" | "kept_last_week" | "nothing_yet";
         /** @description The weekly exploration playlist shelf. */
         WeeklyExploration: {
             /** @description Playlist date (`YYYY-MM-DD`). */
@@ -26928,6 +27170,39 @@ export interface components {
             title: string;
             /** @description Playlist tracks in order. */
             tracks: components["schemas"]["WeeklyTrack"][];
+        };
+        /** @description One week's set. */
+        WeeklySet: {
+            /**
+             * Format: int64
+             * @description When it was built (unix ms).
+             */
+            built_at: number;
+            /** @description What it was made from. */
+            counts: components["schemas"]["SetCounts"];
+            /**
+             * Format: int64
+             * @description When the next set comes out (unix ms).
+             */
+            next_set_at: number;
+            /** @description Its picks, in order. */
+            picks: components["schemas"]["SetPick"][];
+            /** @description The line shown after "Only {n} this week."; null for a full set. */
+            short_line?: string | null;
+            /** @description Why it holds fewer than eight; null for a full set. */
+            short_reason?: null | components["schemas"]["ShortReason"];
+            /** @description The tastes its picks are filed under, largest share first. */
+            tastes: components["schemas"]["SetTaste"][];
+            /**
+             * Format: int64
+             * @description The ISO week number of that day.
+             */
+            week_number: number;
+            /**
+             * Format: int64
+             * @description When its week starts (unix ms): 00:00 server time on the set day.
+             */
+            week_start_at: number;
         };
         /** @description One track of the weekly exploration playlist. */
         WeeklyTrack: {
@@ -31592,6 +31867,95 @@ export interface operations {
             };
         };
     };
+    get_discover_prefs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's set day */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoverPrefs"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The set day could not be read */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    save_discover_prefs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiscoverPrefs"];
+            };
+        };
+        responses: {
+            /** @description The set day as kept */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoverPrefs"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The set day could not be saved */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     get_queue: {
         parameters: {
             query?: {
@@ -32291,6 +32655,96 @@ export interface operations {
                 };
             };
             /** @description The change could not be saved */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_week: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's week */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeekResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The week could not be read */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    week_more: {
+        parameters: {
+            query?: {
+                /** @description Albums per page, 1 to 50; more is read as 50 */
+                limit?: number;
+                /** @description `next_cursor` from the previous page */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page past the set, with how many there are */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_DigFurtherPick"];
+                };
+            };
+            /** @description Bad cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The pool could not be read */
             500: {
                 headers: {
                     [name: string]: unknown;
