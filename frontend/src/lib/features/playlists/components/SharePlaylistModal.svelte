@@ -40,7 +40,7 @@
 		{
 			value: 'private',
 			label: 'Only me',
-			description: 'Others see it locked, with only your name and track count.'
+			description: 'Others see it locked, with its track count and any display name you set.'
 		},
 		{ value: 'people', label: 'Specific people', description: 'Only the people you add.' },
 		{ value: 'everyone', label: 'Everyone', description: 'Every user of this server.' }

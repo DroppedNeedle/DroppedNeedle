@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { epochSecToIso, toPageListItem, transposeMembership } from './playlistV3Adapter';
+import {
+	epochSecToIso,
+	privatePlaylistLine,
+	toPageListItem,
+	transposeMembership
+} from './playlistV3Adapter';
 
 describe('playlistV3Adapter', () => {
 	it('converts dates and membership, passing redacted rows through', () => {
@@ -26,6 +31,19 @@ describe('playlistV3Adapter', () => {
 				can_delete: false,
 				is_redacted: true
 			});
+		}
+
+		{
+			// Names a locked playlist's owner only when the server sends a name.
+			expect(privatePlaylistLine({ track_count: 4, owner_name: 'Cara', can_delete: false })).toBe(
+				'4 tracks · owned by Cara'
+			);
+			expect(privatePlaylistLine({ track_count: 1, owner_name: null, can_delete: false })).toBe(
+				'1 track'
+			);
+			expect(privatePlaylistLine({ track_count: 2, owner_name: null, can_delete: true })).toBe(
+				'2 tracks · No owner'
+			);
 		}
 
 		{

@@ -159,7 +159,11 @@ fn summary(row: &PlaylistRow, user_id: &str, admin: bool) -> PlaylistSummary {
         is_shared: owns(row, user_id) && row.has_members,
         can_edit: owns(row, user_id) || row.shared_to_edit,
         can_delete: can_delete(row.owner_id.as_deref(), user_id, admin),
-        owner_name: row.owner_name.clone(),
+        owner_name: if owns(row, user_id) {
+            row.owner_name.clone()
+        } else {
+            row.owner_listed_name.clone()
+        },
         is_redacted: false,
     }
 }

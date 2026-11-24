@@ -317,6 +317,94 @@ async fn playlist_auth_matrix() {
     assert_eq!(body["error"]["code"], "FORBIDDEN");
 }
 
+/// Anyone but the owner sees a playlist owner's display name only when the
+/// owner chose it: on a locked list row, in the locked playlist's 403 and
+/// on a public playlist. The owner still reads their own name.
+#[tokio::test]
+async fn others_see_an_owner_name_only_when_it_was_chosen() {
+    const QUIET: Identity = ("u-quiet", Role::User);
+    let rig = Rig::open().await;
+    let app = rig.app();
+    let create = |owner: Identity, name: &'static str| {
+        let app = app.clone();
+        async move {
+            let (_, created) = call(
+                &app,
+                Method::POST,
+                "/api/v3/playlists",
+                Some(owner),
+                Some(json!({"name": name})),
+            )
+            .await;
+            created["id"].as_str().unwrap().to_owned()
+        }
+    };
+    let quiet_private = create(QUIET, "Quiet private").await;
+    let quiet_public = create(QUIET, "Quiet public").await;
+    let ada_public = create(ADA, "Ada public").await;
+    for id in [&quiet_public, &ada_public] {
+        call(
+            &app,
+            Method::PATCH,
+            &format!("/api/v3/playlists/{id}/visibility"),
+            Some(if *id == ada_public { ADA } else { QUIET }),
+            Some(json!({"is_public": true})),
+        )
+        .await;
+    }
+
+    let owner_names = |list: &Value| -> Vec<(String, Option<String>)> {
+        list["playlists"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| {
+                let id = row["id"].as_str().unwrap().to_owned();
+                (id, row["owner_name"].as_str().map(str::to_owned))
+            })
+            .collect()
+    };
+    let (_, list) = call(&app, Method::GET, "/api/v3/playlists", Some(BOB), None).await;
+    let mut seen = owner_names(&list);
+    seen.sort();
+    let mut expected = vec![
+        (quiet_private.clone(), None),
+        (quiet_public.clone(), None),
+        (ada_public.clone(), Some("Ada".to_owned())),
+    ];
+    expected.sort();
+    assert_eq!(seen, expected, "only a chosen name reaches another user");
+
+    let (status, body) = call(
+        &app,
+        Method::GET,
+        &format!("/api/v3/playlists/{quiet_private}"),
+        Some(BOB),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["error"]["code"], "PLAYLIST_PRIVATE");
+    assert_eq!(body["error"]["details"]["owner_name"], Value::Null);
+    let (_, public) = call(
+        &app,
+        Method::GET,
+        &format!("/api/v3/playlists/{quiet_public}"),
+        Some(BOB),
+        None,
+    )
+    .await;
+    assert_eq!(public["owner_name"], Value::Null);
+
+    let (_, own) = call(&app, Method::GET, "/api/v3/playlists", Some(QUIET), None).await;
+    let own = owner_names(&own);
+    assert!(
+        own.iter()
+            .any(|(id, name)| *id == quiet_private && name.as_deref() == Some("quiet")),
+        "the owner reads their own name: {own:?}"
+    );
+}
+
 /// Sharing opens a private playlist to the chosen people and no one else.
 /// A member reads it in full and changes nothing: its songs, name,
 /// visibility and members stay the owner's. Only other users the user

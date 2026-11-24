@@ -27,6 +27,8 @@ droppedneedle_kernel::sql! {
          FROM catalog_playlist_members m WHERE m.playlist_id = p.id AND m.user_id = ?1 \
          AND m.can_edit = 1))";
     /// One playlist with its aggregates, in `PlaylistRow`'s mapper order.
+    /// The owner's name comes twice: as it reads to the owner, then only
+    /// when they chose it, which is all anyone else may see.
     fragment PLAYLIST_COLUMNS = "SELECT p.id, p.name, p.user_id, \
          COALESCE(u.display_name, u.username), p.is_public, p.source_ref, \
          p.created_at / 1000, p.updated_at / 1000, \
@@ -40,7 +42,8 @@ droppedneedle_kernel::sql! {
           WHERE t.playlist_id = p.id AND t.library_file_id IS NOT NULL), \
          (SELECT m.can_edit FROM catalog_playlist_members m \
           WHERE m.playlist_id = p.id AND m.user_id = ?1), \
-         EXISTS (SELECT 1 FROM catalog_playlist_members m WHERE m.playlist_id = p.id)";
+         EXISTS (SELECT 1 FROM catalog_playlist_members m WHERE m.playlist_id = p.id), \
+         CASE WHEN " + (listed_user!("u")) + " THEN u.display_name END";
     /// The tables a playlist row is read from.
     fragment PLAYLIST_FROM = " FROM catalog_playlists p \
          LEFT JOIN auth_users u ON u.id = p.user_id \

@@ -21102,7 +21102,10 @@ export interface components {
             is_shared: boolean;
             /** @description Display name. */
             name: string;
-            /** @description Owner display name. */
+            /**
+             * @description Owner display name. To anyone but the owner, only a name the owner
+             *     chose; None when they chose none or it has no owner.
+             */
             owner_name?: string | null;
             /** @description Import provenance (`<source>:<id>`), when the playlist was imported. */
             source_ref?: string | null;
@@ -21301,7 +21304,10 @@ export interface components {
             is_shared: boolean;
             /** @description Display name. */
             name: string;
-            /** @description Owner display name. */
+            /**
+             * @description Owner display name. To anyone but the owner, only a name the owner
+             *     chose; None when they chose none or it has no owner.
+             */
             owner_name?: string | null;
             /** @description Import provenance (`<source>:<id>`), when the playlist was imported. */
             source_ref?: string | null;
@@ -22722,7 +22728,10 @@ export interface components {
             id: string;
             /** @description Always true. */
             is_redacted: boolean;
-            /** @description Owner display name. None when it has no owner. */
+            /**
+             * @description Owner display name, only when the owner chose it. None when they
+             *     chose none or it has no owner.
+             */
             owner_name?: string | null;
             /** @description Track count. */
             track_count: number;

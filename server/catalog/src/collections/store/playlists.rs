@@ -43,8 +43,12 @@ pub struct PlaylistRow {
     pub name: String,
     /// Owning user id. A playlist from v2 with no owner has none.
     pub owner_id: Option<String>,
-    /// Owner display name, when the owner still exists.
+    /// Owner display name, else username, when the owner still exists:
+    /// what the owner reads, and what compat's playlist owner sends.
     pub owner_name: Option<String>,
+    /// The owner's display name when they chose it: the only name of
+    /// theirs another user may see.
+    pub owner_listed_name: Option<String>,
     /// Public playlists are visible to every user.
     pub is_public: bool,
     /// Import provenance (`<source>:<id>`).
@@ -87,7 +91,7 @@ pub enum Listed {
         owner_id: Option<String>,
         /// Every entry.
         track_count: usize,
-        /// Owner display name, when the owner still exists.
+        /// The owner's display name, when they chose it.
         owner_name: Option<String>,
     },
 }
@@ -415,6 +419,7 @@ fn playlist_from_row(row: &Row<'_>) -> rusqlite::Result<PlaylistRow> {
         shared_with_caller: row.get::<_, Option<i64>>(13)?.is_some(),
         shared_to_edit: row.get::<_, Option<i64>>(13)? == Some(1),
         has_members: row.get::<_, i64>(14)? != 0,
+        owner_listed_name: row.get(15)?,
         cover_urls: Vec::new(),
     })
 }
@@ -1502,14 +1507,14 @@ impl VisiblePlaylists<'_> {
                 let mut stmt = conn.prepare(sql::LIST_ALL.text())?;
                 let mut listed = stmt
                     .query_map(params![user_id, with_private_strays], |row| {
-                        if row.get::<_, i64>(15)? != 0 {
+                        if row.get::<_, i64>(16)? != 0 {
                             Ok(Listed::Readable(playlist_from_row(row)?))
                         } else {
                             Ok(Listed::Hidden {
                                 id: row.get(0)?,
                                 owner_id: row.get(2)?,
                                 track_count: count(row.get(9)?),
-                                owner_name: row.get(3)?,
+                                owner_name: row.get(15)?,
                             })
                         }
                     })?

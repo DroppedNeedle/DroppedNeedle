@@ -140,7 +140,8 @@ pub struct PlaylistSummary {
     /// True when the caller may delete it: its owner, or an admin when it
     /// has no owner.
     pub can_delete: bool,
-    /// Owner display name.
+    /// Owner display name. To anyone but the owner, only a name the owner
+    /// chose; None when they chose none or it has no owner.
     pub owner_name: Option<String>,
     /// Always false on a full summary; true on redacted rows.
     pub is_redacted: bool,
@@ -182,7 +183,8 @@ pub struct PlaylistDetail {
     /// True when the caller may delete it: its owner, or an admin when it
     /// has no owner.
     pub can_delete: bool,
-    /// Owner display name.
+    /// Owner display name. To anyone but the owner, only a name the owner
+    /// chose; None when they chose none or it has no owner.
     pub owner_name: Option<String>,
     /// Always false on a full detail; true on redacted rows.
     pub is_redacted: bool,
@@ -197,7 +199,8 @@ pub struct RedactedPlaylist {
     pub id: String,
     /// Track count.
     pub track_count: usize,
-    /// Owner display name. None when it has no owner.
+    /// Owner display name, only when the owner chose it. None when they
+    /// chose none or it has no owner.
     pub owner_name: Option<String>,
     /// True for an admin when it has no owner.
     pub can_delete: bool,

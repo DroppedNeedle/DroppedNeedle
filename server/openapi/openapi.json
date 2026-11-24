@@ -61411,7 +61411,7 @@
               "string",
               "null"
             ],
-            "description": "Owner display name."
+            "description": "Owner display name. To anyone but the owner, only a name the owner\nchose; None when they chose none or it has no owner."
           },
           "source_ref": {
             "type": [
@@ -61859,7 +61859,7 @@
               "string",
               "null"
             ],
-            "description": "Owner display name."
+            "description": "Owner display name. To anyone but the owner, only a name the owner\nchose; None when they chose none or it has no owner."
           },
           "source_ref": {
             "type": [
@@ -64934,7 +64934,7 @@
               "string",
               "null"
             ],
-            "description": "Owner display name. None when it has no owner."
+            "description": "Owner display name, only when the owner chose it. None when they\nchose none or it has no owner."
           },
           "track_count": {
             "type": "integer",

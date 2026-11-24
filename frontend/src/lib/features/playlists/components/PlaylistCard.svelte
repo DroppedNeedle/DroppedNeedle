@@ -183,7 +183,7 @@
 				{/if}
 				<span class="truncate">{subtitle}</span>
 			</p>
-			{#if !playlist.is_owner}
+			{#if !playlist.is_owner && (playlist.owner_name || playlist.can_delete)}
 				<p class="pl-card__owner">
 					<span class="pl-card__initials" aria-hidden="true">{ownerInitials}</span>
 					<span class="truncate">
