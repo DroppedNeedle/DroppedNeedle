@@ -29,8 +29,8 @@ services:
       - ./cache:/app/cache         # database, backups, cover art and metadata cache
       - ./plugins:/app/plugins     # installed plugins; omit and they vanish on recreate
       # One mount holding both the library and the download clients' completed folders keeps
-      # the paths simple. Imports copy each file out of the downloads folder. Configure the
-      # library root as /data/music.
+      # the paths simple. An import renames each file out of the downloads folder when both
+      # are on one filesystem, and copies it otherwise. Configure the library root as /data/music.
       # Avoid nested binds beneath /data: they create new mount boundaries even on one disk.
       - /path/to/media:/data:rw
       # OPTIONAL drop-import staging. Put its host path beneath /path/to/media and

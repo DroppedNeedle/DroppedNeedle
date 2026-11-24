@@ -14,9 +14,9 @@ DroppedNeedle drives a download client you run yourself: slskd, SABnzbd or NZBGe
 
 A download source is slskd, SABnzbd or NZBGet once it is turned on with a URL and its sign-in, Deemix once it is turned on with its URL, or an enabled plugin download client (see [PLUGINS.md](../PLUGINS.md)). It counts while it is down too: DroppedNeedle keeps retrying it, and the Download Client page shows it as not reachable. Requests, manual search, the health check and Discover's "set up a download client" prompt all go by this one answer.
 
-Request buttons show whether or not a download source is turned on. A request made while none is on is accepted and held. The Requests and Downloads pages show it as "Waiting: no download source configured", and it starts by itself as soon as an admin turns a source on or enables a plugin download client. From then on its card shows what the download is doing: searching, awaiting review or downloading.
+Request buttons show whether or not a download source is turned on. A request made while none is on is accepted and held. The Requests page shows it as "Waiting: no download source configured" (the Downloads page says "Download client not configured"), and it starts by itself as soon as an admin turns a source on or enables a plugin download client. From then on its card shows what the download is doing: searching, awaiting review or downloading.
 
-The Requests page also lists the downloads that auto-download starts for artists you follow, marked "Followed artist". They count toward your quota like any other request. When your request quota is full, the request still appears and waits as "Waiting: request quota full" ("Waiting: storage full" when your storage budget or the library's size cap is reached), then starts by itself once there is room.
+The Requests page also lists the downloads that auto-download starts for artists you follow, marked "Followed artist". They count toward your quota like any other request. When your request quota is full, such a download still appears and waits as "Waiting: request quota full" ("Waiting: storage full" when your storage budget or the library's size cap is reached), then starts by itself once there is room. A request you make yourself while either is full is refused with the reason, such as "Request limit reached (10 per 7 days - you've used 10)".
 
 slskd, Usenet and Deezer can run side by side; the source priority control under Settings > Download Client picks who goes first. Deezer comes last until you move it.
 
@@ -24,8 +24,8 @@ slskd, Usenet and Deezer can run side by side; the source priority control under
 
 DroppedNeedle talks to your own running slskd over its local HTTP API (`X-API-Key`). You bring slskd; DroppedNeedle drives it.
 
-- Use slskd 0.25.0 or newer (0.25.1 is the verified pin: `slskd/slskd:0.25.1`), with a Soulseek account inside it.
-- Give DroppedNeedle the URL plus API key under Settings > Download Client, then Test and Save. The key is stored encrypted and never logged. A redirect is followed only on the same host, never from https to http, so the key never goes anywhere else: use the address slskd answers on.
+- DroppedNeedle is checked against slskd 0.25.1 (`slskd/slskd:0.25.1`). Set it up with a Soulseek account inside it.
+- Give DroppedNeedle the URL plus API key under Settings > Download Client, then **Test connection** and Save. The key is stored encrypted and never logged. A redirect is followed only on the same host, never from https to http, so the key never goes anywhere else: use the address slskd answers on.
 
 > [!IMPORTANT]
 > Soulseek bans clients that share nothing, so give slskd at least one shared folder or searches and downloads fail. Everything in a shared folder goes out to the network. Choose it like you mean it.
@@ -78,7 +78,7 @@ Indexers added one by one are asked at most about once a second each. Many cap A
 
 ## Deemix
 
-Deemix is a program that downloads albums and songs from Deezer. You run its container yourself, as you would slskd. DroppedNeedle asks Deemix for an album or a song, Deemix saves the files to a folder DroppedNeedle reads, and DroppedNeedle checks and files them like any other download. This page uses the `ghcr.io/bambanah/deemix` image. DroppedNeedle is checked against deemix-webui 4.8.0 with deemix 3.14.1. After you update Deemix, press Test under Settings > Download Client.
+Deemix is a program that downloads albums and songs from Deezer. You run its container yourself, as you would slskd. DroppedNeedle asks Deemix for an album or a song, Deemix saves the files to a folder DroppedNeedle reads, and DroppedNeedle checks and files them like any other download. This page uses the `ghcr.io/bambanah/deemix` image. DroppedNeedle is checked against deemix-webui 4.8.0 with deemix 3.14.1. After you update Deemix, press **Test connection** under Settings > Download Client.
 
 Put Deemix on a Docker network that only it and DroppedNeedle share, with no published port. Set `PUID` and `PGID` to the same values as DroppedNeedle's (1000 by default, as in the example compose), so the files Deemix writes are ones DroppedNeedle can read and remove.
 
@@ -113,14 +113,14 @@ networks:
 1. Start Deemix with its `ports` lines uncommented. Open `http://localhost:6595` on the machine that runs Docker (or through an SSH tunnel to it) and sign in to Deezer there.
 2. In Deemix's settings, set Overwrite files to Yes, turn off every fallback option and leave its command after downloads empty. Keep its download folder at `/downloads`.
 3. Comment out the `ports` lines again and recreate the container. Its sign-in and queue stay in the `config` folder.
-4. Under Settings > Download Client, turn on Deemix, set URL to `http://deemix:6595` and Downloads folder to `/data/deemix`, then Test and Save. `/data/deemix` is the same host folder as Deemix's `/downloads`, seen through DroppedNeedle's shared mount. Test shows Deemix's version, whether it reaches Deezer, the quality your Deezer account gives, and anything still to change.
+4. Under Settings > Download Client, turn on Deemix, set URL to `http://deemix:6595` and Downloads folder to `/data/deemix`, then **Test connection** and Save. `/data/deemix` is the same host folder as Deemix's `/downloads`, seen through DroppedNeedle's shared mount. **Test connection** shows Deemix's version, whether it reaches Deezer, the quality your Deezer account gives, and anything still to change.
 
 > [!IMPORTANT]
 > Deemix has no password. Anyone who can reach its port can read your Deezer sign-in and run commands on its machine. Keep it on the private network, and publish its port only to `127.0.0.1`, only while you sign in.
 
 Deemix's download folder belongs to DroppedNeedle, never to your library. A download there replaces a file with the same name, your own included, and imported files are removed from it. Albums you downloaded there yourself are taken over when DroppedNeedle wants them. Keep your own music in another folder.
 
-Keep Overwrite files on Yes and the fallback options off. Without Overwrite files on Yes, Deezer waits and the Deemix card says why. Test also warns about single-user mode being off and a command set after downloads.
+Keep Overwrite files on Yes and the fallback options off. Without Overwrite files on Yes, Deezer waits and the Deemix card says why. **Test connection** also warns about single-user mode being off and a command set after downloads.
 
 DroppedNeedle keeps no Deezer sign-in of its own. When it needs one, it gives Deemix the sign-in Deemix saved, in memory only. If Deemix loses that sign-in, the Deemix card says so, and you sign in again on Deemix's page.
 

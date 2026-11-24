@@ -16,14 +16,18 @@ Who can do what, the ways people sign in, and how to get back in when a password
 | Role | Requests | Admin |
 |-|-|-|
 | Admin | Requests start immediately, no approval | Everything: users, approvals, all settings |
-| Trusted | Requests start immediately, no approval | Library curation: editions, matches, the review queue, drop imports, removals, the Recycle Bin (not emptying it) and upgrades. No settings or users |
+| Trusted | Requests start immediately, no approval | Library curation: editions, matches, the review queue, drop imports, removing tracks, the Recycle Bin (not emptying it) and upgrades. No settings or users |
 | User | Requests wait for admin approval | Nothing admin side |
+
+Only an admin removes whole albums, and, in the review queue, uses **Take out of library**, **Put back in library** and **Look again**.
+
+Asking for an album a User's request already waits for joins that request. If it waits for room in its owner's quota, a trusted user's or admin's ask starts it when the asker has room. If it waits for approval, it keeps waiting until an admin approves it under Requests > Approvals, even when a trusted user or an admin joined.
 
 The first account is always admin. Later accounts are created by an admin or automatically on first Jellyfin, Plex, or OIDC sign-in (all start as User). Plex, Jellyfin and OIDC sign-in are switched on and off in the UI. Username and password sign-in is on unless the server is started with `ALLOW_PASSWORD_LOGIN=false` (see [Configuration](configuration.md)); then the sign-in page offers only the other methods, and passwords cannot be set, changed or recovered. First-admin setup and app passwords still work.
 
 Deleting an account under Settings > Users also deletes its play history.
 
-Any signed-in user can see other users' display names, and nothing else about them, when sharing a playlist. Only names people chose are listed: someone shows up there once they save a display name under Profile, or when an admin typed one other than their username while making their account. A name that came from Jellyfin, Plex or single sign-on is never listed.
+Any signed-in user can see other users' display names, and nothing else about them, when sharing a playlist. Only names people chose are listed: someone shows up there once they save a display name under Profile, or when an admin typed one other than their username while making their account. A name that came from Jellyfin, Plex or single sign-on is never listed. Someone's private playlist shows to everyone else on the Playlists page as a locked card with its track count and its owner's name, never its name, cover or songs; **Only me** in Share says so.
 
 ## Sessions
 
@@ -62,7 +66,7 @@ Use the server's own values:
 
 The code works once, for 15 minutes: open "Forgot password?" on the sign-in page and enter the username, the code and a new password. `USERNAME` is the DroppedNeedle username, which can differ from the name the account has with an OIDC provider; `droppedneedle-tool recovery-code --list-admins` prints the admin usernames.
 
-An account that only signs in through OIDC, Plex or Jellyfin has no password yet. The command says so, and the code then gives the account its first password; its other sign-in stays linked. Only the host command can do that: a code made by an admin under Settings > Users is for accounts that already have a password. It is still simpler to keep one admin with a username and password.
+An account that only signs in through OIDC, Plex or Jellyfin has no password yet. Signed in, its owner can add one under Profile > Account with **Set a password**. Otherwise the host command says the account has none, and the code then gives it its first password; its other sign-in stays linked. A code made by an admin under Settings > Users is only for accounts that already have a password. It is still simpler to keep one admin with a username and password.
 
 If the server runs with `ALLOW_PASSWORD_LOGIN=false`, the code cannot be used until you start it again with `ALLOW_PASSWORD_LOGIN=true` (or without the variable). Turn it back off once you are in.
 
@@ -76,7 +80,7 @@ Any OpenID Connect provider works (Authelia, Keycloak, Authentik, Pocket ID, and
 2. Under Settings > Security, enter the issuer URL, the client ID, the client secret (leave it empty for a public client), and the same redirect URI. Keep `openid` in the scopes; `openid email profile` is the default.
 3. Test, switch it on and save. A single sign-on button appears on the login page.
 
-When everyone signs in through your provider, turn on "Go straight to SSO" there as well: the login page then starts single sign-on right away instead of showing the sign-in methods. `/login?local` still shows them, for an admin who can't use single sign-on. Signing out, and the "Back to sign in" link after a failed single sign-on, land on `/login?local`, so the provider doesn't sign you straight back in; a session that runs out goes to `/login` and signs in again by itself. "Sign out everywhere" ends DroppedNeedle's sessions, not your provider's, so another device sent to sign in again may go straight back in through single sign-on. The switch does nothing while single sign-on is off.
+When everyone signs in through your provider, turn on "Go straight to SSO" there as well: the login page then starts single sign-on right away instead of showing the sign-in methods. `/login?local` still shows them, for an admin who can't use single sign-on. Signing out lands on `/login?local`, so the provider doesn't sign you straight back in. A single sign-on that fails when your provider sends you back, or that can't reach the provider, lands on the sign-in page too, with a short message on the single sign-on tab: **Continue with SSO** tries again, and the password tab is still there while password sign-in is on. A session that runs out goes to `/login` and signs in again by itself. "Sign out everywhere" ends DroppedNeedle's sessions, not your provider's, so another device sent to sign in again may go straight back in through single sign-on. The switch does nothing while single sign-on is off.
 
 Things worth knowing:
 
@@ -89,7 +93,7 @@ Things worth knowing:
 
 ## Signing in with Plex or Jellyfin
 
-Turn on "Allow login with Plex" on the Plex page, or "Sign in with Jellyfin" on the Jellyfin page. The login page then shows the matching tab, and the sign-in only works while the switch is on.
+Turn on **Allow login with Plex** on the Plex page, or both **Use Jellyfin** and **Sign in with Jellyfin** on the Jellyfin page, whose URL must be an http or https address. The login page then shows the matching tab, and the sign-in only works while the switch is on.
 
 - Jellyfin checks the username and password against your Jellyfin server.
 - Plex sends the user to plex.tv to approve the sign-in. When a Plex server is set up, only accounts that can reach that server get in, and if DroppedNeedle cannot reach the server to check, nobody gets in until it can.

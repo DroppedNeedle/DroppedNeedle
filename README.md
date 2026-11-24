@@ -41,11 +41,11 @@ One container. No Lidarr.
 
 - **Requests** for whole albums or single tracks from the MusicBrainz catalog, with an approval queue for the User role.
 - **Downloads** through your slskd, your SABnzbd or NZBGet with Newznab indexers or Prowlarr, your Deemix for Deezer, or a plugin. It scores the candidates, verifies every file and holds what it isn't sure of.
-- **Wanted and upgrades**: failed and partial requests are searched again until a verified copy shows up, and a better copy replaces a worse one.
+- **Wanted and upgrades**: failed and partial album requests are searched again until a verified copy shows up, and a better copy replaces a worse one.
 - **Your library**, scanned and identified against MusicBrainz and AcoustID without renaming or retagging anything. Browse, search, rate and play it.
-- **Library Management**, off until you turn it on: Picard-style tags, artwork and file naming behind a preview, with undo.
+- **Library Management**: Picard-style tags, artwork and file naming behind a preview, with undo. Automatic management waits until you turn it on.
 - **Drop imports** for music you bought elsewhere: drag in a zip or loose files.
-- **Discovery**: trending, charts, genres, recommendations from ListenBrainz or Last.fm, a discover queue, a weekly mix, new releases from artists you follow, and gig alerts for your cities.
+- **Discovery**: trending, charts, genres, recommendations from ListenBrainz or Last.fm, a discover queue, a weekly mix, new releases from artists you follow, and upcoming gigs in your cities.
 - **A web player** with a queue, gapless playback, crossfade, even volume, a 10-band EQ, lyrics and live now-playing.
 - **Playlists** mixing your library, Jellyfin, Navidrome, Plex, YouTube and Spotify imports.
 - **Plugins** for more download sources, scrobble targets and purchase links.
@@ -94,7 +94,7 @@ services:
       - ./config:/app/config
       - ./cache:/app/cache
       - ./plugins:/app/plugins  # omit and installed plugins vanish on recreate
-      - ./imports:/app/imports  # uploads waiting for a match; omit and they vanish on recreate
+      - /path/to/media/imports:/app/imports  # uploads waiting for a match; omit and they vanish on recreate
       # One shared parent mount keeps the library and completed downloads on one
       # boundary so imports move fast. Do not nest extra binds under /data.
       - /path/to/media:/data:rw

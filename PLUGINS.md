@@ -78,8 +78,8 @@ are paced. Try again in 3 minutes." That wait covers the whole operation,
 and it is usually DroppedNeedle's own pacing, not a limit from GitHub.
 
 The preview lists the plugin's name, version, author, the exact commit, and
-what the plugin asks to do. Press **Install** to write it. The plugin arrives
-disabled; enable it, fill in its settings, and save.
+what the plugin asks to do. Press **I trust it, install** to write it. The
+plugin arrives disabled; enable it, fill in its settings, and save.
 
 To update later, press **Update** on the plugin. What moves depends on how
 it was installed:
@@ -114,7 +114,7 @@ volume**, or installed plugins disappear when the container is recreated.
 
 ### Removing
 
-**Remove** deletes the plugin's code. Its settings stay in the config and its
+**Remove** deletes the plugin's code. Its settings stay in the database and its
 data folder stays on disk, so reinstalling picks up where you left off.
 
 ## What a plugin needs

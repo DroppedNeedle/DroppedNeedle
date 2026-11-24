@@ -23,9 +23,9 @@ Everything user-editable lives in the web UI and is stored in the database, so a
 | `BIND_HOST` | `auto` | `auto` listens on IPv4 and IPv6, dropping to IPv4 alone where IPv6 is off. Set `0.0.0.0`, `::`, or one interface IP to pin it |
 | `TRUSTED_PROXY_IPS` | `127.0.0.1,::1` | IPs/CIDRs whose `X-Forwarded-*` headers are trusted; point it at your reverse proxy, listing every address family it arrives on. `*` trusts every peer: only behind a proxy that strips spoofed headers |
 | `BASE_PATH` | empty | Serve under a sub-path behind a reverse proxy, e.g. `/music`. Letters, digits and `.` `_` `~` `-` only, no trailing slash, and its first segment cannot be `api` |
-| `TZ` | `UTC` | Container time zone, as an IANA name such as `Europe/London`. Daily library scans run at their set time in this zone; a name the server does not know runs them in UTC, and the scan settings say so |
+| `TZ` | unset | Container time zone, as an IANA name such as `Europe/London`. Daily library scans run at their set time in this zone. Unset, they use the system's zone (`/etc/localtime`, UTC in the image); a name the server does not know runs them in UTC, and the scan settings say so |
 | `SLSKD_DOWNLOADS_PATH` | `/data/downloads/slskd` | Exact in-container path to slskd completions (the compose example uses `/data/slskd/complete`) |
-| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING` or `ERROR`. The audio decoders log only errors whatever this says; set `RUST_LOG` to see more |
+| `LOG_LEVEL` | `INFO` | `TRACE`, `DEBUG`, `INFO`, `WARNING` (or `WARN`), `ERROR` or `CRITICAL` (the same as `ERROR`). The audio decoders log only errors whatever this says; set `RUST_LOG` to see more |
 
 <details>
 <summary>Rarely needed variables</summary>
@@ -123,7 +123,7 @@ services:
 | Home layout | Settings > Home |
 | Discover page sections, the discover queue | Settings > Discover |
 | Sidebar | Settings > Sidebar |
-| Main listening source (ListenBrainz or Last.fm) | Settings > Music Source |
+| Your own main listening source (ListenBrainz or Last.fm) | Profile > Scrobbling & Discovery; Settings > Music Source sets the same for the admin using it |
 | MusicBrainz server (official or your own mirror) | Settings > MusicBrainz |
 | Database backups (admin) | Settings > Backups |
 | Users, roles, Jellyfin and Plex user import | Settings > Users |
@@ -215,7 +215,7 @@ Set these before starting `droppedneedle`:
 - `ROOT_APP_DIR` to a folder the server's account can write. `config`, `cache`, `plugins` and `imports` go inside it, in place of `/app` in the tables above.
 - `DROPPEDNEEDLE_STATIC_DIR` to the `static` folder from the web UI archive. The server copies it into the cache at each start, so it can sit where the server's account cannot write.
 - `COMMIT_TAG` to the release's version, such as `v3.2.0`. The About page and the update check read it: unset, the server calls itself a dev build and always offers an update.
-- `TZ` to your time zone. The server reads only `TZ`, not the system's, so scans otherwise run in UTC.
+- `TZ` to your time zone. Unset, scans run in the system's zone (`/etc/localtime`).
 
 Keep `droppedneedle-tool` in the same folder as `droppedneedle`: the v2 upgrade page runs it from there.
 
