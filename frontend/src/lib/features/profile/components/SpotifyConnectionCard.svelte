@@ -6,12 +6,19 @@
 		createConnectSpotifyMutation,
 		createDisconnectMutation
 	} from '$lib/features/profile/queries/ConnectionsMutations.svelte';
+	import { getSpotifyLinkQuery } from '$lib/features/playlists/queries/spotify.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 
 	const connectionsQuery = getConnectionsQuery();
 	const spotify = $derived(
 		connectionsQuery.data?.connections.find((c) => c.service === 'spotify') ?? null
+	);
+
+	// A link made before Liked Songs could be read asks for one more sign-in.
+	const linkQuery = getSpotifyLinkQuery();
+	const needsReconnect = $derived(
+		Boolean(spotify) && linkQuery.data?.liked_songs === 'needs_reconnect'
 	);
 
 	const connectMutation = createConnectSpotifyMutation();
@@ -57,6 +64,16 @@
 		{/if}
 	</div>
 	{#if spotify}
+		{#if needsReconnect}
+			<Button
+				variant="spotify"
+				size="display-sm"
+				loading={connectMutation.isPending}
+				onclick={connect}
+			>
+				Reconnect
+			</Button>
+		{/if}
 		<Button
 			variant="outline"
 			size="display-sm"
@@ -81,14 +98,17 @@
 </div>
 
 {#if spotify}
+	{#if needsReconnect}
+		<p class="mt-2.5 text-sm">Reconnect to sync Liked Songs.</p>
+	{/if}
 	<p class="mt-2.5 text-sm text-muted">
 		Connected. Go to your <a href={withBasePath('/playlists')} class="link link-primary"
 			>Playlists</a
-		> to import from Spotify.
+		> to import your playlists and Liked Songs, and keep them in sync.
 	</p>
 {:else}
 	<p class="mt-2.5 text-sm text-muted">
-		Connect your Spotify account to import your personal playlists into DroppedNeedle.
+		Connect your Spotify account to import your playlists and Liked Songs, and keep them in sync.
 	</p>
 {/if}
 
