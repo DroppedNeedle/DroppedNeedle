@@ -1880,7 +1880,7 @@ async fn recovery_finishes_cancels_and_dispatches() {
     // An owner cancel cut off after the row moved to `cancelling`.
     state
         .store
-        .prepare_requester_cancel(RequestKind::Album, MBID_A, "u-tris", 1_700_000_000)
+        .prepare_requester_cancel(RequestKind::Album, MBID_A, "u-tris", 1_700_000_000, false)
         .await
         .unwrap();
     // An approval whose dispatch never happened.

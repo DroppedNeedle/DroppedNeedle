@@ -213,6 +213,15 @@ const RECORDINGS: &[Recording] = &[
         param: Some(("query", Some("isrc:QZAAA2600002"))),
         body: include_str!("../../tests/fixtures/musicbrainz/spotify_isrc_single.json"),
     },
+    // musicbrainz/sync_isrc_bohemian_rhapsody.json (recorded from
+    // musicbrainz.org on 2026-11-24, cut to six releases): a song on
+    // various-artists compilations and on its artist's own album.
+    Recording {
+        path: "/recording",
+        inc: &[],
+        param: Some(("query", Some("isrc:GBUM71029604"))),
+        body: include_str!("../../tests/fixtures/musicbrainz/sync_isrc_bohemian_rhapsody.json"),
+    },
     // musicbrainz/file_album_*.json (hand-written in the shape of the
     // recorded recording search): the songs of a playlist file's albums,
     // searched by title, artist and album. Willow Fen's albums: one found,

@@ -1132,13 +1132,16 @@ impl RequestStore {
     /// strangers are denied, listeners
     /// detach, waiting rows cancel outright, and owners of task rows move
     /// through `cancelling` so a failed task-cancel can restore the prior
-    /// status instead of stranding the row.
+    /// status instead of stranding the row. With `withdraw`, only a row
+    /// still waiting (for approval, or to start) that nobody else asked
+    /// for is touched; any other is denied, decided in the same write.
     pub async fn prepare_requester_cancel(
         &self,
         kind: RequestKind,
         key: &str,
         user_id: &str,
         now: u64,
+        withdraw: bool,
     ) -> Result<Option<CancelDecision>, RequestsError> {
         let stored = row_key(kind, key);
         let user_id = user_id.to_owned();
@@ -1152,6 +1155,23 @@ impl RequestStore {
                     return Ok(Some(CancelDecision::Denied {
                         prior_status: prior,
                     }));
+                }
+                if withdraw {
+                    let waiting = matches!(
+                        prior,
+                        RequestStatus::AwaitingApproval
+                            | RequestStatus::Pending
+                            | RequestStatus::Queued
+                    );
+                    let others: bool =
+                        tx.query_row(sql::OTHERS_ASKED.text(), params![stored, user_id], |row| {
+                            row.get(0)
+                        })?;
+                    if !waiting || others {
+                        return Ok(Some(CancelDecision::Denied {
+                            prior_status: prior,
+                        }));
+                    }
                 }
                 if record.user_id.as_deref() != Some(user_id.as_str()) {
                     tx.execute(sql::DETACH_LISTENER.text(), params![stored, user_id])?;

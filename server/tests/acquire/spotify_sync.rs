@@ -1127,3 +1127,311 @@ fn a_compilation_song_moves_to_the_artists_own_album_only_on_proof() {
         "an album Spotify files as the artist's own is left alone"
     );
 }
+
+/// _Bohemian Rhapsody_ as Spotify files it on a various-artists
+/// compilation, with the ISRC the recorded MusicBrainz answer is for.
+fn on_a_compilation() -> Value {
+    json!({
+        "id": "sp-bohemian", "type": "track", "name": "Bohemian Rhapsody",
+        "artists": [{"name": "Queen"}],
+        "album": {
+            "id": "sp-pop-classics", "name": "Pop Classics", "images": [],
+            "artists": [{"name": "Various Artists"}],
+            "album_type": "compilation", "total_tracks": 24,
+        },
+        "external_ids": {"isrc": "GBUM71029604"},
+        "track_number": 1, "disc_number": 1, "duration_ms": 354_000,
+    })
+}
+
+/// The release group of the compilation Spotify files the song on.
+const POP_CLASSICS: &str = "5679aa05-3efc-4bdf-ac5b-084800a5f14f";
+
+/// The entry's album and name, and its source row's pick.
+fn filing(app: &TestApp, playlist_id: &str) -> (Option<String>, String, Option<String>) {
+    app.db()
+        .query_row(
+            "SELECT e.album_id, e.album_name, s.album_pick FROM catalog_playlist_tracks e \
+             JOIN catalog_playlist_source_songs s ON s.entry_id = e.id WHERE e.playlist_id = ?1",
+            [playlist_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap()
+}
+
+/// A song Spotify files on a compilation is asked for on the artist's own
+/// album, and its row says where Spotify lists it. Its owner may keep it
+/// on Spotify's album instead: the entry goes back there, the sync's
+/// waiting request for the moved album is cancelled, the next pass asks
+/// for the song on Spotify's album, and the rule never moves it again.
+#[tokio::test]
+async fn a_moved_song_can_be_kept_on_spotifys_album() {
+    let rig = rig("spotify-sync-kept").await;
+    let admin = admin(&rig).await;
+    let tess = rig.app.login_user("tess").await;
+    set_role(&rig, &admin, &tess, "trusted").await;
+    rig.link(&tess, SPOTIFY_SCOPES, SPOTIFY_TOKEN).await;
+    let playlist_id = synced(&rig, &tess, "sp-kept", vec![on_a_compilation()]).await;
+    assert_eq!(
+        filing(&rig.app, &playlist_id),
+        (
+            Some(NIGHT_AT_THE_OPERA.to_owned()),
+            "A Night at the Opera".to_owned(),
+            Some("own_album".to_owned())
+        ),
+        "asked for on the artist's own album"
+    );
+    let song = format!("track:{ON_THE_ALBUM}");
+    assert_eq!(requests_of(&rig.app, &tess).0, [song.clone()]);
+    let (status, state) = rig
+        .call(
+            &tess,
+            "GET",
+            &format!("/api/v3/playlists/{playlist_id}/request-state"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{state}");
+    assert_eq!(state["entries"][0]["listed_on"], "Pop Classics", "{state}");
+    let entry: String = rig
+        .app
+        .db()
+        .query_row(
+            "SELECT id FROM catalog_playlist_tracks WHERE playlist_id = ?1",
+            [&playlist_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    let bo = rig.app.login_user("bobby").await;
+    let keep = format!("/api/v3/playlists/{playlist_id}/tracks/{entry}/spotify-album");
+    let (status, _) = rig.call(&bo, "POST", &keep, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "only the owner keeps it");
+    let before = rig.checked_at(&playlist_id);
+    let status_of = || -> String {
+        rig.app
+            .db()
+            .query_row(
+                "SELECT status FROM request_history WHERE musicbrainz_id_lower = ?1",
+                [&song],
+                |row| row.get(0),
+            )
+            .unwrap()
+    };
+    assert_eq!(status_of(), "downloading", "the request has started");
+    let (status, started) = rig.call(&tess, "POST", &keep, None).await;
+    assert_eq!(status, StatusCode::OK, "{started}");
+    assert_eq!(
+        started["cancelled"], false,
+        "a started request is left alone"
+    );
+    assert_eq!(status_of(), "downloading");
+    rig.app
+        .until("the pass the choice queues", || async {
+            (rig.checked_at(&playlist_id) != before).then_some(())
+        })
+        .await;
+
+    // Moved again, with its request still waiting for approval: that
+    // request is cancelled, and the song asked for on Spotify's album.
+    rig.app
+        .seed(format!(
+            "UPDATE request_history SET status = 'awaiting_approval' \
+             WHERE musicbrainz_id_lower = '{song}'; \
+             UPDATE catalog_playlist_tracks SET album_id = '{NIGHT_AT_THE_OPERA}', \
+             album_name = 'A Night at the Opera', recording_mbid = '{ON_THE_ALBUM}' \
+             WHERE playlist_id = '{playlist_id}'; \
+             UPDATE catalog_playlist_source_songs SET album_pick = 'own_album', \
+             filed_kind = 'track', filed_key = '{ON_THE_ALBUM}' \
+             WHERE playlist_id = '{playlist_id}'"
+        ))
+        .await;
+    let before = rig.checked_at(&playlist_id);
+    let (status, kept) = rig.call(&tess, "POST", &keep, None).await;
+    assert_eq!(status, StatusCode::OK, "{kept}");
+    assert_eq!(kept["album_id"], POP_CLASSICS, "{kept}");
+    assert_eq!(kept["cancelled"], true, "{kept}");
+    rig.app
+        .until("the pass the choice queues", || async {
+            (rig.checked_at(&playlist_id) != before).then_some(())
+        })
+        .await;
+    assert_eq!(
+        filing(&rig.app, &playlist_id),
+        (
+            Some(POP_CLASSICS.to_owned()),
+            "Pop Classics".to_owned(),
+            Some("kept_spotify".to_owned())
+        ),
+        "the song stays on Spotify's album"
+    );
+    let asked_on: (String, Option<String>) = rig
+        .app
+        .db()
+        .query_row(
+            "SELECT status, track_release_group_mbid FROM request_history \
+             WHERE musicbrainz_id_lower = ?1",
+            [&song],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_ne!(asked_on.0, "cancelled", "asked for again");
+    assert_eq!(
+        asked_on.1.as_deref(),
+        Some(POP_CLASSICS),
+        "on Spotify's album"
+    );
+
+    let (status, body) = rig.call(&tess, "POST", &keep, None).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "ALBUM_NOT_MOVED");
+
+    rig.app.stop().await;
+}
+
+/// `playlist_id`'s one entry, and the path that keeps it on Spotify's album.
+fn keep_path(app: &TestApp, playlist_id: &str) -> String {
+    let entry: String = app
+        .db()
+        .query_row(
+            "SELECT id FROM catalog_playlist_tracks WHERE playlist_id = ?1",
+            [playlist_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    format!("/api/v3/playlists/{playlist_id}/tracks/{entry}/spotify-album")
+}
+
+/// The status of the request for `key`, and who asked for it.
+fn asked_by(app: &TestApp, key: &str) -> (String, Vec<String>) {
+    let status: String = app
+        .db()
+        .query_row(
+            "SELECT status FROM request_history WHERE musicbrainz_id_lower = ?1",
+            [key],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let who = app
+        .db()
+        .prepare(
+            "SELECT user_id FROM request_history_requesters \
+             WHERE musicbrainz_id_lower = ?1 ORDER BY user_id",
+        )
+        .unwrap()
+        .query_map([key], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    (status, who)
+}
+
+/// An admin keeping a moved song on Spotify's album takes back the sync's
+/// ask for the moved album only while nobody else asked for it: another
+/// person's ask for it stands.
+#[tokio::test]
+async fn keeping_spotifys_album_leaves_someone_elses_ask_standing() {
+    let rig = rig("spotify-sync-kept-shared").await;
+    let mut admin = admin(&rig).await;
+    admin.user_id = rig
+        .app
+        .db()
+        .query_row(
+            "SELECT id FROM auth_users WHERE role = 'admin'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    rig.link(&admin, SPOTIFY_SCOPES, SPOTIFY_TOKEN).await;
+    rig.spotify
+        .set_playlist("sp-shared", "v1", vec![on_a_compilation()]);
+    let playlist_id = rig.import(&admin, "sp-shared", 1).await;
+    let (status, body) = rig
+        .call(
+            &admin,
+            "PUT",
+            &format!("/api/v3/playlists/{playlist_id}/sync"),
+            Some(json!({"enabled": true, "whole_albums": true})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    rig.app
+        .until("the first pass", || async {
+            rig.checked_at(&playlist_id).map(|_| ())
+        })
+        .await;
+    let bobby = rig.app.login_user("bobby").await;
+    let (status, body) = rig
+        .call(
+            &bobby,
+            "POST",
+            "/api/v3/requests/albums",
+            Some(json!({
+                "musicbrainz_id": NIGHT_AT_THE_OPERA,
+                "artist": "Queen",
+                "album": "A Night at the Opera",
+            })),
+        )
+        .await;
+    assert!(status.is_success(), "{status} {body}");
+    rig.app
+        .seed(format!(
+            "UPDATE request_history SET status = 'queued', download_task_id = NULL \
+             WHERE musicbrainz_id_lower = '{NIGHT_AT_THE_OPERA}'"
+        ))
+        .await;
+    assert_eq!(
+        asked_by(&rig.app, NIGHT_AT_THE_OPERA).1.len(),
+        2,
+        "the sync and bobby both asked"
+    );
+
+    let (status, body) = rig
+        .call(&admin, "POST", &keep_path(&rig.app, &playlist_id), None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, who) = asked_by(&rig.app, NIGHT_AT_THE_OPERA);
+    assert_eq!(status, "queued", "bobby's ask stands");
+    assert!(who.contains(&bobby.user_id), "{who:?}");
+
+    rig.app.stop().await;
+}
+
+/// Keeping a moved song takes back what the sync filed for it, even after
+/// the owner turned Whole albums on: the song's own request.
+#[tokio::test]
+async fn keeping_spotifys_album_takes_back_what_was_filed() {
+    let rig = rig("spotify-sync-kept-filed").await;
+    let admin = admin(&rig).await;
+    let tess = rig.app.login_user("tess").await;
+    set_role(&rig, &admin, &tess, "trusted").await;
+    rig.link(&tess, SPOTIFY_SCOPES, SPOTIFY_TOKEN).await;
+    let playlist_id = synced(&rig, &tess, "sp-filed", vec![on_a_compilation()]).await;
+    let song = format!("track:{ON_THE_ALBUM}");
+    assert_eq!(requests_of(&rig.app, &tess).0, [song.clone()]);
+    let (status, body) = rig
+        .call(
+            &tess,
+            "PUT",
+            &format!("/api/v3/playlists/{playlist_id}/sync"),
+            Some(json!({"enabled": true, "whole_albums": true})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["whole_albums"], true, "{body}");
+    rig.app
+        .seed(format!(
+            "UPDATE request_history SET status = 'awaiting_approval', download_task_id = NULL \
+             WHERE musicbrainz_id_lower = '{song}'"
+        ))
+        .await;
+
+    let (status, body) = rig
+        .call(&tess, "POST", &keep_path(&rig.app, &playlist_id), None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["cancelled"], true, "{body}");
+    assert_eq!(asked_by(&rig.app, &song).0, "cancelled");
+
+    rig.app.stop().await;
+}

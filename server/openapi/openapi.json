@@ -26976,6 +26976,84 @@
         ]
       }
     },
+    "/api/v3/playlists/{playlist_id}/tracks/{track_id}/spotify-album": {
+      "post": {
+        "tags": [
+          "playlists"
+        ],
+        "summary": "Keep a song the sync moved to the artist's own album on the album\nSpotify lists it on, for the playlist's owner. The sync's waiting\nrequest for the moved album is cancelled, and the next pass asks for\nthe song on Spotify's album.",
+        "operationId": "keep_spotify_album_handler",
+        "parameters": [
+          {
+            "name": "playlist_id",
+            "in": "path",
+            "description": "Playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "track_id",
+            "in": "path",
+            "description": "Playlist entry id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The song is on Spotify's album",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpotifyAlbumKept"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such playlist the caller owns",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The song was not moved (ALBUM_NOT_MOVED), or plays now or is on another album (ENTRY_CHANGED)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/playlists/{playlist_id}/visibility": {
       "patch": {
         "tags": [
@@ -70646,6 +70724,26 @@
           "degraded",
           "error"
         ]
+      },
+      "SpotifyAlbumKept": {
+        "type": "object",
+        "description": "A song put back on the album Spotify lists it on.",
+        "required": [
+          "cancelled"
+        ],
+        "properties": {
+          "album_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The release group Spotify's album is, when something proves one;\nnone shows \"No album found yet\" until a look finds it."
+          },
+          "cancelled": {
+            "type": "boolean",
+            "description": "The sync's request for the moved album was cancelled."
+          }
+        }
       },
       "SpotifyAuthUrlResponse": {
         "type": "object",

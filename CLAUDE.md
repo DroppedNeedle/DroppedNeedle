@@ -348,16 +348,17 @@ Run from the repo root. `make help` lists every target.
   a person's activity.
 - Spotify sync (`acquire/src/spotify_sync/`) is one job kind keyed per
   playlist, queued only by its due tick, its switch, a grant decision, a
-  Spotify reconnect and the import route. It reads a playlist's songs only
-  when its `snapshot_id` changed or once a day (Liked Songs: newest first,
-  to the first page holding a song already taken), adds what is new in one
-  write with its row in `catalog_playlist_source_songs` (at the end; Liked
-  Songs at the top), and never removes, reorders or adds a song twice. A
-  plain user's sync requests nothing until an admin approves that
-  playlist's grant, though it still looks for its songs' albums; a pass
-  requests at most 25 songs, looks for at most 25 albums and reads
-  MusicBrainz to file at most 25 songs, waits on a full quota, and never
-  asks again for a song it followed up. It does not read Discover's feedback:
+  Spotify reconnect, the import route and a kept album (below). It reads a
+  playlist's songs only when its `snapshot_id` changed or once a day (Liked
+  Songs: newest first, to the first page holding a song already taken),
+  adds what is new in one write with its row in
+  `catalog_playlist_source_songs` (at the end; Liked Songs at the top), and
+  never removes, reorders or adds a song twice. A plain user's sync
+  requests nothing until an admin approves that playlist's grant, though
+  it still looks for its songs' albums; a pass requests at most 25 songs,
+  looks for at most 25 albums and reads MusicBrainz to file at most 25
+  songs, waits on a full quota, and never asks again for a song it
+  followed up. It does not read Discover's feedback:
   the songs are a person's own choice.
 - A worker that hears a busy database puts its job back and tries again
   later. Busy never spends an attempt or marks work failed.
@@ -838,8 +839,11 @@ Run from the repo root. `make help` lists every target.
   earliest release; a tie, artists that disagree or a credit that can't be
   read leave the song as Spotify files it. It is worked out in
   `acquire/src/imports/spotify_albums.rs` (`pick_own_group`) and written
-  onto the playlist entry, whose source row keeps Spotify's album. Names
-  never decide it.
+  onto the playlist entry, whose source row keeps Spotify's album. The
+  playlist owner's "Use Spotify's album" puts it back there for good and
+  withdraws, as the owner's own ask, what the sync filed for that song
+  while it still waits and nobody else asked for it.
+  Names never decide it.
 
 **Discover**
 - Discover's seed artists come from one function, `weighted_seeds`

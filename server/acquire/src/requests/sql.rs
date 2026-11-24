@@ -166,6 +166,11 @@ droppedneedle_kernel::sql! {
          WHERE musicbrainz_id_lower = ?1 AND user_id = ?2) \
          OR EXISTS (SELECT 1 FROM request_history_requesters \
          WHERE musicbrainz_id_lower = ?1 AND user_id = ?2)";
+    /// Whether anyone but user `?2` owns or listens to row `?1`.
+    pub(crate) OTHERS_ASKED = "SELECT EXISTS (SELECT 1 FROM request_history \
+         WHERE musicbrainz_id_lower = ?1 AND user_id IS NOT NULL AND user_id <> ?2) \
+         OR EXISTS (SELECT 1 FROM request_history_requesters \
+         WHERE musicbrainz_id_lower = ?1 AND user_id <> ?2)";
     /// One row's `(status, generation)`.
     pub(crate) ROW_STATE = "SELECT status, generation FROM request_history \
          WHERE musicbrainz_id_lower = ?1";

@@ -13,6 +13,7 @@ use droppedneedle_kernel::extract::ValidJson;
 use droppedneedle_kernel::mount::{Routes, routes};
 
 use super::grant::{GrantDecided, PlaylistSyncApprovalsResponse};
+use super::keep::SpotifyAlbumKept;
 use super::models::{PlaylistSync, PlaylistSyncBody};
 use super::{PlaylistSyncError, SpotifySync};
 use crate::requests::ledger::ApprovalState;
@@ -26,6 +27,10 @@ pub const SPOTIFY_NOT_LINKED: &str = "SPOTIFY_NOT_LINKED";
 pub const SPOTIFY_RECONNECT_NEEDED: &str = "SPOTIFY_RECONNECT_NEEDED";
 /// Spotify is turned off on this server.
 pub const SPOTIFY_OFF: &str = "SPOTIFY_OFF";
+/// The song was not moved off Spotify's album.
+pub const ALBUM_NOT_MOVED: &str = "ALBUM_NOT_MOVED";
+/// The moved song plays now, or is on another album.
+pub const ENTRY_CHANGED: &str = "ENTRY_CHANGED";
 
 impl From<PlaylistSyncError> for ApiError {
     fn from(error: PlaylistSyncError) -> Self {
@@ -47,6 +52,14 @@ impl From<PlaylistSyncError> for ApiError {
             PlaylistSyncError::SpotifyOff => {
                 conflict(SPOTIFY_OFF, "Spotify is turned off on this server.")
             }
+            PlaylistSyncError::NotMoved => conflict(
+                ALBUM_NOT_MOVED,
+                "This song is already on the album Spotify lists it on.",
+            ),
+            PlaylistSyncError::EntryChanged => conflict(
+                ENTRY_CHANGED,
+                "This song plays now or is on another album, so it stays as it is.",
+            ),
             PlaylistSyncError::Settings(error) => crate::settings::settings_failed(error).into(),
             PlaylistSyncError::Busy => {
                 ApiError::unavailable(Unavailable::ServerBusy, "database busy: spotify sync")
@@ -61,10 +74,41 @@ impl From<PlaylistSyncError> for ApiError {
 pub fn routes() -> Routes<Arc<SpotifySync>> {
     Routes::new()
         .user(routes!(get_sync_handler, put_sync_handler))
+        .user(routes!(keep_spotify_album_handler))
         .admin(routes!(sync_approvals_handler))
         .admin(routes!(approve_sync_handler))
         .admin(routes!(reject_sync_handler))
         .admin(routes!(revoke_sync_handler))
+}
+
+/// Keep a song the sync moved to the artist's own album on the album
+/// Spotify lists it on, for the playlist's owner. The sync's waiting
+/// request for the moved album is cancelled, and the next pass asks for
+/// the song on Spotify's album.
+#[utoipa::path(
+    post,
+    tag = "playlists",
+    path = "/api/v3/playlists/{playlist_id}/tracks/{track_id}/spotify-album",
+    params(
+        ("playlist_id" = String, Path, description = "Playlist id"),
+        ("track_id" = String, Path, description = "Playlist entry id"),
+    ),
+    responses(
+        (status = 200, description = "The song is on Spotify's album", body = SpotifyAlbumKept),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "No such playlist the caller owns"),
+        (status = 409, description = "The song was not moved (ALBUM_NOT_MOVED), or plays now or is on another album (ENTRY_CHANGED)"),
+    )
+)]
+pub async fn keep_spotify_album_handler(
+    State(sync): State<Arc<SpotifySync>>,
+    User(user): User,
+    Path((playlist_id, track_id)): Path<(String, String)>,
+) -> Result<Json<SpotifyAlbumKept>, ApiError> {
+    Ok(Json(
+        sync.keep_spotify_album(&user, &playlist_id, &track_id)
+            .await?,
+    ))
 }
 
 /// The reply to a decision on a sync's grant.

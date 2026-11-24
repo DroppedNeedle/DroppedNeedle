@@ -33,6 +33,7 @@ pub mod due;
 pub mod grant;
 pub mod http;
 pub mod job;
+pub mod keep;
 pub mod models;
 pub(crate) mod sql;
 pub mod store;
@@ -115,6 +116,12 @@ pub enum PlaylistSyncError {
     ReconnectNeeded,
     /// Spotify is turned off on this server.
     SpotifyOff,
+    /// The song was not moved off Spotify's album, so there is nothing to
+    /// keep.
+    NotMoved,
+    /// The moved song has since gained a file or a source, or another
+    /// album, so it stays as it is.
+    EntryChanged,
     /// The Spotify app settings cannot be read.
     Settings(droppedneedle_kernel::runtime_config::ConfigError),
     /// The database was busy.

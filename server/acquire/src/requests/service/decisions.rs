@@ -194,7 +194,7 @@ impl RequestsService {
                 self.admin_cancel_one(kind, &mbid, now).await?
             } else {
                 matches!(
-                    self.requester_cancel(kind, &mbid, principal.user_id(), now)
+                    self.requester_cancel(kind, &mbid, principal.user_id(), now, false)
                         .await?,
                     RequesterCancel::Detached
                         | RequesterCancel::CancelledDirect
@@ -469,7 +469,7 @@ impl RequestsService {
         };
         if !principal.is_admin() {
             let outcome = self
-                .requester_cancel(kind, &mbid, principal.user_id(), now)
+                .requester_cancel(kind, &mbid, principal.user_id(), now, false)
                 .await?;
             return requester_decided(outcome, &record);
         }
@@ -504,6 +504,39 @@ impl RequestsService {
                 },
             },
         )
+    }
+
+    /// Withdraw `principal`'s own ask for `mbid`, whatever their role,
+    /// while nobody else asked for it too: a request someone else also
+    /// waits for is left standing. Work done for a person, such as a synced
+    /// playlist taking back what it filed, cancels this way and never as an
+    /// admin.
+    pub(crate) async fn withdraw_ask(
+        &self,
+        principal: &Principal,
+        mbid: &str,
+        kind: RequestKind,
+    ) -> Result<Decided, RequestsError> {
+        let mbid = validate_mbid(mbid)?;
+        let Some(record) = self.store.get(kind, &mbid).await? else {
+            return Err(RequestsError::NotFound);
+        };
+        if !self
+            .store
+            .is_requester(kind, &mbid, principal.user_id())
+            .await?
+        {
+            return Err(RequestsError::NotFound);
+        }
+        // Decided in the cancel's own write: a request that started, or
+        // that someone else joined, meanwhile is left standing.
+        match self
+            .requester_cancel(kind, &mbid, principal.user_id(), self.now_epoch(), true)
+            .await?
+        {
+            RequesterCancel::Denied(_) => Ok(Decided::Changed),
+            outcome => requester_decided(outcome, &record),
+        }
     }
 
     /// After an admin stopped a row's download, make the row read
@@ -791,10 +824,11 @@ impl RequestsService {
         mbid: &str,
         user_id: &str,
         now: u64,
+        withdraw: bool,
     ) -> Result<RequesterCancel, RequestsError> {
         let decision = self
             .store
-            .prepare_requester_cancel(kind, mbid, user_id, now)
+            .prepare_requester_cancel(kind, mbid, user_id, now, withdraw)
             .await?;
         let Some(decision) = decision else {
             return Ok(RequesterCancel::NotFound);

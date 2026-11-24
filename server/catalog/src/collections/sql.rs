@@ -8,7 +8,7 @@
 use droppedneedle_kernel::db::statement::ListLen;
 use droppedneedle_kernel::db::time::Millis;
 
-use super::models::{AlbumPick, SourceAlbumKind};
+use super::models::{AlbumPick, FiledKind, SourceAlbumKind};
 
 use droppedneedle_auth::listed_user;
 use droppedneedle_library::{copy_of_group, owns_group};
@@ -353,6 +353,47 @@ droppedneedle_kernel::sql! {
     /// Playlist `?1`'s source song `?2` was moved off the source's filing.
     pub(super) PICK_OWN_ALBUM = "UPDATE catalog_playlist_source_songs \
          SET album_pick = 'own_album' WHERE playlist_id = ?1 AND source_song_id = ?2";
+    /// The song a sync moved from its source's filing that playlist `?1`'s
+    /// entry `?2` is, with the entry's album and recording now, the request
+    /// the sync filed for it, and whether that request covers another of
+    /// the playlist's songs too.
+    pub(super) MOVED_SONG = "SELECT s.source_song_id AS song_id, \
+         s.album_source_id AS album_source_id, s.album_title AS album_title, \
+         s.album_artist AS album_artist, s.album_kind AS album_kind, \
+         s.album_tracks AS album_tracks, lower(e.album_id) AS album_id, \
+         e.recording_mbid AS recording_mbid, s.filed_kind AS filed_kind, \
+         s.filed_key AS filed_key, EXISTS (SELECT 1 FROM catalog_playlist_source_songs o \
+         WHERE o.playlist_id = s.playlist_id AND o.filed_kind = s.filed_kind \
+         AND o.filed_key = s.filed_key AND o.source_song_id <> s.source_song_id) AS filed_shared \
+         FROM catalog_playlist_source_songs s JOIN catalog_playlist_tracks e ON e.id = s.entry_id \
+         WHERE s.playlist_id = ?1 AND s.entry_id = ?2 AND s.album_pick = 'own_album'";
+    /// A song a sync moved, and where it is now.
+    pub(super) row MovedSongColumns for [MOVED_SONG] {
+        song_id: String,
+        album_source_id: Option<String>,
+        album_title: String,
+        album_artist: String,
+        album_kind: Option<SourceAlbumKind>,
+        album_tracks: Option<u32>,
+        album_id: Option<String>,
+        recording_mbid: Option<String>,
+        filed_kind: Option<FiledKind>,
+        filed_key: Option<String>,
+        filed_shared: bool,
+    }
+    /// Put playlist `?1`'s entry `?2`, still on the artist's own album `?3`
+    /// with no file and no source, back on its source's album: release
+    /// group `?4` (none when nothing proves one), cover `?5`, title `?6`.
+    pub(super) KEEP_SOURCE_ALBUM = "UPDATE catalog_playlist_tracks SET album_id = ?4, \
+         cover_url = ?5, album_name = ?6, recording_mbid = NULL \
+         WHERE id = ?2 AND playlist_id = ?1 AND lower(album_id) = ?3 AND source_type = '' \
+         AND library_file_id IS NULL";
+    /// A person kept playlist `?1`'s source song `?2` on its source's
+    /// album: a sync asks for it there, from its first look.
+    pub(super) PICK_SOURCE_ALBUM = "UPDATE catalog_playlist_source_songs \
+         SET album_pick = 'kept_spotify', followed_up_at = NULL, filed_kind = NULL, \
+         filed_key = NULL, looks = 0, look_again_at = NULL \
+         WHERE playlist_id = ?1 AND source_song_id = ?2";
     /// The source's album of each of playlist `?1`'s entries a sync moved
     /// to the artist's own album.
     pub(super) LISTED_ON = "SELECT entry_id, album_title FROM catalog_playlist_source_songs \

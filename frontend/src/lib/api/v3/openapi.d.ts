@@ -6863,6 +6863,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/playlists/{playlist_id}/tracks/{track_id}/spotify-album": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Keep a song the sync moved to the artist's own album on the album
+         *     Spotify lists it on, for the playlist's owner. The sync's waiting
+         *     request for the moved album is cancelled, and the next pass asks for
+         *     the song on Spotify's album.
+         */
+        post: operations["keep_spotify_album_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/playlists/{playlist_id}/visibility": {
         parameters: {
             query?: never;
@@ -25229,6 +25251,16 @@ export interface components {
          * @enum {string}
          */
         SourceStatus: "degraded" | "error";
+        /** @description A song put back on the album Spotify lists it on. */
+        SpotifyAlbumKept: {
+            /**
+             * @description The release group Spotify's album is, when something proves one;
+             *     none shows "No album found yet" until a look finds it.
+             */
+            album_id?: string | null;
+            /** @description The sync's request for the moved album was cancelled. */
+            cancelled: boolean;
+        };
         /** @description Authorize URL for the caller's Spotify link flow. */
         SpotifyAuthUrlResponse: {
             /** @description `accounts.spotify.com/authorize` URL with state. */
@@ -46146,6 +46178,58 @@ export interface operations {
             };
             /** @description Request quota spent (QUOTA_EXCEEDED) */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    keep_spotify_album_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+                /** @description Playlist entry id */
+                track_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The song is on Spotify's album */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpotifyAlbumKept"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No such playlist the caller owns */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The song was not moved (ALBUM_NOT_MOVED), or plays now or is on another album (ENTRY_CHANGED) */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

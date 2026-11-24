@@ -192,6 +192,24 @@ pub struct OpenSourceSong {
     pub looks: i64,
 }
 
+/// A song a sync moved to the artist's own album, as its entry is now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MovedSong {
+    /// The source's id for the song.
+    pub song_id: String,
+    /// What the source said about its album.
+    pub album: SourceAlbum,
+    /// The artist's own album the entry is on.
+    pub own_group: Option<String>,
+    /// The recording the entry was given on it.
+    pub recording_mbid: Option<String>,
+    /// The request the sync filed for the song, by kind and MusicBrainz
+    /// id, when it filed one.
+    pub filed: Option<(FiledKind, String)>,
+    /// That request covers another of the playlist's songs too.
+    pub filed_shared: bool,
+}
+
 /// Where a sync puts the songs it adds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourcePlace {
@@ -1092,6 +1110,81 @@ impl PlaylistStore {
                 )? > 0;
                 if moved {
                     tx.execute(sql::PICK_OWN_ALBUM.text(), params![playlist_id, song_id])?;
+                    tx.execute(sql::STAMP.text(), params![now, playlist_id])?;
+                }
+                Ok(moved)
+            })
+            .await
+    }
+
+    /// The song a sync moved that `playlist_id`'s entry `entry_id` is, or
+    /// none when the sync did not move it.
+    pub async fn moved_song(
+        &self,
+        playlist_id: &str,
+        entry_id: &str,
+    ) -> Result<Option<MovedSong>, StoreError> {
+        let (playlist_id, entry_id) = (playlist_id.to_owned(), entry_id.to_owned());
+        self.db
+            .read("playlists.moved_song", move |conn| {
+                Ok(conn
+                    .query_row(
+                        sql::MOVED_SONG.text(),
+                        params![playlist_id, entry_id],
+                        sql::MovedSongColumns::read,
+                    )
+                    .optional()?
+                    .map(|row| MovedSong {
+                        song_id: row.song_id,
+                        album: SourceAlbum {
+                            source_id: row.album_source_id,
+                            title: row.album_title,
+                            artist: row.album_artist,
+                            kind: row.album_kind,
+                            tracks: row.album_tracks,
+                        },
+                        own_group: row.album_id,
+                        recording_mbid: row.recording_mbid,
+                        filed: row.filed_kind.zip(row.filed_key),
+                        filed_shared: row.filed_shared,
+                    }))
+            })
+            .await
+    }
+
+    /// Put `playlist_id`'s entry `entry_id`, moved by a sync to the
+    /// artist's own album `own_group`, back on its source's album, titled
+    /// `title`: release group `group`, or none, and keep that a person
+    /// chose it, so a sync asks for the song there and never moves it
+    /// again. An entry that has meanwhile gained a file, a source or
+    /// another album is left alone. Answers whether it moved back.
+    pub async fn keep_source_album(
+        &self,
+        playlist_id: &str,
+        song: &MovedSong,
+        entry_id: &str,
+        group: Option<&str>,
+    ) -> Result<bool, StoreError> {
+        let (playlist_id, entry_id, song_id) = (
+            playlist_id.to_owned(),
+            entry_id.to_owned(),
+            song.song_id.clone(),
+        );
+        let own = song.own_group.clone().unwrap_or_default();
+        let group = group.map(str::to_ascii_lowercase);
+        let cover = group.as_deref().and_then(|group| {
+            entry_cover(&format!("/api/v3/covers/release-group/{group}?size=250"))
+        });
+        let title = song.album.title.clone();
+        let now = self.db.now_ms();
+        self.db
+            .write("playlists.keep_source_album", move |tx| {
+                let moved = tx.execute(
+                    sql::KEEP_SOURCE_ALBUM.text(),
+                    params![playlist_id, entry_id, own, group, cover, title],
+                )? > 0;
+                if moved {
+                    tx.execute(sql::PICK_SOURCE_ALBUM.text(), params![playlist_id, song_id])?;
                     tx.execute(sql::STAMP.text(), params![now, playlist_id])?;
                 }
                 Ok(moved)
