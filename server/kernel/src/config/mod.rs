@@ -390,7 +390,9 @@ pub enum ConfigError {
     #[error("invalid TRUSTED_PROXY_IPS: {0}")]
     InvalidTrustedProxies(String),
     /// `LOG_LEVEL` is not a known level.
-    #[error("invalid LOG_LEVEL value {0:?}: expected DEBUG, INFO, WARNING or ERROR")]
+    #[error(
+        "invalid LOG_LEVEL value {0:?}: expected TRACE, DEBUG, INFO, WARNING, WARN, ERROR or CRITICAL"
+    )]
     InvalidLogLevel(String),
     /// A seconds value is not a positive number of at most one day.
     #[error("invalid {name} value {value:?}: expected seconds above zero")]

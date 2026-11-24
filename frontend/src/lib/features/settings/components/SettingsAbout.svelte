@@ -138,6 +138,11 @@
 								</Button>
 							{/if}
 						</div>
+					{:else if updateCheck.check_failed}
+						<div class="alert alert-warning alert-soft mt-4">
+							<Info class="w-5 h-5 shrink-0" />
+							<span>Couldn't check for updates.</span>
+						</div>
 					{:else if updateCheck.comparison_failed}
 						<div class="alert alert-warning alert-soft mt-4">
 							<Info class="w-5 h-5 shrink-0" />

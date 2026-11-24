@@ -649,10 +649,10 @@ impl Reason {
             Self::AccountRefused => "Nothing to do: DroppedNeedle tries another copy.",
             Self::ClientDropped => "Nothing to do: DroppedNeedle tries again.",
             Self::NoDownloadSource => {
-                "Turn on slskd, SABnzbd, Deemix or a plugin source in Settings, Downloads. It starts by itself."
+                "Turn on slskd, SABnzbd, NZBGet, Deemix or a plugin source in Settings, Download Client. It starts by itself."
             }
             Self::SettingsUnreadable => {
-                "Save Settings, Downloads again. The import then goes ahead by itself."
+                "Save Settings, Download Client again. The import then goes ahead by itself."
             }
             Self::JournalUnreadable => "Nothing to do: DroppedNeedle tries again by itself.",
             Self::MusicbrainzUnavailable => {

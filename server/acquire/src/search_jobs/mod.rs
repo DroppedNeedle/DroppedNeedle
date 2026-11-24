@@ -108,7 +108,7 @@ impl SearchReason {
     pub fn action(self) -> &'static str {
         match self {
             Self::NoSources => {
-                "Turn on slskd, SABnzbd, Deemix or a plugin source in Settings, Downloads."
+                "Turn on slskd, SABnzbd, NZBGet, Deemix or a plugin source in Settings, Download Client."
             }
             Self::SourcesFailed => {
                 "Check that your download clients are running and reachable, then search again."

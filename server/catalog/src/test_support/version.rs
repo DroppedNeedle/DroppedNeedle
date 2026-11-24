@@ -1,5 +1,6 @@
 //! Scripted release data.
 
+use droppedneedle_providers::ProviderError;
 use futures_util::future::BoxFuture;
 
 use crate::version::*;
@@ -44,9 +45,9 @@ impl ReleaseSource for FakeReleases {
         self.current.clone()
     }
 
-    fn latest_release(&self) -> BoxFuture<'_, Option<GitHubRelease>> {
+    fn latest_release(&self) -> BoxFuture<'_, Result<Option<GitHubRelease>, ProviderError>> {
         let latest = self.latest.clone();
-        Box::pin(async move { latest })
+        Box::pin(async move { Ok(latest) })
     }
 
     fn release_history(&self) -> BoxFuture<'_, Vec<GitHubRelease>> {

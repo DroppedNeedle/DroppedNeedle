@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
-use super::{Follows, auto_download_live, sql};
+use super::{Follows, PLACEHOLDER_ARTIST, auto_download_live, sql};
 use crate::flows::stores::{StoreFailure, lane_failure, read};
 use crate::requests::ledger::ApprovalState;
 use droppedneedle_auth::Role;
@@ -153,11 +153,15 @@ impl Follows {
 
     /// Store one cursor after a poll, with its known set, and add the new
     /// releases to the followers' feed in the same transaction. A release
-    /// already in the feed keeps its first discovery time.
+    /// already in the feed keeps its first discovery time. `artist_name`,
+    /// the name the poll read for the artist, replaces the placeholder on
+    /// the artist's follows and feed rows that still carry it; no other
+    /// name is touched.
     pub async fn record_poll(
         &self,
         cursor: &FollowCursor,
         feed: &[FeedRelease],
+        artist_name: Option<&str>,
     ) -> Result<(), StoreFailure> {
         let pending = serde_json::to_string(&cursor.pending).map_err(|error| StoreFailure {
             operation: "follows.record_poll",
@@ -165,6 +169,7 @@ impl Follows {
         })?;
         let cursor = cursor.clone();
         let feed = feed.to_vec();
+        let polled_name = artist_name.map(str::to_owned);
         let clock = self.db.clock().clone();
         self.db
             .write_background("follows.record_poll", move |tx| {
@@ -201,6 +206,14 @@ impl Follows {
                             now
                         ],
                     )?;
+                }
+                if let Some(name) = &polled_name {
+                    for statement in [
+                        &sql::RENAME_PLACEHOLDER_FOLLOWS,
+                        &sql::RENAME_PLACEHOLDER_FEED,
+                    ] {
+                        tx.execute(statement.text(), params![artist, name, PLACEHOLDER_ARTIST])?;
+                    }
                 }
                 Ok(())
             })

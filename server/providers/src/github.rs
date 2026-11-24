@@ -6,18 +6,19 @@
 //! [GitHubRepos], which answers typed errors for the installer to judge.
 //!
 //! The releases client is a port of v2's GitHub repository and its
-//! `GitHubRelease` schema. It is the quiet client: every failure (an error
-//! answer, an undecodable body, no answer at all) degrades to an empty
-//! release list with a log line, never an error. An update check must not
-//! break the app it checks for updates. The wire shapes, and the dates they
-//! were verified on, are in `github/models.rs`.
+//! `GitHubRelease` schema. Every failure (an error answer, an undecodable
+//! body, no answer at all) is logged. The release history degrades to an
+//! empty list; the latest release answers the error, so the update check
+//! can say it could not check rather than that the app is up to date. The
+//! wire shapes, and the dates they were verified on, are in
+//! `github/models.rs`.
 //!
 //! Kept behaviors:
 //!
 //! - The `Accept: application/vnd.github+json` header on every call.
 //! - Draft releases are filtered out; prereleases stay in the list but
-//!   [GitHubClient::fetch_latest_release] skips them (the API returns
-//!   newest first, so the first stable release wins).
+//!   [GitHubClient::latest_release] skips them (the API returns newest
+//!   first, so the first stable release wins).
 //! - Missing `name` falls back to the tag, missing `body` to `""`.
 //! - One hourly memo of the last good answer. A failure is never
 //!   remembered, so the next check asks again.
@@ -179,33 +180,52 @@ impl GitHubClient {
     /// person's check that the executor turns down because the row has no
     /// request free soon answers `[]` at once without sending.
     pub async fn fetch_releases(&self, priority: RequestPriority) -> Vec<GitHubRelease> {
+        self.releases(priority).await.unwrap_or_default()
+    }
+
+    /// The latest non-prerelease release, `None` when GitHub lists none.
+    /// Reads through the same memo as [GitHubClient::fetch_releases].
+    ///
+    /// # Errors
+    ///
+    /// Any failure to read the list, so the update check can tell "no
+    /// release" from "GitHub could not be asked".
+    pub async fn latest_release(
+        &self,
+        priority: RequestPriority,
+    ) -> Result<Option<GitHubRelease>, ProviderError> {
+        Ok(self
+            .releases(priority)
+            .await?
+            .into_iter()
+            .find(|release| !release.prerelease))
+    }
+
+    /// The release list from the memo, else fetched and remembered. A
+    /// failure is logged and never remembered.
+    async fn releases(
+        &self,
+        priority: RequestPriority,
+    ) -> Result<Vec<GitHubRelease>, ProviderError> {
         if let Some(cached) = self.memo_get().await {
-            return cached;
+            return Ok(cached);
         }
         match self.fetch(priority).await {
             Ok(releases) => {
                 self.memo_put(releases.clone()).await;
-                releases
+                Ok(releases)
             }
             // The executor has already logged an outage once; only what it
             // passed over quietly is worth a warning here.
-            Err(error) if error.trips_breaker() => {
-                tracing::debug!(%error, "github releases skipped");
-                Vec::new()
-            }
             Err(error) => {
-                tracing::warn!(%error, "github releases unavailable");
-                Vec::new()
+                if error.trips_breaker() {
+                    tracing::debug!(%error, "github releases skipped");
+                } else {
+                    tracing::warn!(%error, "github releases unavailable");
+                }
+                Err(error)
             }
         }
-    }
-
-    /// The latest non-prerelease release, if any.
-    pub async fn fetch_latest_release(&self, priority: RequestPriority) -> Option<GitHubRelease> {
-        self.fetch_releases(priority)
-            .await
-            .into_iter()
-            .find(|release| !release.prerelease)
     }
 
     /// Fresh memoized list when still inside the TTL.

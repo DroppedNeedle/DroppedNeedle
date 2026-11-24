@@ -15776,7 +15776,10 @@ export interface components {
         };
         /** @description Follow-toggle body. */
         FollowBody: {
-            /** @description Artist name to keep, when following. */
+            /**
+             * @description Artist name, when following. A new follow needs one; an existing
+             *     follow keeps its name when none is sent.
+             */
             artist_name?: string | null;
             /** @description True follows the artist; false unfollows (and drops auto-download). */
             followed: boolean;
@@ -25847,6 +25850,11 @@ export interface components {
         };
         /** @description Update-check answer. */
         UpdateCheckResponse: {
+            /**
+             * @description True when GitHub could not be asked, so whether an update exists is
+             *     not known.
+             */
+            check_failed: boolean;
             /** @description True when the two tags could not be compared. */
             comparison_failed: boolean;
             /** @description Running version. */
@@ -28790,7 +28798,7 @@ export interface operations {
                     "application/json": components["schemas"]["FollowStatusResponse"];
                 };
             };
-            /** @description Bad request body */
+            /** @description Bad request body, or a new follow with no artist name */
             400: {
                 headers: {
                     [name: string]: unknown;

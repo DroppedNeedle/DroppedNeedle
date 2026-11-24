@@ -1737,8 +1737,9 @@ async fn a_weekly_mix_tops_up_with_the_persons_own_link() {
 }
 
 // History pages; a user hides a row from their own view while an admin
-// deletes it, and `status=reimportable` lists only the failed requests whose
-// download kept its files, and only for an admin.
+// deletes it, a rejected row included, and `status=reimportable` lists
+// only the failed requests whose download kept its files, and only for an
+// admin.
 #[tokio::test]
 async fn history_pages_hides_and_lists_reimportable() {
     let case = "pages and clears";
@@ -1807,6 +1808,29 @@ async fn history_pages_hides_and_lists_reimportable() {
     )
     .await;
     assert_eq!(owners["total"], 2, "{case}");
+
+    // A rejected request clears like a failed or cancelled one.
+    let case = "rejected";
+    let (state, _db, _dispatch) = setup().await;
+    ask(&state, ADA, MBID_B).await;
+    let reject = format!("/api/v3/requests/approvals/{MBID_B}/reject");
+    call(&state, Method::POST, &reject, Some(ADMIN), None).await;
+    let clear = format!("/api/v3/requests/history/{MBID_B}");
+    let (_, cleared) = call(&state, Method::DELETE, &clear, Some(ADA), None).await;
+    assert_eq!(cleared["success"], true, "{case}: {cleared}");
+    let (_, adas) = call(
+        &state,
+        Method::GET,
+        "/api/v3/requests/history",
+        Some(ADA),
+        None,
+    )
+    .await;
+    assert_eq!(adas["total"], 0, "{case}: hidden from Ada");
+    let (_, cleared) = call(&state, Method::DELETE, &clear, Some(ADMIN), None).await;
+    assert_eq!(cleared["success"], true, "{case}: {cleared}");
+    let row = state.store.get(RequestKind::Album, MBID_B).await.unwrap();
+    assert!(row.is_none(), "{case}: an admin deletes it");
 
     let case = "reimportable";
     let (state, _db, dispatch) = setup().await;
@@ -2809,7 +2833,8 @@ fn ask_to_follow(album: &str, artist: &str, auto_download: bool) -> Value {
 // write: one that names no artist is refused, a plain user's auto-download
 // waits for an admin, a repeat ask on a
 // live row follows too, a batch follows each artist, and a request the
-// quota refuses leaves no follow behind.
+// quota refuses leaves no follow behind. No follow is ever stored without
+// the artist's name.
 #[tokio::test]
 async fn a_request_that_asks_to_follow_follows_the_artist() {
     let (state, db, dispatch) = setup().await;
@@ -2871,6 +2896,82 @@ async fn a_request_that_asks_to_follow_follows_the_artist() {
         follow.followed && follow.auto_download,
         "a trusted ask arms itself"
     );
+
+    let names = |user: &str, artist: &str| -> Vec<String> {
+        db.db().column(
+            "SELECT artist_name FROM acquire_followed_artists \
+             WHERE user_id = ?1 AND artist_mbid_lower = ?2",
+            [user, artist],
+        )
+    };
+    // A batch item that names no artist keeps a follow's own name, else
+    // takes the name of the row it joins when that row is for the same
+    // artist, and otherwise follows nobody.
+    let nameless = |artist: &str| {
+        json!({
+            "items": [{"musicbrainz_id": MBID_A, "album_title": "Album", "artist_mbid": artist}],
+            "monitor_artist": true,
+        })
+    };
+    call(
+        &state,
+        Method::POST,
+        batches,
+        Some(TRUSTED),
+        Some(nameless(ARTIST)),
+    )
+    .await;
+    assert_eq!(names("u-tris", ARTIST), ["Artist"], "the row's name");
+    let own = format!("/api/v3/artists/{ARTIST}/follow");
+    let named = json!({"followed": true, "artist_name": "Radiohead"});
+    call(&state, Method::PUT, &own, Some(ADMIN), Some(named)).await;
+    call(
+        &state,
+        Method::POST,
+        batches,
+        Some(ADMIN),
+        Some(nameless(ARTIST)),
+    )
+    .await;
+    assert_eq!(
+        names("u-root", ARTIST),
+        ["Radiohead"],
+        "a follow's own name"
+    );
+    call(
+        &state,
+        Method::POST,
+        batches,
+        Some(ADMIN),
+        Some(nameless(MBID_B)),
+    )
+    .await;
+    assert!(names("u-root", MBID_B).is_empty(), "another artist's row");
+
+    // The follow route stores a name: a new follow without one is refused
+    // and stores nothing, an existing follow keeps its name, and an
+    // unfollow needs none.
+    let artist = "44444444-4444-4444-8444-444444444444";
+    let put = format!("/api/v3/artists/{artist}/follow");
+    for body in [
+        json!({"followed": true}),
+        json!({"followed": true, "artist_name": "  "}),
+    ] {
+        let (status, _) = call(&state, Method::PUT, &put, Some(ADA), Some(body)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "a new follow needs a name");
+    }
+    assert!(names("u-ada", artist).is_empty(), "a refused follow");
+    let named = json!({"followed": true, "artist_name": "Someone"});
+    let (status, _) = call(&state, Method::PUT, &put, Some(ADA), Some(named)).await;
+    assert_eq!(status, StatusCode::OK);
+    let again = json!({"followed": true});
+    let (status, _) = call(&state, Method::PUT, &put, Some(ADA), Some(again)).await;
+    assert_eq!(status, StatusCode::OK, "a follow kept");
+    assert_eq!(names("u-ada", artist), ["Someone"], "a follow kept");
+    let off = json!({"followed": false});
+    let (status, _) = call(&state, Method::PUT, &put, Some(ADA), Some(off)).await;
+    assert_eq!(status, StatusCode::OK, "an unfollow");
+    assert!(names("u-ada", artist).is_empty(), "an unfollow");
 }
 
 // A dispatch whose link loses the row's generation to another linker of the

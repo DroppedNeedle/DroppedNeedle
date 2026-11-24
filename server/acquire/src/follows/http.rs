@@ -45,7 +45,7 @@ pub fn routes() -> Routes<Follows> {
     request_body = FollowBody,
     responses(
         (status = 200, description = "Follow status", body = FollowStatusResponse),
-        (status = 400, description = "Bad request body"),
+        (status = 400, description = "Bad request body, or a new follow with no artist name"),
         (status = 401, description = "Not authenticated"),
     )
 )]

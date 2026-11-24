@@ -104,7 +104,7 @@ pub const DEPLOYMENT_VARS: &[DeploymentVar] = &[
     DeploymentVar {
         env_name: "LOG_LEVEL",
         default: "INFO",
-        note: "DEBUG, INFO, WARNING or ERROR.",
+        note: "TRACE, DEBUG, INFO, WARNING (or WARN), ERROR or CRITICAL (the same as ERROR).",
     },
     DeploymentVar {
         env_name: "RUST_LOG",

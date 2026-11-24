@@ -8,7 +8,8 @@ use utoipa::ToSchema;
 pub struct FollowBody {
     /// True follows the artist; false unfollows (and drops auto-download).
     pub followed: bool,
-    /// Artist name to keep, when following.
+    /// Artist name, when following. A new follow needs one; an existing
+    /// follow keeps its name when none is sent.
     pub artist_name: Option<String>,
 }
 

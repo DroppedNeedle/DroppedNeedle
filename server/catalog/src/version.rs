@@ -2,14 +2,15 @@
 //!
 //! The check logic is pure over the [`ReleaseSource`] port, and production
 //! runs [`GitHubReleases`], the build tag plus the GitHub releases client
-//! (cached for an hour, quiet on failure).
+//! (cached for an hour).
 //!
 //! Comparison rules: trim a leading `v`, parse both tags as semver and
 //! compare by precedence (build metadata ignored). Anything else fails
 //! closed as `comparison_failed`. A `dev` build reports an update as
 //! available when comparison fails so the full UI stays testable.
 //! `latest_release` ships only when an update is available; a missing
-//! latest release answers with the current version alone.
+//! latest release answers with the current version alone, and a check
+//! GitHub could not answer says so with `check_failed`.
 //!
 //! The running version is the image's `COMMIT_TAG`, which `AppConfig`
 //! reads at start, else `dev`.
@@ -19,7 +20,7 @@ use std::sync::Arc;
 use axum::{Json, extract::State};
 use droppedneedle_auth::User;
 use droppedneedle_kernel::mount::{Routes, routes};
-use droppedneedle_providers::RequestPriority;
+use droppedneedle_providers::{ProviderError, RequestPriority};
 use futures_util::future::BoxFuture;
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -68,6 +69,9 @@ pub struct UpdateCheckResponse {
     pub update_available: bool,
     /// True when the two tags could not be compared.
     pub comparison_failed: bool,
+    /// True when GitHub could not be asked, so whether an update exists is
+    /// not known.
+    pub check_failed: bool,
     /// Latest release detail, present only when an update is available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_release: Option<GitHubRelease>,
@@ -77,8 +81,9 @@ pub struct UpdateCheckResponse {
 pub trait ReleaseSource: Send + Sync + 'static {
     /// Running build identity.
     fn current_version(&self) -> VersionInfo;
-    /// Latest release, or `None` when the lookup found nothing.
-    fn latest_release(&self) -> BoxFuture<'_, Option<GitHubRelease>>;
+    /// Latest release, `None` when there is none, or the failure that kept
+    /// the lookup from answering.
+    fn latest_release(&self) -> BoxFuture<'_, Result<Option<GitHubRelease>, ProviderError>>;
     /// Release history, newest first.
     fn release_history(&self) -> BoxFuture<'_, Vec<GitHubRelease>>;
 }
@@ -118,13 +123,14 @@ impl ReleaseSource for GitHubReleases {
 
     // Both are asked for by a page someone has open, so they go at user
     // priority: while GitHub rests, or no request is free soon, the answer
-    // is nothing at once instead of a held page.
-    fn latest_release(&self) -> BoxFuture<'_, Option<GitHubRelease>> {
+    // comes at once instead of holding the page.
+    fn latest_release(&self) -> BoxFuture<'_, Result<Option<GitHubRelease>, ProviderError>> {
         Box::pin(async move {
-            self.client
-                .fetch_latest_release(RequestPriority::UserInitiated)
-                .await
-                .map(from_github)
+            Ok(self
+                .client
+                .latest_release(RequestPriority::UserInitiated)
+                .await?
+                .map(from_github))
         })
     }
 
@@ -178,33 +184,36 @@ fn is_newer(latest_tag: &str, current_tag: &str) -> (bool, bool) {
     }
 }
 
-/// Pure update-check over one current version and one latest release,
-/// including the dev-build carve-out.
+/// Pure update-check over one current version and the latest-release
+/// lookup, including the dev-build carve-out. A failed lookup is no update
+/// and says the check failed.
 fn build_update_response(
     current: &VersionInfo,
-    latest: Option<&GitHubRelease>,
+    latest: Result<Option<&GitHubRelease>, &ProviderError>,
 ) -> UpdateCheckResponse {
-    let Some(latest) = latest else {
+    let Ok(Some(found)) = latest else {
         return UpdateCheckResponse {
             current_version: current.version.clone(),
             latest_version: None,
             update_available: false,
             comparison_failed: false,
+            check_failed: latest.is_err(),
             latest_release: None,
         };
     };
-    let (mut update_available, comparison_failed) = is_newer(&latest.tag_name, &current.version);
+    let (mut update_available, comparison_failed) = is_newer(&found.tag_name, &current.version);
     let is_dev = current.version == DEV_VERSION;
     if comparison_failed && is_dev {
         update_available = true;
     }
     UpdateCheckResponse {
         current_version: current.version.clone(),
-        latest_version: Some(latest.tag_name.clone()),
+        latest_version: Some(found.tag_name.clone()),
         update_available,
         comparison_failed,
+        check_failed: false,
         latest_release: if update_available {
-            Some(latest.clone())
+            Some(found.clone())
         } else {
             None
         },
@@ -241,7 +250,10 @@ pub async fn check_update(
 ) -> Json<UpdateCheckResponse> {
     let current = state.releases.current_version();
     let latest = state.releases.latest_release().await;
-    Json(build_update_response(&current, latest.as_ref()))
+    Json(build_update_response(
+        &current,
+        latest.as_ref().map(Option::as_ref),
+    ))
 }
 
 /// Release history, newest first.
@@ -285,36 +297,50 @@ mod tests {
 
     /// The update check compares the running version with the latest tag: a
     /// newer tag is an update with its release attached, the same or an
-    /// older one is not, no latest answers the current version only, an
-    /// unreadable tag fails closed, and a dev build reports one.
+    /// older one is not, no latest answers the current version only, a
+    /// lookup that failed says so, an unreadable tag fails closed, and a dev
+    /// build reports one.
     #[test]
     fn update_check_compares_tags() {
-        let answer = build_update_response(&current("1.2.0"), Some(&release("v1.3.0")));
+        let answer = build_update_response(&current("1.2.0"), Ok(Some(&release("v1.3.0"))));
         assert!(answer.update_available, "newer");
         assert!(!answer.comparison_failed, "newer");
         assert_eq!(answer.latest_version.as_deref(), Some("v1.3.0"), "newer");
         assert!(answer.latest_release.is_some(), "newer");
 
         for tag in ["v1.2.0", "1.1.9"] {
-            let answer = build_update_response(&current("1.2.0"), Some(&release(tag)));
+            let answer = build_update_response(&current("1.2.0"), Ok(Some(&release(tag))));
             assert!(!answer.update_available, "tag {tag}");
             assert!(!answer.comparison_failed, "tag {tag}");
             assert!(answer.latest_release.is_none(), "tag {tag}");
         }
 
-        let answer = build_update_response(&current("1.2.0"), None);
+        let answer = build_update_response(&current("1.2.0"), Ok(None));
         assert_eq!(answer.current_version, "1.2.0", "no latest");
         assert_eq!(answer.latest_version, None, "no latest");
         assert!(!answer.update_available, "no latest");
         assert!(!answer.comparison_failed, "no latest");
+        assert!(!answer.check_failed, "no latest");
         assert!(answer.latest_release.is_none(), "no latest");
 
-        let answer = build_update_response(&current("1.2.0"), Some(&release("nightly")));
+        // GitHub not answering is not "up to date": the check says it failed.
+        let refused = ProviderError::RateLimited {
+            provider: "github",
+            retry_after: None,
+        };
+        let answer = build_update_response(&current("1.2.0"), Err(&refused));
+        assert_eq!(answer.current_version, "1.2.0", "check failed");
+        assert_eq!(answer.latest_version, None, "check failed");
+        assert!(!answer.update_available, "check failed");
+        assert!(answer.check_failed, "check failed");
+        assert!(answer.latest_release.is_none(), "check failed");
+
+        let answer = build_update_response(&current("1.2.0"), Ok(Some(&release("nightly"))));
         assert!(!answer.update_available, "unreadable tag");
         assert!(answer.comparison_failed, "unreadable tag");
         assert!(answer.latest_release.is_none(), "unreadable tag");
 
-        let answer = build_update_response(&current("dev"), Some(&release("nightly")));
+        let answer = build_update_response(&current("dev"), Ok(Some(&release("nightly"))));
         assert!(answer.update_available, "dev build");
         assert!(answer.comparison_failed, "dev build");
         assert!(answer.latest_release.is_some(), "dev build");
@@ -328,7 +354,7 @@ mod tests {
         let beta = current("3.0.0-beta.3");
 
         for tag in ["v3.0.0-beta.4", "v3.0.0-beta.10", "v3.0.0"] {
-            let answer = build_update_response(&beta, Some(&release(tag)));
+            let answer = build_update_response(&beta, Ok(Some(&release(tag))));
             assert!(answer.update_available, "tag {tag}");
             assert!(!answer.comparison_failed, "tag {tag}");
             assert_eq!(answer.latest_version.as_deref(), Some(tag), "tag {tag}");
@@ -336,14 +362,14 @@ mod tests {
         }
 
         for tag in ["v3.0.0-beta.3", "v3.0.0-beta.2", "v3.0.0-alpha.9"] {
-            let answer = build_update_response(&beta, Some(&release(tag)));
+            let answer = build_update_response(&beta, Ok(Some(&release(tag))));
             assert!(!answer.update_available, "tag {tag}");
             assert!(!answer.comparison_failed, "tag {tag}");
             assert!(answer.latest_release.is_none(), "tag {tag}");
         }
 
         // GitHub's latest release is the v2 line; a v3 beta is ahead of it.
-        let answer = build_update_response(&beta, Some(&release("v2.15.0")));
+        let answer = build_update_response(&beta, Ok(Some(&release("v2.15.0"))));
         assert_eq!(answer.current_version, "3.0.0-beta.3", "v2 latest");
         assert_eq!(
             answer.latest_version.as_deref(),
@@ -355,13 +381,13 @@ mod tests {
         assert!(answer.latest_release.is_none(), "v2 latest");
 
         // A release outranks the beta before it; build metadata is ignored.
-        let answer = build_update_response(&current("3.0.0"), Some(&release("v3.0.0-beta.3")));
+        let answer = build_update_response(&current("3.0.0"), Ok(Some(&release("v3.0.0-beta.3"))));
         assert!(!answer.update_available, "release vs beta");
         assert!(!answer.comparison_failed, "release vs beta");
 
         let answer = build_update_response(
             &current("3.0.0-beta.3+sha.abc"),
-            Some(&release("v3.0.0-beta.3")),
+            Ok(Some(&release("v3.0.0-beta.3"))),
         );
         assert!(!answer.update_available, "build metadata");
         assert!(!answer.comparison_failed, "build metadata");

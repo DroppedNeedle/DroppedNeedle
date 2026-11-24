@@ -1466,8 +1466,9 @@ async fn github_follows_a_renamed_repository() {
     let providers = Providers::unpaced(wire.clone());
     let found = providers
         .github
-        .fetch_latest_release(RequestPriority::UserInitiated)
+        .latest_release(RequestPriority::UserInitiated)
         .await
+        .expect("the moved list reads")
         .map(|release| release.tag_name);
     assert_eq!(found.as_deref(), Some("v3.0.0"));
 

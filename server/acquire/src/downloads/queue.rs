@@ -39,7 +39,7 @@ pub enum QueueError {
 
 /// What a queue action answers while the download settings do not read.
 pub const SETTINGS_UNREADABLE: &str =
-    "Download settings can't be read. Save Settings, Downloads again.";
+    "Download settings can't be read. Save Settings, Download Client again.";
 
 fn unavailable(error: impl std::fmt::Display) -> QueueError {
     QueueError::Unavailable(error.to_string())

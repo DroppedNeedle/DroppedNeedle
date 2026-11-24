@@ -26,8 +26,8 @@ use crate::dispatch::{
 };
 use crate::downloads::journal::Journal;
 use crate::downloads::state::TaskStatus;
-use crate::follows::Follows;
 use crate::follows::cursors::{FeedRelease, FollowCursor, Follower, PendingRelease};
+use crate::follows::{Follows, PLACEHOLDER_ARTIST};
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::{RequestStatus, WantedWatch, WatchKind, WatchOutcome, WatchState};
 use crate::requests::models::RequestKind;
@@ -746,8 +746,18 @@ pub async fn follow_tick(now: i64, deps: &FollowDeps) -> FollowSummary {
     for mut cursor in due {
         summary.artists_polled += 1;
         let mut feed = Vec::new();
+        let mut polled_name = None;
         match deps.poll.poll_releases(&cursor.artist_mbid).await {
-            Ok(releases) => {
+            Ok(polled) => {
+                let releases = polled.releases;
+                polled_name = polled.artist_name;
+                // A follow still named the placeholder takes MusicBrainz's
+                // name, so this poll's feed rows and downloads carry it.
+                if cursor.artist_name == PLACEHOLDER_ARTIST
+                    && let Some(name) = &polled_name
+                {
+                    cursor.artist_name = name.clone();
+                }
                 if cursor.baselined {
                     let observed =
                         observe_artist(deps, &mut cursor, &releases, &today, &types, now).await;
@@ -770,7 +780,11 @@ pub async fn follow_tick(now: i64, deps: &FollowDeps) -> FollowSummary {
                 cursor.next_poll_at = now + FOLLOW_ARTIST_RETRY.as_secs() as i64;
             }
         }
-        if let Err(error) = deps.follows.record_poll(&cursor, &feed).await {
+        if let Err(error) = deps
+            .follows
+            .record_poll(&cursor, &feed, polled_name.as_deref())
+            .await
+        {
             tracing::warn!(artist = %cursor.artist_mbid, ?error, "follow cursor write failed");
             summary.errors += 1;
         }

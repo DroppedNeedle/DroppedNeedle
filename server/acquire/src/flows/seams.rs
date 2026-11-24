@@ -23,14 +23,24 @@ pub struct ObservedRelease {
     pub secondary_types: Vec<String>,
 }
 
+/// What one poll read of a followed artist.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PolledArtist {
+    /// The artist's own name, from a credit on one of its release groups
+    /// whose artist is the followed MBID; `None` when no credit names it.
+    pub artist_name: Option<String>,
+    /// Every release group of the artist, in any order.
+    pub releases: Vec<ObservedRelease>,
+}
+
 /// Follow-poll provider seam: one artist's release-group page.
 /// Async: production reads the provider page over HTTP.
 pub trait ReleasePoll: Send + Sync {
-    /// Fetch every release group of the artist, in any order.
+    /// Fetch every release group of the artist, with its name.
     fn poll_releases<'a>(
         &'a self,
         artist_mbid: &'a str,
-    ) -> BoxFuture<'a, Result<Vec<ObservedRelease>, String>>;
+    ) -> BoxFuture<'a, Result<PolledArtist, String>>;
 }
 
 /// Durable tick sink. Each tick is emitted at its durable state

@@ -2630,7 +2630,7 @@
             }
           },
           "400": {
-            "description": "Bad request body",
+            "description": "Bad request body, or a new follow with no artist name",
             "content": {
               "application/json": {
                 "schema": {
@@ -49537,7 +49537,7 @@
               "string",
               "null"
             ],
-            "description": "Artist name to keep, when following."
+            "description": "Artist name, when following. A new follow needs one; an existing\nfollow keeps its name when none is sent."
           },
           "followed": {
             "type": "boolean",
@@ -71974,9 +71974,14 @@
         "required": [
           "current_version",
           "update_available",
-          "comparison_failed"
+          "comparison_failed",
+          "check_failed"
         ],
         "properties": {
+          "check_failed": {
+            "type": "boolean",
+            "description": "True when GitHub could not be asked, so whether an update exists is\nnot known."
+          },
           "comparison_failed": {
             "type": "boolean",
             "description": "True when the two tags could not be compared."

@@ -38,7 +38,7 @@ use self::models::{
 };
 use crate::db::{AcquireDb, epoch_secs, unix_secs_f64};
 use crate::requests::error::RequestsError;
-use crate::requests::ledger::{ApprovalState, FollowApproval, validate_mbid};
+use crate::requests::ledger::{ApprovalState, FollowApproval, meaningful_name, validate_mbid};
 use crate::requests::models::ActionResponse;
 use crate::requests::sqlite::{lane_error, ms_from_secs, read};
 use droppedneedle_auth::{Admin, Principal, Role};
@@ -52,8 +52,9 @@ use droppedneedle_kernel::db::statement::ListLen;
 
 pub use self::http::routes;
 
-/// Name used when a follow arrives without one.
-const UNKNOWN_ARTIST: &str = "Unknown Artist";
+/// The name follows made before a name was required may still carry. The
+/// follow poll replaces it with MusicBrainz's name for the artist.
+pub(crate) const PLACEHOLDER_ARTIST: &str = "Unknown Artist";
 /// What a batch card says produced its asks.
 const IMPORT_SOURCE: &str = "import";
 /// How many artist names a batch card previews.
@@ -104,21 +105,43 @@ pub struct FollowAsk {
 
 impl FollowAsk {
     /// Follow the artist for `user_id`, and ask for auto-download the way
-    /// the Following page does. An ask is filed at `now_ms`.
+    /// the Following page does. An ask is filed at `now_ms`. An ask with no
+    /// name keeps an existing follow's name; with no follow it takes the
+    /// name of request row `row` (its stored key) when that row is for the
+    /// same artist and names it, and otherwise follows nobody.
     pub(crate) fn apply(
         &self,
         tx: &Transaction,
         user_id: &str,
+        row: &str,
         now_ms: i64,
     ) -> rusqlite::Result<()> {
-        set_follow_tx(
-            tx,
-            user_id,
-            &self.artist_mbid,
-            true,
-            self.artist_name.as_deref(),
-            real_secs(now_ms),
-        )?;
+        let now = real_secs(now_ms);
+        let name = usable_name(self.artist_name.as_deref());
+        let mut followed = follow_tx(tx, user_id, &self.artist_mbid, name.as_deref(), now)?;
+        if !followed {
+            let found: Option<String> = tx
+                .query_row(
+                    sql::REQUEST_ARTIST_NAME.text(),
+                    params![row, self.artist_mbid.to_lowercase()],
+                    |found| found.get(0),
+                )
+                .optional()?;
+            if let Some(name) =
+                meaningful_name(found.as_deref()).filter(|name| name.as_str() != PLACEHOLDER_ARTIST)
+            {
+                upsert_follow(tx, user_id, &self.artist_mbid, &name, now)?;
+                followed = true;
+            }
+        }
+        if !followed {
+            tracing::info!(
+                artist_mbid = %self.artist_mbid,
+                request = row,
+                "album request names no artist to follow; following nobody"
+            );
+            return Ok(());
+        }
         if self.auto_download {
             set_auto_download_tx(
                 tx,
@@ -163,7 +186,9 @@ impl Follows {
     }
 
     /// Follow or unfollow one artist. Re-following keeps the intent and
-    /// the start date and refreshes the name when one is given.
+    /// the start date and refreshes the name when one is given. A new
+    /// follow needs the artist's name: without one it is refused and
+    /// nothing is stored.
     pub async fn set_follow(
         &self,
         user_id: &str,
@@ -172,21 +197,24 @@ impl Follows {
         artist_name: Option<String>,
     ) -> Result<FollowStatusResponse, RequestsError> {
         let (user, mbid) = (user_id.to_owned(), artist_mbid.to_owned());
-        let name = artist_name.filter(|name| !name.trim().is_empty());
+        let name = usable_name(artist_name.as_deref());
         let now = self.db.now_unix_f64();
-        self.db
+        let stored = self
+            .db
             .write("follows.set_follow", move |tx| {
-                Ok(set_follow_tx(
-                    tx,
-                    &user,
-                    &mbid,
-                    followed,
-                    name.as_deref(),
-                    now,
-                )?)
+                if followed {
+                    return Ok(follow_tx(tx, &user, &mbid, name.as_deref(), now)?);
+                }
+                unfollow_tx(tx, &user, &mbid, now)?;
+                Ok(true)
             })
             .await
             .map_err(|error| lane_error("follows.set_follow", error))?;
+        if !stored {
+            return Err(RequestsError::InvalidInput {
+                message: "Following an artist needs its name".to_owned(),
+            });
+        }
         self.status(user_id, artist_mbid).await
     }
 
@@ -436,7 +464,7 @@ impl Follows {
                     } else if artist.monitors_new {
                         armed.push(artist);
                     }
-                    upsert_follow(tx, &user, &artist.mbid, Some(&artist.name), now)?;
+                    upsert_follow(tx, &user, &artist.mbid, &artist.name, now)?;
                 }
                 for artist in &armed {
                     set_intent(tx, &user, &artist.mbid.to_lowercase(), true, now)?;
@@ -476,26 +504,45 @@ fn reviewer(admin: &Admin) -> Reviewer {
     )
 }
 
-/// Follow or unfollow one artist inside the caller's transaction.
-/// Re-following keeps the intent and the start date and refreshes the
-/// name when one is given.
-pub(crate) fn set_follow_tx(
+/// A name worth storing on a follow: anything but blank.
+fn usable_name(name: Option<&str>) -> Option<String> {
+    name.map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+}
+
+/// Follow one artist inside the caller's transaction. With a name the
+/// follow is made or refreshed; with none an existing follow keeps its
+/// name and nothing new is made. Answers whether the artist is followed.
+fn follow_tx(
     tx: &Transaction,
     user_id: &str,
     artist_mbid: &str,
-    followed: bool,
     artist_name: Option<&str>,
     now: f64,
-) -> rusqlite::Result<()> {
-    if followed {
-        upsert_follow(tx, user_id, artist_mbid, artist_name, now)
-    } else {
-        tx.execute(
-            sql::UNFOLLOW.text(),
-            params![user_id, artist_mbid.to_lowercase()],
+) -> rusqlite::Result<bool> {
+    let Some(name) = artist_name else {
+        let touched = tx.execute(
+            sql::TOUCH_FOLLOW.text(),
+            params![follow_ms(now), user_id, artist_mbid.to_lowercase()],
         )?;
-        end_waiting_follows(tx, user_id, &artist_mbid.to_lowercase(), now)
-    }
+        return Ok(touched > 0);
+    };
+    upsert_follow(tx, user_id, artist_mbid, name, now)?;
+    Ok(true)
+}
+
+/// Unfollow one artist inside the caller's transaction, ending the
+/// downloads still waiting under the follow.
+fn unfollow_tx(
+    tx: &Transaction,
+    user_id: &str,
+    artist_mbid: &str,
+    now: f64,
+) -> rusqlite::Result<()> {
+    let lower = artist_mbid.to_lowercase();
+    tx.execute(sql::UNFOLLOW.text(), params![user_id, lower])?;
+    end_waiting_follows(tx, user_id, &lower, now)
 }
 
 /// Turn auto-download on or off for one followed artist inside the
@@ -531,13 +578,13 @@ pub(crate) fn set_auto_download_tx(
     Ok(true)
 }
 
-/// Follow one artist. A conflict keeps the intent and the start date and
-/// refreshes the name when one is given.
+/// Follow one artist under `artist_name`. A conflict keeps the intent and
+/// the start date and takes the name.
 fn upsert_follow(
     tx: &Transaction,
     user_id: &str,
     artist_mbid: &str,
-    artist_name: Option<&str>,
+    artist_name: &str,
     now: f64,
 ) -> rusqlite::Result<()> {
     tx.execute(
@@ -547,7 +594,6 @@ fn upsert_follow(
             artist_mbid,
             artist_mbid.to_lowercase(),
             artist_name,
-            UNKNOWN_ARTIST,
             follow_ms(now)
         ],
     )?;

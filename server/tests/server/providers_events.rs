@@ -719,7 +719,8 @@ fn releases_payload() -> serde_json::Value {
 }
 
 /// The release check reads the recorded list, filters drafts and falls back
-/// for a missing name or body; failures degrade to `[]` and are not kept; and
+/// for a missing name or body; failures degrade to `[]` for the history and
+/// are an error to the update check, and are not kept; and
 /// a person's check never waits for a request.
 #[tokio::test(start_paused = true)]
 async fn github_release_check_reads_filters_and_degrades() {
@@ -763,13 +764,18 @@ async fn github_release_check_reads_filters_and_degrades() {
         "decode"
     );
 
-    // Error answers degrade to `[]`, quietly, and are not remembered: the
-    // next check asks again, while the row has a request to give, and keeps
-    // what it gets.
+    // Error answers degrade to `[]` for the history and are an error to the
+    // update check, and are not remembered: the next check asks again,
+    // while the row has a request to give, and keeps what it gets.
     let (wire, providers) = scripted();
+    wire.answer(&url("releases"), 404, &[], GITHUB_NOT_FOUND);
     wire.answer(&url("releases"), 404, &[], GITHUB_NOT_FOUND);
     json_answer(&wire, "releases", releases_payload());
 
+    assert!(
+        providers.github.latest_release(USER).await.is_err(),
+        "not kept: the 404 is an error to the update check"
+    );
     assert_eq!(
         providers.github.fetch_releases(USER).await,
         vec![],
@@ -778,8 +784,9 @@ async fn github_release_check_reads_filters_and_degrades() {
     assert_eq!(
         providers
             .github
-            .fetch_latest_release(USER)
+            .latest_release(USER)
             .await
+            .expect("the list reads")
             .map(|release| release.tag_name),
         Some("v2.15.0".to_owned()),
         "not kept: asked again"
@@ -789,7 +796,7 @@ async fn github_release_check_reads_filters_and_degrades() {
         30,
         "not kept: the answer is kept"
     );
-    assert_eq!(sent_to(&wire, "releases").len(), 2, "not kept");
+    assert_eq!(sent_to(&wire, "releases").len(), 3, "not kept");
 
     // A person's check never waits for a request. Once failing answers have
     // spent the row's burst (50 an hour, so the next request is 72 s away),

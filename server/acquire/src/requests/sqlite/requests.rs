@@ -500,8 +500,13 @@ impl RequestStore {
                 let mut outcomes = Vec::with_capacity(records.len());
                 for (record, follow) in records {
                     let outcome = begin_tx(tx, record, made_from)?;
-                    if let (BeginOutcome::Won(_), Some(follow)) = (&outcome, follow) {
-                        follow.apply(tx, &owner, crate::follows::now_ms(clock.as_ref()))?;
+                    if let (BeginOutcome::Won(won), Some(follow)) = (&outcome, follow) {
+                        follow.apply(
+                            tx,
+                            &owner,
+                            &row_key(won.kind, &won.key),
+                            crate::follows::now_ms(clock.as_ref()),
+                        )?;
                     }
                     outcomes.push(outcome);
                 }
@@ -768,7 +773,12 @@ impl RequestStore {
                         sql::WIDEN_MONITORING.text(),
                         params![stored, follow.auto_download],
                     )?;
-                    follow.apply(tx, &user_id, crate::follows::now_ms(clock.as_ref()))?;
+                    follow.apply(
+                        tx,
+                        &user_id,
+                        &stored,
+                        crate::follows::now_ms(clock.as_ref()),
+                    )?;
                 }
                 Ok(true)
             })

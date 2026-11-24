@@ -33,12 +33,20 @@ droppedneedle_kernel::sql! {
     pub(crate) UNFOLLOW = "DELETE FROM acquire_followed_artists \
          WHERE user_id = ?1 AND artist_mbid_lower = ?2";
     /// Follow one artist; a conflict keeps the intent and start date and
-    /// refreshes the name when one is given.
+    /// takes the name.
     pub(crate) UPSERT_FOLLOW = "INSERT INTO acquire_followed_artists (user_id, artist_mbid, \
          artist_mbid_lower, artist_name, auto_download, followed_at, updated_at) \
-         VALUES (?1, ?2, ?3, COALESCE(?4, ?5), 0, ?6, ?6) \
+         VALUES (?1, ?2, ?3, ?4, 0, ?5, ?5) \
          ON CONFLICT (user_id, artist_mbid_lower) DO UPDATE SET \
-         artist_name = COALESCE(?4, artist_name), updated_at = ?6";
+         artist_name = excluded.artist_name, updated_at = ?5";
+    /// Re-follow user `?2`'s existing follow of artist `?3` at `?1`,
+    /// keeping its name.
+    pub(crate) TOUCH_FOLLOW = "UPDATE acquire_followed_artists SET updated_at = ?1 \
+         WHERE user_id = ?2 AND artist_mbid_lower = ?3";
+    /// The artist name of request row `?1` when the row is for artist `?2`
+    /// (lowercased).
+    pub(crate) REQUEST_ARTIST_NAME = "SELECT artist_name FROM request_history \
+         WHERE musicbrainz_id_lower = ?1 AND lower(artist_mbid) = ?2";
     /// End user `?1`'s follow rows for artist `?2` that have not started
     /// (waiting, or left pending with no task by a busy database), as
     /// cancelled at `?3`. A row someone else joined keeps waiting for them;
@@ -147,6 +155,12 @@ droppedneedle_kernel::sql! {
     /// Remember one known release group.
     pub(crate) ADD_KNOWN_RELEASE = "INSERT OR IGNORE INTO artist_known_releases \
          (artist_mbid_lower, rg_mbid_lower) VALUES (?1, ?2)";
+    /// Name artist `?1`'s follows still carrying placeholder `?3` as `?2`.
+    pub(crate) RENAME_PLACEHOLDER_FOLLOWS = "UPDATE acquire_followed_artists \
+         SET artist_name = ?2 WHERE artist_mbid_lower = ?1 AND artist_name = ?3";
+    /// Name artist `?1`'s feed rows still carrying placeholder `?3` as `?2`.
+    pub(crate) RENAME_PLACEHOLDER_FEED = "UPDATE acquire_new_release_feed \
+         SET artist_name = ?2 WHERE artist_mbid_lower = ?1 AND artist_name = ?3";
     /// Add one release to the followers' feed; a known one keeps its time.
     pub(crate) ADD_FEED_RELEASE = "INSERT OR IGNORE INTO acquire_new_release_feed \
          (release_group_mbid_lower, release_group_mbid, artist_mbid_lower, artist_name, title, \

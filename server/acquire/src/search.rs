@@ -3,7 +3,7 @@
 
 use futures_util::future::BoxFuture;
 
-use super::flows::seams::{ObservedRelease, ReleasePoll};
+use super::flows::seams::{ObservedRelease, PolledArtist, ReleasePoll};
 use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::musicbrainz::{Criticality, LiveSource, MusicBrainzView};
 
@@ -13,8 +13,8 @@ const RELEASE_PAGE: u32 = 100;
 /// handful of artists, and bounds one poll's provider work.
 const MAX_RELEASE_PAGES: u32 = 10;
 
-/// The artist's release groups from the MusicBrainz browse endpoint,
-/// every page, at background priority on the shared limiter. The
+/// The artist's release groups and name from the MusicBrainz browse
+/// endpoint, every page, at background priority on the shared limiter. The
 /// browse list is complete, so a release cannot hide behind search
 /// ranking. A provider outage is an error, never an empty page.
 pub struct MusicBrainzReleasePoll {
@@ -32,9 +32,10 @@ impl ReleasePoll for MusicBrainzReleasePoll {
     fn poll_releases<'a>(
         &'a self,
         artist_mbid: &'a str,
-    ) -> BoxFuture<'a, Result<Vec<ObservedRelease>, String>> {
+    ) -> BoxFuture<'a, Result<PolledArtist, String>> {
         Box::pin(async move {
-            let mut out = Vec::new();
+            let followed = artist_mbid.to_lowercase();
+            let mut out = PolledArtist::default();
             for page in 0..MAX_RELEASE_PAGES {
                 let offset = page * RELEASE_PAGE;
                 let found = self
@@ -48,13 +49,29 @@ impl ReleasePoll for MusicBrainzReleasePoll {
                     .await
                     .map_err(|error| error.to_string())?;
                 let read = found.items.len();
-                out.extend(found.items.into_iter().map(|group| ObservedRelease {
-                    rg_mbid: group.id,
-                    title: group.title.unwrap_or_default(),
-                    first_release_date: group.first_release_date,
-                    primary_type: group.primary_type,
-                    secondary_types: group.secondary_types,
-                }));
+                for group in found.items {
+                    // The browse carries each group's artist credits (the
+                    // recorded browse_release_groups_radiohead.json,
+                    // 2026-10-21): the followed artist's own credit gives
+                    // its canonical name.
+                    if out.artist_name.is_none() {
+                        out.artist_name = group
+                            .artist_credit
+                            .iter()
+                            .find(|credit| {
+                                credit.artist.id.to_lowercase() == followed
+                                    && !credit.artist.name.trim().is_empty()
+                            })
+                            .map(|credit| credit.artist.name.trim().to_owned());
+                    }
+                    out.releases.push(ObservedRelease {
+                        rg_mbid: group.id,
+                        title: group.title.unwrap_or_default(),
+                        first_release_date: group.first_release_date,
+                        primary_type: group.primary_type,
+                        secondary_types: group.secondary_types,
+                    });
+                }
                 if read == 0 || u64::from(offset) + read as u64 >= found.count {
                     return Ok(out);
                 }

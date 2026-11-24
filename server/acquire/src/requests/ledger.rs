@@ -72,7 +72,7 @@ impl RequestStatus {
     pub const fn is_clearable(self) -> bool {
         matches!(
             self,
-            Self::Imported | Self::Incomplete | Self::Failed | Self::Cancelled
+            Self::Imported | Self::Incomplete | Self::Failed | Self::Cancelled | Self::Rejected
         )
     }
 }

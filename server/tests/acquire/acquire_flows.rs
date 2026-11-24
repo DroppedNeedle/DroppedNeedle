@@ -640,9 +640,17 @@ async fn status_sweep_settles_what_the_journal_missed() {
     assert_eq!(recorded.keys().len(), 4, "nothing is announced twice");
 }
 
-/// One page of an artist's release groups, as the MusicBrainz browse
-/// endpoint answers it.
+/// One page of `Artist-1`'s release groups, as the MusicBrainz browse
+/// endpoint answers it: each credited to a guest and to the artist, whose
+/// name is "The Band" though the credit spells it "Band, The".
 fn browse_page(releases: &[(&str, &str, &str, &[&str])]) -> String {
+    let credit = |id: &str, credited: &str, name: &str| {
+        serde_json::json!({
+            "name": credited,
+            "joinphrase": "",
+            "artist": {"id": id, "name": name, "sort-name": name},
+        })
+    };
     let groups: Vec<serde_json::Value> = releases
         .iter()
         .map(|(id, date, kind, secondary)| {
@@ -652,6 +660,10 @@ fn browse_page(releases: &[(&str, &str, &str, &[&str])]) -> String {
                 "first-release-date": date,
                 "primary-type": kind,
                 "secondary-types": secondary,
+                "artist-credit": [
+                    credit("artist-guest", "Guest", "Guest"),
+                    credit("Artist-1", "Band, The", "The Band"),
+                ],
             })
         })
         .collect();
@@ -1046,6 +1058,57 @@ async fn follow_rig(db: &AcquireDb, settings: &ConfigStore) -> (FollowDeps, Arc<
         today: Arc::new(|| "2024-06-01".to_owned()),
     };
     (deps, requests)
+}
+
+// A follow still named "Unknown Artist" takes the name MusicBrainz credits
+// the artist with on the poll: that poll's feed row and download carry it,
+// the artist's older feed rows are renamed, and a follow under any other
+// name keeps it.
+#[tokio::test]
+async fn follow_poll_names_a_placeholder_follow() {
+    let db = AcquireDb::scratch().unwrap();
+    db.write("seed follows", |tx| {
+        tx.execute_batch(
+            "INSERT INTO auth_users (id, display_name, role, created_at) VALUES \
+               ('user-1', 'Admin', 'admin', 0), \
+               ('user-2', 'Listener', 'user', 0); \
+             INSERT INTO acquire_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
+               artist_name, auto_download, followed_at, updated_at) VALUES \
+               ('user-1', 'Artist-1', 'artist-1', 'Unknown Artist', 1, 1, 1), \
+               ('user-2', 'Artist-1', 'artist-1', 'Zed Band', 0, 1, 1); \
+             INSERT INTO acquire_follow_cursors (artist_mbid_lower, baselined, next_poll_at) \
+               VALUES ('artist-1', 1, 0); \
+             INSERT INTO acquire_new_release_feed (release_group_mbid_lower, \
+               release_group_mbid, artist_mbid_lower, artist_name, title, discovered_at) \
+               VALUES ('rg-older', 'rg-older', 'artist-1', 'Unknown Artist', 'Older', 1);",
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let settings = settings(&db);
+    let (deps, _) = follow_rig(&db, &settings).await;
+
+    let summary = follow_tick(NOW, &deps).await;
+    assert_eq!((summary.new_releases, summary.enqueued), (1, 1));
+    let queued = tasks(&db).await;
+    assert_eq!(queued[0].artist_name, "The Band", "the download");
+    let row = RequestStore::new(db.clone())
+        .get(RequestKind::Album, "rg-old")
+        .await
+        .unwrap()
+        .expect("the follow download has a request row");
+    assert_eq!(row.artist_name, "The Band", "the request");
+    let feed: Vec<String> = db.db().column(
+        "SELECT artist_name FROM acquire_new_release_feed ORDER BY release_group_mbid",
+        [],
+    );
+    assert_eq!(feed, ["The Band", "The Band"], "the feed");
+    let follows: Vec<String> = db.db().column(
+        "SELECT artist_name FROM acquire_followed_artists ORDER BY user_id",
+        [],
+    );
+    assert_eq!(follows, ["The Band", "Zed Band"], "the follows");
 }
 
 /// A follow download waits, is never dropped, and starts by itself: past
