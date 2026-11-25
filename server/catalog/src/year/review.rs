@@ -394,6 +394,9 @@ pub fn work_out(plays: &[YearPlay], zone: &TimeZone, current: bool) -> Worked {
     }
 }
 
+/// A track's plays, first play, title, album (id and title) and artist shown.
+type TrackTally = (u64, i64, String, Option<(String, String)>, String);
+
 /// One song's plays, per track that played it.
 struct SongTracks {
     plays: u64,
@@ -401,9 +404,8 @@ struct SongTracks {
     /// The first play's names, for a song no track played.
     name: String,
     artist_name: String,
-    /// Each track: plays, first play, title, album (id and title) and
-    /// artist shown.
-    tracks: HashMap<String, (u64, i64, String, Option<(String, String)>, String)>,
+    /// Each track that played it, by track id.
+    tracks: HashMap<String, TrackTally>,
 }
 
 impl SongTracks {
