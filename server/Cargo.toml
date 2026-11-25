@@ -172,9 +172,20 @@ tracing-subscriber.workspace = true
 url.workspace = true
 zip.workspace = true
 
-# The shipped binaries carry no symbols or debug info.
+# The profile the shipped binaries are built with (the dev image and
+# releases): fat link-time optimisation and one codegen unit for a smaller
+# binary, no symbols or debug info.
 [profile.release]
 strip = true
+lto = "fat"
+codegen-units = 1
+
+# Release without link-time optimisation, which builds much quicker and with
+# less memory: what `make image` builds by default.
+[profile.local]
+inherits = "release"
+lto = false
+codegen-units = 16
 
 # A quicker build for the image CI boots on every push. Our crates build
 # unoptimized, like a debug build but without debug info, debug assertions

@@ -1,0 +1,13 @@
+# Size ceilings for the release files, read by server/scripts/size-budget.sh.
+# The dev image and release builds fail when an entry grows past its ceiling.
+#
+# One entry a line: the path under the release-files export (a file, or a
+# folder counted as the sum of its files), the ceiling in MB (1,000,000
+# bytes), the date it was set and why. Raising a ceiling is a reviewed edit
+# with a new date and reason. The sizes are amd64's, the larger build (the
+# arm64 server was 114.6 MB on 2026-11-24).
+#
+# path                    ceiling_mb  set_on      reason
+server/droppedneedle      150         2026-11-25  136.6 MB before LTO, plus 10%; lowered once the first LTO build is measured
+server/droppedneedle-tool 15          2026-11-25  13.7 MB before LTO, plus 10%
+web-ui                    8.5         2026-11-25  7.8 MB measured, plus 10%

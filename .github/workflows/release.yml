@@ -239,7 +239,7 @@ jobs:
             arch: arm64
             triple: aarch64
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -253,12 +253,16 @@ jobs:
           echo "timestamp=$(git log -1 --pretty=%cI)" >> "$GITHUB_OUTPUT"
           echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Warm cache (${{ matrix.platform }})
+      # Each architecture builds on its own native runner. The image leaves
+      # the job as an OCI archive, which publish pushes once the release is
+      # approved, so nothing reaches a registry before then and nothing is
+      # built under emulation.
+      - name: Build the image (${{ matrix.platform }})
         uses: docker/build-push-action@v7
         with:
           context: .
           platforms: ${{ matrix.platform }}
-          push: false
+          outputs: type=oci,dest=image-${{ matrix.arch }}.tar
           build-args: |
             COMMIT_TAG=${{ needs.checks.outputs.version }}
             BUILD_DATE=${{ steps.date.outputs.timestamp }}
@@ -362,6 +366,7 @@ jobs:
           chmod 0755 release-files/server/droppedneedle release-files/server/droppedneedle-tool
           release-files/server/droppedneedle --print-openapi > /dev/null
           release-files/server/droppedneedle-tool --help > /dev/null
+          ./server/scripts/size-budget.sh release-files
 
           # Fixed order, owner and times, so a re-run packs the same bytes and
           # the checksums of a release never change.
@@ -388,11 +393,23 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      # The layers are compressed already, so the archive is stored as it is.
+      - name: Keep the image
+        uses: actions/upload-artifact@v7
+        with:
+          name: image-${{ matrix.arch }}
+          path: image-${{ matrix.arch }}.tar
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  # Builds nothing: it pushes the two images the build jobs made and joins
+  # them into one multi-arch image. A dry run joins them without pushing.
   publish:
     name: Publish multi-arch image
     needs: [checks, build]
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 30
     environment: release
     permissions:
       contents: read
@@ -401,14 +418,11 @@ jobs:
       VERSION: ${{ needs.checks.outputs.version }}
       PUBLISH: ${{ needs.checks.outputs.publish }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-
+      # The version tested to read oci-layout sources in imagetools create.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
+        with:
+          version: v0.39.1
 
       - name: Log in to ghcr.io
         if: env.PUBLISH == 'true'
@@ -425,29 +439,37 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Get build date and commit
-        id: date
-        run: |
-          echo "timestamp=$(git log -1 --pretty=%cI)" >> "$GITHUB_OUTPUT"
-          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Build multi-arch image
-        uses: docker/build-push-action@v7
+      - name: Fetch the images
+        uses: actions/download-artifact@v8
         with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: ${{ env.PUBLISH == 'true' }}
-          tags: |
-            ghcr.io/droppedneedle/droppedneedle:${{ env.VERSION }}
-            droppedneedle/droppedneedle:${{ env.VERSION }}
-          build-args: |
-            COMMIT_TAG=${{ env.VERSION }}
-            BUILD_DATE=${{ steps.date.outputs.timestamp }}
-            VCS_REF=${{ steps.date.outputs.revision }}
-          cache-from: |
-            type=gha,scope=linux/amd64
-            type=gha,scope=linux/arm64
-          provenance: false
+          pattern: image-*
+          path: images
+          merge-multiple: true
+
+      - name: Push and join the multi-arch image
+        run: |
+          sources=()
+          for arch in amd64 arm64; do
+            mkdir "images/$arch"
+            tar -xf "images/image-$arch.tar" -C "images/$arch"
+            digest="$(jq -r --arg arch "$arch" \
+              '.manifests[] | select(.platform.architecture == $arch) | .digest' \
+              "images/$arch/index.json")"
+            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::No $arch image in the $arch archive."
+              exit 1
+            fi
+            sources+=("oci-layout://$PWD/images/$arch@$digest")
+          done
+
+          dry_run=()
+          if [[ "$PUBLISH" != "true" ]]; then
+            dry_run=(--dry-run)
+          fi
+          docker buildx imagetools create "${dry_run[@]}" \
+            -t "ghcr.io/droppedneedle/droppedneedle:${VERSION}" \
+            -t "droppedneedle/droppedneedle:${VERSION}" \
+            "${sources[@]}"
 
       - name: Tag latest
         if: env.PUBLISH == 'true' && needs.checks.outputs.latest == 'true'

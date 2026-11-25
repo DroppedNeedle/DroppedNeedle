@@ -2,9 +2,9 @@
 # binary is one tokio runtime and compose must never scale it past 1, because
 # durable-operation ownership lives in-process.
 
-# The Cargo profile the binaries are built with. Shipping images use release;
-# CI's container boot test passes ci-e2e (server/Cargo.toml) for a quicker
-# build of the same code.
+# The Cargo profile the binaries are built with (server/Cargo.toml). Shipping
+# images use release; CI's container boot test passes ci-e2e and `make image`
+# passes local, both quicker builds of the same code.
 ARG CARGO_PROFILE=release
 
 # Base images name the exact versions in .github/node-version and

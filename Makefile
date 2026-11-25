@@ -94,8 +94,12 @@ contract-write: ## Regenerate the OpenAPI snapshot and TypeScript types
 
 ##@ Image
 
-image: ## Build the container image as droppedneedle:local
-	docker build -t droppedneedle:local "$(ROOT_DIR)"
+# The Cargo profile `make image` builds: local is release without link-time
+# optimisation; IMAGE_PROFILE=release builds what ships.
+IMAGE_PROFILE ?= local
+
+image: ## Build the container image as droppedneedle:local (IMAGE_PROFILE=release for the shipped build)
+	docker build --build-arg CARGO_PROFILE=$(IMAGE_PROFILE) -t droppedneedle:local "$(ROOT_DIR)"
 
 rebuild: image ## Build droppedneedle:local and recreate the container from COMPOSE_FILE
 	cd "$(ROOT_DIR)" && docker compose -f "$(COMPOSE_FILE)" up -d
