@@ -786,6 +786,9 @@ pub(crate) async fn build_on(
     crate::admin::backups::NightlyBackup::new(runtime.backups().clone(), p)
         .spawn_on(supervisor)
         .map_err(|_| stage("jobs loops")("the nightly backup is already running".to_owned()))?;
+    crate::admin::disk::disk_watch(p)
+        .spawn_on(supervisor)
+        .map_err(|_| stage("jobs loops")("the disk watch is already running".to_owned()))?;
 
     let router = create_app_with_web(state.clone(), web);
     Ok(Built {

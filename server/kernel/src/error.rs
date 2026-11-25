@@ -58,6 +58,8 @@ pub const PROVIDER_UNAVAILABLE: &str = "PROVIDER_UNAVAILABLE";
 /// The server was started on v2 data and serves only its upgrade page
 /// until the upgrade is done.
 pub const UPGRADE_REQUIRED: &str = "UPGRADE_REQUIRED";
+/// The server's data or temp disk is full (507).
+pub const DISK_FULL: &str = "DISK_FULL";
 /// An outside service needs a key or account first, or refused the one
 /// saved (409). `details.provider` names it.
 pub const PROVIDER_NOT_CONFIGURED: &str = "PROVIDER_NOT_CONFIGURED";
@@ -120,6 +122,9 @@ pub enum Unavailable {
     },
     /// The server was started on v2 data and waits for its upgrade.
     UpgradeRequired,
+    /// A fault met a data or temp disk that is full. The boundary picks it
+    /// from the free space it reads, never from the error.
+    DiskFull,
 }
 
 /// What one [`Unavailable`] answers: everything the boundary writes.
@@ -200,6 +205,13 @@ impl Unavailable {
                 StatusCode::SERVICE_UNAVAILABLE,
                 UPGRADE_REQUIRED,
                 "DroppedNeedle needs its upgrade from v2. Open the web page to run it.",
+                None,
+                false,
+            ),
+            Self::DiskFull => (
+                StatusCode::INSUFFICIENT_STORAGE,
+                DISK_FULL,
+                "The server's disk is full. An admin needs to free some space.",
                 None,
                 false,
             ),

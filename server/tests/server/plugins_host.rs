@@ -504,9 +504,11 @@ fn admin_app(rig: &Rig, deps: PluginsDeps) -> axum::Router {
     use axum::response::IntoResponse as _;
     use droppedneedle::middleware::{Boundary, request_scope};
 
-    let boundary = Boundary::new(rig.platform.ids.clone(), |_, _, _, status, _| {
-        status.into_response()
-    });
+    let boundary = Boundary::new(
+        rig.platform.ids.clone(),
+        Arc::new(|| None),
+        |_, _, _, status, _| status.into_response(),
+    );
     with_test_principal(
         plugin_routes().with_state(deps).into_router(),
         session("admin-1"),

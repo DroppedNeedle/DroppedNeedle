@@ -17,6 +17,12 @@
 //!   failure shape: the app's from `CompatSetup::server_error`, upgrade
 //!   mode's from the default Subsonic settings ([`Boundary`]).
 //!
+//! A fault that would answer the fixed internal error answers
+//! `DISK_FULL` (507) instead while the data or temp folder has less than
+//! [`DISK_FULL_BELOW`] free, read at that moment through the boundary's
+//! free-space probe. It is decided from the disk, never from the error's
+//! text.
+//!
 //! The cause an [`ApiError`](droppedneedle_kernel::error::ApiError) carried
 //! is logged here once, with the request id.
 
@@ -33,10 +39,13 @@ use std::panic::AssertUnwindSafe;
 use tracing::Instrument as _;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::state::AppState;
 use droppedneedle_kernel::{
-    error::{ApiError, Fault},
+    config::AppConfig,
+    disk::{DISK_FULL_BELOW, READ_BOUND, least_free},
+    error::{ApiError, Fault, Unavailable},
     ids::{IdGenerator, REQUEST_ID_HEADER, RequestId},
 };
 
@@ -45,18 +54,28 @@ use droppedneedle_kernel::{
 type CompatFailure =
     dyn Fn(&str, bool, Option<&str>, StatusCode, Option<HeaderValue>) -> Response + Send + Sync;
 
-/// What the request boundary needs: fresh request ids and the compat
-/// failure shape.
+/// The least free bytes on the data and temp folders, read now; `None`
+/// when that cannot be told. Blocking.
+pub type FreeSpace = Arc<dyn Fn() -> Option<u64> + Send + Sync>;
+
+/// What the request boundary needs: fresh request ids, the compat failure
+/// shape and the free-space probe.
 #[derive(Clone)]
 pub struct Boundary {
     ids: Arc<dyn IdGenerator>,
     compat_failure: Arc<CompatFailure>,
+    free_space: FreeSpace,
+    /// Set while a free-space read runs: a read that hangs is left to end,
+    /// and none starts beside it.
+    reading: Arc<AtomicBool>,
 }
 
 impl Boundary {
-    /// Request ids from `ids`, compat failures from `compat_failure`.
+    /// Request ids from `ids`, free space on the data and temp folders from
+    /// `free_space`, compat failures from `compat_failure`.
     pub fn new(
         ids: Arc<dyn IdGenerator>,
+        free_space: FreeSpace,
         compat_failure: impl Fn(&str, bool, Option<&str>, StatusCode, Option<HeaderValue>) -> Response
         + Send
         + Sync
@@ -65,7 +84,26 @@ impl Boundary {
         Self {
             ids,
             compat_failure: Arc::new(compat_failure),
+            free_space,
+            reading: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// The probe over the data and temp folders of `config`.
+    pub fn disk_probe(config: &AppConfig) -> FreeSpace {
+        let folders: Vec<std::path::PathBuf> = config
+            .library_db_path
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .into_iter()
+            .chain([config.temp_dir.clone()])
+            .collect();
+        Arc::new(move || least_free(&folders))
+    }
+
+    /// The free space the boundary's probe reads now. Blocking.
+    pub fn free_space_now(&self) -> Option<u64> {
+        (self.free_space)()
     }
 
     /// The app's boundary: its ids, and compat failures in the shape the
@@ -74,6 +112,7 @@ impl Boundary {
         let compat = state.compat.clone();
         Self::new(
             state.ids.clone(),
+            Self::disk_probe(&state.config),
             move |path, head, query, status, retry_after| {
                 compat.server_error(path, head, query, status, retry_after)
             },
@@ -117,7 +156,17 @@ pub async fn request_scope(
                 log_fault(&request_id, &method, &path, status, fault.as_ref());
                 (state.compat_failure)(&path, head, query.as_deref(), status, retry_after)
             } else {
-                native_server_error(&request_id, &method, &path, status, retry_after, fault)
+                let disk_full = fault.as_ref().and_then(Fault::unavailable).is_none()
+                    && disk_is_full(&state).await;
+                native_server_error(
+                    &request_id,
+                    &method,
+                    &path,
+                    status,
+                    retry_after,
+                    fault,
+                    disk_full,
+                )
             }
         }
         Err(_) => {
@@ -130,6 +179,9 @@ pub async fn request_scope(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     None,
                 )
+            } else if disk_is_full(&state).await {
+                tracing::warn!(%request_id, "the data disk is full; the panic answers DISK_FULL");
+                disk_full_response(&request_id)
             } else {
                 ApiError::internal_response(&request_id)
             }
@@ -140,8 +192,46 @@ pub async fn request_scope(
     response
 }
 
-/// The native 5xx body: the closed-list answer the fault names, or the
-/// fixed internal error. Status and `Retry-After` are kept.
+/// Clears the boundary's reading flag when its read returns or panics.
+struct ReadDone(Arc<AtomicBool>);
+
+impl Drop for ReadDone {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+/// Whether the data or temp folder has less than [`DISK_FULL_BELOW`] free,
+/// read on the blocking pool under [`READ_BOUND`]. A read that fails, does
+/// not answer in time, or would start while an earlier one still runs is
+/// not a full disk.
+async fn disk_is_full(boundary: &Boundary) -> bool {
+    if boundary.reading.swap(true, Ordering::AcqRel) {
+        return false;
+    }
+    let probe = Arc::clone(&boundary.free_space);
+    let reading = Arc::clone(&boundary.reading);
+    let read = tokio::time::timeout(
+        READ_BOUND,
+        tokio::task::spawn_blocking(move || {
+            let _done = ReadDone(reading);
+            probe()
+        }),
+    )
+    .await;
+    matches!(read, Ok(Ok(Some(free))) if free < DISK_FULL_BELOW)
+}
+
+/// The `DISK_FULL` answer, with no `Retry-After`: waiting does not free a
+/// disk.
+fn disk_full_response(request_id: &str) -> Response {
+    let answer = Unavailable::DiskFull.answer();
+    (answer.status, Json(answer.envelope(Some(request_id)))).into_response()
+}
+
+/// The native 5xx body: the closed-list answer the fault names, `DISK_FULL`
+/// when `disk_full`, or the fixed internal error. Status and `Retry-After`
+/// are kept, except that a full disk answers its own status and none.
 fn native_server_error(
     request_id: &str,
     method: &Method,
@@ -149,8 +239,13 @@ fn native_server_error(
     status: StatusCode,
     retry_after: Option<HeaderValue>,
     fault: Option<Fault>,
+    disk_full: bool,
 ) -> Response {
     log_fault(request_id, method, path, status, fault.as_ref());
+    if disk_full {
+        tracing::warn!(%request_id, "the data disk is full; the fault answers DISK_FULL");
+        return disk_full_response(request_id);
+    }
     let mut response = match fault.as_ref().and_then(Fault::unavailable) {
         Some(variant) => {
             let answer = variant.answer();

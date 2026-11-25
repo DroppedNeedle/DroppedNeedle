@@ -160,6 +160,7 @@ pub mod test_hooks {
                 retry_after: Some(30),
             },
             "UPGRADE_REQUIRED" => Unavailable::UpgradeRequired,
+            "DISK_FULL" => Unavailable::DiskFull,
             _ => return ApiError::not_found(),
         };
         ApiError::unavailable(variant, leaky_cause())

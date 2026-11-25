@@ -854,11 +854,16 @@ const BOOT_STEP: &str = "boot-time file work, awaited before serving";
 const HTTP_SERVER: &str = "the HTTP server, joined by serve at the shutdown deadline";
 const OFFLINE_TOOL: &str = "the offline tool's file and database work, awaited";
 const UPGRADE_RUN: &str = "an upgrade tool run a signed-in admin starts in upgrade mode; it records its own end, and the mode's stop kills its child";
+const DISK_WATCH_READ: &str = "a free-space read of one folder, bounded by a timeout; one that hangs is left to end and none of the same folder starts beside it";
+const FAULT_SPACE: &str = "the free-space read behind a 5xx, bounded by a timeout; one that hangs is left to end and none starts beside it";
+const ROOM_CHECK: &str =
+    "an upload's free-space check, bounded by a timeout and awaited by the request";
 const FOLDER_LISTING: &str = "a folder listing its asker waits on up to a deadline; one that hangs is left to end, and at most four run at once";
 
 const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("acquire/src/deemix/source.rs", 2, AWAITED),
     ("acquire/src/drop_import/http.rs", 1, UPLOAD_CLEANUP),
+    ("acquire/src/drop_import/http.rs", 1, ROOM_CHECK),
     ("acquire/src/drop_import/mod.rs", 12, DROP_IMPORT_STEP),
     ("acquire/src/drop_import/mod.rs", 1, DROP_IMPORT),
     ("acquire/src/held/service.rs", 8, AWAITED),
@@ -901,6 +906,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("catalog/src/artwork/warm.rs", 1, WARM_ENQUEUE),
     ("compat/src/library.rs", 1, REQUEST),
     ("compat/src/subsonic/store.rs", 1, REQUEST),
+    ("kernel/src/disk.rs", 1, DISK_WATCH_READ),
     ("kernel/src/runtime_config/store.rs", 3, AWAITED),
     ("library/src/contrib/live.rs", 1, LOOP_STEP),
     ("library/src/http/mod.rs", 1, REQUEST),
@@ -941,6 +947,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("src/bootstrap/platform.rs", 1, BOOT_STEP),
     ("src/bootstrap/serve.rs", 1, HTTP_SERVER),
     ("src/bootstrap/setup_code.rs", 1, BOOT_STEP),
+    ("src/middleware.rs", 1, FAULT_SPACE),
     ("src/settings/effects.rs", 1, LOOP_STEP),
     ("src/settings/library_policy_service.rs", 1, REQUEST),
     ("src/settings/registry.rs", 1, REQUEST),

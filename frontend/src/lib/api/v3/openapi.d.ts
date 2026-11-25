@@ -34848,6 +34848,15 @@ export interface operations {
                     "application/json": components["schemas"]["DropImportJobResponse"];
                 };
             };
+            /** @description `UPLOAD_NO_ROOM`: the upload would not fit on the disk that receives it */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     library_activity: {

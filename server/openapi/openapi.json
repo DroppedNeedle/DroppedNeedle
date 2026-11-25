@@ -9787,6 +9787,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "`UPLOAD_NO_ROOM`: the upload would not fit on the disk that receives it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [

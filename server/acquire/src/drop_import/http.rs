@@ -33,6 +33,10 @@ use droppedneedle_kernel::mount::{Routes, routes};
 
 /// The largest upload accepted in one request (all files together).
 const MAX_UPLOAD_BYTES: usize = 8 * (1 << 30);
+/// The upload would not fit on the disk that receives it (409).
+pub const UPLOAD_NO_ROOM: &str = "UPLOAD_NO_ROOM";
+/// Room kept free beyond the upload itself.
+const UPLOAD_ROOM_MARGIN: u64 = 256 * 1024 * 1024;
 
 /// One album-shaped folder of an upload. Staged paths never leave the
 /// server.
@@ -143,6 +147,52 @@ fn invalid(message: impl Into<String>) -> ApiError {
     })
 }
 
+/// Refuse an upload of `length` bytes that would not leave room on the
+/// disk holding `incoming`. A free-space read that fails or does not answer
+/// within its bound lets the upload go ahead: the write itself still fails
+/// cleanly on a full disk.
+async fn check_room(incoming: &std::path::Path, length: u64) -> Result<(), ApiError> {
+    use droppedneedle_kernel::disk::{READ_BOUND, free_bytes};
+
+    let incoming = incoming.to_path_buf();
+    let read = tokio::time::timeout(
+        READ_BOUND,
+        tokio::task::spawn_blocking(move || {
+            // The incoming folder may not exist yet; its parent is on the
+            // same disk.
+            let probe = if incoming.exists() {
+                incoming.as_path()
+            } else {
+                incoming.parent().unwrap_or(incoming.as_path())
+            };
+            free_bytes(probe)
+        }),
+    )
+    .await;
+    let Ok(Ok(Ok(free))) = read else {
+        return Ok(());
+    };
+    let needed = length.saturating_add(UPLOAD_ROOM_MARGIN);
+    if free >= needed {
+        return Ok(());
+    }
+    const MB: u64 = 1024 * 1024;
+    tracing::warn!(
+        needed_mb = needed / MB,
+        free_mb = free / MB,
+        "drop upload refused: not enough free space"
+    );
+    Err(ApiError::new(
+        StatusCode::CONFLICT,
+        UPLOAD_NO_ROOM,
+        format!(
+            "Not enough free space for this upload: it needs {} MB and {} MB are free.",
+            needed / MB,
+            free / MB
+        ),
+    ))
+}
+
 /// An upload refused as over the limit, logged with the size the sender
 /// declared (none when the body ran past the limit as it streamed).
 fn too_large(declared: Option<u64>) -> ApiError {
@@ -183,7 +233,10 @@ fn viewer(curator: &Curator) -> Viewer {
     tag = "imports",
     path = "/api/v3/import/uploads",
     request_body(content = DropUploadForm, content_type = "multipart/form-data"),
-    responses((status = 202, body = DropImportJobResponse))
+    responses(
+        (status = 202, body = DropImportJobResponse),
+        (status = 409, description = "`UPLOAD_NO_ROOM`: the upload would not fit on the disk that receives it")
+    )
 )]
 pub async fn upload_handler(
     State(service): State<Arc<DropImports>>,
@@ -202,8 +255,11 @@ pub async fn upload_handler(
         return Err(too_large(declared));
     }
     let multipart = multipart.map_err(|_| invalid("Send the files as a multipart form."))?;
-    tracing::info!(bytes = declared, "drop upload started");
     let incoming = service.incoming_dir();
+    if let Some(length) = declared {
+        check_room(&incoming, length).await?;
+    }
+    tracing::info!(bytes = declared, "drop upload started");
     let mut staged = Incoming::default();
     let bytes = receive(multipart, &incoming, &mut staged.files).await?;
     let files = staged.files.len();

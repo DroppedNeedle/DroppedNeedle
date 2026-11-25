@@ -16,6 +16,7 @@ mod boot;
 mod caller_groups;
 mod config_secrets;
 mod contract;
+mod disk_full;
 mod envelope;
 mod events_stream;
 mod health;

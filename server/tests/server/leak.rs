@@ -146,6 +146,12 @@ fn golden(variant: &Unavailable) -> Golden {
             "DroppedNeedle needs its upgrade from v2. Open the web page to run it.",
             None,
         ),
+        Unavailable::DiskFull => (
+            "DISK_FULL",
+            507,
+            "The server's disk is full. An admin needs to free some space.",
+            None,
+        ),
     }
 }
 
@@ -166,6 +172,7 @@ async fn closed_list_answers_pass_the_boundary_with_their_sentence() {
             retry_after: Some(30),
         },
         Unavailable::UpgradeRequired,
+        Unavailable::DiskFull,
     ];
     for variant in &variants {
         let answer = variant.answer();

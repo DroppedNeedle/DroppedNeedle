@@ -24,6 +24,12 @@ Common problems and what fixes them. Messages from the upgrade from v2 are liste
 
 - **Nobody can sign in** (a forgotten admin password, or single sign-on stopped working). Make a recovery code on the host: see [Forgotten passwords and recovery](accounts-and-sign-in.md#forgotten-passwords-and-recovery).
 
+## Disk space
+
+- **The log says free space is running low.** Every five minutes the server reads the free space of each folder it writes: the data folder (the database and its undo copies), config, temp, its imports folder, each library folder, the recycle bin, the download folders and the import folder. It logs one line when a folder runs low and one when it recovers. The data folder is low below twice the size of the database and undo copies plus 1 GB, and nearly full below their size plus 256 MB. Any other folder is low below 2 GB.
+- **The data disk is nearly full.** Backups are refused, a new version that backs up before it upgrades does not start, and an upload that would not fit is refused with how much room it needs. Free some space; nothing else needs doing.
+- **A message says "The server's disk is full".** A request failed while the data or temp folder had less than 64 MB free, so the server answered `507` with the code `DISK_FULL`. Free some space on that disk, then try again.
+
 ## Starting up
 
 - **The server refuses to start with a message about the key file.** A database whose `data_enc.key` is missing or belongs to another database is refused, and nothing is changed. Put back the key saved with it: see [The key file](backups-and-restore.md#the-key-file).

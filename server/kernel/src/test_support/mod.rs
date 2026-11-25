@@ -156,6 +156,18 @@ impl ConfigStore {
     }
 }
 
+impl crate::disk::DiskWatch {
+    /// The same watch with another time bound per read. Call it before the
+    /// watch is cloned.
+    #[must_use]
+    pub fn with_bound(mut self, bound: Duration) -> Self {
+        if let Some(inner) = std::sync::Arc::get_mut(&mut self.inner) {
+            inner.bound = bound;
+        }
+        self
+    }
+}
+
 impl PrecacheLimits {
     /// Override the watchdog tick (tests run it fast).
     #[must_use]

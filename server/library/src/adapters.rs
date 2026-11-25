@@ -88,22 +88,16 @@ impl SpaceProbe for FsSpaceProbe {
     }
 }
 
+/// Free bytes on the filesystem holding `dir`, through the kernel's one
+/// `statvfs` reader.
 pub fn free_bytes_for(dir: &Path) -> Result<u64, PublishError> {
-    let text = dir.to_string_lossy().into_owned();
-    let cstr = std::ffi::CString::new(text)
-        .map_err(|_| PublishError::UnsafePath("root path holds a NUL byte".into()))?;
-    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
-    // statvfs only reads filesystem metadata; the path is already sandbox-checked.
-    let status = unsafe { libc::statvfs(cstr.as_ptr(), &mut stat) };
-    if status != 0 {
-        return Err(PublishError::Io(
-            format!("cannot stat free space under {}", dir.display()).into(),
-        ));
-    }
-    // The field widths differ by platform (u32 blocks on macOS).
-    #[allow(clippy::unnecessary_cast)]
-    let free = stat.f_bavail as u64 * stat.f_frsize as u64;
-    Ok(free)
+    droppedneedle_kernel::disk::free_bytes(dir).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::InvalidInput {
+            PublishError::UnsafePath("root path holds a NUL byte".into())
+        } else {
+            PublishError::Io(format!("cannot stat free space under {}", dir.display()).into())
+        }
+    })
 }
 
 #[cfg(test)]

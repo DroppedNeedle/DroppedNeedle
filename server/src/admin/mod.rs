@@ -10,6 +10,7 @@
 pub mod backups;
 pub mod cache;
 pub mod custom_css;
+pub mod disk;
 pub mod error;
 pub mod handlers;
 pub mod models;

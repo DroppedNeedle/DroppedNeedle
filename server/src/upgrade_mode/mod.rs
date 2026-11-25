@@ -71,7 +71,7 @@ use crate::{
         },
     },
     handlers::{self, HealthState},
-    middleware::{Boundary, request_scope},
+    middleware::{Boundary, FreeSpace, request_scope},
     security_headers::{ContentSecurity, content_security},
     web::{WebError, WebUi},
 };
@@ -169,6 +169,8 @@ struct Inner {
     sign_in: SignIn,
     tool: ToolCommand,
     env: ChildEnv,
+    /// Free space on the data and temp folders, for the boundary.
+    free_space: FreeSpace,
     runs: Mutex<Runs>,
     /// The shared lock Continue took, for the normal boot.
     continued: Mutex<Option<DataLock>>,
@@ -218,6 +220,7 @@ impl UpgradeMode {
             sign_in,
             tool,
             env: ChildEnv::for_config(config),
+            free_space: Boundary::disk_probe(config),
             runs: Mutex::new(Runs {
                 layout: if interrupted {
                     UpgradeLayout::Interrupted
@@ -239,6 +242,7 @@ impl UpgradeMode {
     pub fn router(&self, web: Option<WebUi>) -> Router {
         let boundary = Boundary::new(
             Arc::new(UuidGenerator),
+            Arc::clone(&self.0.free_space),
             |path, head, query, status, retry_after| {
                 droppedneedle_compat::http::server_error_response(
                     path,
