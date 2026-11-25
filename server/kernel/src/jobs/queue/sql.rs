@@ -101,6 +101,9 @@ crate::sql! {
     pub(super) COUNTS = "SELECT kind,
                      sum(state = 'queued'), sum(state = 'running'), sum(state = 'failed')
                  FROM durable_jobs WHERE state <> 'done' GROUP BY kind ORDER BY kind";
+    /// Rows of each kind that failed for good at or after `:since`.
+    pub(super) FAILED_SINCE = "SELECT kind, count(*) FROM durable_jobs
+                 WHERE state = 'failed' AND finished_at >= :since GROUP BY kind ORDER BY kind";
     /// Kinds that have queued or running rows.
     pub(super) LIVE_KINDS = "SELECT DISTINCT kind FROM durable_jobs WHERE state IN ('queued', 'running') ORDER BY kind";
     /// Remove finished rows of one state older than a cut-off, a batch at a time.

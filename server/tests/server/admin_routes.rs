@@ -97,6 +97,7 @@ impl Rig {
                 runtime.db().clone(),
                 platform.clock.clone(),
             ),
+            droppedneedle::admin::disk::disk_watch(&platform),
         );
         Self {
             runtime,

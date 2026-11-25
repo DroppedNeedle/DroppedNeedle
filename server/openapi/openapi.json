@@ -1108,6 +1108,54 @@
         ]
       }
     },
+    "/api/v3/admin/problems": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "What is wrong right now, broken first. Memory and local reads only;\nfolder checks that do not answer within two seconds are left out.",
+        "operationId": "list_problems",
+        "responses": {
+          "200": {
+            "description": "What is wrong now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/admin/provider-stats": {
       "get": {
         "tags": [
@@ -64628,6 +64676,103 @@
           "title": {
             "type": "string",
             "description": "Track title."
+          }
+        }
+      },
+      "Problem": {
+        "type": "object",
+        "description": "One problem.",
+        "required": [
+          "kind",
+          "severity",
+          "count",
+          "accept_folder"
+        ],
+        "properties": {
+          "accept_folder": {
+            "type": "boolean",
+            "description": "The recycle bin only: the folder may be accepted as the bin."
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many: failed jobs, journal rows, folders.",
+            "minimum": 0
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ProblemKind",
+            "description": "What is wrong."
+          },
+          "severity": {
+            "$ref": "#/components/schemas/ProblemSeverity",
+            "description": "How much it needs the admin, fixed by the kind."
+          },
+          "since_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Since when, unix milliseconds, when that is known."
+          },
+          "subject": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What it is about, a name the server gives: a settings section key,\na download client (`slskd`, `sabnzbd`, `nzbget`, `deemix`), a loop\nname, a job kind, a folder role (`data`, `library`, ...) or an\noutside service key. Never text a person typed."
+          }
+        }
+      },
+      "ProblemKind": {
+        "type": "string",
+        "description": "What is wrong. Each kind has one severity.",
+        "enum": [
+          "settings_unreadable",
+          "loop_failing",
+          "download_client_down",
+          "download_folder_unusable",
+          "recycle_bin_unavailable",
+          "import_folder_unusable",
+          "publish_needs_attention",
+          "disk_nearly_full",
+          "backup_failing",
+          "jobs_failed",
+          "download_client_setup",
+          "disk_low",
+          "backup_old",
+          "database_in_memory",
+          "provider_degraded"
+        ]
+      },
+      "ProblemSeverity": {
+        "type": "string",
+        "description": "How much a problem needs the admin.",
+        "enum": [
+          "broken",
+          "warning",
+          "info"
+        ]
+      },
+      "ProblemsResponse": {
+        "type": "object",
+        "description": "The problems list.",
+        "required": [
+          "problems",
+          "checked_at"
+        ],
+        "properties": {
+          "checked_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the list was worked out, unix milliseconds."
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "description": "Broken first, then warnings, then information."
           }
         }
       },

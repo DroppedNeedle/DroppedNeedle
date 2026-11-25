@@ -330,6 +330,7 @@ impl E2e {
             jobs.precache_trigger(),
             crate::common::bundles::covers_at(p),
             droppedneedle::appearance::store::AppearanceStore::new(p.db.clone(), p.clock.clone()),
+            droppedneedle::admin::disk::disk_watch(p),
         );
         // The production plugins bundle over the scratch plugins folder,
         // launching nothing, reading GitHub through the rig's providers.

@@ -14,11 +14,13 @@ pub mod disk;
 pub mod error;
 pub mod handlers;
 pub mod models;
+pub mod problems;
 pub mod queues;
 pub mod quota;
 pub(crate) mod sql;
 pub mod system;
 
+use droppedneedle_kernel::disk::DiskWatch;
 use std::sync::Arc;
 
 use crate::appearance::store::AppearanceStore;
@@ -78,6 +80,8 @@ pub struct AdminSetup {
     pub covers: droppedneedle_catalog::artwork::cache::ArtworkCache,
     /// Each person's appearance, for the custom CSS summary and switch.
     pub appearance: AppearanceStore,
+    /// The free-space watch's latest reading, for the problems list.
+    pub disk: DiskWatch,
 }
 
 impl AdminSetup {
@@ -96,9 +100,11 @@ impl AdminSetup {
         precache: crate::bootstrap::jobs::PrecacheTrigger,
         covers: droppedneedle_catalog::artwork::cache::ArtworkCache,
         appearance: AppearanceStore,
+        disk: DiskWatch,
     ) -> Self {
         Self {
             appearance,
+            disk,
             users,
             quota,
             cache: providers.cache.clone(),

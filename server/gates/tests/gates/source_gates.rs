@@ -858,6 +858,7 @@ const DISK_WATCH_READ: &str = "a free-space read of one folder, bounded by a tim
 const FAULT_SPACE: &str = "the free-space read behind a 5xx, bounded by a timeout; one that hangs is left to end and none starts beside it";
 const ROOM_CHECK: &str =
     "an upload's free-space check, bounded by a timeout and awaited by the request";
+const PROBLEM_CHECKS: &str = "the problems list's folder checks, one at a time and kept a minute; one that hangs is left to end and none starts beside it";
 const FOLDER_LISTING: &str = "a folder listing its asker waits on up to a deadline; one that hangs is left to end, and at most four run at once";
 
 const SPAWN_SITES: &[(&str, usize, &str)] = &[
@@ -942,6 +943,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("providers/src/youtube.rs", 1, REQUEST),
     ("src/admin/backups.rs", 2, LOOP_STEP),
     ("src/admin/handlers.rs", 1, REQUEST),
+    ("src/admin/problems.rs", 2, PROBLEM_CHECKS),
     ("src/bootstrap/key_check.rs", 1, BOOT_STEP),
     ("src/bootstrap/mod.rs", 2, BOOT_STEP),
     ("src/bootstrap/platform.rs", 1, BOOT_STEP),

@@ -682,6 +682,7 @@ pub(crate) async fn build_on(
         handlers,
     );
     let appearance = AppearanceStore::new(db.clone(), p.clock.clone());
+    let disk = crate::admin::disk::disk_watch(p);
     let admin = AdminSetup::new(
         auth.users.clone(),
         acquire.requests.quota.clone(),
@@ -693,6 +694,7 @@ pub(crate) async fn build_on(
         jobs.precache_trigger(),
         covers,
         appearance.clone(),
+        disk.clone(),
     );
     let download_worker = acquire.worker.clone();
     let roots_library = library.scans.clone();
@@ -786,8 +788,7 @@ pub(crate) async fn build_on(
     crate::admin::backups::NightlyBackup::new(runtime.backups().clone(), p)
         .spawn_on(supervisor)
         .map_err(|_| stage("jobs loops")("the nightly backup is already running".to_owned()))?;
-    crate::admin::disk::disk_watch(p)
-        .spawn_on(supervisor)
+    disk.spawn_on(supervisor)
         .map_err(|_| stage("jobs loops")("the disk watch is already running".to_owned()))?;
 
     let router = create_app_with_web(state.clone(), web);

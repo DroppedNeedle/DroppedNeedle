@@ -512,6 +512,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/admin/problems": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What is wrong right now, broken first. Memory and local reads only;
+         *     folder checks that do not answer within two seconds are left out.
+         */
+        get: operations["list_problems"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/admin/provider-stats": {
         parameters: {
             query?: never;
@@ -22329,6 +22349,52 @@ export interface components {
             /** @description Track title. */
             title: string;
         };
+        /** @description One problem. */
+        Problem: {
+            /** @description The recycle bin only: the folder may be accepted as the bin. */
+            accept_folder: boolean;
+            /**
+             * Format: int64
+             * @description How many: failed jobs, journal rows, folders.
+             */
+            count: number;
+            /** @description What is wrong. */
+            kind: components["schemas"]["ProblemKind"];
+            /** @description How much it needs the admin, fixed by the kind. */
+            severity: components["schemas"]["ProblemSeverity"];
+            /**
+             * Format: int64
+             * @description Since when, unix milliseconds, when that is known.
+             */
+            since_at?: number | null;
+            /**
+             * @description What it is about, a name the server gives: a settings section key,
+             *     a download client (`slskd`, `sabnzbd`, `nzbget`, `deemix`), a loop
+             *     name, a job kind, a folder role (`data`, `library`, ...) or an
+             *     outside service key. Never text a person typed.
+             */
+            subject?: string | null;
+        };
+        /**
+         * @description What is wrong. Each kind has one severity.
+         * @enum {string}
+         */
+        ProblemKind: "settings_unreadable" | "loop_failing" | "download_client_down" | "download_folder_unusable" | "recycle_bin_unavailable" | "import_folder_unusable" | "publish_needs_attention" | "disk_nearly_full" | "backup_failing" | "jobs_failed" | "download_client_setup" | "disk_low" | "backup_old" | "database_in_memory" | "provider_degraded";
+        /**
+         * @description How much a problem needs the admin.
+         * @enum {string}
+         */
+        ProblemSeverity: "broken" | "warning" | "info";
+        /** @description The problems list. */
+        ProblemsResponse: {
+            /**
+             * Format: int64
+             * @description When the list was worked out, unix milliseconds.
+             */
+            checked_at: number;
+            /** @description Broken first, then warnings, then information. */
+            problems: components["schemas"]["Problem"][];
+        };
         /** @description Post-publish notifications. */
         ProfileNotificationSettings: {
             /**
@@ -28855,6 +28921,44 @@ export interface operations {
             };
             /** @description A precache run is already live */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_problems: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description What is wrong now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemsResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Admin role required */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

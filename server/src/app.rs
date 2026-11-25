@@ -199,6 +199,10 @@ fn answer(
 fn mount(m: Mount<'_>) -> Mount<'_> {
     m.area(server_routes(), handlers::HealthState::serving)
         .area(crate::admin::routes(), |state| state.admin.clone())
+        .area(
+            crate::admin::problems::routes(),
+            crate::admin::problems::Problems::from_state,
+        )
         .area(crate::settings::wiring::routes(), |state| {
             state.settings.clone()
         })

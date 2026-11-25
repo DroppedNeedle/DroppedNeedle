@@ -32,6 +32,7 @@ mod persist_schema;
 mod plugins_examples;
 mod plugins_host;
 mod plugins_scrobble;
+mod problems;
 mod providers_audio;
 mod providers_catalog;
 mod providers_core;

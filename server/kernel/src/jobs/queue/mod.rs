@@ -681,6 +681,19 @@ impl JobQueue {
     }
 }
 
+/// How many rows of each kind failed for good at or after `since_ms`
+/// (unix milliseconds), by kind; kinds with none are left out.
+pub async fn failed_since(db: &Db, since_ms: i64) -> Result<Vec<(String, u64)>, DbError> {
+    db.read("jobs-failed-since", move |conn| {
+        let mut statement = conn.prepare_cached(sql::FAILED_SINCE.text())?;
+        let rows = statement.query_map(rusqlite::named_params! {":since": since_ms}, |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    })
+    .await
+}
+
 /// Queued, running and kept failed rows per kind, for the admin view.
 pub async fn counts(db: &Db) -> Result<Vec<KindCounts>, DbError> {
     db.read("jobs-counts", |conn| {
