@@ -184,7 +184,7 @@ impl BlockSummary {
         }
         let mut summary = Self::default();
         let mut next = 0usize;
-        for entry in entries.chunks_exact(SUMMARY_ENTRY) {
+        for entry in entries.as_chunks::<SUMMARY_ENTRY>().0 {
             let index = usize::from(entry[0]);
             let count = u32::from_le_bytes(entry[1..5].try_into().map_err(|_| BadSummary)?);
             let energy = f64::from_le_bytes(entry[5..13].try_into().map_err(|_| BadSummary)?);
@@ -380,7 +380,7 @@ pub fn analyse_until(
         }
         meter.feed(block);
         packets += 1;
-        if packets % 64 == 0 {
+        if packets.is_multiple_of(64) {
             if stop() {
                 ended = Some(Unanalysed::Stopped);
                 return false;

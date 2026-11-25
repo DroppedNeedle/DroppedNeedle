@@ -371,8 +371,10 @@ pub(super) fn decode_lang_text(payload: &[u8]) -> Result<([u8; 3], String, Strin
         .ok_or_else(|| "short frame".to_owned())?;
     let body = &rest[3..];
     let (desc_end, text_start) = if matches!(encoding, 1 | 2) {
-        body.chunks_exact(2)
-            .position(|pair| pair == [0, 0])
+        body.as_chunks::<2>()
+            .0
+            .iter()
+            .position(|pair| *pair == [0, 0])
             .map(|index| (index * 2, index * 2 + 2))
     } else {
         body.iter()
@@ -434,8 +436,10 @@ pub(super) fn decode_people(payload: &[u8]) -> Result<Vec<(String, String)>, Str
         return Err("a role without a name".to_owned());
     }
     Ok(values
-        .chunks_exact(2)
-        .map(|pair| (pair[0].clone(), pair[1].clone()))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|[role, name]| (role.clone(), name.clone()))
         .collect())
 }
 
@@ -567,12 +571,14 @@ fn decode_id3_part_after(encoding: u8, part: &[u8], swap: &mut bool) -> Result<S
             .map(str::to_owned)
             .map_err(|_| "invalid UTF-8 in text frame".to_owned()),
         1 | 2 => {
-            if part.len() % 2 != 0 {
+            if !part.len().is_multiple_of(2) {
                 return Err("odd-length UTF-16 in text frame".to_owned());
             }
             let units: Vec<u16> = part
-                .chunks_exact(2)
-                .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|&pair| u16::from_be_bytes(pair))
                 .collect();
             let units = if encoding == 1 {
                 match units.first() {

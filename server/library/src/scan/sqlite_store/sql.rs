@@ -192,7 +192,6 @@ macro_rules! same_place {
         )
     };
 }
-pub(crate) use same_place;
 
 /// Whether run `$run` held back a folder covering the row aliased `$row`: a
 /// mass-missing guard failure on its root at a folder that [`covers`] its

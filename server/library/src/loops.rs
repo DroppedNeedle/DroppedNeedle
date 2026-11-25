@@ -1014,7 +1014,7 @@ impl Scans {
             polls.set(polls.get().wrapping_add(1));
             stop.is_cancelled()
                 || self.core.wakeups.revision("scan") != revision
-                || (polls.get() % 32 == 0 && !self.coordinator.current().is_empty())
+                || (polls.get().is_multiple_of(32) && !self.coordinator.current().is_empty())
         };
         match self.scan_store.refresh_album_sweeps(&give_way) {
             Ok((artwork, lyrics)) => artwork.complete && lyrics.complete,

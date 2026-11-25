@@ -400,7 +400,7 @@ pub fn album_history(
         });
     }
     // Newest first, as the rows were read; entries read beside them slot in.
-    entries.sort_by(|a, b| b.at.cmp(&a.at));
+    entries.sort_by_key(|a| std::cmp::Reverse(a.at));
     entries.truncate(MAX_ENTRIES);
     Ok(Some(entries))
 }
