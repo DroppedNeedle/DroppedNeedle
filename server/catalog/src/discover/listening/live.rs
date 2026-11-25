@@ -6,6 +6,7 @@
 //! read goes out at the priority it is given. Nothing here caches: the
 //! cache sits in front, in [`ListeningData`](super::ListeningData).
 
+use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -942,7 +943,7 @@ impl ListeningNetwork for LiveNetwork {
             Ok(found.map(|lookup| {
                 let group = lookup.entity;
                 let mut tags = group.tags.clone();
-                tags.sort_by(|a, b| b.count.unwrap_or(0).cmp(&a.count.unwrap_or(0)));
+                tags.sort_by_key(|a| Reverse(a.count.unwrap_or(0)));
                 let first_credit = group.artist_credit.first();
                 let first_release = group.releases.first();
                 ReleaseGroupFacts {

@@ -17,6 +17,7 @@
 //! Ownership is marked when the page is served ([`mark_ownership`]), so a
 //! library change never makes a page wrong.
 
+use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::Mutex;
@@ -944,7 +945,7 @@ impl Builder<'_> {
                 taken += 1;
             }
         }
-        missing.sort_by(|a, b| b.0.cmp(&a.0));
+        missing.sort_by_key(|a| Reverse(a.0));
         if !answered
             && !artists.is_empty()
             && !lastfm
@@ -1254,7 +1255,7 @@ impl Builder<'_> {
             seen.extend(unique.iter().cloned());
             clusters.push((genre.clone(), unique));
         }
-        clusters.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+        clusters.sort_by_key(|a| Reverse(a.1.len()));
         clusters.truncate(5);
         let builds = clusters
             .into_iter()

@@ -204,7 +204,7 @@ impl Ask {
     /// A person's read has no such budget.
     pub fn take_lookup(&self) -> bool {
         self.lookups_left.as_ref().is_none_or(|left| {
-            left.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
+            left.try_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
                 left.checked_sub(1)
             })
             .is_ok()

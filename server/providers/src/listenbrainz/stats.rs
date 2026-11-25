@@ -310,7 +310,7 @@ impl ListenBrainzClient {
                 }),
             }
         }
-        totals.sort_by(|a, b| b.listen_count.cmp(&a.listen_count));
+        totals.sort_by_key(|a| std::cmp::Reverse(a.listen_count));
         Ok(totals)
     }
 
