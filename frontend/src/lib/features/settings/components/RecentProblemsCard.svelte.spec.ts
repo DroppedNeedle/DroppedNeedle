@@ -43,7 +43,9 @@ describe('Recent problems', () => {
 		await expect.element(page.getByText('request failed')).toBeInTheDocument();
 		await expect.element(page.getByText('src/middleware.rs:254')).toBeInTheDocument();
 		expect(
-			api.calls('GET /api/v3/admin/problems/recent').some((call) => call.query.get('ref') === '4f1c2a9e')
+			api
+				.calls('GET /api/v3/admin/problems/recent')
+				.some((call) => call.query.get('ref') === '4f1c2a9e')
 		).toBe(true);
 	});
 });

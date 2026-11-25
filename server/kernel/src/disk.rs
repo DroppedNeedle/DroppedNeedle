@@ -15,6 +15,12 @@ use crate::jobs::{AlreadyRunning, FnTick, Next, Schedule, Supervisor};
 /// `path` (`f_bavail * f_frsize`). Blocking: call it where a blocking call
 /// is allowed.
 pub fn free_bytes(path: &Path) -> io::Result<u64> {
+    space_bytes(path).map(|(free, _)| free)
+}
+
+/// Free and total bytes on the filesystem holding `path`, from one
+/// `statvfs`. Blocking.
+fn space_bytes(path: &Path) -> io::Result<(u64, u64)> {
     use std::os::unix::ffi::OsStrExt as _;
 
     let c_path = std::ffi::CString::new(path.as_os_str().as_bytes())?;
@@ -29,7 +35,9 @@ pub fn free_bytes(path: &Path) -> io::Result<u64> {
     // The field widths differ by platform (u32 blocks on macOS).
     #[allow(clippy::unnecessary_cast)]
     let free = (stat.f_bavail as u64).saturating_mul(stat.f_frsize as u64);
-    Ok(free)
+    #[allow(clippy::unnecessary_cast)]
+    let total = (stat.f_blocks as u64).saturating_mul(stat.f_frsize as u64);
+    Ok((free, total))
 }
 
 /// What a watched folder is to the app.
@@ -83,6 +91,13 @@ pub struct FilesystemSpace {
     pub folders: Vec<Watched>,
     /// Bytes free, unless the read failed or timed out.
     pub free: Option<u64>,
+    /// Its size in bytes, when read.
+    pub total: Option<u64>,
+    /// The filesystem's kind (`ext4`, `nfs`, ...), `other` when not known
+    /// and `unknown` when not read.
+    pub kind: &'static str,
+    /// Whether it is local, not a network share; `false` when not read.
+    pub local: bool,
     /// How that compares with what the app needs there.
     pub level: DiskLevel,
 }
@@ -114,12 +129,16 @@ impl DiskSample {
 }
 
 /// A filesystem's device and free bytes, as [`SpaceReader`] answers them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Space {
     /// The filesystem's device number, to tell filesystems apart.
     pub device: u64,
     /// Bytes an unprivileged process may still write there.
     pub free: u64,
+    /// Its size in bytes.
+    pub total: u64,
+    /// Its statfs magic, which names its kind.
+    pub magic: i64,
 }
 
 /// Reads one folder's filesystem. Blocking: the watch runs it on the
@@ -145,9 +164,12 @@ pub fn read_space(path: &Path) -> io::Result<Space> {
     use std::os::unix::fs::MetadataExt as _;
 
     let device = std::fs::metadata(path)?.dev();
+    let (free, total) = space_bytes(path)?;
     Ok(Space {
         device,
-        free: free_bytes(path)?,
+        free,
+        total,
+        magic: crate::db::filesystem_magic(path)?,
     })
 }
 
@@ -307,6 +329,9 @@ impl DiskWatch {
                             FilesystemSpace {
                                 folders: vec![folder],
                                 free: Some(space.free),
+                                total: Some(space.total),
+                                kind: crate::db::filesystem_name(space.magic),
+                                local: crate::db::filesystem_is_local(space.magic),
                                 level: DiskLevel::Ok,
                             },
                         ));
@@ -317,6 +342,9 @@ impl DiskWatch {
                     FilesystemSpace {
                         folders: vec![folder],
                         free: None,
+                        total: None,
+                        kind: "unknown",
+                        local: false,
                         level: DiskLevel::Unknown,
                     },
                 )),
@@ -518,11 +546,13 @@ mod tests {
                 Space {
                     device: LIBRARY_DEVICE,
                     free: 500 * GIB,
+                    ..Space::default()
                 }
             } else {
                 Space {
                     device: DATA_DEVICE,
                     free: seen.load(Ordering::SeqCst),
+                    ..Space::default()
                 }
             })
         });
@@ -573,6 +603,7 @@ mod tests {
             Ok(Space {
                 device: DATA_DEVICE,
                 free: 50 * GIB,
+                ..Space::default()
             })
         });
         let watch = watch(reader).with_bound(Duration::from_millis(50));

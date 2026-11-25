@@ -18,6 +18,7 @@ pub mod problems;
 pub mod queues;
 pub mod quota;
 pub(crate) mod sql;
+pub mod support;
 pub mod system;
 
 use droppedneedle_kernel::disk::DiskWatch;

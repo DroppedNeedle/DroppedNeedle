@@ -30,6 +30,13 @@ Common problems and what fixes them. Messages from the upgrade from v2 are liste
 - **The data disk is nearly full.** Backups are refused, a new version that backs up before it upgrades does not start, and an upload that would not fit is refused with how much room it needs. Free some space; nothing else needs doing.
 - **A message says "The server's disk is full".** A request failed while the data or temp folder had less than 64 MB free, so the server answered `507` with the code `DISK_FULL`. Free some space on that disk, then try again.
 
+## Reporting a problem
+
+- **Recent problems.** Settings > Diagnostics lists the server's latest warnings and errors, newest first; repeats within ten minutes count as one. Type the ref an error showed into the Ref box to find the one that person met. It shows what the server log shows, paths and names included, so it is for admins only.
+- **The support bundle.** Settings > Diagnostics > Download support bundle opens one JSON file to read, then Download saves exactly that text. Attach it to a bug report.
+  - It holds: the version and build, the machine (architecture, kernel release, container or not, CPUs, memory), each folder by role ("library" with its number) with its filesystem's kind, whether it is local or a network share, and its free and total space, each settings section's state (default, saved or unreadable), the download clients and plugin download sources that are on, background jobs and how long they have failed, queue sizes by job kind, outside services not answering, database and cache file sizes, the schema version, how many backups there are and the newest nightly one's age, counts (accounts by role, artists, albums, tracks, playlists, requests by state, held files), enabled plugins with their versions, and recent problems: their level, module, file and line, counts, times, refs the server made, and a few fields such as error codes.
+  - It never holds: settings values, keys, tokens or passwords (masked or not), paths, host names, addresses or ports, user names, emails or ids, what your library holds (names, MusicBrainz ids), search text, message, error or cause text, or request paths. A ref someone typed themselves is counted, not shown. Which deployment variables are set is left out too, because the server does not keep that.
+
 ## Starting up
 
 - **The server refuses to start with a message about the key file.** A database whose `data_enc.key` is missing or belongs to another database is refused, and nothing is changed. Put back the key saved with it: see [The key file](backups-and-restore.md#the-key-file).

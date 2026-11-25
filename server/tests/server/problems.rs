@@ -92,3 +92,56 @@ async fn the_list_names_each_broken_thing_once_and_only_to_an_admin() {
 
     app.stop().await;
 }
+
+/// A folder check that does not answer never holds the list: it answers
+/// within its bound with a "could not check" row, and the check's answer,
+/// when it comes, is what the next look reads.
+#[tokio::test]
+async fn a_hung_folder_check_answers_could_not_check_within_its_bound() {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use droppedneedle::admin::problems::{ProblemKind, Problems};
+    use droppedneedle_acquire::import_folder::ImportFolderState;
+    use tokio::sync::Notify;
+
+    let app = TestApp::start("problems-hang").await;
+    let release = Arc::new(Notify::new());
+    let gate = Arc::clone(&release);
+    let problems = Problems::with_import_status(
+        app.state(),
+        Arc::new(move || {
+            let gate = Arc::clone(&gate);
+            Box::pin(async move {
+                // Blocks until the test lets go, as a dead mount would.
+                gate.notified().await;
+                ImportFolderState::Off
+            })
+        }),
+    );
+    let could_not_check = |list: &droppedneedle::admin::problems::ProblemsResponse| {
+        list.problems.iter().any(|p| {
+            p.kind == ProblemKind::CouldNotCheck && p.subject.as_deref() == Some("folder_checks")
+        })
+    };
+
+    let list = tokio::time::timeout(Duration::from_secs(30), problems.list())
+        .await
+        .expect("the list answers while the check hangs");
+    assert!(could_not_check(&list), "{:?}", list.problems);
+
+    release.notify_one();
+    let fresh = app
+        .until("the check's answer lands", || async {
+            let list = problems.list().await;
+            (!could_not_check(&list)).then_some(list)
+        })
+        .await;
+    assert!(
+        !fresh.problems.iter().any(|p| p.stale),
+        "{:?}",
+        fresh.problems
+    );
+
+    app.stop().await;
+}

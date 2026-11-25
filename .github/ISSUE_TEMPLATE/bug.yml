@@ -46,11 +46,20 @@ body:
     attributes:
       label: Screenshots
       description: If applicable, add screenshots to help explain the problem.
+  - type: input
+    id: error-ref
+    attributes:
+      label: Error ref
+      description: If an error showed a ref, such as 4f1c2a9e, copy it here.
+  - type: markdown
+    attributes:
+      value: |
+        **Support bundle:** Settings > Diagnostics > Download support bundle, then attach the file below. It holds no settings values, paths, names or library contents; you can read it before you download it.
   - type: textarea
     id: logs
     attributes:
       label: Logs
-      description: Relevant log output from `docker compose logs droppedneedle`. This will be formatted as code automatically.
+      description: Only if there is no support bundle. Relevant log output from `docker compose logs droppedneedle`. This will be formatted as code automatically.
       render: shell
   - type: dropdown
     id: deployment

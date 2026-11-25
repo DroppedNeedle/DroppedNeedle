@@ -17,6 +17,7 @@
 	} from './diagnosticsDisplay';
 	import Card from '$lib/ui/Card.svelte';
 	import RecentProblemsCard from './RecentProblemsCard.svelte';
+	import SupportBundleModal from './SupportBundleModal.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 
 	// The section mounts only while its settings tab is active; document
@@ -234,4 +235,5 @@
 		{/if}
 	</Card>
 	<RecentProblemsCard />
+	<SupportBundleModal />
 </div>

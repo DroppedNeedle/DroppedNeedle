@@ -587,6 +587,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/admin/support-bundle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The support bundle: how this server is set up and what is wrong, with
+         *     no settings values, paths, hosts, names, library contents or message
+         *     text. An admin reads it before it is downloaded.
+         */
+        get: operations["support_bundle"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/admin/users": {
         parameters: {
             query?: never;
@@ -12957,6 +12978,224 @@ export interface components {
          * @enum {string}
          */
         BulkAction: "keep_tagged" | "exclude" | "accept";
+        /** @description How much the server holds. */
+        BundleCounts: {
+            /**
+             * Format: int64
+             * @description Albums in the library.
+             */
+            albums: number;
+            /**
+             * Format: int64
+             * @description Artists in the library.
+             */
+            artists: number;
+            /**
+             * Format: int64
+             * @description Files kept for a person's decision.
+             */
+            held_entries: number;
+            /**
+             * Format: int64
+             * @description Playlists.
+             */
+            playlists: number;
+            /** @description Requests by state. */
+            requests_by_state: {
+                [key: string]: number;
+            };
+            /**
+             * Format: int64
+             * @description Tracks in the library.
+             */
+            tracks: number;
+            /** @description Accounts by role. */
+            users_by_role: {
+                [key: string]: number;
+            };
+        };
+        /** @description The database's files. */
+        BundleDatabase: {
+            /**
+             * Format: int64
+             * @description Backups in the backups folder.
+             */
+            backup_count?: number | null;
+            /**
+             * Format: int64
+             * @description The provider cache's size.
+             */
+            cache_bytes?: number | null;
+            /**
+             * Format: int64
+             * @description The database file's size.
+             */
+            db_bytes?: number | null;
+            /**
+             * Format: int64
+             * @description Seconds since the newest nightly backup.
+             */
+            newest_nightly_backup_age_secs?: number | null;
+            /**
+             * Format: int64
+             * @description The database's schema version.
+             */
+            schema_version: number;
+            /**
+             * Format: int64
+             * @description Its write-ahead log's size.
+             */
+            wal_bytes?: number | null;
+        };
+        /**
+         * @description A filesystem's room.
+         * @enum {string}
+         */
+        BundleDiskLevel: "ok" | "low" | "critical" | "unknown";
+        /** @description One folder the app writes. */
+        BundleFolder: {
+            /** @description Its filesystem's kind (`ext4`, `nfs`, ...). */
+            filesystem: string;
+            /**
+             * Format: int64
+             * @description Free bytes, when the last check read them.
+             */
+            free_bytes?: number | null;
+            /** @description How that compares with what the app needs there. */
+            level: components["schemas"]["BundleDiskLevel"];
+            /**
+             * Format: int32
+             * @description For a library folder, which one: 1 for the first.
+             */
+            library_number?: number | null;
+            /** @description Whether that filesystem is local, not a network share. */
+            local: boolean;
+            /** @description What it is to the app. */
+            role: string;
+            /**
+             * Format: int64
+             * @description The filesystem's size, when read.
+             */
+            total_bytes?: number | null;
+        };
+        /** @description One background loop. */
+        BundleLoop: {
+            /**
+             * Format: int64
+             * @description Seconds since its current run of failures began, while it fails.
+             */
+            failing_for_secs?: number | null;
+            /** @description Its last failure's fixed code, when it has one. */
+            last_error?: null | components["schemas"]["SafeToken"];
+            /** @description Its name. */
+            name: components["schemas"]["SafeToken"];
+            /** @description What it is doing. */
+            state: components["schemas"]["BundleLoopState"];
+        };
+        /**
+         * @description A loop's state.
+         * @enum {string}
+         */
+        BundleLoopState: "running" | "stopped" | "failed";
+        /** @description One enabled plugin. */
+        BundlePlugin: {
+            /** @description Its id. */
+            id: components["schemas"]["SafeToken"];
+            /** @description Its version; null when the manifest's is not a plain version. */
+            version?: null | components["schemas"]["SafeToken"];
+        };
+        /** @description One recent problem, redacted. */
+        BundleProblem: {
+            /**
+             * Format: int64
+             * @description How many times it was seen.
+             */
+            count: number;
+            /** @description The allowlisted fields. */
+            fields: {
+                [key: string]: components["schemas"]["BundleValue"];
+            };
+            /** @description Its file, cut to its crate. */
+            file?: null | components["schemas"]["SafeToken"];
+            /**
+             * Format: int64
+             * @description Seconds since it was first seen.
+             */
+            first_secs_ago: number;
+            /**
+             * Format: int64
+             * @description Seconds since it was last seen.
+             */
+            last_secs_ago: number;
+            /** @description Its level. */
+            level: components["schemas"]["BundleProblemLevel"];
+            /**
+             * Format: int32
+             * @description Its line.
+             */
+            line?: number | null;
+            /**
+             * Format: int32
+             * @description Refs of another shape, counted.
+             */
+            other_refs: number;
+            /** @description Refs of requests it was seen in, the minted ones only. */
+            refs: components["schemas"]["SafeToken"][];
+            /** @description The module that logged it. */
+            target: components["schemas"]["SafeToken"];
+        };
+        /**
+         * @description A recent problem's level.
+         * @enum {string}
+         */
+        BundleProblemLevel: "warn" | "error";
+        /** @description Queued work of one job kind. */
+        BundleQueue: {
+            /**
+             * Format: int64
+             * @description Failed for good in the last 24 hours.
+             */
+            failed_last_day: number;
+            /** @description The job kind. */
+            kind: components["schemas"]["SafeToken"];
+            /**
+             * Format: int64
+             * @description Waiting.
+             */
+            queued: number;
+            /**
+             * Format: int64
+             * @description Running.
+             */
+            running: number;
+        };
+        /** @description One settings section. */
+        BundleSection: {
+            /** @description The section's key. */
+            key: string;
+            /** @description Its state. */
+            state: components["schemas"]["BundleSectionState"];
+        };
+        /**
+         * @description What is stored for a section.
+         * @enum {string}
+         */
+        BundleSectionState: "default" | "saved" | "unreadable";
+        /** @description One download source: a built-in client or a plugin's. */
+        BundleSource: {
+            /** @description Set up. */
+            configured: boolean;
+            /** @description Turned on. */
+            enabled: boolean;
+            /** @description Which: the client, or the plugin's id. */
+            name: components["schemas"]["SafeToken"];
+            /** @description A plugin's download source. */
+            plugin: boolean;
+            /** @description Its last check answered. */
+            reachable: boolean;
+        };
+        /** @description An allowlisted field's value. */
+        BundleValue: components["schemas"]["SafeToken"] | number | boolean;
         /** @description Cache-clear request. No scope clears everything. */
         CacheClearBody: {
             /** @description What to clear. */
@@ -22372,8 +22611,11 @@ export interface components {
         };
         /** @description One problem. */
         Problem: {
-            /** @description The recycle bin only: the folder may be accepted as the bin. */
-            accept_folder: boolean;
+            /**
+             * @description The recycle bin only: the saved bin folder, when an admin may accept
+             *     it as the bin.
+             */
+            accept_folder?: string | null;
             /**
              * Format: int64
              * @description How many: failed jobs, journal rows, folders.
@@ -22389,6 +22631,11 @@ export interface components {
              */
             since_at?: number | null;
             /**
+             * @description Read from the folder checks' last answer, which is over a minute
+             *     old: the newest check has not answered.
+             */
+            stale: boolean;
+            /**
              * @description What it is about, a name the server gives: a settings section key,
              *     a download client (`slskd`, `sabnzbd`, `nzbget`, `deemix`), a loop
              *     name, a job kind, a folder role (`data`, `library`, ...) or an
@@ -22400,7 +22647,7 @@ export interface components {
          * @description What is wrong. Each kind has one severity.
          * @enum {string}
          */
-        ProblemKind: "settings_unreadable" | "loop_failing" | "download_client_down" | "download_folder_unusable" | "recycle_bin_unavailable" | "import_folder_unusable" | "publish_needs_attention" | "disk_nearly_full" | "backup_failing" | "jobs_failed" | "download_client_setup" | "disk_low" | "backup_old" | "database_in_memory" | "provider_degraded";
+        ProblemKind: "settings_unreadable" | "loop_failing" | "download_client_down" | "download_folder_unusable" | "recycle_bin_unavailable" | "import_folder_unusable" | "publish_needs_attention" | "disk_nearly_full" | "backup_failing" | "jobs_failed" | "download_client_setup" | "disk_low" | "backup_old" | "database_in_memory" | "provider_degraded" | "could_not_check";
         /**
          * @description How much a problem needs the admin.
          * @enum {string}
@@ -24527,6 +24774,12 @@ export interface components {
              */
             url: string;
         };
+        /**
+         * @description A short plain token: letters, digits, `_`, `.`, `:` and `-`, at most 64.
+         *     Its one constructor checks the shape, so no path, host, address, name,
+         *     sentence or secret is ever one.
+         */
+        SafeToken: string;
         /** @description A pause, resume or stop request. */
         ScanControlBody: {
             /**
@@ -26222,6 +26475,58 @@ export interface components {
         SuggestionsResponse: {
             /** @description Reason-tagged tracks, pools interleaved. */
             items: components["schemas"]["SuggestionTrack"][];
+        };
+        /** @description The support bundle. */
+        SupportBundle: {
+            /** @description The CPU architecture. */
+            arch: string;
+            /** @description When the image was built, when that is a plain token. */
+            build_date?: null | components["schemas"]["SafeToken"];
+            /** @description The image's tag, when it is a plain token. */
+            commit_tag?: null | components["schemas"]["SafeToken"];
+            /** @description Whether the server runs in a container. */
+            container: boolean;
+            /** @description How much the server holds, as counts. */
+            counts: components["schemas"]["BundleCounts"];
+            /**
+             * Format: int64
+             * @description CPUs the server may use.
+             */
+            cpus: number;
+            /** @description The database's files. */
+            database: components["schemas"]["BundleDatabase"];
+            /** @description Outside services not answering now, by key. */
+            degraded_services: string[];
+            /** @description The download clients. */
+            download_sources: components["schemas"]["BundleSource"][];
+            /** @description Each filesystem the app writes, by the role of the folders on it. */
+            folders: components["schemas"]["BundleFolder"][];
+            /** @description The Linux kernel release, numbers only. */
+            kernel_release?: null | components["schemas"]["SafeToken"];
+            /** @description The background loops. */
+            loops: components["schemas"]["BundleLoop"][];
+            /**
+             * Format: int64
+             * @description Memory the machine has, in bytes.
+             */
+            memory_bytes?: number | null;
+            /** @description The operating system. */
+            os: string;
+            /** @description Plugins an admin enabled. */
+            plugins: components["schemas"]["BundlePlugin"][];
+            /** @description Recent warnings and errors, redacted, newest first. */
+            problems: components["schemas"]["BundleProblem"][];
+            /**
+             * Format: int64
+             * @description Recent problems left out to keep the bundle under 1 MiB.
+             */
+            problems_left_out: number;
+            /** @description Queued work by job kind. */
+            queues: components["schemas"]["BundleQueue"][];
+            /** @description Each settings section's state, never its values. */
+            settings: components["schemas"]["BundleSection"][];
+            /** @description The server's version. */
+            version: string;
         };
         /**
          * @description Why the last pass did not reach Spotify or could not save: the values
@@ -29125,6 +29430,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["QueueStatsResponse"];
+                };
+            };
+        };
+    };
+    support_bundle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The support bundle */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupportBundle"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

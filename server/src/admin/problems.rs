@@ -16,6 +16,8 @@
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+use futures_util::FutureExt as _;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -87,6 +89,9 @@ pub enum ProblemKind {
     DatabaseInMemory,
     /// An outside service is not answering.
     ProviderDegraded,
+    /// Something the list reads did not answer in time or could not be
+    /// read, so it may be missing rows.
+    CouldNotCheck,
 }
 
 /// How much a problem needs the admin.
@@ -118,7 +123,8 @@ impl ProblemKind {
             | Self::DownloadClientSetup
             | Self::DiskLow
             | Self::BackupOld
-            | Self::DatabaseInMemory => ProblemSeverity::Warning,
+            | Self::DatabaseInMemory
+            | Self::CouldNotCheck => ProblemSeverity::Warning,
             Self::ProviderDegraded => ProblemSeverity::Info,
         }
     }
@@ -140,8 +146,12 @@ pub struct Problem {
     pub count: u64,
     /// Since when, unix milliseconds, when that is known.
     pub since_at: Option<i64>,
-    /// The recycle bin only: the folder may be accepted as the bin.
-    pub accept_folder: bool,
+    /// The recycle bin only: the saved bin folder, when an admin may accept
+    /// it as the bin.
+    pub accept_folder: Option<String>,
+    /// Read from the folder checks' last answer, which is over a minute
+    /// old: the newest check has not answered.
+    pub stale: bool,
 }
 
 impl Problem {
@@ -152,7 +162,8 @@ impl Problem {
             subject: subject.map(str::to_owned),
             count: 1,
             since_at: None,
-            accept_folder: false,
+            accept_folder: None,
+            stale: false,
         }
     }
 
@@ -179,8 +190,8 @@ pub struct ProblemsResponse {
 /// What the filesystem reads found, kept for [`SLOW_KEPT`].
 #[derive(Debug, Clone, Default)]
 struct SlowFacts {
-    /// The recycle bin's warning, and whether its folder may be accepted.
-    bin: Option<bool>,
+    /// The recycle bin's warning, with the folder an admin may accept.
+    bin: Option<Option<String>>,
     /// The import folder's state when it cannot be used.
     import_folder: Option<ImportFolderState>,
     /// Publish journal rows that need a person.
@@ -191,23 +202,44 @@ struct SlowFacts {
 
 struct Kept {
     at: Instant,
+    at_ms: i64,
     facts: SlowFacts,
 }
+
+/// What the folder checks answered: fresh, or the last answer kept while
+/// the newest has not come back.
+struct Checked {
+    facts: SlowFacts,
+    stale_since: Option<i64>,
+}
+
+/// The import folder's state, read under the folder checks' bound. Tests
+/// pass one that hangs.
+pub type ImportStatus =
+    Arc<dyn Fn() -> futures_util::future::BoxFuture<'static, ImportFolderState> + Send + Sync>;
 
 /// The problems service, built once from the app's state.
 #[derive(Clone)]
 pub struct Problems {
-    settings: SettingsSetup,
-    supervisor: Supervisor,
-    db: Db,
-    probes: Arc<ProbeCache>,
-    import_folder: Arc<ImportFolders>,
+    pub(crate) settings: SettingsSetup,
+    pub(crate) supervisor: Supervisor,
+    pub(crate) db: Db,
+    pub(crate) probes: Arc<ProbeCache>,
+    import_status: ImportStatus,
     management: Management,
-    disk: DiskWatch,
-    backups: Arc<BackupService>,
+    pub(crate) disk: DiskWatch,
+    pub(crate) backups: Arc<BackupService>,
     nightly: Live<Backups>,
-    health: Arc<ServiceHealth>,
-    recent: RecentProblems,
+    pub(crate) health: Arc<ServiceHealth>,
+    pub(crate) recent: RecentProblems,
+    /// The plugins, for the support bundle's list of enabled ones.
+    pub(crate) plugins: Arc<droppedneedle_plugins::host::PluginHost>,
+    /// The database file and the provider cache's, for their sizes.
+    pub(crate) db_path: std::path::PathBuf,
+    pub(crate) cache_path: std::path::PathBuf,
+    /// The image's tag and build date, as the deployment gives them.
+    pub(crate) commit_tag: String,
+    pub(crate) build_date: Option<String>,
     kept: Arc<Mutex<Option<Kept>>>,
     reading: Arc<AtomicBool>,
 }
@@ -215,18 +247,39 @@ pub struct Problems {
 impl Problems {
     /// The service over what `state` holds.
     pub fn from_state(state: &AppState) -> Self {
+        let folders: Arc<ImportFolders> = state.acquire.import_folder.clone();
+        Self::with_import_status(
+            state,
+            Arc::new(move || {
+                let folders = Arc::clone(&folders);
+                Box::pin(async move { folders.status().await.state })
+            }),
+        )
+    }
+
+    /// [`Problems::from_state`] reading the import folder through
+    /// `import_status`.
+    pub fn with_import_status(state: &AppState, import_status: ImportStatus) -> Self {
         Self {
             settings: state.settings.clone(),
             supervisor: state.admin.supervisor.clone(),
             db: state.admin.db.db.clone(),
             probes: state.acquire.probe_cache.clone(),
-            import_folder: state.acquire.import_folder.clone(),
+            import_status,
             management: state.library_services.management.clone(),
             disk: state.admin.disk.clone(),
             backups: state.admin.backups.clone(),
             nightly: state.settings.service().store.live(),
             health: state.admin.providers.health.clone(),
             recent: state.admin.recent.clone(),
+            plugins: state.plugins.host().clone(),
+            db_path: state.config.library_db_path.clone(),
+            cache_path: state
+                .config
+                .cache_dir
+                .join(droppedneedle_kernel::db::cache::FILE_NAME),
+            commit_tag: state.config.commit_tag.clone(),
+            build_date: state.config.build_date.clone(),
             kept: Arc::new(Mutex::new(None)),
             reading: Arc::new(AtomicBool::new(false)),
         }
@@ -243,8 +296,24 @@ impl Problems {
         self.jobs(now, &mut problems).await;
         self.download_clients(&mut problems);
         self.disks(&mut problems);
-        if let Some(slow) = self.slow().await {
-            self.slow_rows(&slow, now, &mut problems);
+        match self.slow().await {
+            Some(checked) => {
+                let first = problems.len();
+                self.slow_rows(&checked.facts, now, &mut problems);
+                if let Some(since) = checked.stale_since {
+                    for problem in &mut problems[first..] {
+                        problem.stale = true;
+                    }
+                    problems.push(
+                        Problem::new(ProblemKind::CouldNotCheck, Some("folder_checks"))
+                            .since(Some(since)),
+                    );
+                }
+            }
+            None => problems.push(Problem::new(
+                ProblemKind::CouldNotCheck,
+                Some("folder_checks"),
+            )),
         }
         if self.backups.database_in_memory() {
             problems.push(Problem::new(ProblemKind::DatabaseInMemory, None));
@@ -303,7 +372,10 @@ impl Problems {
                     problems.push(Problem::new(ProblemKind::JobsFailed, Some(&kind)).count(failed));
                 }
             }
-            Err(error) => tracing::warn!(%error, "problems: failed jobs not counted"),
+            Err(error) => {
+                tracing::warn!(%error, "problems: failed jobs not counted");
+                problems.push(Problem::new(ProblemKind::CouldNotCheck, Some("jobs")));
+            }
         }
     }
 
@@ -368,7 +440,8 @@ impl Problems {
             let kind = match filesystem.level {
                 DiskLevel::Critical => ProblemKind::DiskNearlyFull,
                 DiskLevel::Low => ProblemKind::DiskLow,
-                DiskLevel::Ok | DiskLevel::Unknown => continue,
+                DiskLevel::Unknown => ProblemKind::CouldNotCheck,
+                DiskLevel::Ok => continue,
             };
             let role = filesystem
                 .folders
@@ -384,9 +457,9 @@ impl Problems {
     }
 
     fn slow_rows(&self, slow: &SlowFacts, now: i64, problems: &mut Vec<Problem>) {
-        if let Some(accept_folder) = slow.bin {
+        if let Some(accept_folder) = &slow.bin {
             let mut problem = Problem::new(ProblemKind::RecycleBinUnavailable, None);
-            problem.accept_folder = accept_folder;
+            problem.accept_folder.clone_from(accept_folder);
             problems.push(problem);
         }
         if let Some(state) = slow.import_folder {
@@ -410,34 +483,66 @@ impl Problems {
         }
     }
 
+    /// When the newest nightly backup was taken, from the folder checks.
+    pub(crate) async fn newest_nightly_at(&self) -> Option<i64> {
+        self.slow()
+            .await
+            .and_then(|checked| checked.facts.newest_nightly_at)
+    }
+
     /// The filesystem facts: kept ones under a minute old, else read now
-    /// under [`SLOW_BOUND`]. `None` while an earlier read still runs and
-    /// nothing is kept, or when this one ran past its bound.
-    async fn slow(&self) -> Option<SlowFacts> {
+    /// under [`SLOW_BOUND`]. When the read runs past it or an earlier one
+    /// still runs, the last answer, marked stale, or `None` when there is
+    /// none.
+    async fn slow(&self) -> Option<Checked> {
         let kept = {
             let kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
-            kept.as_ref()
-                .map(|kept| (kept.at.elapsed() < SLOW_KEPT, kept.facts.clone()))
+            kept.as_ref().map(|kept| {
+                (
+                    kept.at.elapsed() < SLOW_KEPT,
+                    kept.at_ms,
+                    kept.facts.clone(),
+                )
+            })
         };
-        if let Some((true, facts)) = &kept {
-            return Some(facts.clone());
+        if let Some((true, _, facts)) = &kept {
+            return Some(Checked {
+                facts: facts.clone(),
+                stale_since: None,
+            });
         }
-        let stale = kept.map(|(_, facts)| facts);
+        let stale = kept.map(|(_, at_ms, facts)| Checked {
+            facts,
+            stale_since: Some(at_ms),
+        });
         if self.reading.swap(true, Ordering::AcqRel) {
             return stale;
         }
         let read = self.clone();
+        // Left running past the bound, the checks still land their answer
+        // for the next call, and a panic is logged here, not lost.
         let run = tokio::spawn(async move {
             let _done = ReadDone(Arc::clone(&read.reading));
-            let facts = read.read_slow().await;
+            let outcome = std::panic::AssertUnwindSafe(read.read_slow())
+                .catch_unwind()
+                .await;
+            let Ok(facts) = outcome else {
+                tracing::error!("problems: the folder checks panicked");
+                return None;
+            };
             *read.kept.lock().unwrap_or_else(PoisonError::into_inner) = Some(Kept {
                 at: Instant::now(),
+                at_ms: read.supervisor.clock().now_ms(),
                 facts: facts.clone(),
             });
-            facts
+            Some(facts)
         });
         match tokio::time::timeout(SLOW_BOUND, run).await {
-            Ok(Ok(facts)) => Some(facts),
+            Ok(Ok(Some(facts))) => Some(Checked {
+                facts,
+                stale_since: None,
+            }),
+            Ok(Ok(None)) => stale,
             Ok(Err(error)) => {
                 tracing::warn!(%error, "problems: the folder checks did not finish");
                 stale
@@ -447,7 +552,7 @@ impl Problems {
     }
 
     async fn read_slow(&self) -> SlowFacts {
-        let state = self.import_folder.status().await.state;
+        let state = (self.import_status)().await;
         let import_folder = matches!(
             state,
             ImportFolderState::SettingsUnreadable
@@ -464,7 +569,7 @@ impl Problems {
         let blocking = tokio::task::spawn_blocking(move || {
             let bin = settings
                 .recycle_bin_warning_blocking()
-                .map(|warning| warning.accept_folder);
+                .map(|(warning, path)| warning.accept_folder.then_some(path));
             let needs_attention = management
                 .recovery_diagnostics()
                 .map(|diagnostics| diagnostics.needs_attention_count)
@@ -697,4 +802,5 @@ pub fn routes() -> Routes<Problems> {
     Routes::new()
         .admin(routes!(list_problems))
         .admin(routes!(list_recent_problems))
+        .admin(routes!(super::support::support_bundle))
 }

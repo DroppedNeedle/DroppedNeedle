@@ -1281,6 +1281,54 @@
         ]
       }
     },
+    "/api/v3/admin/support-bundle": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "The support bundle: how this server is set up and what is wrong, with\nno settings values, paths, hosts, names, library contents or message\ntext. An admin reads it before it is downloaded.",
+        "operationId": "support_bundle",
+        "responses": {
+          "200": {
+            "description": "The support bundle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupportBundle"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/admin/users": {
       "get": {
         "tags": [
@@ -44083,6 +44131,476 @@
           "accept"
         ]
       },
+      "BundleCounts": {
+        "type": "object",
+        "description": "How much the server holds.",
+        "required": [
+          "users_by_role",
+          "artists",
+          "albums",
+          "tracks",
+          "playlists",
+          "requests_by_state",
+          "held_entries"
+        ],
+        "properties": {
+          "albums": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Albums in the library.",
+            "minimum": 0
+          },
+          "artists": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Artists in the library.",
+            "minimum": 0
+          },
+          "held_entries": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Files kept for a person's decision.",
+            "minimum": 0
+          },
+          "playlists": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Playlists.",
+            "minimum": 0
+          },
+          "requests_by_state": {
+            "type": "object",
+            "description": "Requests by state.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string",
+              "description": "A short plain token: letters, digits, `_`, `.`, `:` and `-`, at most 64.\nIts one constructor checks the shape, so no path, host, address, name,\nsentence or secret is ever one."
+            }
+          },
+          "tracks": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Tracks in the library.",
+            "minimum": 0
+          },
+          "users_by_role": {
+            "type": "object",
+            "description": "Accounts by role.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "BundleDatabase": {
+        "type": "object",
+        "description": "The database's files.",
+        "required": [
+          "schema_version"
+        ],
+        "properties": {
+          "backup_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Backups in the backups folder.",
+            "minimum": 0
+          },
+          "cache_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The provider cache's size.",
+            "minimum": 0
+          },
+          "db_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The database file's size.",
+            "minimum": 0
+          },
+          "newest_nightly_backup_age_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Seconds since the newest nightly backup.",
+            "minimum": 0
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The database's schema version."
+          },
+          "wal_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Its write-ahead log's size.",
+            "minimum": 0
+          }
+        }
+      },
+      "BundleDiskLevel": {
+        "type": "string",
+        "description": "A filesystem's room.",
+        "enum": [
+          "ok",
+          "low",
+          "critical",
+          "unknown"
+        ]
+      },
+      "BundleFolder": {
+        "type": "object",
+        "description": "One folder the app writes.",
+        "required": [
+          "role",
+          "filesystem",
+          "local",
+          "level"
+        ],
+        "properties": {
+          "filesystem": {
+            "type": "string",
+            "description": "Its filesystem's kind (`ext4`, `nfs`, ...)."
+          },
+          "free_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Free bytes, when the last check read them.",
+            "minimum": 0
+          },
+          "level": {
+            "$ref": "#/components/schemas/BundleDiskLevel",
+            "description": "How that compares with what the app needs there."
+          },
+          "library_number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "For a library folder, which one: 1 for the first.",
+            "minimum": 0
+          },
+          "local": {
+            "type": "boolean",
+            "description": "Whether that filesystem is local, not a network share."
+          },
+          "role": {
+            "type": "string",
+            "description": "What it is to the app."
+          },
+          "total_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The filesystem's size, when read.",
+            "minimum": 0
+          }
+        }
+      },
+      "BundleLoop": {
+        "type": "object",
+        "description": "One background loop.",
+        "required": [
+          "name",
+          "state"
+        ],
+        "properties": {
+          "failing_for_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Seconds since its current run of failures began, while it fails.",
+            "minimum": 0
+          },
+          "last_error": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SafeToken"
+              }
+            ],
+            "description": "Its last failure's fixed code, when it has one."
+          },
+          "name": {
+            "$ref": "#/components/schemas/SafeToken",
+            "description": "Its name."
+          },
+          "state": {
+            "$ref": "#/components/schemas/BundleLoopState",
+            "description": "What it is doing."
+          }
+        }
+      },
+      "BundleLoopState": {
+        "type": "string",
+        "description": "A loop's state.",
+        "enum": [
+          "running",
+          "stopped",
+          "failed"
+        ]
+      },
+      "BundlePlugin": {
+        "type": "object",
+        "description": "One enabled plugin.",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/SafeToken",
+            "description": "Its id."
+          },
+          "version": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SafeToken"
+              }
+            ],
+            "description": "Its version; null when the manifest's is not a plain version."
+          }
+        }
+      },
+      "BundleProblem": {
+        "type": "object",
+        "description": "One recent problem, redacted.",
+        "required": [
+          "level",
+          "target",
+          "count",
+          "first_secs_ago",
+          "last_secs_ago",
+          "refs",
+          "other_refs",
+          "fields"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many times it was seen.",
+            "minimum": 0
+          },
+          "fields": {
+            "type": "object",
+            "description": "The allowlisted fields.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/BundleValue"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "file": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SafeToken"
+              }
+            ],
+            "description": "Its file, cut to its crate."
+          },
+          "first_secs_ago": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds since it was first seen.",
+            "minimum": 0
+          },
+          "last_secs_ago": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds since it was last seen.",
+            "minimum": 0
+          },
+          "level": {
+            "$ref": "#/components/schemas/BundleProblemLevel",
+            "description": "Its level."
+          },
+          "line": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Its line.",
+            "minimum": 0
+          },
+          "other_refs": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Refs of another shape, counted.",
+            "minimum": 0
+          },
+          "refs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SafeToken"
+            },
+            "description": "Refs of requests it was seen in, the minted ones only."
+          },
+          "target": {
+            "$ref": "#/components/schemas/SafeToken",
+            "description": "The module that logged it."
+          }
+        }
+      },
+      "BundleProblemLevel": {
+        "type": "string",
+        "description": "A recent problem's level.",
+        "enum": [
+          "warn",
+          "error"
+        ]
+      },
+      "BundleQueue": {
+        "type": "object",
+        "description": "Queued work of one job kind.",
+        "required": [
+          "kind",
+          "queued",
+          "running",
+          "failed_last_day"
+        ],
+        "properties": {
+          "failed_last_day": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Failed for good in the last 24 hours.",
+            "minimum": 0
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SafeToken",
+            "description": "The job kind."
+          },
+          "queued": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Waiting.",
+            "minimum": 0
+          },
+          "running": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Running.",
+            "minimum": 0
+          }
+        }
+      },
+      "BundleSection": {
+        "type": "object",
+        "description": "One settings section.",
+        "required": [
+          "key",
+          "state"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The section's key."
+          },
+          "state": {
+            "$ref": "#/components/schemas/BundleSectionState",
+            "description": "Its state."
+          }
+        }
+      },
+      "BundleSectionState": {
+        "type": "string",
+        "description": "What is stored for a section.",
+        "enum": [
+          "default",
+          "saved",
+          "unreadable"
+        ]
+      },
+      "BundleSource": {
+        "type": "object",
+        "description": "One download source: a built-in client or a plugin's.",
+        "required": [
+          "name",
+          "plugin",
+          "enabled",
+          "configured",
+          "reachable"
+        ],
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "description": "Set up."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Turned on."
+          },
+          "name": {
+            "$ref": "#/components/schemas/SafeToken",
+            "description": "Which: the client, or the plugin's id."
+          },
+          "plugin": {
+            "type": "boolean",
+            "description": "A plugin's download source."
+          },
+          "reachable": {
+            "type": "boolean",
+            "description": "Its last check answered."
+          }
+        }
+      },
+      "BundleValue": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/SafeToken",
+            "description": "A plain token."
+          },
+          {
+            "type": "number",
+            "format": "double",
+            "description": "A number."
+          },
+          {
+            "type": "boolean",
+            "description": "A switch."
+          }
+        ],
+        "description": "An allowlisted field's value."
+      },
       "CacheClearBody": {
         "type": "object",
         "description": "Cache-clear request. No scope clears everything.",
@@ -64755,12 +65273,15 @@
           "kind",
           "severity",
           "count",
-          "accept_folder"
+          "stale"
         ],
         "properties": {
           "accept_folder": {
-            "type": "boolean",
-            "description": "The recycle bin only: the folder may be accepted as the bin."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The recycle bin only: the saved bin folder, when an admin may accept\nit as the bin."
           },
           "count": {
             "type": "integer",
@@ -64783,6 +65304,10 @@
             ],
             "format": "int64",
             "description": "Since when, unix milliseconds, when that is known."
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "Read from the folder checks' last answer, which is over a minute\nold: the newest check has not answered."
           },
           "subject": {
             "type": [
@@ -64811,7 +65336,8 @@
           "disk_low",
           "backup_old",
           "database_in_memory",
-          "provider_degraded"
+          "provider_degraded",
+          "could_not_check"
         ]
       },
       "ProblemSeverity": {
@@ -69518,6 +70044,10 @@
           }
         }
       },
+      "SafeToken": {
+        "type": "string",
+        "description": "A short plain token: letters, digits, `_`, `.`, `:` and `-`, at most 64.\nIts one constructor checks the shape, so no path, host, address, name,\nsentence or secret is ever one."
+      },
       "ScanControlBody": {
         "type": "object",
         "description": "A pause, resume or stop request.",
@@ -73495,6 +74025,164 @@
               "$ref": "#/components/schemas/SuggestionTrack"
             },
             "description": "Reason-tagged tracks, pools interleaved."
+          }
+        }
+      },
+      "SupportBundle": {
+        "type": "object",
+        "description": "The support bundle.",
+        "required": [
+          "version",
+          "arch",
+          "os",
+          "container",
+          "cpus",
+          "folders",
+          "settings",
+          "download_sources",
+          "loops",
+          "queues",
+          "degraded_services",
+          "database",
+          "counts",
+          "plugins",
+          "problems",
+          "problems_left_out"
+        ],
+        "properties": {
+          "arch": {
+            "type": "string",
+            "description": "The CPU architecture."
+          },
+          "build_date": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SafeToken"
+              }
+            ],
+            "description": "When the image was built, when that is a plain token."
+          },
+          "commit_tag": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SafeToken"
+              }
+            ],
+            "description": "The image's tag, when it is a plain token."
+          },
+          "container": {
+            "type": "boolean",
+            "description": "Whether the server runs in a container."
+          },
+          "counts": {
+            "$ref": "#/components/schemas/BundleCounts",
+            "description": "How much the server holds, as counts."
+          },
+          "cpus": {
+            "type": "integer",
+            "format": "int64",
+            "description": "CPUs the server may use.",
+            "minimum": 0
+          },
+          "database": {
+            "$ref": "#/components/schemas/BundleDatabase",
+            "description": "The database's files."
+          },
+          "degraded_services": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Outside services not answering now, by key."
+          },
+          "download_sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BundleSource"
+            },
+            "description": "The download clients."
+          },
+          "folders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BundleFolder"
+            },
+            "description": "Each filesystem the app writes, by the role of the folders on it."
+          },
+          "kernel_release": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SafeToken"
+              }
+            ],
+            "description": "The Linux kernel release, numbers only."
+          },
+          "loops": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BundleLoop"
+            },
+            "description": "The background loops."
+          },
+          "memory_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Memory the machine has, in bytes.",
+            "minimum": 0
+          },
+          "os": {
+            "type": "string",
+            "description": "The operating system."
+          },
+          "plugins": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BundlePlugin"
+            },
+            "description": "Plugins an admin enabled."
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BundleProblem"
+            },
+            "description": "Recent warnings and errors, redacted, newest first."
+          },
+          "problems_left_out": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Recent problems left out to keep the bundle under 1 MiB.",
+            "minimum": 0
+          },
+          "queues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BundleQueue"
+            },
+            "description": "Queued work by job kind."
+          },
+          "settings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BundleSection"
+            },
+            "description": "Each settings section's state, never its values."
+          },
+          "version": {
+            "type": "string",
+            "description": "The server's version."
           }
         }
       },

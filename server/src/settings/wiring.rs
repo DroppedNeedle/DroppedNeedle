@@ -131,23 +131,44 @@ impl SettingsSetup {
         &self.second_folder
     }
 
+    /// Each settings section's key, whether it was ever saved, and whether
+    /// it reads now. States only, never values.
+    pub fn section_states(&self) -> Vec<(&'static str, bool, bool)> {
+        let unreadable = self.unreadable_sections();
+        droppedneedle_kernel::runtime_config::registry::SECTION_KEYS
+            .iter()
+            .map(|key| {
+                (
+                    *key,
+                    self.service.store.revision(key) > 0,
+                    unreadable.contains(key),
+                )
+            })
+            .collect()
+    }
+
     /// The keys of the settings sections that do not read now.
     pub fn unreadable_sections(&self) -> Vec<&'static str> {
         droppedneedle_kernel::runtime_config::registry::unreadable_sections(&self.service.store)
     }
 
-    /// What keeps the saved recycle bin from being used, if anything does.
+    /// What keeps the saved recycle bin from being used, if anything does,
+    /// with the saved bin path.
     /// `None` too while the Library Management settings do not read, which
     /// the unreadable sections already name. Blocking: it resolves paths.
     pub fn recycle_bin_warning_blocking(
         &self,
-    ) -> Option<droppedneedle_library::settings_models::RecycleBinWarning> {
+    ) -> Option<(
+        droppedneedle_library::settings_models::RecycleBinWarning,
+        String,
+    )> {
         let management = self
             .service
             .store
             .get::<droppedneedle_kernel::runtime_config::sections::LibraryManagement>()
             .ok()?;
-        self.bins.warning(&management.recycle_bin_path)
+        let warning = self.bins.warning(&management.recycle_bin_path)?;
+        Some((warning, management.recycle_bin_path))
     }
 
     /// `response` with what keeps a recycle bin from being used, if

@@ -77,6 +77,36 @@ fn memory_filesystem(magic: i64) -> Option<&'static str> {
         .map(|(_, name)| *name)
 }
 
+/// statfs magics of local filesystems a folder is commonly on, from
+/// `linux/magic.h`.
+const LOCAL_MAGICS: &[(i64, &str)] = &[
+    (0xEF53, "ext4"),
+    (0x58465342, "xfs"),
+    (0x9123683E, "btrfs"),
+    (0x2FC12FC1, "zfs"),
+    (0x794C7630, "overlay"),
+    (0xF2F52010, "f2fs"),
+    (0x4D44, "vfat"),
+    (0x2011BAB0, "exfat"),
+    (0x5346544E, "ntfs"),
+];
+
+/// The filesystem a statfs magic names, `other` when the tables don't
+/// know it. A fixed name, never the magic's text.
+pub fn filesystem_name(magic: i64) -> &'static str {
+    REMOTE_MAGICS
+        .iter()
+        .chain(MEMORY_MAGICS)
+        .chain(LOCAL_MAGICS)
+        .find(|(known, _)| *known == magic)
+        .map_or("other", |(_, name)| *name)
+}
+
+/// The statfs magic of the filesystem holding `path` (0 off Linux).
+pub fn filesystem_magic(path: &Path) -> std::io::Result<i64> {
+    statfs_magic(path)
+}
+
 /// Name a refused magic for the error, falling back to the hex value.
 fn name_magic(magic: i64) -> String {
     REMOTE_MAGICS

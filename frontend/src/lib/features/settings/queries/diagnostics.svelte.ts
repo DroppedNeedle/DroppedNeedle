@@ -13,7 +13,8 @@ export const DiagnosticsQueryKeyFactory = {
 	all: () => key(ADMIN, 'diagnostics'),
 	queueStats: () => key(ADMIN, 'diagnostics', 'queue-stats'),
 	providerStats: () => key(ADMIN, 'diagnostics', 'provider-stats'),
-	recentProblems: (reference: string) => key(ADMIN, 'diagnostics', 'recent-problems', reference)
+	recentProblems: (reference: string) => key(ADMIN, 'diagnostics', 'recent-problems', reference),
+	supportBundle: () => key(ADMIN, 'diagnostics', 'support-bundle')
 };
 
 /** Gauges must stay fresh; polling is cheap, the server reads in-memory state. */
@@ -61,3 +62,14 @@ export const getRecentProblemsQuery = (getRef: Getter<string>) =>
 				)
 		};
 	});
+
+/** The support bundle, read while its window is open; never kept. */
+export const getSupportBundleQuery = (getOpen: Getter<boolean>) =>
+	createQuery(() => ({
+		queryKey: DiagnosticsQueryKeyFactory.supportBundle(),
+		enabled: getOpen(),
+		staleTime: 0,
+		gcTime: 0,
+		refetchOnWindowFocus: false,
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/admin/support-bundle'), { signal })
+	}));
