@@ -326,6 +326,19 @@ impl From<HeldError> for ApiError {
     }
 }
 
+/// Runs a held action to its end and waits for it. An action claims its
+/// entry and gives it back when done, so it runs detached: a request that
+/// goes away mid-way (a closed tab, a proxy timeout) cannot leave the entry
+/// claimed.
+async fn run_to_end<T: Send + 'static>(
+    action: impl Future<Output = Result<T, HeldError>> + Send + 'static,
+) -> Result<T, ApiError> {
+    tokio::spawn(action)
+        .await
+        .map_err(|error| HeldError::Unavailable(format!("held action did not finish: {error}")))?
+        .map_err(ApiError::from)
+}
+
 /// Ids arrive as path text; a non-number is simply not found.
 fn id_of(text: &str) -> Result<i64, ApiError> {
     text.parse()
@@ -388,14 +401,18 @@ pub async fn import_handler(
     Path(entry_id): Path<String>,
     ValidJson(body): ValidJson<HeldFilesRequest>,
 ) -> Result<Json<HeldActionResponse>, ApiError> {
-    let acted = service
-        .import(
-            &viewer(&principal),
-            id_of(&entry_id)?,
-            body.file_ids,
-            principal.user_id(),
-        )
-        .await?;
+    let entry_id = id_of(&entry_id)?;
+    let acted = run_to_end(async move {
+        service
+            .import(
+                &viewer(&principal),
+                entry_id,
+                body.file_ids,
+                principal.user_id(),
+            )
+            .await
+    })
+    .await?;
     Ok(Json(acted.into()))
 }
 
@@ -419,15 +436,20 @@ pub async fn match_handler(
         user_id: curator.user_id().to_owned(),
         admin: curator.is_admin(),
     };
-    let acted = service
-        .match_album(
-            &viewer,
-            id_of(&entry_id)?,
-            &body.release_group_mbid,
-            body.file_ids,
-            curator.user_id(),
-        )
-        .await?;
+    let entry_id = id_of(&entry_id)?;
+    let actor = curator.user_id().to_owned();
+    let acted = run_to_end(async move {
+        service
+            .match_album(
+                &viewer,
+                entry_id,
+                &body.release_group_mbid,
+                body.file_ids,
+                &actor,
+            )
+            .await
+    })
+    .await?;
     Ok(Json(acted.into()))
 }
 
@@ -448,14 +470,18 @@ pub async fn recheck_handler(
     Path(entry_id): Path<String>,
     ValidJson(body): ValidJson<HeldFilesRequest>,
 ) -> Result<Json<HeldActionResponse>, ApiError> {
-    let acted = service
-        .recheck(
-            &viewer(&principal),
-            id_of(&entry_id)?,
-            body.file_ids,
-            principal.user_id(),
-        )
-        .await?;
+    let entry_id = id_of(&entry_id)?;
+    let acted = run_to_end(async move {
+        service
+            .recheck(
+                &viewer(&principal),
+                entry_id,
+                body.file_ids,
+                principal.user_id(),
+            )
+            .await
+    })
+    .await?;
     Ok(Json(acted.into()))
 }
 
@@ -473,9 +499,12 @@ pub async fn recheck_all_handler(
     User(principal): User,
     ValidJson(body): ValidJson<HeldRecheckAllRequest>,
 ) -> Result<Json<HeldRecheckAllResponse>, ApiError> {
-    let results = service
-        .recheck_bulk(&viewer(&principal), body.entry_ids, principal.user_id())
-        .await?;
+    let results = run_to_end(async move {
+        service
+            .recheck_bulk(&viewer(&principal), body.entry_ids, principal.user_id())
+            .await
+    })
+    .await?;
     Ok(Json(HeldRecheckAllResponse {
         results: results
             .into_iter()
@@ -512,9 +541,13 @@ pub async fn discard_handler(
     Path(entry_id): Path<String>,
     ValidJson(body): ValidJson<HeldFilesRequest>,
 ) -> Result<Json<HeldActionResponse>, ApiError> {
-    let acted = service
-        .discard(&viewer(&principal), id_of(&entry_id)?, body.file_ids)
-        .await?;
+    let entry_id = id_of(&entry_id)?;
+    let acted = run_to_end(async move {
+        service
+            .discard(&viewer(&principal), entry_id, body.file_ids)
+            .await
+    })
+    .await?;
     Ok(Json(acted.into()))
 }
 

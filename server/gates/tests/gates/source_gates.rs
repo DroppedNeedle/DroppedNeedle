@@ -821,6 +821,7 @@ const AWAITED: &str = "blocking file or store work, awaited by the request or lo
 const UPLOAD_CLEANUP: &str = "removes unused uploads when the request's guard drops";
 const DROP_IMPORT_STEP: &str = "blocking file work, awaited by the drop import that runs it";
 const DROP_IMPORT: &str = "a drop import a request starts; it logs its own end";
+const HELD_ACTION: &str = "a held action a request starts and waits for, run detached so a dropped request cannot leave its entry claimed";
 const MIX_REFRESH: &str = "a personal-mix refresh a request starts; it logs its own end";
 const SEARCH: &str = "an acquire search a request starts; it logs its own end";
 const LIBRARY_CHECK: &str = "the library folder check, bounded by a timeout; one that hangs is left to end and none starts beside it";
@@ -869,6 +870,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("acquire/src/drop_import/http.rs", 1, ROOM_CHECK),
     ("acquire/src/drop_import/mod.rs", 12, DROP_IMPORT_STEP),
     ("acquire/src/drop_import/mod.rs", 1, DROP_IMPORT),
+    ("acquire/src/held/http.rs", 1, HELD_ACTION),
     ("acquire/src/held/service.rs", 8, AWAITED),
     ("acquire/src/import_folder/mod.rs", 5, LOOP_STEP),
     ("acquire/src/intake/dispose.rs", 1, AWAITED),

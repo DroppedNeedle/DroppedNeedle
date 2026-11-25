@@ -2149,6 +2149,121 @@ async fn a_held_import_cut_off_by_a_restart_never_places_its_file_twice() {
     assert!(files_under(&music.join(".recycle"), "flac").is_empty());
 }
 
+/// AcoustID that says when a call arrives and answers (unreachable) only
+/// once let through, so a test can cut a request off in the middle.
+#[derive(Default)]
+struct HeldUp {
+    arrived: tokio::sync::Notify,
+    through: tokio::sync::Notify,
+}
+
+impl FingerprintSource for HeldUp {
+    fn identify<'a>(
+        &'a self,
+        _tracks: &'a [LocalTrackFacts],
+        _priority: RequestPriority,
+    ) -> BoxFuture<'a, Result<AudioMatches, AcoustIdUnavailable>> {
+        Box::pin(async { Ok(AudioMatches::default()) })
+    }
+
+    fn identify_files<'a>(
+        &'a self,
+        _files: &'a [(String, PathBuf)],
+        _priority: RequestPriority,
+    ) -> BoxFuture<'a, HeardFiles> {
+        Box::pin(async move {
+            self.arrived.notify_one();
+            self.through.notified().await;
+            Err(AcoustIdUnavailable::Unreachable)
+        })
+    }
+}
+
+/// A Re-check whose request goes away while AcoustID is still answering
+/// (a closed tab, a proxy giving up) runs to its end and gives the entry
+/// back, so its buttons are not refused as already being handled.
+#[tokio::test]
+async fn a_held_action_its_request_dropped_still_gives_the_entry_back() {
+    let db = AcquireDb::scratch().expect("scratch db");
+    db.add_user("u-ada", "Ada", "user").await.expect("user");
+    let dir = db.path().parent().expect("scratch dir").to_path_buf();
+    let config = Arc::new(
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("config"),
+    );
+    let platform = TestPlatform::on(db.db(), &dir)
+        .settings(config)
+        .build()
+        .await;
+    let (mut library, _) = library_at(&platform);
+    let acoustid = Arc::new(HeldUp::default());
+    library.imports.fingerprints = acoustid.clone();
+    let release = release(GOOD_RELEASE, GOOD_GROUP, &["Mysterons"], &[None]);
+    let track = release.tracks[0].clone();
+    let releases: Arc<dyn ReleaseSource> = Arc::new(Releases(vec![release]));
+    let acquire = acquire_over(
+        &platform,
+        &library,
+        Arc::new(LibraryLanding::new(&library, every_priority(releases))),
+    );
+    let held_dir = acquire.held.folders().held.clone();
+    land_file(&held_dir, "heard.flac", "flac_full_01.flac", "Mysterons", 1);
+    let file: i64 = acquire
+        .db
+        .write("test.held", move |tx| {
+            tx.execute(
+                "INSERT INTO acquire_held_entries (id, user_id, origin, group_key, \
+                 release_group_mbid, state, created_at, expires_at) VALUES (1, 'u-ada', \
+                 'download', ?1, ?2, 'held', 1, 9999999999999)",
+                rusqlite::params![format!("album:{GOOD_GROUP}"), GOOD_GROUP],
+            )?;
+            tx.execute(
+                "INSERT INTO acquire_held_files (entry_id, root, path, original_name, \
+                 release_mbid, release_track_mbid, recording_mbid, disc_number, \
+                 track_number, reason, source, state, created_at) VALUES (1, 'held', \
+                 'heard.flac', 'heard.flac', ?1, ?2, ?3, 1, 1, 'fingerprint_mismatch', \
+                 'soulseek', 'held', 1)",
+                rusqlite::params![GOOD_RELEASE, track.id, track.recording_id],
+            )?;
+            Ok(tx.last_insert_rowid())
+        })
+        .await
+        .expect("held rows");
+    let ada = &test_principal("u-ada", Role::User, "sess-ada", SessionKind::Standard);
+    let entry_state = || -> String {
+        acquire
+            .db
+            .db()
+            .one("SELECT state FROM acquire_held_entries WHERE id = 1", [])
+    };
+
+    let recheck = held_call(
+        &acquire,
+        "POST",
+        "/api/v3/held/1/recheck",
+        Some(serde_json::json!({ "file_ids": [file] })),
+        ada,
+    );
+    tokio::select! {
+        (status, body) = recheck => panic!("answered before AcoustID did: {status} {body}"),
+        () = acoustid.arrived.notified() => {}
+    }
+    assert_eq!(entry_state(), "placing", "the re-check holds its claim");
+
+    // The request is gone; AcoustID answers now.
+    let mut commits = acquire.db.db().commits();
+    acoustid.through.notify_one();
+    let given_back = async {
+        while entry_state() == "placing" {
+            commits.changed().await.expect("write lane");
+        }
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(10), given_back)
+        .await
+        .expect("the entry is given back once the re-check ends");
+    assert_eq!(entry_state(), "held");
+}
+
 /// A discard a restart cut off after it removed the copy: the row is
 /// discarded with it. While the held folder itself is not there nothing is
 /// judged gone.
