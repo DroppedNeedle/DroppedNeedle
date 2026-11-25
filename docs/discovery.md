@@ -141,6 +141,10 @@ Sync goes at a steady pace: each pass requests at most 25 songs, looks up at mos
 
 Liked Songs has no version for Spotify to compare, so each pass reads it newest first and stops at the first song already taken. A song unliked on Spotify while that read runs can, rarely, hide one new song from it.
 
+## Smart playlists
+
+Under **Playlists → Smart playlists**, choose **New smart playlist**, name it and choose a minimum star rating. Open the playlist to see the library tracks that meet your rating rule. **Edit rule** changes the name or rating. The definition belongs to your account, so you can open it on another signed-in client.
+
 ## Playlist files
 
 A playlist's menu exports it as M3U (extended M3U8) or CSV, and "Import playlist" on the Playlists page reads one of those files back into a new private playlist of yours, named after the file.

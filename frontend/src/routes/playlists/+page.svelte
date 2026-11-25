@@ -14,6 +14,7 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import { Plus, Lock, TriangleAlert, RefreshCw } from 'lucide-svelte';
 	import SpotifyIcon from '$lib/media/icons/SpotifyIcon.svelte';
+	import SmartPlaylistShelf from '$lib/features/playlists/components/SmartPlaylistShelf.svelte';
 	import PlaylistCard from '$lib/features/playlists/components/PlaylistCard.svelte';
 	import PlaylistImport from '$lib/features/playlists/components/PlaylistImport.svelte';
 	import RedactedPlaylistCard from '$lib/features/playlists/components/RedactedPlaylistCard.svelte';
@@ -194,6 +195,12 @@
 					</div>
 				</section>
 			{/if}
+		{/if}
+
+		{#if authStore.user}
+			{#key authStore.user.id}
+				<SmartPlaylistShelf />
+			{/key}
 		{/if}
 	</div>
 </div>

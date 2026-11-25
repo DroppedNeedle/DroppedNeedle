@@ -14,6 +14,7 @@ mod ratings;
 
 pub use follows::follow_status;
 pub(crate) use playlists::MAX_COVER_BYTES;
+pub(super) use playlists::clean_name;
 pub use playlists::{SavedPlaylist, Visible};
 
 use super::state::CollectionsState;

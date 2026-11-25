@@ -48,6 +48,7 @@ catalog_user_favorites kept: hearts on artists, albums and songs
 catalog_user_favorite_names kept: the names shown with those hearts
 catalog_user_ratings kept: ratings on artists, albums and songs
 catalog_playlists kept: their playlists
+catalog_smart_playlists kept: playlist rules the listener saved
 catalog_playlist_members kept: playlists shared with them
 library_album_looks_wrong kept: albums they marked as looking wrong
 catalog_new_release_seen_marks kept: when they last looked at new releases, for the unseen count
