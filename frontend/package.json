@@ -16,6 +16,7 @@
 	"scripts": {
 		"dev": "vite dev --open",
 		"build": "vite build",
+		"budget": "node scripts/home-budget.mjs",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
 		"check:ci": "pnpm check && pnpm format:check && pnpm lint",

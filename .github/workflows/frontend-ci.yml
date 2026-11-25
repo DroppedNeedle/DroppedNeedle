@@ -65,6 +65,12 @@ jobs:
       - name: Run type check
         run: pnpm run check
 
+      - name: Build
+        run: pnpm run build
+
+      - name: Check signed-in Home's size budget
+        run: pnpm run budget
+
   test:
     name: Tests
     runs-on: ubuntu-latest
