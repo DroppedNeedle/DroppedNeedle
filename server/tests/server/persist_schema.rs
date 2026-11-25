@@ -4298,6 +4298,7 @@ const FOREIGN_KEYS: &[(&str, &str, &str, &str)] = &[
     ("catalog_user_play_marks", "local_track_id", "local_tracks", "CASCADE"),
     ("catalog_user_play_marks", "user_id", "auth_users", "CASCADE"),
     ("catalog_user_ratings", "user_id", "auth_users", "CASCADE"),
+    ("catalog_smart_playlists", "user_id", "auth_users", "CASCADE"),
     ("catalog_weekly_set_picks", "user_id", "auth_users", "CASCADE"),
     ("catalog_weekly_set_picks", "user_id, week_start_at", "catalog_weekly_sets", "CASCADE"),
     ("catalog_weekly_sets", "user_id", "auth_users", "CASCADE"),
