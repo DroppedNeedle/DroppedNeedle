@@ -252,7 +252,7 @@ Each release on GitHub also carries Linux builds, for a machine or container wit
 
 The files are attached once the image is published, up to an hour after the release appears. `SHA256SUMS` goes up last, so once it is there the set is complete.
 
-They are the binaries the image ships, built on Debian 12, so they need glibc 2.36 or newer (Debian 12, Ubuntu 24.04 or later). Install `ffmpeg` for transcoding and `python3` for Python plugins, both on `PATH`.
+They are the binaries the image ships, and the packages above carry them too. They need glibc 2.28 or newer: RHEL, Rocky and AlmaLinux 8, Debian 10, Ubuntu 20.04 or later. Install `ffmpeg` for transcoding (on RHEL 8 and its rebuilds, from RPM Fusion) and, for Python plugins, Python 3.9 or newer, both on `PATH`. RHEL 8's `python3` is 3.6: install `python3.11` and run `sudo alternatives --set python3 /usr/bin/python3.11`.
 
 Set these before starting `droppedneedle`:
 

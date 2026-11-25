@@ -343,8 +343,8 @@ jobs:
 
       # The same build cut at the release-files stage, so every layer comes
       # from the cache the step above filled and the binaries are the ones
-      # the image ships. They are built on Debian 12, so they need glibc 2.36
-      # or newer.
+      # the image ships. They are built on AlmaLinux 8, so they need glibc
+      # 2.28 or newer.
       - name: Export the release files
         uses: docker/build-push-action@v7
         with:
@@ -445,6 +445,11 @@ jobs:
           ./packaging/build.sh "$ARCH" "$VERSION" \
             "files/droppedneedle-${VERSION}-${TRIPLE}-linux" \
             "files/droppedneedle-frontend-${VERSION}" packages
+
+      - name: Start the binaries on the oldest systems
+        env:
+          TRIPLE: ${{ matrix.triple }}
+        run: ./server/scripts/glibc-floor-boot.sh "files/droppedneedle-${VERSION}-${TRIPLE}-linux" "files/droppedneedle-frontend-${VERSION}/static"
 
       - name: Install and start them in each system
         run: ./server/scripts/package-test.sh packages

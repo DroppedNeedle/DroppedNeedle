@@ -319,7 +319,11 @@ jobs:
           node_version=$(cat .github/node-version)
           rust_version=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
           grep -q "^FROM node:${node_version}-bookworm-slim " Dockerfile
-          grep -q "^FROM rust:${rust_version}-bookworm " Dockerfile
+          # The image's Rust build installs what rust-toolchain.toml names, on
+          # the glibc 2.28 builder.
+          grep -q "^FROM almalinux:8\.[0-9]*@sha256:[0-9a-f]\{64\} AS chef$" Dockerfile
+          grep -qxF "COPY rust-toolchain.toml ./" Dockerfile
+          grep -qxF "RUN rustup toolchain install && cargo --version" Dockerfile
           grep -q "^FROM rust:${rust_version}-bookworm " server/scripts/e2e-mocks.Dockerfile
           grep -qxF "rust-version = \"${rust_version%.*}\"" server/Cargo.toml
           grep -qxF "rust-version = \"${rust_version%.*}\"" server/testkit/Cargo.toml

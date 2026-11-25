@@ -7,8 +7,9 @@
 # passes local, both quicker builds of the same code.
 ARG CARGO_PROFILE=release
 
-# Base images name the exact versions in .github/node-version and
-# rust-toolchain.toml; CI fails when they drift apart.
+# The Node base image names the exact version in .github/node-version, and
+# the Rust build installs the one rust-toolchain.toml names; CI fails when
+# they drift apart.
 FROM node:22.23.4-bookworm-slim AS frontend
 
 WORKDIR /app/frontend
@@ -34,19 +35,41 @@ ENV DROPPEDNEEDLE_BASE_PATH_PLACEHOLDER=1
 RUN pnpm run build --sourcemap hidden \
     && node scripts/notices.mjs build /app/NOTICES-web-ui.txt
 
-FROM rust:1.100.0-bookworm AS chef
+# The binaries are built on AlmaLinux 8, so they need glibc 2.28 at most and
+# run on RHEL 8, Debian 10, Ubuntu 20.04 and later. The image, the release
+# files and the packages all ship this one build; glibc-floor.sh holds it.
+FROM almalinux:8.10@sha256:768bedc30fe0a536adb0a65d2eddb7caad364e514fbddd0ae9e026975f590342 AS chef
 
 # Audio decode: opusic-sys (via symphonia-adapter-libopus) builds a
 # bundled C library through the `cmake` crate, which shells out to the cmake
-# binary. The rust base image ships gcc but not cmake.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends cmake \
-    && rm -rf /var/lib/apt/lists/*
+# binary. gcc-toolset-13 is the C compiler and linker.
+RUN dnf install -y --setopt=install_weak_deps=False cmake gcc-toolset-13-gcc gcc-toolset-13-binutils make \
+    && dnf clean all
 
-RUN cargo install cargo-chef --version 0.1.78 --locked
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:/opt/rh/gcc-toolset-13/root/usr/bin:$PATH
+
+# rustup, pinned by version and checksum, installs the Rust version
+# rust-toolchain.toml names.
+ARG RUSTUP_VERSION=1.29.3
+RUN case "$(uname -m)" in \
+        x86_64) sha256=b1c8cb14e30889e7e2999e6b69e62d9e9b9ffc0f4df8180564d306d9680e6c55 ;; \
+        aarch64) sha256=9f608c142e0e38a78957d0661ba1dfaf0b6fb37184cfaa4b9a0aa57af6184282 ;; \
+        *) echo "no pinned rustup for $(uname -m)" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL --retry 3 -o /tmp/rustup-init "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/$(uname -m)-unknown-linux-gnu/rustup-init" \
+    && echo "${sha256}  /tmp/rustup-init" | sha256sum -c - \
+    && chmod 0755 /tmp/rustup-init \
+    && /tmp/rustup-init -y --no-modify-path --profile minimal --default-toolchain none \
+    && rm /tmp/rustup-init
 
 WORKDIR /app
 COPY rust-toolchain.toml ./
+RUN rustup toolchain install && cargo --version
+
+RUN cargo install cargo-chef --version 0.1.78 --locked
+
 # The same SQLite the tests run: see .cargo/config.toml.
 ENV LIBSQLITE3_FLAGS=-DSQLITE_DEFAULT_MEMSTATUS=0
 
@@ -97,7 +120,8 @@ COPY frontend/src/lib/stores/customCssRules.json ./frontend/src/lib/stores/custo
 RUN cargo build --profile "$CARGO_PROFILE" --locked --manifest-path server/Cargo.toml --bins -p droppedneedle -p droppedneedle-tool \
     && mkdir /out \
     && cp "server/target/$CARGO_PROFILE/droppedneedle" "server/target/$CARGO_PROFILE/droppedneedle-tool" /out/ \
-    && rm -rf server/target
+    && rm -rf server/target \
+    && server/scripts/glibc-floor.sh 2.28 /out/droppedneedle /out/droppedneedle-tool
 
 # A slim audio-only ffmpeg for transcoding, LGPL only: never --enable-gpl or
 # --enable-nonfree. libmp3lame and libopus come from Debian, linked dynamically.
