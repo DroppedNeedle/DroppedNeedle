@@ -17,6 +17,7 @@ on:
       - '.cargo/**'
       - 'rust-toolchain.toml'
       - '.github/node-version'
+      - 'templates/**'
       - '.github/workflows/v3-ci.yml'
   pull_request:
     paths:
@@ -30,6 +31,7 @@ on:
       - '.cargo/**'
       - 'rust-toolchain.toml'
       - '.github/node-version'
+      - 'templates/**'
       - '.github/workflows/v3-ci.yml'
   workflow_dispatch:
 
@@ -55,6 +57,7 @@ jobs:
       rust: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.rust == 'true' }}
       contract: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.contract == 'true' }}
       image: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.image == 'true' }}
+      templates: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.templates == 'true' }}
     steps:
       - name: Checkout code
         if: github.event_name != 'workflow_dispatch'
@@ -95,6 +98,31 @@ jobs:
               - 'rust-toolchain.toml'
               - '.github/node-version'
               - '.github/workflows/v3-ci.yml'
+            templates:
+              - 'templates/**'
+              - '.github/workflows/v3-ci.yml'
+
+  # Unraid reads the template straight from main, so a file that is not
+  # well-formed XML breaks installs at once.
+  templates:
+    name: Unraid template
+    needs: changes
+    if: needs.changes.outputs.templates == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Check the templates are well-formed XML
+        run: |
+          python3 -c '
+          import sys
+          import xml.etree.ElementTree as ET
+          for path in sys.argv[1:]:
+              ET.parse(path)
+              print(path, "is well-formed")
+          ' templates/*.xml
 
   # Two shards that together run what `cargo test --workspace` runs: the two
   # longest test binaries, then every other test target, the unit tests and
