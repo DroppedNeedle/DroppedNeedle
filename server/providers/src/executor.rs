@@ -120,6 +120,7 @@ pub struct Request {
     pub(crate) body: Body,
     idempotent: bool,
     max_body: Option<usize>,
+    large: Option<(usize, Duration)>,
     redirects: Redirects,
 }
 
@@ -201,6 +202,7 @@ impl Request {
             body,
             idempotent: method == Method::Get,
             max_body: None,
+            large: None,
             redirects: Redirects::Refuse,
         }
     }
@@ -224,6 +226,15 @@ impl Request {
     #[must_use]
     pub fn max_body(mut self, cap: usize) -> Self {
         self.max_body = Some(cap);
+        self
+    }
+
+    /// Read at most `cap` bytes of the answer, each attempt within
+    /// `deadline`, in place of the provider's own limits: for one answer
+    /// known to be larger and slower than the rest.
+    #[must_use]
+    pub(crate) fn large_answer(mut self, cap: usize, deadline: Duration) -> Self {
+        self.large = Some((cap, deadline));
         self
     }
 
@@ -634,7 +645,8 @@ fn unread(provider: &'static str, error: BodyError) -> WireError {
 impl Wire for ReqwestWire {
     fn send<'a>(&'a self, prepared: Prepared<'a>) -> BoxFuture<'a, Result<WireAnswer, WireError>> {
         Box::pin(async move {
-            let (response, status, headers) = self.respond(&prepared, None).await?;
+            let deadline = prepared.request.large.map(|(_, deadline)| deadline);
+            let (response, status, headers) = self.respond(&prepared, deadline).await?;
             let body = read_capped(response, prepared.max_body)
                 .await
                 .map_err(|error| unread(prepared.provider, error))?;
@@ -986,8 +998,11 @@ impl Executor {
     ) -> (Result<Reply, ProviderError>, bool) {
         let mut body_bytes = 0;
         let mut foreign = false;
+        let deadline = request
+            .large
+            .map_or(self.spec.timeout, |(_, deadline)| deadline);
         let outcome = tokio::time::timeout(
-            self.spec.timeout,
+            deadline,
             self.exchange(request, &mut body_bytes, &mut foreign),
         )
         .await
@@ -1007,9 +1022,11 @@ impl Executor {
         foreign: &mut bool,
     ) -> Result<Reply, ProviderError> {
         let provider = self.spec.source;
-        let max_body = request
-            .max_body
-            .map_or(self.spec.max_body, |cap| cap.min(self.spec.max_body));
+        let max_body = match (request.large, request.max_body) {
+            (Some((cap, _)), _) => cap,
+            (None, Some(cap)) => cap.min(self.spec.max_body),
+            (None, None) => self.spec.max_body,
+        };
         let mut url = request.url.clone();
         let mut hops = 0;
         loop {

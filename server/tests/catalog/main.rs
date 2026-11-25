@@ -7,6 +7,7 @@ mod concerts;
 mod discover_forget;
 mod discover_health;
 mod discover_later;
+mod discover_new_releases;
 mod discover_page;
 mod discover_pool;
 mod discover_queue;

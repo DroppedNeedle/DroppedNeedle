@@ -113,10 +113,14 @@ export const EFFECTS = {
 	downloadsChanged: (userId: UserId): Sweep[] => [
 		{ key: DownloadQueryKeyFactory.tasksPrefix(userId) }
 	],
-	/** The caller's requests, and their week, whose picks read them as their state. */
+	/**
+	 * The caller's requests, and their week and new releases, whose rows read
+	 * them as their state.
+	 */
 	requestsChanged: (userId: UserId): Sweep[] => [
 		{ key: RequestQueryKeyFactory.all(userId) },
-		{ key: DiscoverQueryKeyFactory.v3.week(userId) }
+		{ key: DiscoverQueryKeyFactory.v3.week(userId) },
+		{ key: DiscoverQueryKeyFactory.v3.newReleases(userId) }
 	],
 	/** One manual album search moved. */
 	searchJobChanged: (userId: UserId, jobId: string): Sweep[] => [
@@ -153,6 +157,7 @@ export const EFFECTS = {
 		{ key: DiscoverQueryKeyFactory.v3.feedback(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.week(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.home(userId) },
+		{ key: DiscoverQueryKeyFactory.v3.newReleases(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.radios(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.radioPlans(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.allPlaylistSuggestions(userId) },

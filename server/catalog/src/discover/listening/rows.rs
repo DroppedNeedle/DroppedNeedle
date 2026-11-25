@@ -45,6 +45,26 @@ pub struct ArtistRow {
     pub listen_count: Option<i64>,
 }
 
+/// One release from ListenBrainz's sitewide fresh releases, as kept. Ids
+/// are lowercased.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FreshRow {
+    /// Release group id.
+    pub release_group_mbid: String,
+    /// Release title.
+    pub title: String,
+    /// The artist credit as it reads.
+    pub artist_name: String,
+    /// Credited artist ids, in credit order; never empty.
+    pub artist_mbids: Vec<String>,
+    /// Release date, `YYYY-MM-DD`.
+    pub release_date: String,
+    /// The release group's primary type, as MusicBrainz spells it.
+    pub primary_type: Option<String>,
+    /// Its secondary type, when it has one.
+    pub secondary_type: Option<String>,
+}
+
 /// One album row keyed by its release group.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AlbumRow {

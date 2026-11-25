@@ -36,7 +36,11 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 	],
 	localChanged: [every('local')],
 	downloadsChanged: [key(U, 'downloads', 'tasks')],
-	requestsChanged: [key(U, 'requests'), key(U, 'discover', 'week')],
+	requestsChanged: [
+		key(U, 'requests'),
+		key(U, 'discover', 'week'),
+		key(U, 'discover', 'new-releases')
+	],
 	searchJobChanged: [key(U, 'downloads', 'search', 'job')],
 	searchJobsChanged: [key(U, 'downloads', 'search')],
 	dropImportsChanged: [every('drop-import'), { key: [U, 'downloads', 'tasks', 'anon', 0, 'held'] }],
@@ -48,6 +52,7 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 		key(U, 'discover', 'feedback'),
 		key(U, 'discover', 'week'),
 		key(U, 'discover', 'home'),
+		key(U, 'discover', 'new-releases'),
 		key(U, 'discover', 'radio'),
 		key(U, 'discover', 'radio-plan'),
 		key(U, 'discover', 'playlist-suggestions'),

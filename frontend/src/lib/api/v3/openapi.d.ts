@@ -1941,6 +1941,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/discover/new-releases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The caller's new releases from their artists: every release of the
+         *     last 90 days by an artist they play, the library owns, they follow or
+         *     that is close to theirs, newest first, a page at a time, each marked
+         *     owned or requested. Read from kept rows; nothing is asked of a
+         *     provider.
+         */
+        get: operations["list_new_releases"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/discover/picks/events": {
         parameters: {
             query?: never;
@@ -20054,6 +20077,21 @@ export interface components {
              */
             username: string;
         };
+        /** @description One release on a person's list of new releases from their artists. */
+        NewRelease: {
+            /**
+             * @description The release: its date (`release_date`, `YYYY-MM-DD`), its type,
+             *     whether the library holds it and whether a request for it is open.
+             */
+            album: components["schemas"]["AlbumRef"];
+            /** @description Why it is listed, for a release by an artist close to theirs. */
+            reason?: string | null;
+            /**
+             * @description What kind of release it is besides its type, when it is a live
+             *     set, a demo or a compilation.
+             */
+            secondary_kind?: null | components["schemas"]["SecondaryKind"];
+        };
         /** @description One new-release sighting. */
         NewReleaseItem: {
             /** @description Artist MBID. */
@@ -20080,6 +20118,23 @@ export interface components {
             items: components["schemas"]["NewReleaseItem"][];
             /** @description Rows the filter matches, beyond this page too. */
             total: number;
+        };
+        /** @description The newest of a person's new releases, as the page shows them. */
+        NewReleaseSheet: {
+            /** @description The newest releases, newest first. */
+            releases: components["schemas"]["NewRelease"][];
+            /**
+             * Format: int64
+             * @description How many the whole list holds.
+             */
+            total: number;
+            /**
+             * Format: int64
+             * @description When ListenBrainz's list of new releases was read (unix seconds);
+             *     none when none is kept, and the list holds only what the person's
+             *     follows found.
+             */
+            updated_at?: number | null;
         };
         /** @description Whether a pick's artist is new to the person. */
         NewToYou: {
@@ -20858,6 +20913,26 @@ export interface components {
                 plan: components["schemas"]["ManagementPlanItemView"];
                 result: Record<string, never>;
                 work_state: components["schemas"]["ResultState"];
+            }[];
+            /** @description Pass back as `cursor` for the next page; null on the last. */
+            next_cursor: string | null;
+            /**
+             * Format: int64
+             * @description Rows in the whole list, for lists that count them.
+             */
+            total: number | null;
+        };
+        /** @description One page of a list. */
+        Page_NewRelease: {
+            items: {
+                /**
+                 * @description The release: its date (`release_date`, `YYYY-MM-DD`), its type,
+                 *     whether the library holds it and whether a request for it is open.
+                 */
+                album: components["schemas"]["AlbumRef"];
+                /** @description Why it is listed, for a release by an artist close to theirs. */
+                reason?: string | null;
+                secondary_kind?: null | components["schemas"]["SecondaryKind"];
             }[];
             /** @description Pass back as `cursor` for the next page; null on the last. */
             next_cursor: string | null;
@@ -25421,6 +25496,11 @@ export interface components {
             track_number: number;
         };
         /**
+         * @description A new release's kind besides its type, of those the list names.
+         * @enum {string}
+         */
+        SecondaryKind: "live" | "demo" | "compilation";
+        /**
          * @description Why a section switched on is not plainly built. The one list of these
          *     reasons, for the page's sections.
          * @enum {string}
@@ -25442,6 +25522,11 @@ export interface components {
             shape: "weekly";
             /** @description The playlist. */
             weekly: components["schemas"]["WeeklyExploration"];
+        } | {
+            /** @description The newest of them. */
+            new_releases: components["schemas"]["NewReleaseSheet"];
+            /** @enum {string} */
+            shape: "new_releases";
         };
         /** @description One row inside a section, tagged by `kind`. */
         SectionItem: (components["schemas"]["ArtistRef"] & {
@@ -25461,7 +25546,7 @@ export interface components {
          * @description One section of the home or discover page.
          * @enum {string}
          */
-        SectionKey: "popular_albums" | "trending_artists" | "weekly_exploration" | "your_top_albums" | "recently_played" | "recently_added" | "genre_list" | "favorite_artists" | "library_artists" | "library_albums" | "weekly_set" | "playlist_discovery" | "daily_mixes" | "radio_sections" | "fresh_releases" | "new_from_followed" | "missing_essentials" | "rediscover" | "anniversaries" | "lastfm_recent_scrobbles" | "lastfm_weekly_artist_chart" | "lastfm_weekly_album_chart";
+        SectionKey: "popular_albums" | "trending_artists" | "weekly_exploration" | "your_top_albums" | "recently_played" | "recently_added" | "genre_list" | "favorite_artists" | "library_artists" | "library_albums" | "weekly_set" | "playlist_discovery" | "daily_mixes" | "radio_sections" | "new_from_your_artists" | "missing_essentials" | "rediscover" | "anniversaries" | "lastfm_recent_scrobbles" | "lastfm_weekly_artist_chart" | "lastfm_weekly_album_chart";
         /**
          * @description What a section's rows are.
          * @enum {string}
@@ -32702,6 +32787,58 @@ export interface operations {
                 };
             };
             /** @description The change could not be saved */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_new_releases: {
+        parameters: {
+            query?: {
+                /** @description Releases per page, 1 to 100; more is read as 100 */
+                limit?: number;
+                /** @description `next_cursor` from the previous page */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of the list, newest first, with how many it holds */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_NewRelease"];
+                };
+            };
+            /** @description Bad cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The list could not be read */
             500: {
                 headers: {
                     [name: string]: unknown;

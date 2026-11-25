@@ -3,8 +3,8 @@
 
 use droppedneedle_catalog::discover::health::{BuildFacts, PageHealth, page_health};
 use droppedneedle_catalog::discover::models::{
-    AlbumRef, ArtistRef, ChartSection, DiscoverResponse, PageSection, SectionContent, SectionItem,
-    SectionKey, SectionKind, SectionZone,
+    AlbumRef, ArtistRef, ChartSection, DiscoverResponse, NewRelease, NewReleaseSheet, PageSection,
+    SectionContent, SectionItem, SectionKey, SectionKind, SectionZone,
 };
 use droppedneedle_catalog::discover::page::empty_page;
 use droppedneedle_catalog::discover::sections::{self, Page};
@@ -40,6 +40,28 @@ fn shelf(key: SectionKey, kind: SectionKind, items: Vec<SectionItem>) -> PageSec
     }
 }
 
+/// New from your artists holding `albums`.
+fn new_releases(albums: Vec<AlbumRef>) -> PageSection {
+    PageSection {
+        key: SectionKey::NewFromYourArtists,
+        zone: SectionZone::NewAndFresh,
+        content: SectionContent::NewReleases {
+            new_releases: NewReleaseSheet {
+                total: albums.len() as u64,
+                releases: albums
+                    .into_iter()
+                    .map(|album| NewRelease {
+                        album,
+                        reason: None,
+                        secondary_kind: None,
+                    })
+                    .collect(),
+                updated_at: None,
+            },
+        },
+    }
+}
+
 fn page(sections: Vec<PageSection>) -> DiscoverResponse {
     DiscoverResponse {
         sections,
@@ -64,11 +86,7 @@ fn a_page_counts_duplicates_and_repeats() {
                 )],
             },
         },
-        shelf(
-            SectionKey::FreshReleases,
-            SectionKind::Albums,
-            vec![SectionItem::Album(album("a1", "x"))],
-        ),
+        new_releases(vec![album("a1", "x")]),
         shelf(
             SectionKey::LastfmWeeklyArtistChart,
             SectionKind::Artists,
@@ -78,15 +96,11 @@ fn a_page_counts_duplicates_and_repeats() {
             })],
         ),
     ]);
-    let before = page(vec![shelf(
-        SectionKey::FreshReleases,
-        SectionKind::Albums,
-        vec![SectionItem::Album(album("a2", "y"))],
-    )]);
+    let before = page(vec![new_releases(vec![album("a2", "y")])]);
     let wanted: Vec<_> = [
         SectionKey::WeeklySet,
         SectionKey::RadioSections,
-        SectionKey::FreshReleases,
+        SectionKey::NewFromYourArtists,
         SectionKey::MissingEssentials,
         SectionKey::LastfmWeeklyArtistChart,
         SectionKey::WeeklyExploration,

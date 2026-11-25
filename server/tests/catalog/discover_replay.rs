@@ -61,7 +61,7 @@ use droppedneedle_catalog::discover::engine::pool_store;
 use droppedneedle_catalog::discover::engine::reason::reason;
 use droppedneedle_catalog::discover::engine::select::{self, Exposure, Floors, Share, Shown};
 use droppedneedle_catalog::discover::listening::{
-    AlbumRow, ArtistFacts, ArtistRow, JellyfinList, LastFmAlbum, LastFmChartAlbum, LastFmFacts,
+    ArtistFacts, ArtistRow, FreshRow, JellyfinList, LastFmAlbum, LastFmChartAlbum, LastFmFacts,
     ListenSource, ListenedAlbum, ListeningError, ListeningNetwork, LovedTrack, PlayedArtist, Read,
     ReleaseGroupFacts, ScoredArtist, SourceContext, StatsRange, TagAlbum, UserMusic,
     WeeklyPlaylist,
@@ -256,12 +256,8 @@ impl ListeningNetwork for Replay {
     fn genres<'a>(&'a self, username: &'a str, _: RequestPriority) -> Read<'a, Vec<(String, i64)>> {
         self.refuse(format!("genres {username}"))
     }
-    fn fresh_releases<'a>(
-        &'a self,
-        username: &'a str,
-        _: RequestPriority,
-    ) -> Read<'a, Vec<AlbumRow>> {
-        self.refuse(format!("fresh_releases {username}"))
+    fn sitewide_fresh_releases(&self, days: u32, _: RequestPriority) -> Read<'_, Vec<FreshRow>> {
+        self.refuse(format!("sitewide_fresh_releases {days}"))
     }
     fn loved<'a>(
         &'a self,

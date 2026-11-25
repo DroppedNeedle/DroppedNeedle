@@ -143,6 +143,10 @@ const MB_MERGED_ARTIST_MBID: &str = "ffbcb0c1-37ad-4df8-a78d-e31bd590d7ea";
 const MB_RECORDING_MBID: &str = "33ea7e59-3691-4414-92d3-6bce48d5d9cc";
 const MB_OK_COMPUTER_GROUP_MBID: &str = "b1392450-e666-3926-a536-22c65f834433";
 const MB_RADIOHEAD_MBID: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
+/// The sitewide fresh releases: seven of 90 days' rows, as answered.
+const FRESH_RELEASES_PATH: &str = "/1/explore/fresh-releases/";
+const FRESH_RELEASES_BODY: &str =
+    include_str!("../fixtures/listenbrainz/fresh_releases_sitewide.json");
 /// The recording the recorded ListenBrainz metadata answer is about.
 const LB_KARMA_POLICE_MBID: &str = "9e2ad5bc-c6f9-40d2-a36f-3122ee2072a3";
 const MB_RELEASE_INCLUDES: &[&str] = &[
@@ -928,9 +932,9 @@ const ROWS: &[Row] = &[
         identity: "/feedback",
     },
     Row {
-        name: "listenbrainz /1/user/{user}/fresh_releases, list",
+        name: "listenbrainz /1/explore/fresh-releases/, list",
         provider: Provider::ListenBrainz(ListenBrainzRead::FreshReleases),
-        body: include_str!("../fixtures/listenbrainz/fresh_releases_account.json"),
+        body: FRESH_RELEASES_BODY,
         kind: PayloadKind::Decode,
         identity: "/payload/releases",
     },
@@ -1727,17 +1731,12 @@ async fn listenbrainz(read: ListenBrainzRead, body: &str) -> Result<bool, Provid
             .await?
                 > 0
         }
-        // The recorded lists are empty for the new account: decoding them is the check.
-        ListenBrainzRead::FreshReleases => {
-            answer(
-                Method::Get,
-                "/1/user/DroppedNeedle/fresh_releases".to_owned(),
-            )
+        ListenBrainzRead::FreshReleases => !answer(Method::Get, FRESH_RELEASES_PATH.to_owned())
             .listenbrainz
-            .user_fresh_releases("DroppedNeedle", PRIORITY)
-            .await?;
-            true
-        }
+            .sitewide_fresh_releases(90, PRIORITY)
+            .await?
+            .is_empty(),
+        // The recorded lists are empty for the new account: decoding them is the check.
         ListenBrainzRead::SimilarUsers => {
             answer(
                 Method::Get,
@@ -2290,6 +2289,57 @@ async fn listenbrainz_sitewide_stats_read_as_answered() {
         .await
         .expect("a 204 is absence");
     assert!(computing.is_empty());
+}
+
+/// The sitewide fresh releases read as answered: every recorded row with
+/// its date and types, and a row with no release group, no artist id or no
+/// whole date skipped rather than shown.
+#[tokio::test]
+async fn listenbrainz_fresh_releases_read_as_answered() {
+    let read = |body: String| async move {
+        listenbrainz_answer(Method::Get, FRESH_RELEASES_PATH, 200, &body)
+            .listenbrainz
+            .sitewide_fresh_releases(90, PRIORITY)
+            .await
+            .expect("the answer decodes")
+    };
+    let rows = read(FRESH_RELEASES_BODY.to_owned()).await;
+    assert_eq!(rows.len(), 7, "no recorded row is dropped");
+    assert_eq!(rows[0].release_name, "Load The Beat Up");
+    assert_eq!(rows[0].release_date, "2026-08-27");
+    assert_eq!(rows[0].primary_type.as_deref(), Some("Single"));
+    assert_eq!(
+        rows[0].artist_mbids,
+        ["659c2668-dc06-4ea6-824f-4134394eb0c9"]
+    );
+    assert_eq!(rows[2].primary_type, None, "a row with no primary type");
+    assert_eq!(rows[3].secondary_type.as_deref(), Some("Audiobook"));
+    assert_eq!(rows[3].artist_mbids.len(), 2);
+
+    let mut answer: serde_json::Value =
+        serde_json::from_str(FRESH_RELEASES_BODY).expect("recorded body parses");
+    let releases = answer["payload"]["releases"]
+        .as_array_mut()
+        .expect("the recorded list");
+    let drop = |row: &mut serde_json::Value, field: &str| {
+        row.as_object_mut()
+            .and_then(|row| row.remove(field))
+            .expect("the recorded row has the field");
+    };
+    drop(&mut releases[0], "release_group_mbid");
+    drop(&mut releases[1], "release_date");
+    releases[2]["artist_mbids"] = serde_json::json!([]);
+    releases[4]["release_date"] = serde_json::json!("2026-08");
+    let rows = read(answer.to_string()).await;
+    let names: Vec<&str> = rows.iter().map(|row| row.release_name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "We Have Ways of Making You Talk: New Histories of the Second World War",
+            "Audiotree Live",
+            "Yellow"
+        ]
+    );
 }
 
 /// The recorded answers that are not hits: an unknown release group has no

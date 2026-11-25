@@ -12,10 +12,9 @@ use std::sync::Arc;
 
 use super::network::{ListeningNetwork, Read};
 use super::rows::{
-    AlbumFacts, AlbumRow, ArtistFacts, ArtistRow, JellyfinList, LastFmAlbum, LastFmChartAlbum,
-    LastFmFacts, ListenSource, ListenedAlbum, LovedTrack, PlayedArtist, PlaylistTrack,
-    ReleaseGroupFacts, ScoredArtist, SourceContext, StatsRange, TagAlbum, UserMusic,
-    WeeklyPlaylist,
+    ArtistFacts, ArtistRow, FreshRow, JellyfinList, LastFmAlbum, LastFmChartAlbum, LastFmFacts,
+    ListenSource, ListenedAlbum, LovedTrack, PlayedArtist, PlaylistTrack, ReleaseGroupFacts,
+    ScoredArtist, SourceContext, StatsRange, TagAlbum, UserMusic, WeeklyPlaylist,
 };
 use super::{ListeningError, ListeningResult};
 use crate::discover::ports::BoxFuture;
@@ -419,28 +418,32 @@ impl ListeningNetwork for LiveNetwork {
         })
     }
 
-    fn fresh_releases<'a>(
-        &'a self,
-        username: &'a str,
+    fn sitewide_fresh_releases(
+        &self,
+        days: u32,
         priority: RequestPriority,
-    ) -> Read<'a, Vec<AlbumRow>> {
+    ) -> Read<'_, Vec<FreshRow>> {
         Box::pin(async move {
             let rows = provider(
                 self.listenbrainz
-                    .user_fresh_releases(username, priority)
+                    .sitewide_fresh_releases(days, priority)
                     .await,
             )?;
             Ok(rows
                 .into_iter()
-                .filter_map(|row| {
-                    let artist_name = row.artist_credit_name.filter(|name| !name.is_empty())?;
-                    Some(AlbumRow {
-                        release_group_mbid: row.release_group_mbid,
-                        title: row.release_name,
-                        artist_name,
-                        artist_mbid: row.artist_mbids.into_iter().next(),
-                        facts: AlbumFacts::default(),
-                    })
+                // A row with no credit name is kept and shows no artist.
+                .map(|row| FreshRow {
+                    release_group_mbid: row.release_group_mbid.to_ascii_lowercase(),
+                    artist_name: row.artist_credit_name.unwrap_or_default(),
+                    title: row.release_name,
+                    artist_mbids: row
+                        .artist_mbids
+                        .iter()
+                        .map(|mbid| mbid.to_ascii_lowercase())
+                        .collect(),
+                    release_date: row.release_date,
+                    primary_type: row.primary_type,
+                    secondary_type: row.secondary_type,
                 })
                 .collect())
         })

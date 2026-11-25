@@ -233,6 +233,7 @@ async fn due_on_visit(rig: &AuthRig) -> bool {
             )
             .due(),
             crate::common::history_store(&rig.platform),
+            crate::discover_queue::fresh_feed(&rig.platform),
         ),
     );
     due.visit("user-1").await;

@@ -40,7 +40,6 @@ use crate::discover::models::{
     AlbumRef, ChartSection, DiscoverResponse, RadioSeedKind, SectionContent, SectionItem,
     SectionKey, SectionKind, ServiceState, ShelfSource, WeeklyExploration, WeeklyTrack,
 };
-use crate::discover::ownership;
 use crate::discover::queue::QueueSettings;
 use crate::discover::queue::build::{
     AlbumCard, BuildContext, VARIOUS_ARTISTS_MBID, lastfm_pools, normalize, or_empty,
@@ -50,6 +49,7 @@ use crate::discover::queue::seeds::{SEEDS, links_listening, weighted_seeds};
 use crate::discover::queue::select::{MAX_PER_ARTIST, Shuffler, round_robin};
 use crate::discover::queue::store::QueueDb;
 use crate::discover::sections::{self, Dedupe, Input, Page, Requires, SectionDef};
+use crate::discover::{new_releases, ownership};
 
 /// Bound on any one upstream read in a build.
 const TASK_TIMEOUT: Duration = Duration::from_secs(25);
@@ -166,6 +166,9 @@ pub enum Outcome {
     Failed(Option<ListenSource>),
     /// It needs a service the person has not linked.
     NeedsLink(ListenSource),
+    /// It was built from ListenBrainz rows kept since this time (unix
+    /// seconds), whose daily read has missed since.
+    Dated(i64),
 }
 
 /// Failed reads of the first round, for the degraded banner and for the
@@ -335,7 +338,6 @@ struct Shared {
     lastfm_weekly_artists: Vec<ArtistRow>,
     lastfm_weekly_albums: Vec<LastFmChartAlbum>,
     lastfm_recent: Vec<LastFmChartAlbum>,
-    fresh: Vec<AlbumRow>,
     genres: Option<Vec<(String, i64)>>,
     jellyfin: Vec<PlayedArtist>,
     library_albums: Vec<super::library::LibraryAlbum>,
@@ -568,11 +570,16 @@ impl Builder<'_> {
                 }
                 shelves::section(Page::Discover, def.key, content)
             });
+            let stale = section.as_ref().and_then(|section| {
+                new_releases::stale_since(&section.content, (self.now * 1000.0) as i64)
+            });
             let outcome = if failed {
                 let source = input_failure(def)
                     .flatten()
                     .or_else(|| required_service(def));
                 Some(Outcome::Failed(source))
+            } else if let Some(since) = stale {
+                Some(Outcome::Dated(since))
             } else if section.is_some() {
                 Some(Outcome::Built)
             } else {
@@ -690,8 +697,7 @@ impl Builder<'_> {
                     )
                     .await,
             }),
-            SectionKey::FreshReleases => one(fresh_releases(&shared.fresh)),
-            SectionKey::NewFromFollowed => one(self.new_from_followed(user_id).await),
+            SectionKey::NewFromYourArtists => self.new_from_your_artists(user_id).await,
             SectionKey::MissingEssentials => {
                 one(self.missing_essentials(user_id, ctx.user, shared).await)
             }
@@ -809,33 +815,14 @@ impl Builder<'_> {
                 },
             )
         };
-        let listenbrainz_user = async {
-            let Some(username) = lb_user else {
-                return (Vec::new(), None);
-            };
-            tokio::join!(
-                async {
-                    if !needs(Input::Fresh) {
-                        return Vec::new();
-                    }
-                    tracker
-                        .run(
-                            Input::Fresh,
-                            "lb_fresh",
-                            listening.fresh_releases(username, ask),
-                        )
-                        .await
-                        .unwrap_or_default()
-                },
-                async {
-                    if !needs(Input::Genres) {
-                        return None;
-                    }
-                    tracker
-                        .run(Input::Genres, "lb_genres", listening.genres(username, ask))
-                        .await
-                },
-            )
+        let genres = async {
+            let username = lb_user?;
+            if !needs(Input::Genres) {
+                return None;
+            }
+            tracker
+                .run(Input::Genres, "lb_genres", listening.genres(username, ask))
+                .await
         };
         let jellyfin = async {
             if !user.jellyfin || !needs(Input::Jellyfin) {
@@ -865,15 +852,14 @@ impl Builder<'_> {
         };
         let (
             (lastfm_weekly_artists, lastfm_weekly_albums, lastfm_recent),
-            (fresh, genres),
+            genres,
             jellyfin,
             library_albums,
-        ) = tokio::join!(lastfm_charts, listenbrainz_user, jellyfin, library);
+        ) = tokio::join!(lastfm_charts, genres, jellyfin, library);
         Shared {
             lastfm_weekly_artists,
             lastfm_weekly_albums,
             lastfm_recent,
-            fresh,
             genres,
             jellyfin,
             library_albums,
@@ -1497,32 +1483,18 @@ impl Builder<'_> {
         )
     }
 
-    /// The newest releases from artists the user follows.
-    async fn new_from_followed(&self, user_id: &str) -> Option<ChartSection> {
-        let rows = or_empty(
-            "followed releases",
-            self.library.followed_releases(user_id, 10).await,
-        );
-        let items = rows
-            .into_iter()
-            .map(|row| {
-                let mut item = album(
-                    Some(&row.release_group_mbid),
-                    &row.title,
-                    Some(&row.artist_name),
-                    Some(&row.artist_mbid),
-                    None,
-                );
-                item.release_date = row.first_release_date;
-                SectionItem::Album(item)
-            })
-            .collect();
-        shelf(
-            "New From Artists You Follow",
-            SectionKind::Albums,
-            items,
-            Some(ShelfSource::Library),
-        )
+    /// New from your artists: the newest of the person's list, read from
+    /// kept rows. A list that could not be read fails the section, so the
+    /// page keeps the one it showed.
+    async fn new_from_your_artists(&self, user_id: &str) -> Option<SectionContent> {
+        match new_releases::list(self.library.db(), self.listening, user_id).await {
+            Ok(listed) => new_releases::sheet(listed),
+            Err(error) => {
+                tracing::warn!(%error, "new releases unreadable; the page keeps its section");
+                self.ask.note_failure();
+                None
+            }
+        }
     }
 
     /// The Last.fm tags of the first few of `artists`, in order.
@@ -1680,29 +1652,6 @@ fn artist_shelf(
     }
     items.truncate(SHELF_SIZE);
     shelf(title, SectionKind::Artists, items, source)
-}
-
-/// Recent releases by artists the user listens to.
-fn fresh_releases(rows: &[AlbumRow]) -> Option<ChartSection> {
-    let items = rows
-        .iter()
-        .take(SHELF_SIZE)
-        .map(|row| {
-            SectionItem::Album(album(
-                Some(&row.release_group_mbid),
-                &row.title,
-                Some(&row.artist_name),
-                row.artist_mbid.as_deref(),
-                None,
-            ))
-        })
-        .collect();
-    shelf(
-        "Fresh Releases For You",
-        SectionKind::Albums,
-        items,
-        Some(ShelfSource::Listenbrainz),
-    )
 }
 
 /// Jellyfin artists played a lot but not in the last three months.
@@ -1988,6 +1937,7 @@ pub async fn mark_ownership(db: &Db, page: &mut DiscoverResponse) {
             }
         }
     }
+    new_releases::mark_served(db, &mut page.sections).await;
     page.sections.retain(|section| !section.content.is_empty());
 }
 

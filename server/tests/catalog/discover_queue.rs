@@ -18,7 +18,7 @@ use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_catalog::discover::facts::KeptFacts;
 use droppedneedle_catalog::discover::listening::{
-    AlbumRow, ArtistFacts, ArtistRow, Ask, JellyfinList, LastFmAlbum, LastFmChartAlbum,
+    AlbumRow, ArtistFacts, ArtistRow, Ask, FreshRow, JellyfinList, LastFmAlbum, LastFmChartAlbum,
     LastFmFacts, ListenedAlbum, ListeningData, ListeningError, ListeningNetwork, LovedTrack,
     PlayedArtist, RankedAlbum, Read, ReleaseGroupFacts, ScoredArtist, SourceContext, StatsRange,
     TagAlbum, UserMusic, WeeklyPlaylist,
@@ -48,8 +48,9 @@ fn group(n: u8) -> String {
 
 /// Scripted listening answers, the network behind the listening data.
 /// Each read answers its field (empty by default). Release-group facts
-/// fail while `musicbrainz_down` is set, fresh releases while
-/// `fresh_down` is, similar artists while `similar_down` is and an
+/// fail while `musicbrainz_down` is set, the sitewide fresh releases
+/// (counted) while `fresh_down` is, the weekly playlist while
+/// `weekly_down` is, similar artists while `similar_down` is and an
 /// artist's discography while `albums_down` is. ListenBrainz's similar list
 /// answers `similar`, each row's score as its co-listening score, and
 /// `listeners` its counts; both reads are counted, and the artists whose
@@ -103,7 +104,10 @@ pub(crate) struct Script {
     /// The user's Jellyfin artists.
     pub jellyfin_artists: Vec<ArtistRow>,
     pub genres: Vec<(String, i64)>,
-    pub fresh: Vec<AlbumRow>,
+    /// ListenBrainz's sitewide fresh releases.
+    pub fresh: Vec<FreshRow>,
+    /// Sitewide fresh-release reads made so far.
+    pub fresh_reads: AtomicUsize,
     pub loved: Vec<LovedTrack>,
     pub tag_artists: Vec<ArtistRow>,
     pub tag_albums: Vec<TagAlbum>,
@@ -118,6 +122,9 @@ pub(crate) struct Script {
     pub release_lookups_hang: bool,
     pub musicbrainz_down: AtomicBool,
     pub fresh_down: AtomicBool,
+    /// When set, the sitewide fresh releases answer an empty list.
+    pub fresh_empty: AtomicBool,
+    pub weekly_down: AtomicBool,
     pub similar_down: AtomicBool,
     pub albums_down: AtomicBool,
     /// When set, the user's Jellyfin most played fails.
@@ -288,13 +295,17 @@ impl ListeningNetwork for Script {
     fn genres<'a>(&'a self, _u: &'a str, _p: RequestPriority) -> Answer<'a, Vec<(String, i64)>> {
         ok(self.genres.clone())
     }
-    fn fresh_releases<'a>(&'a self, _u: &'a str, _p: RequestPriority) -> Answer<'a, Vec<AlbumRow>> {
+    fn sitewide_fresh_releases(&self, _d: u32, _p: RequestPriority) -> Answer<'_, Vec<FreshRow>> {
+        self.fresh_reads.fetch_add(1, Ordering::SeqCst);
         if self.fresh_down.load(Ordering::SeqCst) {
             return Box::pin(async {
                 Err(ListeningError::MediaServer(
                     "fresh releases down".to_owned(),
                 ))
             });
+        }
+        if self.fresh_empty.load(Ordering::SeqCst) {
+            return ok(Vec::new());
         }
         ok(self.fresh.clone())
     }
@@ -312,6 +323,9 @@ impl ListeningNetwork for Script {
         _u: &'a str,
         _p: RequestPriority,
     ) -> Answer<'a, Option<WeeklyPlaylist>> {
+        if self.weekly_down.load(Ordering::SeqCst) {
+            return down("weekly playlist down");
+        }
         ok(self.weekly.clone())
     }
     fn recording_groups<'a>(
@@ -674,6 +688,18 @@ pub(crate) async fn seen_now(rig: &AuthRig, user: &str) {
         })
         .await
         .expect("seen");
+}
+
+/// The fresh releases' reads over a network that has none, for a `Due`
+/// that queues no feed read worth making.
+pub(crate) fn fresh_feed(
+    platform: &droppedneedle_kernel::platform::Platform,
+) -> droppedneedle_catalog::discover::listening::fresh::FreshFeedReads {
+    droppedneedle_catalog::discover::listening::fresh::FreshFeedReads::new(
+        Arc::new(Script::default()),
+        Providers::closed().cache,
+        KeptFacts::new(platform.db.clone(), platform.clock.clone()),
+    )
 }
 
 /// Keep, as the refresh job would have, every similar-artists list and

@@ -173,23 +173,78 @@ droppedneedle_kernel::sql! {
     /// Owned albums of some years, oldest first, in `ShelfAlbumColumns`'
     /// columns.
     family ANNIVERSARY_ALBUMS = anniversary_albums;
-    /// The newest releases from a user's follows that the library lacks.
-    pub(super) FOLLOWED_RELEASES = (concat!(
-        "SELECT n.release_group_mbid AS release_group_mbid, n.title AS title, \
-         n.artist_name AS artist_name, f.artist_mbid AS artist_mbid, \
-         n.first_release_date AS first_release_date \
+    // -- new from your artists -----------------------------------------------
+
+    /// Person ?1's artists, lowercased, one row for each way they are theirs:
+    /// played (their taste rows), owned (a library artist with an owned
+    /// album), followed, or among the ?2 strongest artists of their pool,
+    /// with the name of the artist of theirs it is closest to.
+    pub(super) NEW_RELEASE_ARTISTS = (concat!(
+        "SELECT artist_mbid_lower AS mbid, name AS name, 'played' AS tie, NULL AS near \
+         FROM catalog_taste_artists WHERE user_id = ?1 \
+         UNION ALL \
+         SELECT lower(ai.provider_artist_id), MIN(r.display_name), 'owned', NULL \
+         FROM local_artist_external_identities ai \
+         JOIN local_artists r ON r.id = ai.local_artist_id WHERE ",
+        musicbrainz!("ai"),
+        " AND ",
+        owned_artist!("r"),
+        " GROUP BY lower(ai.provider_artist_id) \
+         UNION ALL \
+         SELECT artist_mbid_lower, artist_name, 'followed', NULL \
+         FROM acquire_followed_artists WHERE user_id = ?1 \
+         UNION ALL \
+         SELECT mbid, name, 'near', near FROM (\
+           SELECT mbid, name, near, support FROM (\
+             SELECT lower(c.artist_mbid) AS mbid, c.artist_name AS name, c.support AS support, \
+             (SELECT p.artist_name FROM catalog_discover_candidate_paths p \
+               WHERE p.user_id = c.user_id \
+               AND p.release_group_mbid_lower = c.release_group_mbid_lower \
+               AND p.kind = 'seed' AND p.artist_name IS NOT NULL \
+               ORDER BY p.link_strength DESC, p.path_no LIMIT 1) AS near, \
+             ROW_NUMBER() OVER (PARTITION BY lower(c.artist_mbid) \
+               ORDER BY c.support DESC, c.rank) AS pick \
+             FROM catalog_discover_candidates c \
+             WHERE c.user_id = ?1 AND c.kind = 'new_artist') \
+           WHERE pick = 1 ORDER BY support DESC, mbid LIMIT ?2)"
+    ));
+    pub(super) row NewReleaseArtist for [NEW_RELEASE_ARTISTS] {
+        mbid: String,
+        name: String,
+        tie: String,
+        near: Option<String>,
+    }
+    /// The releases of person ?1's follows the follow poll found, dated
+    /// from ?2 to ?3 (`YYYY-MM-DD`, both included).
+    pub(super) FOLLOWED_RELEASES = "SELECT n.release_group_mbid_lower AS release_group_mbid, \
+         n.title AS title, n.artist_name AS artist_name, n.artist_mbid_lower AS artist_mbid, \
+         n.primary_type AS primary_type, n.secondary_types AS secondary_types, \
+         n.first_release_date AS release_date \
          FROM acquire_new_release_feed n JOIN acquire_followed_artists f \
          ON f.artist_mbid_lower = n.artist_mbid_lower AND f.user_id = ?1 \
-         WHERE NOT EXISTS (",
-        owns_group!("= +n.release_group_mbid_lower"),
-        ") ORDER BY n.first_release_date DESC, n.discovered_at DESC LIMIT ?2"
-    ));
+         WHERE length(n.first_release_date) = 10 \
+         AND n.first_release_date BETWEEN ?2 AND ?3";
     pub(super) row FollowedReleaseColumns for [FOLLOWED_RELEASES] {
         release_group_mbid: String,
         title: String,
         artist_name: String,
         artist_mbid: String,
-        first_release_date: Option<String>,
+        primary_type: Option<String>,
+        secondary_types: Option<String>,
+        release_date: String,
+    }
+    /// For each release group in the JSON list ?1 (lowercased), its oldest
+    /// owned album and whether an album request for it is open.
+    pub(super) RELEASE_MARKS = "WITH asked(g) AS (SELECT DISTINCT value FROM json_each(?1)), \
+         owners AS (" + OLDEST_OWNERS + ") \
+         SELECT a.g AS mbid, o.local_id AS local_id, \
+         EXISTS (SELECT 1 FROM request_history \
+             WHERE musicbrainz_id_lower = a.g AND " + OPEN_REQUEST + ") AS requested \
+         FROM asked a LEFT JOIN owners o ON o.mbid = a.g";
+    pub(super) row ReleaseMark for [RELEASE_MARKS] {
+        mbid: String,
+        local_id: Option<String>,
+        requested: bool,
     }
 
     // -- home and genre pages -------------------------------------------------

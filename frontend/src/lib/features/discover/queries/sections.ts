@@ -1,5 +1,6 @@
 import type {
 	ChartSection,
+	NewReleaseSheet,
 	PageSection,
 	SectionKey,
 	SectionState,
@@ -33,6 +34,11 @@ export function shelfOf(sections: Sections, key: SectionKey): ChartSection | nul
 /** A section of several shelves (Daily Mixes, radio). */
 export function shelvesOf(sections: Sections, key: SectionKey): ChartSection[] {
 	return contentOf(sections, key, 'shelves')?.shelves ?? [];
+}
+
+/** New from your artists: the newest of the person's new releases. */
+export function newReleasesOf(sections: Sections): NewReleaseSheet | null {
+	return contentOf(sections, 'new_from_your_artists', 'new_releases')?.new_releases ?? null;
 }
 
 /** The weekly exploration playlist. */

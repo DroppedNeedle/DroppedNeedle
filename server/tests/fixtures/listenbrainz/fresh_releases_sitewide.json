@@ -1,0 +1,119 @@
+{
+  "payload": {
+    "releases": [
+      {
+        "artist_credit_name": "6ino",
+        "artist_mbids": [
+          "659c2668-dc06-4ea6-824f-4134394eb0c9"
+        ],
+        "caa_id": null,
+        "caa_release_mbid": null,
+        "listen_count": 0,
+        "release_date": "2026-08-27",
+        "release_group_mbid": "6e17f351-bfc9-4a46-87b0-e576be2d4e92",
+        "release_group_primary_type": "Single",
+        "release_mbid": "96c22dc1-d44d-4f31-bbaa-daf2d3c477e2",
+        "release_name": "Load The Beat Up",
+        "release_tags": []
+      },
+      {
+        "artist_credit_name": "Added Color",
+        "artist_mbids": [
+          "d714e66d-c003-40eb-9c71-1119f984d5b4"
+        ],
+        "caa_id": 46584021425,
+        "caa_release_mbid": "ff5c7580-24f6-479b-a582-8f077c66c4b4",
+        "listen_count": 0,
+        "release_date": "2026-08-27",
+        "release_group_mbid": "b6133868-ed40-41e6-a3b1-79ac8a750bcf",
+        "release_group_primary_type": "EP",
+        "release_mbid": "ff5c7580-24f6-479b-a582-8f077c66c4b4",
+        "release_name": "Dust",
+        "release_tags": []
+      },
+      {
+        "artist_credit_name": "Akira the Don",
+        "artist_mbids": [
+          "d9e5d29d-7c33-4e6d-be98-26f7470a0b04"
+        ],
+        "caa_id": 46170474698,
+        "caa_release_mbid": "13a08cb3-7443-4b7b-bdb6-ef2c075cf2b8",
+        "listen_count": 0,
+        "release_date": "2026-08-27",
+        "release_group_mbid": "75b01646-d448-411e-8eb5-312baa6a9150",
+        "release_mbid": "13a08cb3-7443-4b7b-bdb6-ef2c075cf2b8",
+        "release_name": "Thinking is an Action",
+        "release_tags": []
+      },
+      {
+        "artist_credit_name": "Al Murray & James Holland read by Al Murray",
+        "artist_mbids": [
+          "29665c52-df31-455e-9ffe-622ff5aecb03",
+          "945f2047-1de7-460d-8c18-5dcf4adbc3be"
+        ],
+        "caa_id": 46367191812,
+        "caa_release_mbid": "9e8d41c7-99b9-416f-8ba4-ae25b9623b91",
+        "listen_count": 0,
+        "release_date": "2026-08-27",
+        "release_group_mbid": "7734bcf7-2833-45b2-ba25-67c1d1b4bbdc",
+        "release_group_primary_type": "Other",
+        "release_group_secondary_type": "Audiobook",
+        "release_mbid": "9e8d41c7-99b9-416f-8ba4-ae25b9623b91",
+        "release_name": "We Have Ways of Making You Talk: New Histories of the Second World War",
+        "release_tags": [
+          "chapters"
+        ]
+      },
+      {
+        "artist_credit_name": "Arde la Sangre",
+        "artist_mbids": [
+          "5c54bd87-0dda-4f3b-bc20-02ae4af5619f"
+        ],
+        "caa_id": 46515345960,
+        "caa_release_mbid": "c0b84755-65e8-4161-920c-d4cb02ac6a68",
+        "listen_count": 0,
+        "release_date": "2026-08-27",
+        "release_group_mbid": "a590b83c-7e82-43c7-83bf-61e02d052dc8",
+        "release_group_primary_type": "Album",
+        "release_mbid": "c0b84755-65e8-4161-920c-d4cb02ac6a68",
+        "release_name": "DESESPERADA (MENTE)",
+        "release_tags": []
+      },
+      {
+        "artist_credit_name": "Armor for Sleep",
+        "artist_mbids": [
+          "a5be6906-b6ad-43af-ae65-ec4f9aa6c40b"
+        ],
+        "caa_id": 46138880708,
+        "caa_release_mbid": "b0520fe4-c651-483a-82a3-8602d02801b8",
+        "listen_count": 0,
+        "release_date": "2026-08-27",
+        "release_group_mbid": "18b4c81c-273e-436a-a135-7d3950f0e935",
+        "release_group_primary_type": "EP",
+        "release_group_secondary_type": "Live",
+        "release_mbid": "b0520fe4-c651-483a-82a3-8602d02801b8",
+        "release_name": "Audiotree Live",
+        "release_tags": []
+      },
+      {
+        "artist_credit_name": "DC THE DON",
+        "artist_mbids": [
+          "eec466a4-aec6-42ea-ab35-20416e502b9d"
+        ],
+        "caa_id": 46031188782,
+        "caa_release_mbid": "569131a9-28b9-4a1c-98a9-434cff2b29d0",
+        "listen_count": 0,
+        "release_date": "2026-08-27",
+        "release_group_mbid": "b551bd01-beb6-4888-9c5c-9c0ef23c45da",
+        "release_group_primary_type": "Single",
+        "release_mbid": "569131a9-28b9-4a1c-98a9-434cff2b29d0",
+        "release_name": "Yellow",
+        "release_tags": [
+          "hip hop",
+          "pop"
+        ]
+      }
+    ],
+    "total_count": 36684
+  }
+}

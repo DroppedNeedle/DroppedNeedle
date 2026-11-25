@@ -24,8 +24,11 @@
 //! - the background read meter: every read made at background priority to
 //!   ListenBrainz or the official MusicBrainz service is counted by day,
 //!   for the daily ceiling ([`crate::discover::facts::plan`]).
+//! - the fresh releases feed ([`fresh`]): read once a day for the install,
+//!   kept under one shared key, never read for a build.
 
 pub(crate) mod albums;
+pub mod fresh;
 pub mod gate;
 mod live;
 mod network;
@@ -109,7 +112,7 @@ const ACTIVITY: Policy = Policy {
     fresh: Duration::from_secs(15 * 60),
     miss: Duration::from_secs(15 * 60),
 };
-/// A user's slower statistics (genres, similar users, fresh releases).
+/// A user's slower statistics (genres).
 const LISTENING_SLOW: Policy = Policy {
     fresh: Duration::from_secs(12 * 3_600),
     miss: Duration::from_secs(12 * 3_600),
@@ -339,6 +342,7 @@ pub struct ListeningData {
     cache: ProviderCacheStore,
     facts: KeptFacts,
     health: Arc<Health>,
+    fresh: fresh::FreshFeedReads,
 }
 
 fn lower(text: &str) -> String {
@@ -374,17 +378,24 @@ impl ListeningData {
         cache: ProviderCacheStore,
         facts: KeptFacts,
     ) -> Self {
+        let fresh = fresh::FreshFeedReads::new(Arc::clone(&network), cache.clone(), facts.clone());
         Self {
             network,
             cache,
             facts,
             health: Arc::default(),
+            fresh,
         }
     }
 
     /// The kept facts these reads read.
     pub fn facts(&self) -> &KeptFacts {
         &self.facts
+    }
+
+    /// The fresh releases feed these reads keep.
+    pub fn fresh(&self) -> &fresh::FreshFeedReads {
+        &self.fresh
     }
 
     /// What a read to `source` at `priority` is counted against, if
@@ -799,26 +810,6 @@ impl ListeningData {
             LISTENING_SLOW,
             ask,
             move |network, priority| async move { network.genres(&name, priority).await },
-        )
-        .await
-    }
-
-    /// Recent releases by artists the user listens to.
-    pub async fn fresh_releases(
-        &self,
-        username: &str,
-        ask: &Ask,
-    ) -> ListeningResult<Vec<AlbumRow>> {
-        if self.listenbrainz_off() {
-            return Ok(Default::default());
-        }
-        let key = CacheKey::new(Source::ListenBrainz, &["fresh", &lower(username)]).personal();
-        let name = username.to_owned();
-        self.list(
-            key,
-            LISTENING_SLOW,
-            ask,
-            move |network, priority| async move { network.fresh_releases(&name, priority).await },
         )
         .await
     }

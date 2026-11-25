@@ -370,6 +370,7 @@ async fn a_visit_queues_the_job_with_the_warm_cycle_off() {
             )
             .due(),
             crate::common::history_store(&rig.platform),
+            crate::discover_queue::fresh_feed(&rig.platform),
         ),
     );
     on.visit("nobody").await;

@@ -25,6 +25,7 @@ pub mod home;
 pub mod later;
 pub mod listening;
 pub mod models;
+pub mod new_releases;
 pub mod ownership;
 pub mod page;
 pub mod ports;

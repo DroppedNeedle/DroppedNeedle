@@ -646,6 +646,10 @@ pub(crate) async fn build_on(
             catalog_setup.discover.facts.clone(),
         )
         .with(
+            droppedneedle_catalog::discover::listening::fresh::SPEC,
+            catalog_setup.discover.fresh.clone(),
+        )
+        .with(
             droppedneedle_catalog::discover::engine::jobs::SPEC,
             catalog_setup.discover.taste.clone(),
         )

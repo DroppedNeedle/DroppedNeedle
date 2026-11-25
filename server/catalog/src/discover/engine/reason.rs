@@ -1,8 +1,10 @@
 //! A pick's reason, pure: the one line shown on it, built from its stored
 //! paths and nothing else.
 //!
-//! The person's artists come first, then a service's pick. A line names up
-//! to three of their artists, strongest first. A pick whose line would name
+//! A new release says so first, naming its artist and, for an artist close
+//! to theirs, the one of theirs it is closest to. Then the person's
+//! artists, then a service's pick. A line names up to three of their
+//! artists, strongest first. A pick whose line would name
 //! an artist that is no longer one of their seeds has no reason, and is not
 //! offered. No score, share or rank is ever part of a line.
 
@@ -26,6 +28,15 @@ pub(crate) fn seed_paths(candidate: &Candidate) -> Vec<&Path> {
     paths
 }
 
+/// The line of a new release by `artist`: one of the person's, or close to
+/// their `near`.
+pub(crate) fn fresh_line(artist: &str, near: Option<&str>) -> String {
+    match near {
+        Some(near) => format!("New from {artist}, close to {near}."),
+        None => format!("New from {artist}."),
+    }
+}
+
 /// The line naming `names` (one to three).
 fn close_to(names: &[&str], closest_new: bool) -> String {
     match names {
@@ -42,6 +53,13 @@ fn close_to(names: &[&str], closest_new: bool) -> String {
 /// not among `seeds`, the person's seeds now (lowercased).
 pub fn reason(candidate: &Candidate, seeds: &HashSet<String>) -> Option<PickReason> {
     let paths = seed_paths(candidate);
+    if candidate
+        .paths
+        .iter()
+        .any(|path| path.kind == PathKind::Fresh)
+    {
+        return fresh_reason(candidate, &paths, seeds);
+    }
     if !paths.is_empty() {
         let named: Vec<&Path> = paths.iter().take(NAMED_MAX).copied().collect();
         let mut artists = Vec::with_capacity(named.len());
@@ -88,4 +106,45 @@ pub fn reason(candidate: &Candidate, seeds: &HashSet<String>) -> Option<PickReas
             }),
             _ => None,
         })
+}
+
+/// The line of a new release: by an artist close to theirs, naming the
+/// seed it is closest to, which must still be one of `seeds`; else by
+/// their own artist.
+fn fresh_reason(
+    candidate: &Candidate,
+    paths: &[&Path],
+    seeds: &HashSet<String>,
+) -> Option<PickReason> {
+    let name = candidate.artist_name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let (line, artist) = match paths.first() {
+        Some(path) => {
+            let near = path.artist.as_ref()?;
+            if near.name.trim().is_empty() || !seeds.contains(&near.mbid) {
+                return None;
+            }
+            (
+                fresh_line(name, Some(near.name.trim())),
+                PickReasonArtist {
+                    artist_mbid: near.mbid.clone(),
+                    name: near.name.trim().to_owned(),
+                },
+            )
+        }
+        None => (
+            fresh_line(name, None),
+            PickReasonArtist {
+                artist_mbid: candidate.artist_mbid.clone(),
+                name: name.to_owned(),
+            },
+        ),
+    };
+    Some(PickReason {
+        kind: PickReasonKind::YourArtists,
+        line,
+        artists: vec![artist],
+    })
 }

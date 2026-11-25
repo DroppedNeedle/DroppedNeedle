@@ -508,6 +508,7 @@ async fn pool_due(rig: &AuthRig) -> bool {
             )
             .due(),
             crate::common::history_store(&rig.platform),
+            crate::discover_queue::fresh_feed(&rig.platform),
         ),
     );
     due.visit("user-1").await;

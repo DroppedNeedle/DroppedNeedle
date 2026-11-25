@@ -26,10 +26,11 @@ use super::{
         DiscoverPickEventRequest, DiscoverPrefs, DiscoverQueueStatusResponse, DiscoverResponse,
         DiscoverTuningEntry, DiscoverTuningRequest, DiscoverTuningsResponse, FeedbackTarget,
         GenreDetailResponse, HomeResponse, IntegrationStatus, LaterAlbum, LaterRequest,
-        ListenSource, PickEvidence, PlaylistSuggestionsRequest, PlaylistSuggestionsResponse,
-        RadioPlanRequest, RadioPlanResponse, RadioRequest, StatsRange, TrackPreviewResponse,
-        TuningKind, WeekResponse, YouTubeSearchResponse,
+        ListenSource, NewRelease, PickEvidence, PlaylistSuggestionsRequest,
+        PlaylistSuggestionsResponse, RadioPlanRequest, RadioPlanResponse, RadioRequest, StatsRange,
+        TrackPreviewResponse, TuningKind, WeekResponse, YouTubeSearchResponse,
     },
+    new_releases,
     services::{self, DiscoverDeps},
 };
 
@@ -59,6 +60,15 @@ pub struct LaterQuery {
     pub cursor: Option<String>,
     /// Only this album, by its release-group id: a page of one row or none.
     pub release_group_mbid: Option<String>,
+}
+
+/// `GET /discover/new-releases` params.
+#[derive(Debug, Deserialize)]
+pub struct NewReleasesQuery {
+    /// Releases per page, 1 to 100 (default 50); more is read as 100.
+    pub limit: Option<u32>,
+    /// `next_cursor` from the previous page.
+    pub cursor: Option<String>,
 }
 
 /// `GET /discover/week/more` params.
@@ -455,6 +465,43 @@ pub async fn list_later(
     .await
     .map(Json)
     .map_err(ApiError::from)
+}
+
+/// The caller's new releases from their artists: every release of the
+/// last 90 days by an artist they play, the library owns, they follow or
+/// that is close to theirs, newest first, a page at a time, each marked
+/// owned or requested. Read from kept rows; nothing is asked of a
+/// provider.
+#[utoipa::path(
+    get,
+    tag = "discover",
+    path = "/api/v3/discover/new-releases",
+    params(
+        ("limit" = Option<u32>, Query, description = "Releases per page, 1 to 100; more is read as 100"),
+        ("cursor" = Option<String>, Query, description = "`next_cursor` from the previous page"),
+    ),
+    responses(
+        (status = 200, description = "One page of the list, newest first, with how many it holds", body = Page<NewRelease>),
+        (status = 400, description = "Bad cursor"),
+        (status = 401, description = "Not authenticated"),
+        (status = 500, description = "The list could not be read"),
+    )
+)]
+pub async fn list_new_releases(
+    State(deps): State<DiscoverDeps>,
+    User(user): User,
+    ValidQuery(query): ValidQuery<NewReleasesQuery>,
+) -> Result<Json<Page<NewRelease>>, ApiError> {
+    let paging = PageRequest::read(
+        query.limit,
+        query.cursor.as_deref(),
+        new_releases::PAGE_DEFAULT,
+        new_releases::PAGE_MAX,
+    )?;
+    services::new_releases_page(&deps, user.user_id(), paging)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// The caller's week: whether this week's set is out, being set out,
@@ -1024,6 +1071,7 @@ pub fn routes() -> Routes<DiscoverDeps> {
         .user(routes!(mark_later))
         .user(routes!(remove_later))
         .user(routes!(list_later))
+        .user(routes!(list_new_releases))
         .user(routes!(get_week))
         .user(routes!(week_more))
         .user(routes!(get_discover_prefs))

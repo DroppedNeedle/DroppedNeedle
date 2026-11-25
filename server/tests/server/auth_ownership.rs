@@ -2144,6 +2144,35 @@ async fn caller_keyed_state_stays_with_its_caller() {
         "B's and the admin's days left A's: {body}"
     );
 
+    // A's new releases, from an artist A follows: B's and an admin's lists
+    // hold none of them.
+    let followed = "9a8d4f1b-5c3e-4a0d-8e0b-6c4f5e7d8ea4";
+    let released = "0b9e5a2c-6d4f-4b1e-9f1c-7d5a6f8e9fb5";
+    app.seed(format!(
+        "INSERT INTO acquire_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
+         artist_name, followed_at, updated_at) \
+         VALUES ('{id}', '{followed}', '{followed}', 'Followed', 1, 1); \
+         INSERT INTO acquire_new_release_feed (release_group_mbid_lower, release_group_mbid, \
+         artist_mbid_lower, artist_name, title, primary_type, first_release_date, \
+         discovered_at) VALUES ('{released}', '{released}', '{followed}', 'Followed', \
+         'New album', 'Album', date('now'), 1)",
+        id = ada.id
+    ))
+    .await;
+    let new_releases = "/api/v3/discover/new-releases";
+    for (who, what) in [(&bob, "B"), (&admin, "an admin")] {
+        let (status, body) = call(&app, who, "GET", new_releases, None).await;
+        ok(status, &body, &format!("{what} reads their new releases"));
+        assert_eq!(body["items"], json!([]), "{what} sees none of A's: {body}");
+    }
+    let (status, body) = call(&app, &ada, "GET", new_releases, None).await;
+    ok(status, &body, "A reads A's new releases");
+    assert_eq!(
+        body["items"][0]["album"]["musicbrainz_id"],
+        json!(released),
+        "{body}"
+    );
+
     // A's listening history from ListenBrainz: B's and an admin's reads
     // show none of it.
     app.seed(format!(

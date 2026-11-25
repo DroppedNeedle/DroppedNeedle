@@ -164,6 +164,7 @@ fn due(rig: &AuthRig, enabled: bool) -> Due {
         (
             FactJobs::new(KeptFacts::new(db, clock), Arc::new(Script::default())).due(),
             crate::common::history_store(&rig.platform),
+            crate::discover_queue::fresh_feed(&rig.platform),
         ),
     )
 }

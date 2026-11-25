@@ -68,7 +68,17 @@ pub struct RecordingStat {
     pub recording_mbid: Option<String>,
 }
 
-/// One fresh release from a user's fresh-releases feed.
+/// Most days of releases one fresh-releases read covers (ListenBrainz's
+/// own limit).
+pub const MAX_FRESH_DAYS: u32 = 90;
+/// Largest fresh-releases answer read: 90 days were 15.9 MB on 2026-11-25,
+/// so twice that leaves room for a busy season.
+const MAX_FRESH_BODY_BYTES: usize = 32 * 1024 * 1024;
+/// How long one fresh-releases read may take: 90 days took 15 seconds to
+/// arrive on 2026-11-25.
+const FRESH_DEADLINE: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// One release from ListenBrainz's sitewide fresh releases.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FreshRelease {
     /// Release group MBID.
@@ -77,8 +87,16 @@ pub struct FreshRelease {
     pub release_name: String,
     /// Credited artist, when sent.
     pub artist_credit_name: Option<String>,
-    /// Artist MBIDs, when mapped.
+    /// Credited artist MBIDs, in credit order; never empty.
     pub artist_mbids: Vec<String>,
+    /// Release date, `YYYY-MM-DD`.
+    pub release_date: String,
+    /// The release group's primary type, when sent.
+    pub primary_type: Option<String>,
+    /// The release group's secondary type, when it has one.
+    pub secondary_type: Option<String>,
+    /// The release it was found through, when sent.
+    pub release_mbid: Option<String>,
 }
 
 /// One loved recording with the names to show it.
@@ -341,30 +359,36 @@ impl ListenBrainzClient {
         Ok(answer.map_or(0, |answer| answer.rows().len()))
     }
 
-    /// Releases out recently by artists the user listens to
-    /// (`/1/user/{user}/fresh_releases?past=true&future=false`, v2
-    /// `get_user_fresh_releases`). Rows without a release group id or a
-    /// title are skipped.
+    /// Every release ListenBrainz knows of from the last `days` days up to
+    /// today, oldest first (`/1/explore/fresh-releases/` with `past=true`,
+    /// `future=false`, `sort=release_date`). A public read: no token is
+    /// sent. Ninety days answer some 16 MB, so the read has a larger cap
+    /// and a longer deadline than the rest. Rows without a release group,
+    /// a title, an artist id or a full date are skipped.
     ///
     /// # Errors
     ///
     /// The typed failure of the call.
-    pub async fn user_fresh_releases(
+    pub async fn sitewide_fresh_releases(
         &self,
-        username: &str,
+        days: u32,
         priority: RequestPriority,
     ) -> Result<Vec<FreshRelease>, ProviderError> {
-        if username.is_empty() {
-            return Ok(Vec::new());
-        }
-        let Some(answer) = self
-            .public_read::<FreshReleasesAnswer>(
-                &["1", "user", username, "fresh_releases"],
-                &[("past", "true"), ("future", "false")],
-                priority,
-            )
-            .await?
-        else {
+        let days = days.clamp(1, MAX_FRESH_DAYS).to_string();
+        let request = self
+            .get(
+                &["1", "explore", "fresh-releases"],
+                &[
+                    ("days", days.as_str()),
+                    ("past", "true"),
+                    ("future", "false"),
+                    ("sort", "release_date"),
+                ],
+                &ListenBrainzCredentials::default(),
+            )?
+            .trailing_slash()
+            .large_answer(MAX_FRESH_BODY_BYTES, FRESH_DEADLINE);
+        let Some(answer) = self.read::<FreshReleasesAnswer>(request, priority).await? else {
             return Ok(Vec::new());
         };
         Ok(answer
@@ -501,14 +525,38 @@ fn recording_stat(row: RecordingStatRow) -> Option<RecordingStat> {
     })
 }
 
-/// One fresh release.
+/// One fresh release, `None` without its release group, title, artist ids
+/// or a full date.
 fn fresh_release(row: FreshReleaseRow) -> Option<FreshRelease> {
+    let artist_mbids: Vec<String> = row
+        .artist_mbids?
+        .into_iter()
+        .filter_map(|mbid| non_blank(Some(mbid)))
+        .collect();
+    let release_date = row.release_date.filter(|date| full_date(date))?;
+    if artist_mbids.is_empty() {
+        return None;
+    }
     Some(FreshRelease {
         release_group_mbid: row.release_group_mbid?,
         release_name: row.release_name?,
         artist_credit_name: row.artist_credit_name,
-        artist_mbids: row.artist_mbids.unwrap_or_default(),
+        artist_mbids,
+        release_date,
+        primary_type: row.release_group_primary_type,
+        secondary_type: row.release_group_secondary_type,
+        release_mbid: row.release_mbid,
     })
+}
+
+/// Whether `date` is a whole `YYYY-MM-DD` date.
+fn full_date(date: &str) -> bool {
+    let bytes = date.as_bytes();
+    bytes.len() == 10
+        && bytes.iter().enumerate().all(|(at, byte)| match at {
+            4 | 7 => *byte == b'-',
+            _ => byte.is_ascii_digit(),
+        })
 }
 
 /// The metadata object of one feedback row, under any of its spellings.

@@ -28,7 +28,7 @@ use droppedneedle_catalog::discover::content::LiveContent;
 use droppedneedle_catalog::discover::facts::{KeptFacts, job::FactJobs};
 use droppedneedle_catalog::discover::listening::shared;
 use droppedneedle_catalog::discover::listening::{
-    AlbumRow, ArtistRow, Ask, ListenedAlbum, ListeningData, PlaylistTrack, RankedAlbum,
+    AlbumRow, ArtistRow, Ask, FreshRow, ListenedAlbum, ListeningData, PlaylistTrack, RankedAlbum,
     ScoredArtist, SourceContext, UserMusic, WeeklyPlaylist,
 };
 use droppedneedle_catalog::discover::ports::BoxFuture;
@@ -126,7 +126,6 @@ pub(crate) fn page_script() -> Script {
             mbid: Some(SEED.to_owned()),
             listen_count: Some(50),
         }],
-        fresh: vec![ranked(90, &mbid('f', 1), 0).album],
         sitewide_artists: vec![ArtistRow {
             name: "Everyone's Favourite".to_owned(),
             mbid: Some(mbid('c', 1)),
@@ -137,6 +136,14 @@ pub(crate) fn page_script() -> Script {
         artist_albums,
         genres: vec![("shoegaze".to_owned(), 40)],
         ..Script::default()
+    }
+}
+
+/// `script` with a weekly playlist made the day before the rig's clock.
+fn with_weekly(script: Script) -> Script {
+    Script {
+        weekly: Some(weekly_playlist("2023-12-31T23:00:00+00:00")),
+        ..script
     }
 }
 
@@ -270,12 +277,6 @@ async fn page_builds_in_the_background_is_saved_and_records_activity() {
     assert_eq!(
         content(&page, "radio_sections")["shelves"][0]["title"],
         "Radio: Seed"
-    );
-    assert_eq!(
-        content(&page, "fresh_releases")["shelf"]["items"]
-            .as_array()
-            .map(Vec::len),
-        Some(1)
     );
     assert_eq!(
         content(&page, "genre_list")["shelf"]["items"][0]["name"],
@@ -752,14 +753,14 @@ async fn a_shelf_whose_read_failed_is_built_again_soon() {
     let rig = AuthRig::new("discover-failed-shelf").await;
     seed_user(&rig.platform.db).await;
     keep_facts_of(&rig, Arc::new(page_script())).await;
-    let script = Arc::new(page_script());
-    script.fresh_down.store(true, Ordering::SeqCst);
+    let script = Arc::new(with_weekly(page_script()));
+    script.weekly_down.store(true, Ordering::SeqCst);
     let network = Arc::clone(&script);
     let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |slot| {
         *slot = network;
     }));
     let fresh = |page: &Value| {
-        content(page, "fresh_releases")["shelf"]["items"]
+        content(page, "weekly_exploration")["weekly"]["tracks"]
             .as_array()
             .map(Vec::len)
     };
@@ -768,12 +769,12 @@ async fn a_shelf_whose_read_failed_is_built_again_soon() {
     let page = settled_page(&rig, &app, "the first page was built").await;
     assert_eq!(fresh(&page), None, "the failed shelf is left out");
     assert_eq!(
-        state_of(&page, "fresh_releases"),
-        json!({"key": "fresh_releases", "state": "source_down", "source": "listenbrainz"}),
+        state_of(&page, "weekly_exploration"),
+        json!({"key": "weekly_exploration", "state": "source_down", "source": "listenbrainz"}),
         "and says which service failed"
     );
 
-    script.fresh_down.store(false, Ordering::SeqCst);
+    script.weekly_down.store(false, Ordering::SeqCst);
     rig.clock().advance(301_000);
     let (_, page) = call(&app, "GET", "/api/v3/discover", None).await;
     assert_eq!(page["refreshing"], true, "a rebuild started");
@@ -783,7 +784,7 @@ async fn a_shelf_whose_read_failed_is_built_again_soon() {
     })
     .await;
     assert_eq!(fresh(&page), Some(1));
-    assert_eq!(state_of(&page, "fresh_releases"), Value::Null);
+    assert_eq!(state_of(&page, "weekly_exploration"), Value::Null);
     settled_page(&rig, &app, "the rebuild finished").await;
 
     rig.clock().advance(301_000);
@@ -808,7 +809,7 @@ async fn page_after(app: &Router, before: &Value, what: &str) -> Value {
 
 /// A rebuild that finds no similar-artist list kept (provider data was
 /// cleared and labs is down) keeps the radio shelves the page had, as
-/// they were, and says when they are from; Fresh Releases, whose
+/// they were, and says when they are from; Weekly Exploration, whose
 /// ListenBrainz read failed, is kept too and names ListenBrainz. A section whose reads all
 /// answered with nothing says it is empty.
 #[tokio::test]
@@ -817,7 +818,7 @@ async fn a_failed_read_keeps_the_sections_the_page_had() {
     let rig = AuthRig::new("discover-kept").await;
     seed_user(&rig.platform.db).await;
     keep_facts_of(&rig, Arc::new(page_script())).await;
-    let script = Arc::new(page_script());
+    let script = Arc::new(with_weekly(page_script()));
     let network = Arc::clone(&script);
     let providers = Providers::closed();
     let answers = providers.cache.clone();
@@ -835,9 +836,9 @@ async fn a_failed_read_keeps_the_sections_the_page_had() {
         "{first}"
     );
     assert_eq!(state_of(&first, "radio_sections"), Value::Null);
-    let fresh = content(&first, "fresh_releases").clone();
+    let fresh = content(&first, "weekly_exploration").clone();
     assert!(
-        fresh["shelf"]["items"]
+        fresh["weekly"]["tracks"]
             .as_array()
             .is_some_and(|i| !i.is_empty())
     );
@@ -848,7 +849,7 @@ async fn a_failed_read_keeps_the_sections_the_page_had() {
     );
 
     script.similar_down.store(true, Ordering::SeqCst);
-    script.fresh_down.store(true, Ordering::SeqCst);
+    script.weekly_down.store(true, Ordering::SeqCst);
     answers.clear().await.expect("provider answers cleared");
     droppedneedle_catalog::discover::facts::clear(&rig.platform.db)
         .await
@@ -872,11 +873,11 @@ async fn a_failed_read_keeps_the_sections_the_page_had() {
             "since": first["generated_at"],
         })
     );
-    assert_eq!(content(&page, "fresh_releases"), &fresh);
+    assert_eq!(content(&page, "weekly_exploration"), &fresh);
     assert_eq!(
-        state_of(&page, "fresh_releases"),
+        state_of(&page, "weekly_exploration"),
         json!({
-            "key": "fresh_releases",
+            "key": "weekly_exploration",
             "state": "kept",
             "source": "listenbrainz",
             "since": first["generated_at"],
@@ -978,7 +979,7 @@ async fn a_switch_for_a_section_that_left_changes_nothing() {
          VALUES ('user-1', 'discover', 'discover_queue', 0, 1), \
          ('user-1', 'discover', 'top_picks', 0, 1), \
          ('user-1', 'discover', 'listeners_like_you', 0, 1), \
-         ('user-1', 'discover', 'fresh_releases', 0, 1)"
+         ('user-1', 'discover', 'genre_list', 0, 1)"
             .to_owned(),
     )
     .await;
@@ -995,7 +996,7 @@ async fn a_switch_for_a_section_that_left_changes_nothing() {
     call(&app, "GET", "/api/v3/discover", None).await;
     let page = settled_page(&rig, &app, "the page was built").await;
     assert_eq!(page["weekly_set_enabled"], true, "{page}");
-    assert_eq!(content(&page, "fresh_releases"), &Value::Null);
+    assert_eq!(content(&page, "genre_list"), &Value::Null);
     assert_eq!(
         content(&page, "radio_sections")["shelves"][0]["title"],
         "Radio: Seed"
@@ -1049,6 +1050,7 @@ async fn a_warm_that_kept_nothing_waits_before_it_is_tried_again() {
             (
                 FactJobs::new(facts, Arc::new(Script::default())).due(),
                 crate::common::history_store(&rig.platform),
+                crate::discover_queue::fresh_feed(&rig.platform),
             ),
         )),
         vec![warm.clone()],
@@ -1718,6 +1720,19 @@ fn page_rows(page: &Value) -> Vec<(String, String, String, String)> {
                 text(&item["artist_id"]),
             ));
         }
+        for row in content["new_releases"]["releases"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            let album = &row["album"];
+            rows.push((
+                key.clone(),
+                "album".to_owned(),
+                text(&album["musicbrainz_id"]),
+                text(&album["artist_id"]),
+            ));
+        }
     }
     rows
 }
@@ -1739,7 +1754,7 @@ async fn what_a_person_hid_leaves_the_served_page_at_once() {
     let credited = mbid('f', 1);
     let scrobbled = mbid('e', 1);
     // One album each for the similar artists, so the radio shelf keeps
-    // the one Fresh Releases shows too.
+    // the one New from your artists shows too.
     let one_each = || {
         let mut script = page_script();
         for albums in script.artist_albums.values_mut() {
@@ -1750,15 +1765,44 @@ async fn what_a_person_hid_leaves_the_served_page_at_once() {
     let mut script = one_each();
     script.user.lastfm_username = Some("scrobbler".to_owned());
     script.user.lastfm = true;
-    // Similar 2's album is on the radio shelf too.
-    let both = ranked(b'2', &mbid('b', 2), 500).album;
+    // New releases by artists close to the seed in the person's pool, from
+    // the sitewide feed; Similar 2's album is on the radio shelf too.
+    let near = |n: u8, artist: &str, name: &str| {
+        let candidate = mbid('c', n);
+        format!(
+            "INSERT INTO catalog_discover_candidates (user_id, release_group_mbid_lower, \
+             rank, kind, title, artist_mbid, artist_name, credited_artist_mbids, support, \
+             group_support) VALUES ('user-1', '{candidate}', {n}, 'new_artist', 'Pooled', \
+             '{artist}', '{name}', '[]', 1.0, 1.0); \
+             INSERT INTO catalog_discover_candidate_paths (user_id, \
+             release_group_mbid_lower, path_no, kind, source, artist_mbid, artist_name, \
+             link_strength, named_by_labs, named_by_lastfm) VALUES ('user-1', \
+             '{candidate}', 0, 'seed', 'listenbrainz_labs', '{SEED}', 'Seed', 1.0, 1, 0);"
+        )
+    };
+    insert(
+        &db,
+        [
+            near(1, &credited, "Similar 3 & Friends"),
+            near(2, &mbid('b', 2), "Similar 2"),
+            near(3, &hidden_artist, "Hidden"),
+        ]
+        .concat(),
+    )
+    .await;
+    let fresh = |group: String, artist: &str, name: &str| FreshRow {
+        release_group_mbid: group,
+        title: "New Album".to_owned(),
+        artist_name: name.to_owned(),
+        artist_mbids: vec![artist.to_owned()],
+        release_date: "2023-12-20".to_owned(),
+        primary_type: Some("Album".to_owned()),
+        secondary_type: None,
+    };
     script.fresh = vec![
-        AlbumRow {
-            artist_name: "Similar 3 & Friends".to_owned(),
-            ..ranked(90, &credited, 0).album
-        },
-        both,
-        ranked(91, &hidden_artist, 0).album,
+        fresh(mbid('a', 90), &credited, "Similar 3 & Friends"),
+        fresh(mbid('a', b'2'), &mbid('b', 2), "Similar 2"),
+        fresh(mbid('a', 91), &hidden_artist, "Hidden"),
     ];
     script.lastfm_weekly_artists = vec![ArtistRow {
         name: "Scrobbled".to_owned(),
@@ -1772,9 +1816,12 @@ async fn what_a_person_hid_leaves_the_served_page_at_once() {
     weekly.tracks.push(by_hidden_song);
     script.weekly = Some(weekly);
     keep_facts_of(&rig, Arc::new(one_each())).await;
-    let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |network| {
+    seen_now(&rig, "user-1").await;
+    let deps = discover_deps(&rig, &dir, Providers::closed(), |network| {
         *network = Arc::new(script);
-    }));
+    });
+    assert!(deps.fresh.refresh().await, "the sitewide releases are read");
+    let app = discover_routes(deps);
     call(&app, "GET", "/api/v3/discover", None).await;
     let built = settled_page(&rig, &app, "the page was built").await;
     let before = page_rows(&built);
@@ -1827,7 +1874,7 @@ async fn what_a_person_hid_leaves_the_served_page_at_once() {
     let shown = by(&hidden_artist, &before);
     assert_eq!(
         shown,
-        ["fresh_releases", "radio_sections"]
+        ["new_from_your_artists", "radio_sections"]
             .map(str::to_owned)
             .into(),
         "the artist is on two album shelves"
@@ -1835,7 +1882,7 @@ async fn what_a_person_hid_leaves_the_served_page_at_once() {
     assert!(
         before
             .iter()
-            .any(|(key, _, id, artist)| key == "fresh_releases"
+            .any(|(key, _, id, artist)| key == "new_from_your_artists"
                 && *id == mbid('a', 90)
                 && *artist == credited),
         "the album that only credits them is shown"
@@ -1877,7 +1924,7 @@ async fn what_a_person_hid_leaves_the_served_page_at_once() {
     assert!(
         after
             .iter()
-            .any(|(key, _, id, _)| key == "fresh_releases" && *id == mbid('a', 90)),
+            .any(|(key, _, id, _)| key == "new_from_your_artists" && *id == mbid('a', 90)),
         "an album filed under another artist stays"
     );
     assert_eq!(

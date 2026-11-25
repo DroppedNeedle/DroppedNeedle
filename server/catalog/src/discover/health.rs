@@ -106,6 +106,18 @@ fn cards(content: &SectionContent) -> Vec<Card<'_>> {
                 })
             })
             .collect(),
+        SectionContent::NewReleases { new_releases } => new_releases
+            .releases
+            .iter()
+            .filter_map(|row| {
+                let id = known(row.album.musicbrainz_id.as_ref())?;
+                Some(Card {
+                    id,
+                    album: Some(id),
+                    artist: known(row.album.artist_id.as_ref()),
+                })
+            })
+            .collect(),
         _ => content
             .shelves()
             .into_iter()

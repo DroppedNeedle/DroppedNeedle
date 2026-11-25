@@ -539,6 +539,67 @@ pub enum SectionContent {
         /// The playlist.
         weekly: WeeklyExploration,
     },
+    /// New releases from the person's artists, dated and typed.
+    NewReleases {
+        /// The newest of them.
+        new_releases: NewReleaseSheet,
+    },
+}
+
+/// One release on a person's list of new releases from their artists.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct NewRelease {
+    /// The release: its date (`release_date`, `YYYY-MM-DD`), its type,
+    /// whether the library holds it and whether a request for it is open.
+    pub album: AlbumRef,
+    /// Why it is listed, for a release by an artist close to theirs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// What kind of release it is besides its type, when it is a live
+    /// set, a demo or a compilation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secondary_kind: Option<SecondaryKind>,
+}
+
+/// A new release's kind besides its type, of those the list names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SecondaryKind {
+    /// A live recording.
+    Live,
+    /// A demo.
+    Demo,
+    /// A compilation.
+    Compilation,
+}
+
+impl SecondaryKind {
+    /// The first of `types` (MusicBrainz secondary types, as spelled there)
+    /// the list names, if any.
+    pub fn of(types: &[String]) -> Option<Self> {
+        types
+            .iter()
+            .find_map(|kind| match kind.trim().to_ascii_lowercase().as_str() {
+                "live" => Some(Self::Live),
+                "demo" => Some(Self::Demo),
+                "compilation" => Some(Self::Compilation),
+                _ => None,
+            })
+    }
+}
+
+/// The newest of a person's new releases, as the page shows them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct NewReleaseSheet {
+    /// The newest releases, newest first.
+    pub releases: Vec<NewRelease>,
+    /// How many the whole list holds.
+    pub total: u64,
+    /// When ListenBrainz's list of new releases was read (unix seconds);
+    /// none when none is kept, and the list holds only what the person's
+    /// follows found.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
 }
 
 /// Discover: its sections, in page order, plus the page-level fields. A

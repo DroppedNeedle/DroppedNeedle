@@ -517,10 +517,10 @@ pub struct GenreActivityRow {
     pub listen_count: Option<i64>,
 }
 
-/// `GET /1/user/{user}/fresh_releases`.
+/// `GET /1/explore/fresh-releases/`: every release of the last days,
+/// sitewide.
 ///
-/// Verified against api.listenbrainz.org/1/user/{user}/fresh_releases on 2026-11-03: tests/fixtures/listenbrainz/fresh_releases_account.json (an empty list, for a new account).
-/// Not verified: a row, since the account has none.
+/// Verified against api.listenbrainz.org/1/explore/fresh-releases/ on 2026-11-25 with `days=90`, `past=true`, `future=false` and `sort=release_date`, no token: tests/fixtures/listenbrainz/fresh_releases_sitewide.json (seven of the 36,684 rows answered). Every row carried a release group, a list of artist ids and a `YYYY-MM-DD` date; 650 had no primary type and 3,528 one secondary type, sent as one string. Rows come oldest first.
 #[derive(Debug, Clone, Deserialize)]
 pub struct FreshReleasesAnswer {
     /// The envelope.
@@ -534,21 +534,34 @@ pub struct FreshReleasesPayload {
     pub releases: Vec<FreshReleaseRow>,
 }
 
-/// One fresh release. The row is skipped if its id or title is null or blank.
+/// One fresh release. The row is skipped if its release group, its title,
+/// its artist ids or its date is missing, null or blank.
 #[derive(Debug, Clone, Deserialize)]
 pub struct FreshReleaseRow {
     /// Release group MBID.
-    #[serde(deserialize_with = "loose_text")]
+    #[serde(default, deserialize_with = "loose_text")]
     pub release_group_mbid: Option<String>,
     /// Release title.
-    #[serde(deserialize_with = "loose_text")]
+    #[serde(default, deserialize_with = "loose_text")]
     pub release_name: Option<String>,
-    /// Credited artist.
+    /// Credited artist, as the credit reads.
     #[serde(default, deserialize_with = "loose_text")]
     pub artist_credit_name: Option<String>,
-    /// Artist MBIDs.
+    /// Credited artist MBIDs, in credit order.
     #[serde(default)]
     pub artist_mbids: Option<Vec<String>>,
+    /// Release date, `YYYY-MM-DD`.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub release_date: Option<String>,
+    /// The release group's primary type, as MusicBrainz spells it.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub release_group_primary_type: Option<String>,
+    /// The release group's secondary type, one name.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub release_group_secondary_type: Option<String>,
+    /// The release the row was found through.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub release_mbid: Option<String>,
 }
 
 /// `GET /1/feedback/user/{user}/get-feedback`.

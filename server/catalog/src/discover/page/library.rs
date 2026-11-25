@@ -1,6 +1,6 @@
 //! What the discover page reads from the local library: the owned
-//! albums, the genre index over the scanned tags, milestone anniversaries
-//! and new releases from followed artists.
+//! albums, the genre index over the scanned tags and milestone
+//! anniversaries.
 //!
 //! A genre counts the distinct artists credited (track, album or album
 //! artist) on indexed tracks tagged with it.
@@ -36,21 +36,6 @@ pub struct ShelfAlbum {
     pub artist_mbid: Option<String>,
     /// Release year, when tagged.
     pub year: Option<i64>,
-}
-
-/// One new release from a followed artist.
-#[derive(Debug, Clone, PartialEq)]
-pub struct FollowedRelease {
-    /// Release-group MBID.
-    pub release_group_mbid: String,
-    /// Release title.
-    pub title: String,
-    /// Artist name.
-    pub artist_name: String,
-    /// Artist MBID.
-    pub artist_mbid: String,
-    /// First release date, when known.
-    pub first_release_date: Option<String>,
 }
 
 /// Library reads over the reader pool.
@@ -266,34 +251,6 @@ impl LibraryReads {
         .await
         .map_err(|error| format!("anniversary albums read: {error}"))?;
         Ok(rows.into_iter().map(shelf_album).collect())
-    }
-
-    /// The newest releases from artists the user follows that the library
-    /// does not hold yet.
-    pub async fn followed_releases(
-        &self,
-        user_id: &str,
-        limit: i64,
-    ) -> Result<Vec<FollowedRelease>, String> {
-        let rows = read_all(
-            &self.db,
-            "discover.library.followed_releases",
-            sql::FOLLOWED_RELEASES.text(),
-            (user_id.to_owned(), limit.max(1)),
-            sql::FollowedReleaseColumns::read,
-        )
-        .await
-        .map_err(|error| format!("followed releases read: {error}"))?;
-        Ok(rows
-            .into_iter()
-            .map(|row| FollowedRelease {
-                release_group_mbid: row.release_group_mbid,
-                title: row.title,
-                artist_name: row.artist_name,
-                artist_mbid: row.artist_mbid,
-                first_release_date: row.first_release_date,
-            })
-            .collect())
     }
 }
 

@@ -349,6 +349,7 @@ async fn nothing_runs_for_a_person_unseen_for_a_week_and_a_request_wakes_it() {
             )
             .due(),
             crate::common::history_store(&rig.rig.platform),
+            crate::discover_queue::fresh_feed(&rig.rig.platform),
         ),
     );
     let queued = |db: &Db| -> i64 {

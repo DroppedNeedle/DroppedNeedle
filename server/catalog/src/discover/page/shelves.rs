@@ -87,12 +87,13 @@ pub enum RowMut<'a> {
 }
 
 impl SectionContent {
-    /// The section's shelves; none for the weekly playlist.
+    /// The section's shelves; none for the weekly playlist or the new
+    /// releases.
     pub fn shelves(&self) -> Vec<&ChartSection> {
         match self {
             Self::Shelf { shelf } => vec![shelf],
             Self::Shelves { shelves } => shelves.iter().collect(),
-            Self::Weekly { .. } => Vec::new(),
+            Self::Weekly { .. } | Self::NewReleases { .. } => Vec::new(),
         }
     }
 
@@ -101,12 +102,19 @@ impl SectionContent {
         match self {
             Self::Shelf { shelf } => vec![shelf],
             Self::Shelves { shelves } => shelves.iter_mut().collect(),
-            Self::Weekly { .. } => Vec::new(),
+            Self::Weekly { .. } | Self::NewReleases { .. } => Vec::new(),
         }
     }
 
     /// Every album and artist row.
     pub fn rows_mut(&mut self) -> Vec<RowMut<'_>> {
+        if let Self::NewReleases { new_releases } = self {
+            return new_releases
+                .releases
+                .iter_mut()
+                .map(|row| RowMut::Album(&mut row.album))
+                .collect();
+        }
         self.shelves_mut()
             .into_iter()
             .flat_map(|shelf| shelf.items.iter_mut())
@@ -122,6 +130,7 @@ impl SectionContent {
     pub fn is_empty(&self) -> bool {
         match self {
             Self::Weekly { weekly } => weekly.tracks.is_empty(),
+            Self::NewReleases { new_releases } => new_releases.releases.is_empty(),
             _ => self
                 .shelves()
                 .iter()
@@ -135,6 +144,11 @@ impl SectionContent {
             Self::Weekly { weekly } => {
                 for track in &weekly.tracks {
                     targets.cover(track.release_group_mbid.as_deref());
+                }
+            }
+            Self::NewReleases { new_releases } => {
+                for row in &new_releases.releases {
+                    targets.cover(row.album.musicbrainz_id.as_deref());
                 }
             }
             _ => {

@@ -45,6 +45,7 @@
 	import WeekReceipt from '$lib/features/discover/components/WeekReceipt.svelte';
 	import WhyCard from '$lib/features/discover/components/WhyCard.svelte';
 	import AfterNoSlip from '$lib/features/discover/components/AfterNoSlip.svelte';
+	import NewFromYourArtists from '$lib/features/discover/components/NewFromYourArtists.svelte';
 	import { getDiscoverHomeV3Query } from '$lib/features/discover/queries/DiscoverV3Queries.svelte';
 	import { createPickEventMutation } from '$lib/features/discover/queries/DiscoverV3Mutations.svelte';
 	import { useDiscoverActivity } from '$lib/features/discover/queries/DiscoverDemand.svelte';
@@ -74,6 +75,7 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import type {
 		ChartSection,
+		NewReleaseSheet,
 		PageSection,
 		SectionKey,
 		SectionState,
@@ -587,7 +589,8 @@
 	} & (
 		| { kind: 'weekly' | 'playlist' }
 		| { kind: 'mixes' | 'radio' | 'genres-browse' }
-		| { kind: 'shelf'; shelf: ChartSection; key: SectionKey; playable: boolean; link?: string }
+		| { kind: 'shelf'; shelf: ChartSection; key: SectionKey; playable: boolean }
+		| { kind: 'new-releases'; sheet: NewReleaseSheet }
 		| { kind: 'state'; title: string; state: SectionState }
 	);
 
@@ -602,10 +605,6 @@
 		},
 		browse_genres: { id: 'zone-genres', nav: 'Genres', label: 'Browse Genres', icon: LayoutGrid },
 		trending_now: { id: 'zone-trending', nav: 'Trending', label: 'Trending Now', icon: TrendingUp }
-	};
-
-	const SHELF_LINKS: Partial<Record<SectionKey, string>> = {
-		new_from_followed: '/following/new-releases'
 	};
 
 	// zones that come before the playlist band
@@ -674,6 +673,8 @@
 					});
 			} else if (key === 'genre_list') {
 				if (genreList) place({ id, kind: 'genres-browse', width: 'half', kicker });
+			} else if (content.shape === 'new_releases') {
+				place({ id, kind: 'new-releases', width: 'wide', kicker, sheet: content.new_releases });
 			} else if (content.shape === 'shelf') {
 				place({
 					id,
@@ -682,8 +683,7 @@
 					kicker,
 					shelf: content.shelf,
 					key,
-					playable: zone === 'new_and_fresh',
-					link: SHELF_LINKS[key]
+					playable: zone === 'new_and_fresh'
 				});
 			}
 			if (state && list.length > placed) list[placed].state = state;
@@ -1026,15 +1026,17 @@
 	{:else if block.kind === 'shelf'}
 		{@render kickerRow(block.kicker)}
 		{#if block.playable}
-			<PlayableSection
-				section={block.shelf}
-				headerLink={block.link ?? null}
-				sectionKey={block.key}
-				compact={paired}
-			/>
+			<PlayableSection section={block.shelf} sectionKey={block.key} compact={paired} />
 		{:else}
 			<HomeSection madeFrom="discover_shelf" section={block.shelf} compact={paired} />
 		{/if}
+	{:else if block.kind === 'new-releases'}
+		{@render kickerRow(block.kicker)}
+		<NewFromYourArtists
+			releases={block.sheet.releases}
+			updatedAt={block.sheet.updated_at ?? null}
+			href={withBasePath('/discover/new-releases')}
+		/>
 	{:else if block.kind === 'genres-browse' && genreList}
 		{@render kickerRow(block.kicker)}
 		<div class="dn-discover-genres" class:dn-discover-genres--paired={paired}>

@@ -18,7 +18,7 @@ pub enum CandidateKind {
     /// An album of the person's own shelves. Not written yet: the shelves
     /// source writes it.
     Shelf,
-    /// A new release. Not written yet: the fresh releases source writes it.
+    /// A new release by one of the person's artists, or one close to theirs.
     Fresh,
     /// An album along a thread of credits or labels. Not written yet: the
     /// threads write it.
@@ -44,8 +44,7 @@ pub enum PathKind {
     /// The library holds the artist's other albums. Not written yet: the
     /// gaps source writes it.
     Library,
-    /// The album is a new release. Not written yet: the fresh releases
-    /// source writes it.
+    /// The album is a new release.
     Fresh,
     /// A credit or label leads to the album. Not written yet: the threads
     /// write it.
@@ -67,10 +66,11 @@ pub enum PathSource {
     ListenbrainzLabs,
     /// Last.fm's similar artists.
     Lastfm,
-    /// ListenBrainz, for the person (their weekly playlists).
+    /// ListenBrainz: the person's weekly playlists, and its sitewide new
+    /// releases.
     Listenbrainz,
-    /// The install's MusicBrainz source. Not written yet: the fresh
-    /// releases source writes it.
+    /// The install's MusicBrainz source: the new releases its follow poll
+    /// found.
     Musicbrainz,
     /// The library. Not written yet: the gaps source writes it.
     Library,

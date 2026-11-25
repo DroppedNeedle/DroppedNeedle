@@ -20,11 +20,12 @@ use crate::discover::{
         DiscoverFeedbackResponse, DiscoverHealthResponse, DiscoverPickEventRequest, DiscoverPrefs,
         DiscoverQueueStatusResponse, DiscoverResponse, DiscoverTuningEntry, DiscoverTuningRequest,
         DiscoverTuningsResponse, GenreDetailResponse, HomeResponse, IntegrationStatus, LaterAlbum,
-        LaterRequest, ListenSource, PickEvidence, PickState, PlaylistSuggestionsRequest,
-        PlaylistSuggestionsResponse, QueueBuildStatus, RadioPlanRequest, RadioPlanResponse,
-        RadioRequest, RadioSeedKind, StatsRange, TrackPreviewResponse, WeekResponse, WeekStatus,
-        YouTubeSearchResponse,
+        LaterRequest, ListenSource, NewRelease, PickEvidence, PickState,
+        PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, QueueBuildStatus,
+        RadioPlanRequest, RadioPlanResponse, RadioRequest, RadioSeedKind, StatsRange,
+        TrackPreviewResponse, WeekResponse, WeekStatus, YouTubeSearchResponse,
     },
+    new_releases::{NewReleaseLists, ReleaseKey},
     ports::{ProviderFailure, RadioFailure},
     previews::LivePreviews,
     radio::LiveRadio,
@@ -113,6 +114,8 @@ pub struct DiscoverDeps {
     pub history: HistoryStores,
     /// The kept facts' refresh job, for the jobs table to run.
     pub facts: Arc<crate::discover::facts::job::FactJobs>,
+    /// The fresh releases' daily read, for the jobs table to run.
+    pub fresh: Arc<crate::discover::listening::fresh::FreshFeedReads>,
     /// The taste job, for the jobs table to run.
     pub taste: Arc<crate::discover::engine::jobs::TasteJobs>,
     /// The pool job, for the jobs table to run.
@@ -123,6 +126,8 @@ pub struct DiscoverDeps {
     pub tunings: Tunings,
     /// Each person's Later pile.
     pub later: LaterPile,
+    /// Each person's new releases from their artists.
+    pub new_releases: NewReleaseLists,
     /// Each person's weekly sets: the job kind and the routes' answers.
     pub weekly: Arc<crate::discover::engine::weekly::WeeklySets>,
 }
@@ -533,6 +538,18 @@ pub async fn later_page(
         .page(user_id, paging, only)
         .await
         .map_err(later_failure)
+}
+
+/// One page of the user's new releases from their artists.
+pub async fn new_releases_page(
+    deps: &DiscoverDeps,
+    user_id: &str,
+    paging: PageRequest<ReleaseKey>,
+) -> Result<Page<NewRelease>, ServiceError> {
+    deps.new_releases
+        .page(user_id, paging)
+        .await
+        .map_err(|error| ServiceError::Internal(format!("new releases: {error}")))
 }
 
 /// The user's week: where it stands and the set to show.

@@ -19,9 +19,11 @@
 //!
 //! A section whose own build failed keeps the one the page it replaces
 //! showed, built under a week ago, so a bad hour at a provider takes
-//! nothing away. Every section switched on that is not plainly built says
-//! how it stands (`section_states`): kept, its source down, waiting for a
-//! linked account, thin, empty, or not built yet.
+//! nothing away. New from your artists, built from a kept feed whose daily
+//! read has missed, is shown as built and says how old the feed is. Every
+//! section switched on that is not plainly built says how it stands
+//! (`section_states`): kept, its source down, waiting for a linked
+//! account, thin, empty, or not built yet.
 //!
 //! Every serve, the home teaser's included, leaves out of the sections
 //! about the person what they told Discover to hide ([`Feedback`]), so an
@@ -541,6 +543,11 @@ fn settle(
             Outcome::NeedsLink(service) => {
                 Some(state(SectionCondition::NeedsLink, Some(service), None))
             }
+            Outcome::Dated(since) => Some(state(
+                SectionCondition::Kept,
+                Some(ListenSource::Listenbrainz),
+                Some(since),
+            )),
             Outcome::Failed(source) => {
                 let kept = carried.get(&key).and_then(|(section, since)| {
                     let mut section = (*section).clone();
@@ -574,7 +581,8 @@ fn settle(
 fn row_ids(content: &SectionContent) -> Vec<String> {
     let mut ids = Vec::new();
     match content {
-        SectionContent::Weekly { .. } => {}
+        // New from your artists takes no part in the album dedupe.
+        SectionContent::Weekly { .. } | SectionContent::NewReleases { .. } => {}
         _ => {
             for shelf in content.shelves() {
                 ids.extend(shelf.items.iter().filter_map(row_id));
@@ -598,7 +606,7 @@ fn row_id(item: &SectionItem) -> Option<String> {
 fn drop_rows(content: &mut SectionContent, shown: &HashSet<String>) {
     let unseen = |id: Option<String>| id.is_none_or(|id| !shown.contains(&id.to_lowercase()));
     match content {
-        SectionContent::Weekly { .. } => {}
+        SectionContent::Weekly { .. } | SectionContent::NewReleases { .. } => {}
         SectionContent::Shelves { shelves } => {
             for shelf in shelves.iter_mut() {
                 shelf.items.retain(|item| unseen(row_id(item)));
@@ -616,6 +624,7 @@ fn size(content: &SectionContent) -> usize {
         SectionContent::Shelf { shelf } => shelf.items.len(),
         SectionContent::Shelves { shelves } => shelves.len(),
         SectionContent::Weekly { weekly } => weekly.tracks.len(),
+        SectionContent::NewReleases { new_releases } => new_releases.releases.len(),
     }
 }
 
@@ -758,7 +767,7 @@ mod tests {
     /// keeps the week counted from the build that worked.
     #[test]
     fn a_failed_build_never_carries_rows_another_failure_left() {
-        let key = SectionKey::FreshReleases;
+        let key = SectionKey::MissingEssentials;
         let outcomes = [(key, DOWN)];
 
         let first = saved(
@@ -807,8 +816,8 @@ mod tests {
     /// A carried section leaves out the albums a freshly built one shows.
     #[test]
     fn a_kept_section_repeats_nothing_a_fresh_one_shows() {
-        let kept = SectionKey::FreshReleases;
-        let fresh = SectionKey::NewFromFollowed;
+        let kept = SectionKey::MissingEssentials;
+        let fresh = SectionKey::Anniversaries;
         let before = saved(page(vec![albums(kept, &["a", "b"])], Vec::new()), 0);
         let mut now = page(vec![albums(fresh, &["A"])], Vec::new());
         settle(

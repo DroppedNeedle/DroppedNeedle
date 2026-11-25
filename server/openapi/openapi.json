@@ -5999,6 +5999,86 @@
         ]
       }
     },
+    "/api/v3/discover/new-releases": {
+      "get": {
+        "tags": [
+          "discover"
+        ],
+        "summary": "The caller's new releases from their artists: every release of the\nlast 90 days by an artist they play, the library owns, they follow or\nthat is close to theirs, newest first, a page at a time, each marked\nowned or requested. Read from kept rows; nothing is asked of a\nprovider.",
+        "operationId": "list_new_releases",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Releases per page, 1 to 100; more is read as 100",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` from the previous page",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the list, newest first, with how many it holds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_NewRelease"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad cursor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The list could not be read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/discover/picks/events": {
       "post": {
         "tags": [
@@ -59551,6 +59631,37 @@
           }
         }
       },
+      "NewRelease": {
+        "type": "object",
+        "description": "One release on a person's list of new releases from their artists.",
+        "required": [
+          "album"
+        ],
+        "properties": {
+          "album": {
+            "$ref": "#/components/schemas/AlbumRef",
+            "description": "The release: its date (`release_date`, `YYYY-MM-DD`), its type,\nwhether the library holds it and whether a request for it is open."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it is listed, for a release by an artist close to theirs."
+          },
+          "secondary_kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SecondaryKind"
+              }
+            ],
+            "description": "What kind of release it is besides its type, when it is a live\nset, a demo or a compilation."
+          }
+        }
+      },
       "NewReleaseItem": {
         "type": "object",
         "description": "One new-release sighting.",
@@ -59617,6 +59728,37 @@
             "type": "integer",
             "description": "Rows the filter matches, beyond this page too.",
             "minimum": 0
+          }
+        }
+      },
+      "NewReleaseSheet": {
+        "type": "object",
+        "description": "The newest of a person's new releases, as the page shows them.",
+        "required": [
+          "releases",
+          "total"
+        ],
+        "properties": {
+          "releases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NewRelease"
+            },
+            "description": "The newest releases, newest first."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many the whole list holds.",
+            "minimum": 0
+          },
+          "updated_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When ListenBrainz's list of new releases was read (unix seconds);\nnone when none is kept, and the list holds only what the person's\nfollows found."
           }
         }
       },
@@ -61384,6 +61526,67 @@
                 },
                 "work_state": {
                   "$ref": "#/components/schemas/ResultState"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass back as `cursor` for the next page; null on the last."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Rows in the whole list, for lists that count them.",
+            "minimum": 0
+          }
+        }
+      },
+      "Page_NewRelease": {
+        "type": "object",
+        "description": "One page of a list.",
+        "required": [
+          "items",
+          "next_cursor",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One release on a person's list of new releases from their artists.",
+              "required": [
+                "album"
+              ],
+              "properties": {
+                "album": {
+                  "$ref": "#/components/schemas/AlbumRef",
+                  "description": "The release: its date (`release_date`, `YYYY-MM-DD`), its type,\nwhether the library holds it and whether a request for it is open."
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Why it is listed, for a release by an artist close to theirs."
+                },
+                "secondary_kind": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SecondaryKind",
+                      "description": "What kind of release it is besides its type, when it is a live\nset, a demo or a compilation."
+                    }
+                  ]
                 }
               }
             }
@@ -71542,6 +71745,15 @@
           }
         }
       },
+      "SecondaryKind": {
+        "type": "string",
+        "description": "A new release's kind besides its type, of those the list names.",
+        "enum": [
+          "live",
+          "demo",
+          "compilation"
+        ]
+      },
       "SectionCondition": {
         "type": "string",
         "description": "Why a section switched on is not plainly built. The one list of these\nreasons, for the page's sections.",
@@ -71616,6 +71828,26 @@
               "weekly": {
                 "$ref": "#/components/schemas/WeeklyExploration",
                 "description": "The playlist."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "New releases from the person's artists, dated and typed.",
+            "required": [
+              "new_releases",
+              "shape"
+            ],
+            "properties": {
+              "new_releases": {
+                "$ref": "#/components/schemas/NewReleaseSheet",
+                "description": "The newest of them."
+              },
+              "shape": {
+                "type": "string",
+                "enum": [
+                  "new_releases"
+                ]
               }
             }
           }
@@ -71737,8 +71969,7 @@
           "playlist_discovery",
           "daily_mixes",
           "radio_sections",
-          "fresh_releases",
-          "new_from_followed",
+          "new_from_your_artists",
           "missing_essentials",
           "rediscover",
           "anniversaries",

@@ -65,10 +65,8 @@ pub enum SectionKey {
     DailyMixes,
     /// Discover: album radios per seed artist.
     RadioSections,
-    /// Discover: recent releases picked for the user.
-    FreshReleases,
-    /// Discover: releases from followed artists.
-    NewFromFollowed,
+    /// Discover: the last 90 days' releases from the person's artists.
+    NewFromYourArtists,
     /// Discover: albums missing from artists the library collects.
     MissingEssentials,
     /// Discover: artists played a lot, but not lately.
@@ -172,8 +170,6 @@ pub enum Input {
     LastfmWeeklyAlbums,
     /// The user's recent Last.fm scrobbles.
     LastfmRecent,
-    /// ListenBrainz fresh releases for the user.
-    Fresh,
     /// The user's ListenBrainz genres.
     Genres,
     /// The user's Jellyfin play counts.
@@ -420,23 +416,13 @@ pub const SECTIONS: &[SectionDef] = &[
     )
     .reading(&[I::Seeds, I::LibraryAlbums], Dedupe::Albums(6)),
     discover(
-        K::FreshReleases,
+        K::NewFromYourArtists,
         Z::NewAndFresh,
-        "Fresh Releases",
-        "New releases picked for you by ListenBrainz.",
-        Some(Requires::Listenbrainz),
-        B::Personal,
-    )
-    .reading(&[I::Fresh], Dedupe::Albums(1)),
-    discover(
-        K::NewFromFollowed,
-        Z::NewAndFresh,
-        "New From Artists You Follow",
-        "Fresh releases from your followed artists.",
+        "New from your artists",
+        "The last 90 days' releases from artists you play, own or follow.",
         None,
         B::Personal,
-    )
-    .reading(&[], Dedupe::Albums(2)),
+    ),
     SectionDef {
         hides_owned: true,
         ..discover(

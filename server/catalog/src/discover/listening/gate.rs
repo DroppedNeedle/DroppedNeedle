@@ -10,12 +10,9 @@
 
 use super::rows::{AlbumRow, RankedAlbum};
 
-/// Secondary types that keep a release group off every album shelf, as
-/// MusicBrainz spells them; compared ignoring case.
-const LEFT_OUT: [&str; 10] = [
-    "Live",
-    "Demo",
-    "Compilation",
+/// Secondary types Discover never offers, as MusicBrainz spells them;
+/// compared ignoring case.
+const NEVER_OFFERED: [&str; 7] = [
     "Soundtrack",
     "Remix",
     "DJ-mix",
@@ -24,6 +21,17 @@ const LEFT_OUT: [&str; 10] = [
     "Audiobook",
     "Audio drama",
 ];
+/// Secondary types that, with those, keep a release group off every album
+/// shelf.
+const NOT_AN_ALBUM: [&str; 3] = ["Live", "Demo", "Compilation"];
+
+/// Whether a release group of secondary type `kind` is never offered on
+/// Discover, as an album or as a new release.
+pub fn never_offered(kind: &str) -> bool {
+    NEVER_OFFERED
+        .iter()
+        .any(|out| kind.trim().eq_ignore_ascii_case(out))
+}
 
 /// Whether `album` may be offered as an album by `artist_mbid`.
 pub fn may_offer(album: &AlbumRow, artist_mbid: &str) -> bool {
@@ -33,9 +41,10 @@ pub fn may_offer(album: &AlbumRow, artist_mbid: &str) -> bool {
     });
     let left_out = facts.secondary_types.as_ref().is_some_and(|types| {
         types.iter().any(|kind| {
-            LEFT_OUT
-                .iter()
-                .any(|out| kind.trim().eq_ignore_ascii_case(out))
+            never_offered(kind)
+                || NOT_AN_ALBUM
+                    .iter()
+                    .any(|out| kind.trim().eq_ignore_ascii_case(out))
         })
     });
     let artist = artist_mbid.trim();

@@ -4,7 +4,8 @@
 //! queued through them, never by a loop of its own:
 //!
 //! - [`Due::clock_pass`], from the 90-second demand tick: the kept facts'
-//!   refresh whenever it has work and room in the day, a taste or pool
+//!   refresh whenever it has work and room in the day, the fresh releases'
+//!   daily read when it is due ([`FreshFeedReads::due`]), a taste or pool
 //!   build for each person seen in seven days who is due one, a weekly set
 //!   for each person seen in thirty days whose week is due one, the
 //!   ListenBrainz history work media decides is due
@@ -12,7 +13,8 @@
 //!   work. Nothing while the warm cycle is switched off
 //!   (`DISCOVER_WARMER_ENABLED`).
 //! - [`Due::visit`], where the page records a person's activity: the kept
-//!   facts' refresh when it has work, their ListenBrainz history
+//!   facts' refresh when it has work, the fresh releases' read when it is
+//!   due, their ListenBrainz history
 //!   ([`HistoryStore::visit`]), their taste or pool build or weekly set
 //!   when one is due, and that person's own work, whether the warm cycle
 //!   runs or not.
@@ -34,6 +36,7 @@ use rusqlite::Transaction;
 
 use crate::discover::engine::schedule::TasteDue;
 use crate::discover::facts::job::{self as facts, FactsDue};
+use crate::discover::listening::fresh::{self, FreshFeedReads};
 use crate::discover::record::outcomes;
 use crate::discover::sql;
 
@@ -49,6 +52,8 @@ pub struct Due {
     clock: Arc<dyn Clock>,
     enabled: bool,
     facts: FactsDue,
+    /// When the fresh releases' read is due.
+    fresh: FreshFeedReads,
     /// When each person's taste build was last queued.
     taste: TasteDue,
     history: Arc<HistoryStore>,
@@ -69,13 +74,13 @@ impl Due {
     /// Work queued on `queue`, written through `db`, dated by `clock`.
     /// `enabled` is the warm cycle's switch; `facts` says when the kept
     /// facts' refresh has work; `history` queues the people's ListenBrainz
-    /// history work.
+    /// history work; `fresh` says when the fresh releases are due a read.
     pub fn new(
         db: Db,
         queue: JobQueue,
         clock: Arc<dyn Clock>,
         enabled: bool,
-        (facts, history): (FactsDue, Arc<HistoryStore>),
+        (facts, history, fresh): (FactsDue, Arc<HistoryStore>, FreshFeedReads),
     ) -> Self {
         Self {
             db,
@@ -83,6 +88,7 @@ impl Due {
             clock,
             enabled,
             facts,
+            fresh,
             taste: TasteDue::default(),
             history,
             passed: Mutex::new(NOT_YET),
@@ -126,17 +132,37 @@ impl Due {
         }
     }
 
+    /// The fresh releases' read, when it is due. A failed write is logged
+    /// and the next tick tries again.
+    async fn fresh_pass(&self) {
+        if !self.fresh.due().await {
+            return;
+        }
+        let queue = self.queue.clone();
+        let queued = self
+            .db
+            .write(Lane::Background, "discover.due.fresh", move |tx| {
+                queue.enqueue(tx, fresh::KIND, fresh::KEY, &())?;
+                Ok::<_, JobError>(())
+            })
+            .await;
+        if let Err(error) = queued {
+            tracing::warn!(%error, "the fresh releases' read not queued; trying next pass");
+        }
+    }
+
     /// The clock's pass: the kept facts' refresh when it has work, the
-    /// taste builds due, the history work that is due, then, on the first
-    /// pass of each UTC day, every person with rows in the pick record
-    /// whose job was not queued today gets one, in one write. Nothing while
-    /// the warm cycle is off. A failed write is logged and the next pass
-    /// tries again.
+    /// fresh releases' read when it is due, the taste builds due, the
+    /// history work that is due, then, on the first pass of each UTC day,
+    /// every person with rows in the pick record whose job was not queued
+    /// today gets one, in one write. Nothing while the warm cycle is off.
+    /// A failed write is logged and the next pass tries again.
     pub async fn clock_pass(&self) {
         if !self.enabled {
             return;
         }
         self.facts_pass().await;
+        self.fresh_pass().await;
         self.taste
             .pass(&self.db, &self.queue, self.clock.now_ms())
             .await;
@@ -181,14 +207,16 @@ impl Due {
         }
     }
 
-    /// A person's visit: the kept facts' refresh when it has work, their
-    /// ListenBrainz history, their taste or pool build or weekly set when
-    /// one is due (a person with no picks yet included), and their outcomes
-    /// job, when they have rows in the pick record and it was not queued
-    /// today. Runs whether the warm cycle is on or not. A failed
-    /// write is logged; the next visit or pass tries again.
+    /// A person's visit: the kept facts' refresh when it has work, the
+    /// fresh releases' read when it is due, their ListenBrainz history,
+    /// their taste or pool build or weekly set when one is due (a person
+    /// with no picks yet included), and their outcomes job, when they have
+    /// rows in the pick record and it was not queued today. Runs whether
+    /// the warm cycle is on or not. A failed write is logged; the next
+    /// visit or pass tries again.
     pub async fn visit(&self, user_id: &str) {
         self.facts_pass().await;
+        self.fresh_pass().await;
         // The history first: a first visit starts the import, which the
         // person's first set then waits on.
         self.history.visit(user_id).await;

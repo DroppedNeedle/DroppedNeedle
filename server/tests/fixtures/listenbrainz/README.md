@@ -45,8 +45,6 @@ recordings, no releases, similar users or recommended playlists yet):
 - `feedback_account.json`: HTTP 200 to
   `GET /1/feedback/user/DroppedNeedle/get-feedback?score=1&count=5`. Three rows,
   each with `track_metadata` null: this request asks for no metadata.
-- `fresh_releases_account.json`: HTTP 200 to
-  `GET /1/user/DroppedNeedle/fresh_releases?past=true&future=false`. An empty list.
 - `similar_users_account.json`: HTTP 200 to `GET /1/user/DroppedNeedle/similar-users`.
   An empty list.
 - `recommendation_playlists_account.json`: HTTP 200 to
@@ -87,6 +85,23 @@ unless said otherwise:
   347 `release_group_mbids` of `top_release_groups_radiohead.json`, sorted, in
   one call. The bytes as received: one row per id in that order, 20 of them
   with both counts null.
+
+Sitewide fresh releases, 2026-11-25, with the app's User-Agent and no token:
+
+- `fresh_releases_sitewide.json`: HTTP 200 to `GET /1/explore/fresh-releases/`
+  with `days=90`, `past=true`, `future=false` and `sort=release_date`. The
+  answer was 15,885,421 bytes (it took 15 seconds to arrive) holding 36,684
+  rows, oldest first, from 2026-08-27 to 2026-11-25, and `total_count`
+  36,684. Kept: seven of those rows as answered, chosen for their kinds (a
+  single with no cover, an EP, a row with no primary type, an audiobook
+  credited to two artists, an album, a live EP and a single with tags), with
+  `total_count` as answered; the other 36,677 rows are cut. Re-indented,
+  nothing else changed. Every row carried `release_group_mbid`,
+  `artist_mbids` and a `YYYY-MM-DD` `release_date`; 650 had no
+  `release_group_primary_type` and 3,528 had a `release_group_secondary_type`,
+  one name as a string. The same read with `days=7` answered HTTP 200 with
+  769,743 bytes and 1,784 rows, from 2026-11-18 to 2026-11-25, in the same
+  shape; it is not kept.
 
 A hand-made export file, 2026-11-23:
 
@@ -129,8 +144,8 @@ Not recorded yet:
 - The 200 answers of the user `artists`, `release-groups` and `recordings`
   stats. On 2026-11-07 a public account's answers to these, with `range` and
   `offset`, were checked against the models and decoded, but not kept.
-- A row of `fresh_releases`, `similar-users` or `playlists/recommendations`:
-  the account's lists are empty.
+- A row of `similar-users` or `playlists/recommendations`: the account's
+  lists are empty.
 - `/1/playlist/{id}`: the account has no recommended playlist to take an id from.
 - The answer to a good token at `/1/validate-token`: only a made-up token is
   recorded.

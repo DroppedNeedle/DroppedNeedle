@@ -899,7 +899,6 @@ fn sorted_ids(items: &Value, key: &str) -> Vec<String> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn one_album_set_everywhere() {
     use crate::common::compat::{CompatApp, PLAYER, named, rest};
-    use droppedneedle_catalog::discover::page::library::LibraryReads;
 
     let rig = CompatApp::unscanned("reads-library-album-set").await;
     rig.app.seed(ALBUM_KINDS).await;
@@ -1079,7 +1078,7 @@ async fn one_album_set_everywhere() {
         "9b2c4f10-0000-4000-8000-0000000000a2"
     );
 
-    // Owned: the library half of search, membership, follows and Discover.
+    // Owned: the library half of search, membership and follows.
     let (status, found) = rig
         .app
         .call("GET", "/api/v3/search?q=set&buckets=albums", &native, None)
@@ -1127,15 +1126,27 @@ async fn one_album_set_everywhere() {
         sorted_ids(&releases["items"], "release_group_mbid"),
         not_owned
     );
-    let mut discover: Vec<String> = LibraryReads::new(rig.app.state().library.db.clone())
-        .followed_releases(&player_id, 50)
-        .await
-        .expect("followed releases read")
-        .into_iter()
-        .map(|release| release.release_group_mbid)
+    // New from your artists lists the follow's releases owned or not, and
+    // marks owned exactly the albums the library owns.
+    let (status, listed) = rig
+        .app
+        .call("GET", "/api/v3/discover/new-releases", &native, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    let mut marked: Vec<String> = listed["items"]
+        .as_array()
+        .expect("a list")
+        .iter()
+        .filter(|row| row["album"]["in_library"] == true)
+        .map(|row| {
+            row["album"]["musicbrainz_id"]
+                .as_str()
+                .expect("an id")
+                .to_owned()
+        })
         .collect();
-    discover.sort();
-    assert_eq!(discover, not_owned);
+    marked.sort();
+    assert_eq!(marked, ["rg-live", "rg-pair"], "{listed}");
 
     // Player apps: owned albums only, listed, by id and in artist counts.
     let subsonic_json = |body: Vec<u8>| -> Value {

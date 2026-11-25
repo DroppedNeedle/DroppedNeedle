@@ -187,13 +187,16 @@ fn deps_with(
         charts,
         forgets: forgets.clone(),
     });
+    let fresh_feed = listening.fresh().clone();
+    let new_releases =
+        crate::discover::new_releases::NewReleaseLists::new(inputs.db.clone(), listening.clone());
     let fact_jobs = Arc::new(facts::job::FactJobs::new(kept, network));
     let due = Arc::new(due::Due::new(
         inputs.db.clone(),
         inputs.jobs.clone(),
         Arc::clone(&inputs.clock),
         inputs.discover_warmer,
-        (fact_jobs.due(), inputs.history.clone()),
+        (fact_jobs.due(), inputs.history.clone(), fresh_feed.clone()),
     ));
     let taste = Arc::new(engine::jobs::TasteJobs::new(engine::jobs::TasteInputs {
         db: inputs.db.clone(),
@@ -252,11 +255,13 @@ fn deps_with(
             forgets,
         ),
         facts: fact_jobs,
+        fresh: Arc::new(fresh_feed),
         taste,
         pool,
         evidence: engine::evidence::Evidence::new(inputs.db.clone()),
         tunings: tunings::Tunings::new(inputs.db.clone(), Arc::clone(&inputs.clock), due),
         later: later::LaterPile::new(inputs.db.clone(), Arc::clone(&inputs.clock)),
+        new_releases,
         weekly,
     }
 }

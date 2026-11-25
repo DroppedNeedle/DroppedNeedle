@@ -482,6 +482,16 @@ impl Feedback {
                 });
             }
             SectionContent::Shelf { shelf } => shelf.items.retain(|item| !self.hides_row(item)),
+            SectionContent::NewReleases { new_releases } => {
+                let before = new_releases.releases.len();
+                new_releases
+                    .releases
+                    .retain(|row| !self.hides_album_row(&row.album));
+                let hidden = before - new_releases.releases.len();
+                new_releases.total = new_releases
+                    .total
+                    .saturating_sub(u64::try_from(hidden).unwrap_or(0));
+            }
         }
     }
 

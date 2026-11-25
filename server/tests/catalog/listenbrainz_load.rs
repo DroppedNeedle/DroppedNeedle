@@ -86,8 +86,6 @@ const HOUR_MS: i64 = 3_600_000;
 const GENRES: [&str; 4] = ["rock", "jazz", "folk", "metal"];
 const SIMILAR_USERS_BODY: &str =
     include_str!("../fixtures/listenbrainz/similar_users_account.json");
-const FRESH_RELEASES_BODY: &str =
-    include_str!("../fixtures/listenbrainz/fresh_releases_account.json");
 const FEEDBACK_BODY: &str = include_str!("../fixtures/listenbrainz/feedback_account.json");
 const RECOMMENDATION_PLAYLISTS_BODY: &str =
     include_str!("../fixtures/listenbrainz/recommendation_playlists_account.json");
@@ -190,7 +188,6 @@ fn lb_answer(uri: &Uri, body: &[u8]) -> Value {
             .map(|genre| json!({"genre": genre, "listen_count": 40}))
             .collect::<Vec<_>>()}}),
         ["user", _, "similar-users"] => recorded(SIMILAR_USERS_BODY),
-        ["user", _, "fresh_releases"] => recorded(FRESH_RELEASES_BODY),
         // `metadata=true` is not recorded yet, so those rows stay generated.
         ["feedback", ..] if metadata_read => {
             json!({"feedback": (1..=6)

@@ -8,7 +8,8 @@
 //! wanted for the kept facts' refresh. The one outside read is the
 //! person's own weekly ListenBrainz playlist, the cached read the Discover
 //! page makes ([`listenbrainz_picks`]), and only while no pick from a
-//! playlist under a week old is kept. While a seed's list is missing the
+//! playlist under a week old is kept. The person's new releases come from
+//! the kept fresh releases ([`fresh`]). While a seed's list is missing the
 //! albums of the build before that still pass stay beside the new ones, so
 //! a bad night never empties a pool that was good. A run is safe to repeat.
 //!
@@ -30,12 +31,13 @@ use super::pool_store::{self, Counts, PoolBuild};
 use super::rank::{self, AlbumGates, AlbumList, ArtistGates, Ranking, Seed, Walk, proposed};
 use super::select::Exposure;
 use super::sources::listenbrainz_picks::{self, Picked};
-use super::sources::neighbours;
+use super::sources::{fresh, neighbours};
 use super::taste_store::Kept as Written;
 use crate::discover::cache::ForgetCounts;
 use crate::discover::facts::{FactKind, FactSource, Kept, Notes, WantOrder};
 use crate::discover::feedback::Feedback;
 use crate::discover::listening::ListeningData;
+use crate::discover::new_releases;
 
 /// The pool job kind.
 pub const KIND: JobKind = JobKind::new("discover.pool");
@@ -237,6 +239,7 @@ impl PoolJobs {
             &artist_gates,
         );
         let (kept_new, kept_picks) = self.previous(user_id, now_ms).await?;
+        let listed = new_releases::list(&self.db, &self.listening, user_id).await?;
         // This week's playlist, once: while the picks kept from it are under
         // a week old it is not read again.
         let picked = if accounts.listenbrainz.is_none() {
@@ -258,6 +261,12 @@ impl PoolJobs {
         if let Some(Picked::Rows(rows)) = &picked {
             reachable.extend(rows.iter().map(|row| row.release_group.clone()));
         }
+        reachable.extend(
+            listed
+                .releases
+                .iter()
+                .filter_map(|row| row.album.musicbrainz_id.clone()),
+        );
         reachable.extend(
             kept_new
                 .iter()
@@ -326,6 +335,10 @@ impl PoolJobs {
             }
         };
         merge(&mut candidates, picks);
+        merge(
+            &mut candidates,
+            fresh::candidates(&listed, &ranking.artists, &seeds, &gates),
+        );
         let candidates = rank::order(candidates);
 
         let mut waiting_for = walk.pending.clone();
@@ -341,9 +354,10 @@ impl PoolJobs {
             artists_without_album: walk.without_album,
         };
         let kinds = |kind: CandidateKind| candidates.iter().filter(|c| c.kind == kind).count();
-        let (new_artist, source_pick) = (
+        let (new_artist, source_pick, fresh) = (
             kinds(CandidateKind::NewArtist),
             kinds(CandidateKind::SourcePick),
+            kinds(CandidateKind::Fresh),
         );
         let wanted = waiting_for.len();
         let build = PoolBuild {
@@ -377,6 +391,7 @@ impl PoolJobs {
             artists_without_album = counts.artists_without_album,
             new_artist,
             source_pick,
+            fresh,
             wanted,
             incomplete,
             "discover pool built"

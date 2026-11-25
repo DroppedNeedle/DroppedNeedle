@@ -18,6 +18,7 @@ export type StatsRange = Schemas['StatsRange'];
 export type ServicePrompt = Schemas['ServicePrompt'];
 export type IntegrationStatus = Schemas['IntegrationStatus'];
 export type WeeklyExploration = Schemas['WeeklyExploration'];
+export type NewReleaseSheet = Schemas['NewReleaseSheet'];
 export type WeeklyTrack = Schemas['WeeklyTrack'];
 export type GenreArtwork = Schemas['GenreArtwork'];
 export type GenreArtworkAlbum = Schemas['GenreArtworkAlbum'];

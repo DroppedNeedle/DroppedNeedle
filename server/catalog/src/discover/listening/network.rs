@@ -15,7 +15,7 @@ use droppedneedle_providers::listenbrainz::{
 
 use super::ListeningResult;
 use super::rows::{
-    AlbumRow, ArtistFacts, ArtistRow, JellyfinList, LastFmAlbum, LastFmChartAlbum, LastFmFacts,
+    ArtistFacts, ArtistRow, FreshRow, JellyfinList, LastFmAlbum, LastFmChartAlbum, LastFmFacts,
     ListenedAlbum, LovedTrack, PlayedArtist, ReleaseGroupFacts, ScoredArtist, SourceContext,
     StatsRange, TagAlbum, UserMusic, WeeklyPlaylist,
 };
@@ -114,12 +114,16 @@ pub trait ListeningNetwork: Send + Sync {
         username: &'a str,
         priority: RequestPriority,
     ) -> Read<'a, Vec<(String, i64)>>;
-    /// Recent releases by artists the user listens to.
-    fn fresh_releases<'a>(
-        &'a self,
-        username: &'a str,
+    /// Every release of the last `days` days, sitewide, oldest first, sent
+    /// with no token. A network that does not script it has none.
+    fn sitewide_fresh_releases(
+        &self,
+        days: u32,
         priority: RequestPriority,
-    ) -> Read<'a, Vec<AlbumRow>>;
+    ) -> Read<'_, Vec<FreshRow>> {
+        let _ = (days, priority);
+        Box::pin(async { Ok(Vec::new()) })
+    }
     /// A user's loved recordings, newest first.
     fn loved<'a>(
         &'a self,
