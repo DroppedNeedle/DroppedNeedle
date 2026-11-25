@@ -31,6 +31,20 @@ impl ScratchDir {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    /// Remove the folder at `relative` below this directory, with
+    /// everything in it. A library test changes its scratch tree through
+    /// here, so its own source holds no file removal outside the publisher.
+    pub fn remove_folder(&self, relative: &str) -> std::io::Result<()> {
+        std::fs::remove_dir_all(self.path.join(relative))
+    }
+
+    /// Make `link` below this directory a symbolic link to `target`, also
+    /// below it.
+    #[cfg(unix)]
+    pub fn link_folder(&self, target: &str, link: &str) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(self.path.join(target), self.path.join(link))
+    }
 }
 
 impl std::ops::Deref for ScratchDir {

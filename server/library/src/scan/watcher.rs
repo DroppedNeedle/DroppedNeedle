@@ -871,9 +871,9 @@ mod tests {
             .pass(&root, &whole, made + 10.0, &|| false)
             .expect("pass");
 
-        std::fs::remove_dir_all(root.join("Gone")).expect("remove");
-        std::fs::remove_dir_all(root.join("A")).expect("remove");
-        std::os::unix::fs::symlink(base.join("elsewhere"), root.join("A")).expect("link");
+        scratch.remove_folder("music/Gone").expect("remove");
+        scratch.remove_folder("music/A").expect("remove");
+        scratch.link_folder("elsewhere", "music/A").expect("link");
         later(&root);
         let quick = full
             .pass(&root, &whole, made + 20.0, &|| false)

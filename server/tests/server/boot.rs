@@ -271,7 +271,7 @@ async fn database_one_version_behind_is_backed_up_before_migrating() {
             .map(|entries| {
                 entries
                     .map(|entry| entry.unwrap().path())
-                    .filter(|path| path.extension().is_some_and(|ext| ext == "db"))
+                    .filter(|path| path.to_string_lossy().ends_with(".db.gz"))
                     .collect()
             })
             .unwrap_or_default();
@@ -289,8 +289,14 @@ async fn database_one_version_behind_is_backed_up_before_migrating() {
     runtime.shutdown().await;
     let taken = backups();
     assert_eq!(taken.len(), 1, "{taken:?}");
+    let unpacked = dir.join("unpacked.db");
+    std::io::copy(
+        &mut flate2::read::GzDecoder::new(std::fs::File::open(&taken[0]).unwrap()),
+        &mut std::fs::File::create(&unpacked).unwrap(),
+    )
+    .unwrap();
     assert_eq!(
-        read(&taken[0]),
+        read(&unpacked),
         (BRIDGE_FROM, 1),
         "the backup holds the database as the bridge found it"
     );

@@ -59,8 +59,13 @@ function startupError(cause: unknown): never {
 // The shell's code downloads while the session is read, so a signed-in page
 // does not wait for it after the bootstrap. The page's own import gets the
 // same module, and a failed download shows the page's retry.
+//
+// The import stays out of the server build: SvelteKit puts the stylesheets
+// of any import the server build keeps in every page's head, and there the
+// shell's would sit ahead of a signed-out page's own Tailwind build, which
+// then wins over the shell's responsive classes (the desktop sidebar).
 function preloadShell(): void {
-	void loadAuthenticatedAppShell().catch(() => undefined);
+	if (browser) void loadAuthenticatedAppShell().catch(() => undefined);
 }
 
 export const load: LayoutLoad = async ({ url }) => {

@@ -166,6 +166,43 @@ pub fn effects() -> Vec<(&'static str, &'static [Effect])> {
     collect.0
 }
 
+/// The keys of the sections whose stored value does not read now, in list
+/// order: what the work each one controls waits on. Opens nothing twice per
+/// revision ([`super::store::Live::get`] keeps what it opened).
+pub fn unreadable_sections(store: &ConfigStore) -> Vec<&'static str> {
+    struct Unreadable<'a> {
+        store: &'a ConfigStore,
+        keys: Vec<&'static str>,
+    }
+    impl Unreadable<'_> {
+        fn check<S: Listed>(&mut self) {
+            if self.store.live::<S>().get().is_err() {
+                self.keys.push(S::KEY);
+            }
+        }
+    }
+    impl Visitor for Unreadable<'_> {
+        fn plain<S: PlainSection + Listed>(&mut self) {
+            self.check::<S>();
+        }
+        fn secret<S: SecretSection + Listed>(&mut self) {
+            self.check::<S>();
+        }
+        fn indexers(&mut self) {
+            if self.store.get_indexers().is_err() {
+                self.keys.push(<Indexers as Section>::KEY);
+            }
+        }
+        fn plugins(&mut self) {}
+    }
+    let mut visitor = Unreadable {
+        store,
+        keys: Vec::new(),
+    };
+    for_each(&mut visitor);
+    visitor.keys
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
@@ -311,41 +348,4 @@ mod tests {
             ConfigStore::scratch(dir.path(), Crypto::from_key_bytes(&[5u8; 32]).unwrap()).unwrap();
         for_each(&mut NoLeaks { store });
     }
-}
-
-/// The keys of the sections whose stored value does not read now, in list
-/// order: what the work each one controls waits on. Opens nothing twice per
-/// revision ([`super::store::Live::get`] keeps what it opened).
-pub fn unreadable_sections(store: &ConfigStore) -> Vec<&'static str> {
-    struct Unreadable<'a> {
-        store: &'a ConfigStore,
-        keys: Vec<&'static str>,
-    }
-    impl Unreadable<'_> {
-        fn check<S: Listed>(&mut self) {
-            if self.store.live::<S>().get().is_err() {
-                self.keys.push(S::KEY);
-            }
-        }
-    }
-    impl Visitor for Unreadable<'_> {
-        fn plain<S: PlainSection + Listed>(&mut self) {
-            self.check::<S>();
-        }
-        fn secret<S: SecretSection + Listed>(&mut self) {
-            self.check::<S>();
-        }
-        fn indexers(&mut self) {
-            if self.store.get_indexers().is_err() {
-                self.keys.push(<Indexers as Section>::KEY);
-            }
-        }
-        fn plugins(&mut self) {}
-    }
-    let mut visitor = Unreadable {
-        store,
-        keys: Vec::new(),
-    };
-    for_each(&mut visitor);
-    visitor.keys
 }

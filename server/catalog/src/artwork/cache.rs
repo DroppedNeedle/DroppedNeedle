@@ -303,7 +303,7 @@ fn parse_hex(text: &str) -> Option<Digest> {
         return None;
     }
     let mut digest = [0u8; 32];
-    for (byte, pair) in digest.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
+    for (byte, pair) in digest.iter_mut().zip(text.as_bytes().as_chunks::<2>().0) {
         let pair = std::str::from_utf8(pair).ok()?;
         *byte = u8::from_str_radix(pair, 16).ok()?;
     }

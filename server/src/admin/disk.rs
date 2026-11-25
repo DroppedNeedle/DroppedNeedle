@@ -14,7 +14,7 @@ use droppedneedle_kernel::runtime_config::sections::{ImportFolder, LibraryManage
 /// name. A section that cannot be read leaves its folders out of that pass.
 pub fn disk_watch(platform: &Platform) -> DiskWatch {
     let config = &platform.config;
-    let fixed = vec![
+    let fixed = [
         (FolderRole::Config, config.config_dir.clone()),
         (FolderRole::Temp, config.temp_dir.clone()),
         (FolderRole::Imports, config.imports_dir()),

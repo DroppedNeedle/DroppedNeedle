@@ -184,7 +184,7 @@ impl RecentProblems {
             .filter(|entry| reference.is_none_or(|found| entry.has_ref(found)))
             .cloned()
             .collect();
-        entries.sort_by(|a, b| b.last.cmp(&a.last));
+        entries.sort_by_key(|entry| std::cmp::Reverse(entry.last));
         entries
     }
 

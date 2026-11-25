@@ -43,7 +43,7 @@ async fn a_fault_is_found_by_the_ref_its_answer_gave() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|r| r == &error_id.as_str()),
+            .any(|r| r == error_id.as_str()),
         "{found}"
     );
     assert!(
