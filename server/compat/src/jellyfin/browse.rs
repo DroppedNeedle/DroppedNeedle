@@ -162,6 +162,24 @@ fn unscoped(limit: usize) -> usize {
     }
 }
 
+/// The page size when a request sends no `Limit`. Jellyfin then answers
+/// every match, and Finamp's library download relies on it, so a list
+/// under the library view or an album, an `Ids` list, or a recursive list
+/// with no parent gets everything up to [`MAX_ITEMS`]. Any other list
+/// keeps 100: an app asking for the whole library with no type, or for an
+/// artist's albums, with no `Limit` gets one page.
+fn missing_limit(ids: &[String], parent: Option<Option<&str>>, recursive: Option<bool>) -> i64 {
+    let every = match parent {
+        Some(kind) => matches!(kind, Some("library" | "album")),
+        None => recursive == Some(true),
+    };
+    if every || !ids.is_empty() {
+        MAX_ITEMS as i64
+    } else {
+        100
+    }
+}
+
 /// One page as a request asks for it: `start` is `StartIndex`, the offset
 /// in every order, `limit` is `Limit` as asked, and `counted` is
 /// `EnableTotalRecordCount`.
@@ -228,23 +246,21 @@ pub(super) async fn browse(
     let q = CiParams::parse(raw_query.as_deref());
     let b = builder(&state);
     let start = params::qint(&q, "StartIndex", 0).max(0) as usize;
-    let limit = params::qint(&q, "Limit", 100).max(0) as usize;
     let search = q.get("SearchTerm").map(str::to_owned);
     let types = params::csv_param(&q, "IncludeItemTypes");
     let ids = params::csv_param(&q, "Ids");
+    let recursive = q
+        .get("Recursive")
+        .map(|value| value.trim().eq_ignore_ascii_case("true"));
     let album_artist_ids = params::csv_param(&q, "AlbumArtistIds");
     let artist_ids = params::csv_param(&q, "ArtistIds");
     let contributing_ids = params::csv_param(&q, "ContributingArtistIds");
     let (sort_key, sort_desc) = params::browse_sort(&q);
     let played = params::played_filter(&q);
     let counted = params::wants_total(&q);
-    let paging = Paging {
-        start,
-        limit,
-        counted,
-    };
 
     if !ids.is_empty() {
+        let limit = params::qint(&q, "Limit", missing_limit(&ids, None, recursive)).max(0) as usize;
         let mut built = Vec::new();
         for (kind, internal) in state.ids.from_jf_many(&ids).await?.into_iter().flatten() {
             if let Some(item) = fetch_item(&state, &user_id, &kind, &internal).await? {
@@ -266,9 +282,24 @@ pub(super) async fn browse(
             None => return Ok(nothing(start)),
         }
     }
+    let parent = q.get("ParentId").map(|_| parent_kind.as_deref());
+    let limit = params::qint(&q, "Limit", missing_limit(&ids, parent, recursive)).max(0) as usize;
+    let paging = Paging {
+        start,
+        limit,
+        counted,
+    };
 
     if params::wants_favorites(&q) {
         return favorites_browse(&state, &user_id, &types, played, paging).await;
+    }
+
+    // Only artists sit directly in the library view, as in Jellyfin.
+    if parent_kind.as_deref() == Some("library")
+        && recursive == Some(false)
+        && primary_type(&types) != "MusicArtist"
+    {
+        return Ok(nothing(start));
     }
 
     if parent_kind.as_deref() == Some("album") {

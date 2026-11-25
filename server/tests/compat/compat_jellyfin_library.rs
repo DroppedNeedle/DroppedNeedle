@@ -2186,3 +2186,97 @@ async fn a_list_stops_at_the_cap_and_counts_every_match() {
     assert_eq!(everything["TotalRecordCount"], TRACKS);
     rig.stop().await;
 }
+
+/// Finamp's "Download library" sends no `Limit`, and Jellyfin then answers
+/// every match: its album and artist calls under the library view, and
+/// its `Ids` batches, get every item, not the first 100. A list under an
+/// artist still gets 100. Its call for
+/// loose tracks (`Recursive=false` under the library view) answers none,
+/// as only artists sit there in Jellyfin.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn finamps_library_download_gets_every_item() {
+    const ALBUMS: usize = 150;
+    let rig = CompatApp::unscanned("jf-finamp-download").await;
+    rig.app
+        .seed(format!(
+            "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+             updated_at) \
+             WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {ALBUMS}) \
+             SELECT printf('art-%03d', i), printf('Band %03d', i), printf('band %03d', i), \
+             'group', 1, 1 FROM n; \
+             INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_name, album_artist_name_folded, album_artist_id, year, \
+             grouping_source, created_at, updated_at) \
+             SELECT printf('alb-%03d', substr(id, 5)), 'root', printf('key-%s', id), \
+             printf('Album %s', substr(id, 5)), printf('album %s', substr(id, 5)), \
+             display_name, folded_name, id, 2000, 'automatic', 1, 1 FROM local_artists \
+             WHERE id LIKE 'art-%'; \
+             INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             artist_name, artist_name_folded, album_title, album_title_folded, \
+             album_artist_name, album_artist_name_folded, track_number, duration_seconds, \
+             file_format, ingest_source, imported_at, membership_source) \
+             SELECT printf('trk-%s', substr(id, 5)), id, 'root', \
+             printf('/music/%s/01.flac', id), printf('%s/01.flac', id), printf('h-%s', id), \
+             1000, 1, 'r1', 'Song', 'song', album_artist_name, album_artist_name_folded, \
+             title, title_folded, album_artist_name, album_artist_name_folded, 1, 60.0, \
+             'flac', 'scan', 1, 'automatic' FROM local_albums WHERE id LIKE 'alb-%'; \
+             INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role) \
+             SELECT id, 0, printf('art-%s', substr(id, 5)), 'main' FROM local_tracks \
+             WHERE id LIKE 'trk-%';"
+        ))
+        .await;
+    rig.jellyfin_ids_caught_up().await;
+    let auth = finamp(&rig.secret);
+    let views = json(&rig, "/jellyfin/UserViews", &auth).await;
+    let library = views["Items"][0]["Id"]
+        .as_str()
+        .expect("view id")
+        .to_owned();
+    let user = &rig.user_id;
+    let listed = |kind: &str, recursive: &str| {
+        format!(
+            "/jellyfin/Users/{user}/Items?ParentId={library}&IncludeItemTypes={kind}\
+             &Recursive={recursive}"
+        )
+    };
+    let items = |page: &Value| page["Items"].as_array().expect("item list").clone();
+
+    let albums = json(&rig, &listed("MusicAlbum", "true"), &auth).await;
+    assert_eq!(items(&albums).len(), ALBUMS);
+    assert_eq!(albums["TotalRecordCount"], ALBUMS);
+
+    let ids = items(&albums)
+        .iter()
+        .map(|album| album["Id"].as_str().expect("album id").to_owned())
+        .collect::<Vec<_>>()
+        .join(",");
+    let batch = json(&rig, &format!("/jellyfin/Items?Ids={ids}"), &auth).await;
+    assert_eq!(items(&batch).len(), ALBUMS);
+
+    let artists = json(&rig, &listed("MusicArtist", "true"), &auth).await;
+    assert!(
+        items(&artists).len() > 100,
+        "{}",
+        artists["TotalRecordCount"]
+    );
+
+    // A parent the list does not narrow by (an artist, as Music Assistant
+    // sends for an artist's albums) keeps the page of 100.
+    let artist = items(&artists)[0]["Id"]
+        .as_str()
+        .expect("artist id")
+        .to_owned();
+    let under_artist = json(
+        &rig,
+        &format!("/jellyfin/Users/{user}/Items?ParentId={artist}&IncludeItemTypes=MusicAlbum"),
+        &auth,
+    )
+    .await;
+    assert_eq!(items(&under_artist).len(), 100);
+
+    let loose = json(&rig, &listed("Audio", "false"), &auth).await;
+    assert_eq!(items(&loose).len(), 0);
+    assert_eq!(loose["TotalRecordCount"], 0);
+    rig.stop().await;
+}
