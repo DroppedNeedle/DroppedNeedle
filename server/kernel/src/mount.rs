@@ -16,7 +16,7 @@
 //! outside the session gate, and record each path template so the app can
 //! fix a request path's case before routing.
 //!
-//! Nothing else registers a route; `route_gate` in the server tests keeps
+//! Nothing else registers a route; `route_gate` in the gates crate keeps
 //! it that way.
 
 use axum::{handler::Handler, routing::MethodRouter};

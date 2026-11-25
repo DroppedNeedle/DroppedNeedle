@@ -723,6 +723,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "droppedneedle-gates"
+version = "3.1.0"
+dependencies = [
+ "regex",
+ "toml",
+]
+
+[[package]]
 name = "droppedneedle-kernel"
 version = "3.1.0"
 dependencies = [

@@ -1,6 +1,7 @@
 //! Compat wiring through the production app: kill switches, mounts
-//! outside the `/api` session gate, CORS, case-insensitive paths, the
-//! layered rate limits, and the rule that request queries never reach logs.
+//! outside the `/api` session gate, CORS, case-insensitive paths and the
+//! layered rate limits. The rule that request queries never reach logs is
+//! the gates crate's `compat_logging`.
 
 use crate::common::TestApp;
 
@@ -247,61 +248,4 @@ async fn api_bodies_compress_when_the_client_accepts() {
     assert!(plain.contains("songLyrics"), "{plain}");
     let (_, headers, _) = oneshot(&app, "GET", uri, &[], b"").await;
     assert!(headers.get("content-encoding").is_none());
-}
-
-/// Compat clients put app passwords in the query string, so source code may
-/// only read a request URI's path, query or host, and never log a URI.
-#[test]
-fn access_logging_records_path_only() {
-    // Every shipping crate of the workspace: each member's `src`, except the
-    // testkit's mock servers.
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let manifest = std::fs::read_to_string(manifest_dir.join("Cargo.toml")).expect("manifest");
-    let manifest: toml::Table = manifest.parse().expect("manifest parses");
-    let members = manifest["workspace"]["members"]
-        .as_array()
-        .expect("workspace members");
-    let mut dirs: Vec<_> = members
-        .iter()
-        .map(|member| member.as_str().expect("member path"))
-        .filter(|member| *member != "testkit")
-        .map(|member| manifest_dir.join(member).join("src"))
-        .collect();
-    assert!(dirs.len() > 1, "the workspace lists its crates");
-    let mut violations = Vec::new();
-    while let Some(dir) = dirs.pop() {
-        for entry in std::fs::read_dir(&dir).expect("src lists") {
-            let path = entry.expect("entry").path();
-            if path.is_dir() {
-                dirs.push(path);
-                continue;
-            }
-            if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
-                continue;
-            }
-            let source = std::fs::read_to_string(&path).expect("source reads");
-            for (number, line) in source.lines().enumerate() {
-                if line.trim_start().starts_with("//") {
-                    continue;
-                }
-                let full_target =
-                    line.contains("uri().path_and_query") || line.contains("uri().to_string()");
-                // Match `uri` as an identifier so words like "during" pass.
-                let names_uri = line
-                    .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-                    .any(|word| {
-                        word == "uri" || word.ends_with("_uri") || word.starts_with("uri_")
-                    });
-                let logged = line.contains("tracing::") && names_uri;
-                if full_target || logged {
-                    violations.push(format!("{}:{}: {line}", path.display(), number + 1));
-                }
-            }
-        }
-    }
-    assert!(
-        violations.is_empty(),
-        "full-target URI reads:\n{}",
-        violations.join("\n")
-    );
 }

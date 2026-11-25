@@ -1,9 +1,11 @@
 //! The shipping source of the workspace, for gates that read code as text:
 //! every `.rs` file under the `src/` of each member that `server/Cargo.toml`
-//! lists, except the testkit's mock servers. A new crate is walked without
-//! editing any gate, no `tests/` or build folder is ever reached, no
-//! folder is skipped by name, and a member whose `src/` holds no source
-//! fails the walk rather than shrinking it.
+//! lists, except the testkit's mock servers and the gates crate, which has
+//! no `src/`. The server's test binaries and the gates crate both include
+//! this file. A new crate is walked without editing any gate, no `tests/`
+//! or build folder is ever reached, no folder is skipped by name, and a
+//! member whose `src/` holds no source fails the walk rather than
+//! shrinking it.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -16,10 +18,24 @@ pub struct Source {
     pub text: String,
 }
 
-/// Every shipping source file of the workspace, sorted by path. For the
-/// server package's test binaries, whose manifest directory is `server/`.
+/// The workspace folder, `server/`: the first folder at or above the
+/// testing crate's own whose `Cargo.toml` has a `[workspace]` table.
+pub fn server_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .find(|dir| {
+            std::fs::read_to_string(dir.join("Cargo.toml"))
+                .ok()
+                .and_then(|text| text.parse::<toml::Table>().ok())
+                .is_some_and(|manifest| manifest.contains_key("workspace"))
+        })
+        .expect("a workspace manifest above the crate")
+        .to_path_buf()
+}
+
+/// Every shipping source file of the workspace, sorted by path.
 pub fn workspace_sources() -> Vec<Source> {
-    let server = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let server = server_dir();
     let manifest = std::fs::read_to_string(server.join("Cargo.toml")).expect("manifest reads");
     let manifest: toml::Table = manifest.parse().expect("manifest parses");
     let members = manifest["workspace"]["members"]
@@ -28,7 +44,7 @@ pub fn workspace_sources() -> Vec<Source> {
     let dirs: Vec<PathBuf> = members
         .iter()
         .map(|member| member.as_str().expect("member path"))
-        .filter(|member| *member != "testkit")
+        .filter(|member| !["testkit", "gates"].contains(member))
         .map(|member| server.join(member).join("src"))
         .collect();
     assert!(dirs.len() > 1, "the workspace lists its crates");
@@ -209,4 +225,128 @@ fn block_end(lines: &[&str], start: usize) -> usize {
         }
     }
     lines.len() - 1
+}
+
+/// A `sql.rs` file, where an area's SQL text lives.
+pub fn is_sql_file(path: &str) -> bool {
+    path.ends_with("/sql.rs") || path == "src/sql.rs"
+}
+
+/// The code of a file with every string literal emptied, and each literal's
+/// line and value. Comments are skipped, and `\` line continuations are
+/// joined as the compiler joins them. It reads text and does not parse
+/// Rust.
+pub fn split_literals(text: &str) -> (String, Vec<(usize, String)>) {
+    let chars: Vec<char> = text.chars().collect();
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    let (mut code, mut literals) = (String::new(), Vec::new());
+    let (mut at, mut line) = (0, 1);
+    while at < chars.len() {
+        let c = chars[at];
+        if c == '/' && chars.get(at + 1) == Some(&'/') {
+            while at < chars.len() && chars[at] != '\n' {
+                at += 1;
+            }
+            continue;
+        }
+        if c == '/' && chars.get(at + 1) == Some(&'*') {
+            at += 2;
+            while at + 1 < chars.len() && !(chars[at] == '*' && chars[at + 1] == '/') {
+                if chars[at] == '\n' {
+                    line += 1;
+                    code.push('\n');
+                }
+                at += 1;
+            }
+            at += 2;
+            continue;
+        }
+        if c == '\'' {
+            if chars.get(at + 1) == Some(&'\\') {
+                at += 2;
+                while at < chars.len() && chars[at] != '\'' {
+                    at += 1;
+                }
+                at += 1;
+                code.push_str("' '");
+                continue;
+            }
+            if chars.get(at + 2) == Some(&'\'') {
+                at += 3;
+                code.push_str("' '");
+                continue;
+            }
+        }
+        let raw = (c == 'r' || (c == 'b' && chars.get(at + 1) == Some(&'r')))
+            && (at == 0 || !ident(chars[at - 1]));
+        if raw {
+            let mut quote = at + if c == 'b' { 2 } else { 1 };
+            let mut hashes = 0;
+            while chars.get(quote) == Some(&'#') {
+                hashes += 1;
+                quote += 1;
+            }
+            if chars.get(quote) == Some(&'"') {
+                let start = quote + 1;
+                let mut end = start;
+                while end < chars.len()
+                    && !(chars[end] == '"'
+                        && (1..=hashes).all(|k| chars.get(end + k) == Some(&'#')))
+                {
+                    end += 1;
+                }
+                let value: String = chars[start..end.min(chars.len())].iter().collect();
+                let newlines = value.matches('\n').count();
+                literals.push((line, value));
+                line += newlines;
+                code.push_str("\"\"");
+                code.push_str(&"\n".repeat(newlines));
+                at = end + 1 + hashes;
+                continue;
+            }
+        }
+        if c == '"' {
+            let (start_line, mut value) = (line, String::new());
+            at += 1;
+            while at < chars.len() && chars[at] != '"' {
+                if chars[at] == '\\' {
+                    match chars.get(at + 1) {
+                        Some('\n') => {
+                            at += 1;
+                            while at < chars.len() && chars[at].is_whitespace() {
+                                if chars[at] == '\n' {
+                                    line += 1;
+                                    code.push('\n');
+                                }
+                                at += 1;
+                            }
+                            continue;
+                        }
+                        Some('n') => value.push('\n'),
+                        Some('t') => value.push('\t'),
+                        Some(other) => value.push(*other),
+                        None => {}
+                    }
+                    at += 2;
+                    continue;
+                }
+                if chars[at] == '\n' {
+                    line += 1;
+                    code.push('\n');
+                }
+                value.push(chars[at]);
+                at += 1;
+            }
+            literals.push((start_line, value));
+            code.push_str("\"\"");
+            at += 1;
+            continue;
+        }
+        if c == '\n' {
+            line += 1;
+        }
+        code.push(c);
+        at += 1;
+    }
+    (code, literals)
 }

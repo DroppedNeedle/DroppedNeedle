@@ -1,0 +1,14 @@
+# The gates that read the workspace's source as text. Test-only, outside
+# the layers, and free of every droppedneedle crate, so it builds in
+# seconds: `cargo test -p droppedneedle-gates`.
+[package]
+name = "droppedneedle-gates"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dev-dependencies]
+regex.workspace = true
+toml.workspace = true

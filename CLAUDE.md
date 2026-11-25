@@ -18,9 +18,10 @@ Maintainers may keep a gitignored local file that adds to this one.
   `server/src` (router, startup, state, admin and settings routes, the API
   document, the web UI), the migration tool in `server/tool` on top, and
   the mock servers in `server/testkit`. Integration tests are in
-  `server/tests/<binary>/`, sharing `server/tests/common`. `frontend/` is
-  the SvelteKit SPA, `sdk/python/` and `examples/plugins/` the plugin
-  helper and examples.
+  `server/tests/<binary>/`, sharing `server/tests/common`; the gates that
+  read the source as text are the test-only crate `server/gates`.
+  `frontend/` is the SvelteKit SPA, `sdk/python/` and `examples/plugins/`
+  the plugin helper and examples.
 - User-facing docs: `README.md`, `PLUGINS.md`, `docs/`, `CONTRIBUTING.md`.
 
 ## Ground rules
@@ -75,7 +76,9 @@ Run from the repo root. `make help` lists every target.
 - Focused run: `cd server && cargo test --test <binary> <module>`. The
   binaries are `library`, `acquire`, `compat`, `catalog`, `media` and
   `server` (everything else); the tool's are
-  `cargo test -p droppedneedle-tool --test tool <module>`.
+  `cargo test -p droppedneedle-tool --test tool <module>`; the source-text
+  gates run with `cargo test -p droppedneedle-gates [<module>]`, which
+  builds none of the server.
 - A crate's unit tests: `cargo test -p droppedneedle-<crate>`;
   `cargo test --lib` runs only the server crate's.
 - CI is path-filtered: `v3-ci.yml` runs on code changes and adds
@@ -84,6 +87,9 @@ Run from the repo root. `make help` lists every target.
   the shipping build before it publishes, and the dev image is built only
   after CI passes on main. `frontend-ci.yml` runs on `frontend/` changes.
   Green locally never excuses red CI.
+- The Rust version is `rust-toolchain.toml`'s channel; both Dockerfiles'
+  `FROM rust:` lines and `rust-version` match it, and CI's pin check holds
+  them equal.
 - Clippy rejects `unwrap`, `expect` and `panic!` outside tests. Eslint rejects
   raw `fetch` and hand-built `/api/v3` strings.
 - `make contract-check` and `make contract-write` take the document from the
@@ -129,7 +135,9 @@ Run from the repo root. `make help` lists every target.
   plugins, media, catalog, acquire, compat, then the server crate and the
   tool. A crate uses only crates below it, and Cargo refuses an upward
   import. A new `droppedneedle-*` dependency in a crate's `Cargo.toml` is
-  an architecture change and the maintainer's call.
+  an architecture change and the maintainer's call. Two test-only crates
+  sit outside the layers: the mock servers (`testkit`) and the source-text
+  gates (`gates`), which depend on no `droppedneedle-*` crate.
 - `/api/v3` is snake_case with no duty to v2 shapes. Types are generated,
   never hand-copied: after a route or type change run `make contract-write`,
   commit both generated files and update the frontend query hooks in the same
@@ -178,8 +186,8 @@ Run from the repo root. `make help` lists every target.
   the last page, and a `total` only where the list counts rows. The
   library's lists use it; other areas move to it when they are next
   touched.
-- `server/tests/server/http_gate.rs` holds the one way in for errors and
-  extractors; an allowlist entry needs a reason beside it and is the
+- `server/gates/tests/gates/http_gate.rs` holds the one way in for errors
+  and extractors; an allowlist entry needs a reason beside it and is the
   maintainer's call.
 
 **Auth**
@@ -206,7 +214,8 @@ Run from the repo root. `make help` lists every target.
   and are not access checks. Work done for a user with no request builds its
   principal only through `Principal::acting_for`, in the service doing the
   work, from the stored row; it never proves a role and never signs a
-  request in. `server/tests/server/caller_shapes.rs` enforces this.
+  request in. `caller_shapes.rs` in the gates crate and
+  `server/tests/server/caller_groups.rs` enforce this.
 - Compat APIs and the wrapped routes have their own credentials outside that
   gate. Never assume `/api` auth covers them.
 - A locked-out admin recovers from the host: stop the server, run
@@ -218,8 +227,8 @@ Run from the repo root. `make help` lists every target.
 **Database**
 - One SQLite file, WAL mode, local filesystem, opened only in
   `server/kernel/src/db/`; outside it only where
-  `server/tests/server/source_gates.rs` lists: the boot stamp probe, backup
-  checks, the offline tool and the test template. The same gate keeps
+  `server/gates/tests/gates/source_gates.rs` lists: the boot stamp probe,
+  backup checks, the offline tool and the test template. The same gate keeps
   hand-run transactions, pragmas, connection hooks, ATTACH/VACUUM and leaked
   values inside `db/`, and `Lane::Bulk` inside `db/` and the scan, whose
   writes may wait out a WAL hold. A journal write before a file moves is a
@@ -343,7 +352,7 @@ Run from the repo root. `make help` lists every target.
   iteration. A spawned task nobody awaits logs its own failure.
 - Every loop runs on the one loop supervisor (`kernel/src/jobs/supervisor.rs`)
   and appears in the admin jobs view. A spawn outside it is listed, with
-  its reason, in `server/tests/server/source_gates.rs`.
+  its reason, in `server/gates/tests/gates/source_gates.rs`.
 - Discover's background work for a person is queued only from
   `catalog/src/discover/due.rs`: `clock_pass` from the demand tick (nothing
   while `DISCOVER_WARMER_ENABLED` is off) and `visit` where the page records
@@ -399,8 +408,9 @@ Run from the repo root. `make help` lists every target.
 - LAN services (slskd, SABnzbd) get no rate limiter. Public APIs follow the
   one rate table in `server/providers/src/rates.rs`, which the limiters are
   built from; each row carries the date and source it was verified against.
-  `server/tests/server/providers_gate.rs` refuses a rate written anywhere
-  else, an HTTP client in a provider file and a priority nobody chose.
+  `server/gates/tests/gates/providers_gate.rs` refuses a rate written
+  anywhere else, an HTTP client in a provider file and a priority nobody
+  chose.
   Change a limit only after re-verifying it against the provider's docs.
 - Pace per install is not enough. MetaBrainz counts the total across every
   install, so ListenBrainz and MusicBrainz reads are cached for as long as the
@@ -419,7 +429,8 @@ Run from the repo root. `make help` lists every target.
   past a refusal, without asking the provider first.
 - The limits, from `rates.rs`, with the day each was last read at its source
   ("theirs" is a published limit we must keep, "ours" a pace we chose where none
-  is published). `providers_gate.rs` holds this table to `rates.rs`:
+  is published). `server/tests/server/providers_rates.rs` holds this table
+  to `rates.rs`:
 
   | Source | Keep to | Basis | Last read |
   |---|---|---|---|
@@ -489,7 +500,7 @@ Run from the repo root. `make help` lists every target.
   again. A start never mints an encryption key over a database that holds
   settings or accounts.
 - A service holds a live handle (`Live<S>`) to its settings section, never
-  a copied value; `server/tests/server/source_gates.rs` keeps the store
+  a copied value; `server/gates/tests/gates/source_gates.rs` keeps the store
   itself to the composition roots and the settings writers. A setting
   nothing reads is a bug (`settings_readers.rs` checks every stored field
   has a reader). A section's get and put routes come from one table,
@@ -1065,6 +1076,11 @@ Run from the repo root. `make help` lists every target.
 ## Testing (brief-first, minimal, fast)
 
 - A test is a short brief saying exactly how one behavior must work.
+- A test that reads only the source as text (no app, API document,
+  database or value from a workspace crate) is a gate in `server/gates`;
+  one that needs any of those stays in an integration binary.
+  `crates_depend_only_downward` keeps the gates crate free of
+  `droppedneedle-*` dependencies.
 - Test-only code lives in the crate's one `test_support` module, or in
   `server/tests/common` when it needs no crate internals; nothing else in
   `src/` names the `test-support` feature except the named sites

@@ -1,6 +1,6 @@
 # Files that still read the system clock outside kernel/src/clock.rs. Wall
 # time comes from the kernel clock, so a test's ManualClock drives every
-# path. The gate in tests/server/source_gates.rs fails on a read in a file
+# path. The gate in gates/tests/gates/source_gates.rs fails on a read in a file
 # that is not listed here, and on a listed file that no longer reads the
 # clock: delete its line then, so the list only shrinks. Each line says why
 # the file is still listed. Inline #[cfg(test)] modules are skipped; a test

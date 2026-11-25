@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = [".", "acquire", "auth", "catalog", "compat", "kernel", "library", "media", "plugins", "providers", "testkit", "tool"]
+members = [".", "acquire", "auth", "catalog", "compat", "gates", "kernel", "library", "media", "plugins", "providers", "testkit", "tool"]
 
 [workspace.package]
 version = "3.1.0"

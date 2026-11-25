@@ -34,7 +34,7 @@
 //!
 //! Inside the router, matching does not follow registration order (an
 //! overlap panics at build). Every route is registered through the kernel's
-//! mount API (`route_gate` in the server tests refuses any other). What is
+//! mount API (`route_gate` in the gates crate refuses any other). What is
 //! load-bearing is which layers wrap which routes:
 //! - Areas declare their routes as [`Routes`], in posture groups (public,
 //!   user, curator, admin, own credential), and [`mount`] lists them once.

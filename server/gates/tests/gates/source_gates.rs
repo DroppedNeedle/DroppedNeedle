@@ -13,7 +13,7 @@ use std::path::Path;
 
 use regex::Regex;
 
-use crate::common::sources::workspace_sources;
+use crate::common::sources::{server_dir, workspace_sources};
 
 /// A place under `server/`, a file or a folder ending in `/`.
 struct Place {
@@ -228,10 +228,7 @@ fn the_database_is_reached_one_way() {
 /// `rsa` and the advisory against it, which CI no longer ignores.
 #[test]
 fn the_lock_holds_one_sqlite_library() {
-    let lock = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"),
-    )
-    .expect("the lock reads");
+    let lock = std::fs::read_to_string(server_dir().join("Cargo.lock")).expect("the lock reads");
     let lock: toml::Table = lock.parse().expect("the lock parses");
     // The one line under `server/` that names the crate: the check that it
     // is gone reads the tree with this line left out.
@@ -1242,10 +1239,8 @@ const KERNEL_CLOCK: &str = "kernel/src/clock.rs";
 /// The files that still read the system clock outside the kernel, each with
 /// its reason, from `server/clock-outside-kernel.txt`.
 fn clock_outside_kernel() -> Vec<(String, String)> {
-    let list = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("clock-outside-kernel.txt"),
-    )
-    .expect("clock-outside-kernel.txt reads");
+    let list = std::fs::read_to_string(server_dir().join("clock-outside-kernel.txt"))
+        .expect("clock-outside-kernel.txt reads");
     list.lines()
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
@@ -1324,7 +1319,7 @@ fn trigger_followed_tables(migrations: &[(String, String)]) -> BTreeSet<String> 
 
 /// Every migration file, by name, with its text.
 fn migrations() -> Vec<(String, String)> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    let dir = server_dir().join("migrations");
     let mut files: Vec<(String, String)> = std::fs::read_dir(&dir)
         .expect("migrations list")
         .map(|entry| entry.expect("entry").path())
@@ -1411,7 +1406,7 @@ const FREE_SOURCE_NAME_ALLOWED: &[(&str, &str)] = &[
 /// Every file under `server/` but the build folder and the tool crate, as
 /// a path from `server/` and its text.
 fn server_files() -> Vec<(String, String)> {
-    let server = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let server = &server_dir();
     let mut files = Vec::new();
     let mut pending = vec![server.to_path_buf()];
     while let Some(dir) = pending.pop() {
@@ -1500,11 +1495,12 @@ const LAYERS: &[(&str, &str)] = &[
 ];
 
 /// A crate's shipping dependencies point down the layers only. Cargo
-/// refuses a cycle; this also refuses an upward edge that makes none, and
-/// any crate of the workspace left off the list.
+/// refuses a cycle; this also refuses an upward edge that makes none, any
+/// crate of the workspace left off the list, and any workspace crate in the
+/// gates crate's manifest, which must keep building in seconds.
 #[test]
 fn crates_depend_only_downward() {
-    let server = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let server = &server_dir();
     let manifest: toml::Table = std::fs::read_to_string(server.join("Cargo.toml"))
         .expect("manifest reads")
         .parse()
@@ -1519,7 +1515,7 @@ fn crates_depend_only_downward() {
     for member in members
         .iter()
         .copied()
-        .filter(|member| *member != "testkit")
+        .filter(|member| !["testkit", "gates"].contains(member))
     {
         if !LAYERS.iter().any(|(folder, _)| *folder == member) {
             wrong.push(format!(
@@ -1552,7 +1548,41 @@ fn crates_depend_only_downward() {
             }
         }
     }
+    let gates: toml::Table = std::fs::read_to_string(server.join("gates").join("Cargo.toml"))
+        .expect("gates manifest reads")
+        .parse()
+        .expect("gates manifest parses");
+    for dependency in workspace_dependencies(&gates) {
+        wrong.push(format!(
+            "droppedneedle-gates depends on {dependency}; the gates crate builds none of the \
+             workspace"
+        ));
+    }
     assert!(wrong.is_empty(), "crate layers:\n{}", wrong.join("\n"));
+}
+
+/// The `droppedneedle*` keys in every dependency table of a manifest:
+/// normal, dev and build, under a `[target.*]` table too.
+fn workspace_dependencies(manifest: &toml::Table) -> Vec<String> {
+    let mut found = Vec::new();
+    for (key, value) in manifest {
+        let Some(table) = value.as_table() else {
+            continue;
+        };
+        if key.ends_with("dependencies") {
+            found.extend(
+                table
+                    .keys()
+                    .filter(|name| name.starts_with("droppedneedle"))
+                    .cloned(),
+            );
+        } else if key == "target" {
+            for platform in table.values().filter_map(toml::Value::as_table) {
+                found.extend(workspace_dependencies(platform));
+            }
+        }
+    }
+    found
 }
 
 /// Where the narration gate looks, from the repository root: code, tests
@@ -1635,9 +1665,8 @@ fn no_port_narration_or_plan_ids() {
     .iter()
     .map(|pattern| Regex::new(pattern).unwrap())
     .collect();
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("the repository root");
+    let server = server_dir();
+    let repo = server.parent().expect("the repository root");
     let mut files = Vec::new();
     for root in NARRATION_ROOTS {
         narration_files(repo, root, &mut files);
