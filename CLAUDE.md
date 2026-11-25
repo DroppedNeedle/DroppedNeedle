@@ -87,9 +87,11 @@ Run from the repo root. `make help` lists every target.
   the shipping build before it publishes, and the dev image is built only
   after CI passes on main. `frontend-ci.yml` runs on `frontend/` changes.
   Green locally never excuses red CI.
-- The Rust version is `rust-toolchain.toml`'s channel; both Dockerfiles'
-  `FROM rust:` lines and `rust-version` match it, and CI's pin check holds
-  them equal.
+- The Rust version is `rust-toolchain.toml`'s channel; the image's AlmaLinux
+  8 builder installs it through rustup, `e2e-mocks.Dockerfile`'s `FROM rust:`
+  line and `rust-version` match it, and CI's pin check holds them equal. The
+  shipped binaries need glibc 2.28 at most; `server/scripts/glibc-floor.sh`
+  checks it in the image build.
 - Clippy rejects `unwrap`, `expect` and `panic!` outside tests. Eslint rejects
   raw `fetch` and hand-built `/api/v3` strings.
 - `make contract-check` and `make contract-write` take the document from the
