@@ -1077,8 +1077,7 @@ pub async fn album_status(
         .iter()
         .find(|id| records.iter().any(|record| &record.album_id == *id))
         .or_else(|| album_ids.first())
-        .cloned()
-        .unwrap_or_else(|| identifier.to_owned());
+        .cloned();
     let tracks: Vec<LibraryStatusTrack> = records
         .into_iter()
         .map(|record| {

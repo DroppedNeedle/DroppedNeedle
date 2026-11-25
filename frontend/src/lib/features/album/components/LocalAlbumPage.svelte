@@ -21,6 +21,7 @@
 	import Card from '$lib/ui/Card.svelte';
 	import ContextMenu, { type MenuItem } from '$lib/ui/ContextMenu.svelte';
 	import PaperPanel from '$lib/ui/PaperPanel.svelte';
+	import LazySection from '$lib/ui/LazySection.svelte';
 	import RatingStars from '$lib/ui/RatingStars.svelte';
 	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import { formatTotalDurationSec } from '$lib/utils/formatting';
@@ -366,14 +367,20 @@
 			{/if}
 
 			{#if authStore.isTrusted}
-				<RecycledRemovals albumId={album.id} releaseGroupMbid={album.release_group_mbid} />
+				<LazySection>
+					<RecycledRemovals albumId={album.id} releaseGroupMbid={album.release_group_mbid} />
+				</LazySection>
 			{/if}
 
 			{#if authStore.isAdmin}
-				<AlbumRetagPairs {albumId} />
+				<LazySection>
+					<AlbumRetagPairs {albumId} />
+				</LazySection>
 			{/if}
 
-			<AlbumHistory {albumId} />
+			<LazySection>
+				<AlbumHistory {albumId} />
+			</LazySection>
 		</div>
 
 		{#if authStore.isAdmin}

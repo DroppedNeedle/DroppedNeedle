@@ -13,6 +13,7 @@
 	import AlbumHeader from './AlbumHeader.svelte';
 	import AlbumHeroSkeleton from './AlbumHeroSkeleton.svelte';
 	import PaperPanel from '$lib/ui/PaperPanel.svelte';
+	import LazySection from '$lib/ui/LazySection.svelte';
 	import UnmatchedFilesSection from './UnmatchedFilesSection.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import AlbumSourceBars from './AlbumSourceBars.svelte';
@@ -60,8 +61,8 @@
 	const state = createAlbumPageState(() => data.albumId);
 	// The page is keyed by release group, but the library reads take local
 	// album ids: the album status names the local album holding the group,
-	// and its copies are the group's other local albums. A status that echoes
-	// the asked id back found no local album.
+	// and its copies are the group's other local albums. A status that names
+	// no album found no local album.
 	const libraryStatusQuery = getLibraryAlbumStatusQuery(() => data.albumId);
 	const localAlbumId = $derived.by(() => {
 		if (localAlbum) return localAlbum.id;
@@ -258,7 +259,9 @@
 				</Card>
 			{/if}
 
-			<WhereToBuy releaseGroupMbid={album.musicbrainz_id} enabled={!state.loadingTracks} />
+			<LazySection minHeight="5rem">
+				<WhereToBuy releaseGroupMbid={album.musicbrainz_id} enabled={!state.loadingTracks} />
+			</LazySection>
 
 			<section class="space-y-3" aria-labelledby="album-tracks-title">
 				<div class="flex flex-wrap items-center justify-between gap-2">
@@ -399,40 +402,52 @@
 			{/if}
 
 			{#if authStore.isTrusted && localAlbumId}
-				<RecycledRemovals
-					albumId={localAlbumId}
-					releaseGroupMbid={album.musicbrainz_id}
-					onputback={() => void state.refreshAll()}
-				/>
+				<LazySection>
+					<RecycledRemovals
+						albumId={localAlbumId}
+						releaseGroupMbid={album.musicbrainz_id}
+						onputback={() => void state.refreshAll()}
+					/>
+				</LazySection>
 			{/if}
 
 			{#if authStore.isAdmin && localAlbumId}
-				<AlbumRetagPairs albumId={localAlbumId} />
+				<LazySection>
+					<AlbumRetagPairs albumId={localAlbumId} />
+				</LazySection>
 			{/if}
 
 			{#if localAlbumId && state.tracksInfo && state.tracksInfo.tracks.length > 0}
-				<AlbumHistory albumId={localAlbumId} />
+				<LazySection>
+					<AlbumHistory albumId={localAlbumId} />
+				</LazySection>
 			{/if}
 
 			{#if state.loadingLastfm || state.lastfmEnrichment}
-				<LastFmAlbumEnrichmentComponent
-					enrichment={state.lastfmEnrichment}
-					loading={state.loadingLastfm}
-				/>
+				<LazySection key={data.albumId} onshow={state.showLastfm}>
+					<LastFmAlbumEnrichmentComponent
+						enrichment={state.lastfmEnrichment}
+						loading={state.loadingLastfm}
+					/>
+				</LazySection>
 			{/if}
 
-			<AlbumPluginDetails
-				releaseGroupMbid={album.musicbrainz_id}
-				hasNotes={!!state.lastfmEnrichment?.summary}
-				knownTags={(state.lastfmEnrichment?.tags ?? []).map((tag) => tag.name)}
-			/>
+			<LazySection>
+				<AlbumPluginDetails
+					releaseGroupMbid={album.musicbrainz_id}
+					hasNotes={!!state.lastfmEnrichment?.summary}
+					knownTags={(state.lastfmEnrichment?.tags ?? []).map((tag) => tag.name)}
+				/>
+			</LazySection>
 
-			<AlbumDiscovery
-				moreByArtist={state.moreByArtist}
-				similarAlbums={state.similarAlbums}
-				loadingDiscovery={state.loadingDiscovery}
-				artistName={album.artist_name}
-			/>
+			<LazySection minHeight="24rem" key={data.albumId} onshow={state.showDiscovery}>
+				<AlbumDiscovery
+					moreByArtist={state.moreByArtist}
+					similarAlbums={state.similarAlbums}
+					loadingDiscovery={state.loadingDiscovery}
+					artistName={album.artist_name}
+				/>
+			</LazySection>
 		</div>
 	{:else}
 		<div class="dn-album-page flex min-h-[50vh] items-center justify-center">

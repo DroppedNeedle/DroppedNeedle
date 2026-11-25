@@ -17247,8 +17247,11 @@ export interface components {
          *     Unknown albums answer with `in_library` false, never 404.
          */
         LibraryAlbumStatus: {
-            /** @description The local album id holding the tracks, or the asked id when none. */
-            album_id: string;
+            /**
+             * @description The local album the id names or that holds the tracks; null when no
+             *     local album does.
+             */
+            album_id?: string | null;
             /** @description True when at least one streamable track is held. */
             in_library: boolean;
             /**

@@ -118,11 +118,18 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		tracksInfo ? buildRenderedTrackSections(tracksInfo.tracks) : []
 	);
 
-	// The shelves wait for the tracklist, which the page shows first.
+	// The shelves and the Last.fm panel sit below the fold: each reads once
+	// its section has come near view, and again for each album it shows.
+	let discoveryShownFor = $state<string | null>(null);
+	let lastfmShownFor = $state<string | null>(null);
+	const showDiscovery = () => (discoveryShownFor = albumIdGetter());
+	const showLastfm = () => (lastfmShownFor = albumIdGetter());
+
+	// The shelves also wait for the tracklist, which the page shows first.
 	const discoveryParams = () => ({
 		albumId: albumIdGetter(),
 		artistId: album?.artist_id ?? '',
-		enabled: !tracksQuery.isPending
+		enabled: !tracksQuery.isPending && discoveryShownFor === albumIdGetter()
 	});
 	const moreByArtistQuery = getMoreByArtistQuery(userId, discoveryParams);
 	const similarAlbumsQuery = getSimilarAlbumsQuery(userId, discoveryParams);
@@ -130,13 +137,15 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		!!album?.artist_id && (moreByArtistQuery.isPending || similarAlbumsQuery.isPending)
 	);
 
+	// Last.fm and YouTube are read only while they are switched on.
 	const lastFmQuery = getAlbumLastFmQuery(() =>
-		album
+		album && integrations.lastfm && lastfmShownFor === albumIdGetter()
 			? { albumId: albumIdGetter(), artistName: album.artist_name, albumName: album.title }
 			: null
 	);
-	const youtubeLinkQuery = getAlbumYouTubeLinkQuery(albumIdGetter);
-	const youtubeTrackLinksQuery = getAlbumYouTubeTrackLinksQuery(albumIdGetter);
+	const youtubeAlbumId = () => (integrations.youtube ? albumIdGetter() : '');
+	const youtubeLinkQuery = getAlbumYouTubeLinkQuery(youtubeAlbumId);
+	const youtubeTrackLinksQuery = getAlbumYouTubeTrackLinksQuery(youtubeAlbumId);
 	const trackLinks = $derived(youtubeTrackLinksQuery.data ?? []);
 
 	// Jellyfin and the local library match on the id alone; Navidrome and Plex
@@ -329,7 +338,9 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 	// plan: the same reads, under the same keys, as the edition plate, so the
 	// track rows, the counts and the plate never disagree.
 	const localAlbumId = $derived(
-		libraryStatus && libraryStatus.album_id !== albumIdGetter() ? libraryStatus.album_id : ''
+		libraryStatus?.album_id && libraryStatus.album_id !== albumIdGetter()
+			? libraryStatus.album_id
+			: ''
 	);
 	const editionStatusQuery = getAlbumEditionStatusQuery(userId, () => localAlbumId);
 	const editionPlanQuery = getEditionPlanQuery(
@@ -813,8 +824,10 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 			return lastFmQuery.data ?? null;
 		},
 		get loadingLastfm() {
-			return lastFmQuery.isPending;
+			return integrations.lastfm && lastFmQuery.isPending;
 		},
+		showDiscovery,
+		showLastfm,
 		get renderedTrackSections() {
 			return renderedTrackSections;
 		},

@@ -53175,14 +53175,16 @@
         "description": "What the library holds for one album, by local id or MusicBrainz id.\nUnknown albums answer with `in_library` false, never 404.",
         "required": [
           "in_library",
-          "album_id",
           "track_count",
           "tracks"
         ],
         "properties": {
           "album_id": {
-            "type": "string",
-            "description": "The local album id holding the tracks, or the asked id when none."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The local album the id names or that holds the tracks; null when no\nlocal album does."
           },
           "in_library": {
             "type": "boolean",

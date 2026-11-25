@@ -211,12 +211,14 @@ async fn browse_gaps_journey() {
         .json(&fixture.user, "GET", "/library/albums/al2/status", None)
         .await;
     assert_eq!(body["album_id"], "al2");
+    // An id no local album holds names no album, so the page reads no local
+    // detail for it.
     let (_, body) = fixture
         .json(&fixture.user, "GET", "/library/albums/nope/status", None)
         .await;
     assert_eq!(
         body,
-        json!({"in_library": false, "album_id": "nope", "track_count": 0, "tracks": []})
+        json!({"in_library": false, "album_id": null, "track_count": 0, "tracks": []})
     );
 
     // Top-songs resolution: known positions resolve, the rest stay bare.

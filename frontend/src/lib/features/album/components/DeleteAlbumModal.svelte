@@ -30,7 +30,7 @@
 	// against and what this dialog shows.
 	const status = getLibraryAlbumStatusQuery(() => musicbrainzId);
 	const detail = getLibraryAlbumDetailQuery(() =>
-		status.data?.in_library ? status.data.album_id : ''
+		status.data?.in_library ? (status.data.album_id ?? '') : ''
 	);
 	const client = useQueryClient();
 	const shownTitle = $derived(detail.data?.title ?? albumTitle);
@@ -66,7 +66,7 @@
 	// until the person has seen what would.
 	async function readAgain(): Promise<never> {
 		const current = (await status.refetch()).data;
-		if (!current?.in_library) throw new Error("Couldn't read this album");
+		if (!current?.in_library || !current.album_id) throw new Error("Couldn't read this album");
 		await client.fetchQuery(
 			getLibraryAlbumDetailQueryOptions(authStore.user?.id, current.album_id)
 		);

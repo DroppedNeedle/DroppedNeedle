@@ -893,8 +893,9 @@ pub struct LibraryStatusTrack {
 pub struct LibraryAlbumStatus {
     /// True when at least one streamable track is held.
     pub in_library: bool,
-    /// The local album id holding the tracks, or the asked id when none.
-    pub album_id: String,
+    /// The local album the id names or that holds the tracks; null when no
+    /// local album does.
+    pub album_id: Option<String>,
     /// Held streamable tracks.
     pub track_count: u64,
     /// Held tracks by album, disc and track.

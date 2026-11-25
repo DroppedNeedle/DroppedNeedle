@@ -1,5 +1,6 @@
-import { page } from 'vitest/browser';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { QueryClient } from '@tanstack/svelte-query';
+import { page, type Locator } from 'vitest/browser';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { toastStore } from '$lib/stores/toast';
 import { apiError, fakeApi, type FakeApi, type RouteData } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
@@ -33,6 +34,7 @@ import AlbumRoute from './+page.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { HomeQueryKeyFactory } from '$lib/queries/featureKeys';
 import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
+import { STALE_DEFAULT } from '$lib/queries/staleTime';
 import { libraryStore } from '$lib/stores/library';
 import { toAuthUser } from '$lib/features/auth/queries/types';
 
@@ -89,9 +91,15 @@ function localTrack(i: number, albumIdOfFile: string): LocalTrack {
 	};
 }
 
-// The release group the library does not hold: the status echoes the asked id.
+// An id the library holds no tracks for: the local album answers for itself,
+// any other id names no album.
 function notHeld(id: string): Status {
-	return { album_id: id, in_library: false, track_count: 0, tracks: [] };
+	return {
+		album_id: id === localAlbumId ? id : null,
+		in_library: false,
+		track_count: 0,
+		tracks: []
+	};
 }
 
 function localAlbum(): RouteData<'GET /api/v3/library/albums/{id}'> {
@@ -255,8 +263,28 @@ async function renderPage(id = albumId) {
 
 const trackRow = (title: string) => page.getByRole('listitem').filter({ hasText: title }).first();
 
+// A phone-sized screen short enough that the panels under the track list
+// start more than a screen below it.
+async function shortScreen(): Promise<void> {
+	const [width, height] = [window.innerWidth, window.innerHeight];
+	await page.viewport(width, 320);
+	onTestFinished(() => page.viewport(width, height));
+}
+
+// Scroll down a screen at a time, as a person does, until `target` is there.
+async function scrollTo(target: Locator): Promise<void> {
+	await vi.waitFor(
+		() => {
+			window.scrollBy(0, window.innerHeight);
+			expect(target.elements().length).toBeGreaterThan(0);
+		},
+		{ timeout: 5000 }
+	);
+}
+
 beforeEach(async () => {
 	localStorage.clear();
+	window.scrollTo(0, 0);
 	h.goto.mockReset();
 	status = notHeld;
 	guessContradicted = false;
@@ -754,7 +782,8 @@ describe('the page agrees with the edition', () => {
 			.toBeVisible();
 	});
 
-	it('shows the album history below the track list', async () => {
+	it('shows the album history below the track list once it nears view', async () => {
+		await shortScreen();
 		chooseRemaster();
 		history = {
 			items: [
@@ -770,8 +799,11 @@ describe('the page agrees with the edition', () => {
 			]
 		};
 		await renderPage();
+		await expect.element(trackRow('Ambrosia')).toBeVisible();
+		expect(api.calls('GET /api/v3/library/albums/{album_id}/history')).toHaveLength(0);
 
 		const historyHeading = page.getByRole('heading', { name: 'Album history' });
+		await scrollTo(historyHeading);
 		await expect.element(historyHeading).toBeVisible();
 		const tracks = page.getByRole('heading', { name: 'Tracks', exact: true }).element();
 		expect(
@@ -844,5 +876,56 @@ describe('a local album opened by its own id', () => {
 			.element(page.getByRole('dialog', { name: 'Edition of Daylight Hours' }))
 			.toBeVisible();
 		expect(groupPage()).toBe(false);
+	});
+});
+
+describe('the reads of a cold album page', () => {
+	const lower = [
+		'GET /api/v3/albums/{album_id}/more-by-artist',
+		'GET /api/v3/albums/{album_id}/similar',
+		'GET /api/v3/albums/{album_id}/lastfm',
+		'GET /api/v3/albums/{album_id}/plugin-details'
+	] as const;
+
+	it('asks each read once, and the panels below the fold only as they near view', async () => {
+		await shortScreen();
+		await setQueryDataWithPersister(HomeQueryKeyFactory.integrationStatus('user-1'), {
+			download_client: false,
+			jellyfin: false,
+			lastfm: true,
+			library: true,
+			listenbrainz: false,
+			localfiles: true,
+			navidrome: true,
+			plex: false,
+			youtube: false,
+			youtube_api: false
+		});
+		// Answers stay fresh as long as in the app, so a read asked twice is the page's.
+		const client = new QueryClient({
+			defaultOptions: {
+				queries: { retry: false, refetchOnWindowFocus: false, staleTime: STALE_DEFAULT }
+			}
+		});
+		await renderWithQuery(AlbumRoute, { data: { albumId } }, { client });
+		await expect.element(trackRow('Ambrosia')).toBeVisible();
+
+		expect(api.calls('GET /api/v3/library/albums/{id}')).toHaveLength(0);
+		for (const route of lower) expect(api.calls(route), route).toHaveLength(0);
+
+		await scrollTo(page.getByText('More by Lumen'));
+		await vi.waitFor(() => {
+			for (const route of lower) expect(api.calls(route), route).toHaveLength(1);
+		});
+
+		expect(api.calls('GET /api/v3/library/albums/{id}')).toHaveLength(0);
+		expect(api.calls('GET /api/v3/library/albums/{album_id}/history')).toHaveLength(0);
+		expect(api.calls('GET /api/v3/youtube/link/{album_id}')).toHaveLength(0);
+		expect(api.calls('GET /api/v3/youtube/track-links/{album_id}')).toHaveLength(0);
+		const reads = api
+			.calls()
+			.filter((call) => call.method === 'GET')
+			.map((call) => `${call.url.pathname}${call.url.search}`);
+		expect(reads.filter((read, i) => reads.indexOf(read) !== i)).toEqual([]);
 	});
 });

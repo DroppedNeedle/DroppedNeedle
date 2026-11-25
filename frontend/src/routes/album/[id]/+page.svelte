@@ -17,17 +17,15 @@
 	}
 
 	let { data }: Props = $props();
-	// The status names the local album that holds the asked id. When that is
-	// another album, the id is a release group the library holds: its page is
-	// the matched one, and the id is never read as a local album.
+	// The status names the local album the asked id is, or the one holding it
+	// when the id is a release group, whose page is the matched one. The id is
+	// read as a local album only when the status names it, or cannot be read.
 	const statusQuery = getLibraryAlbumStatusQuery(() => data.albumId);
-	const heldByAnotherAlbum = $derived(
-		statusQuery.data !== undefined && statusQuery.data.album_id !== data.albumId
+	const localById = $derived(
+		statusQuery.data ? statusQuery.data.album_id === data.albumId : statusQuery.isError
 	);
 	const statusSettled = $derived(statusQuery.data !== undefined || statusQuery.isError);
-	const localQuery = getLibraryAlbumDetailQuery(() =>
-		statusSettled && !heldByAnotherAlbum ? data.albumId : ''
-	);
+	const localQuery = getLibraryAlbumDetailQuery(() => (localById ? data.albumId : ''));
 	const localAlbum = $derived(localQuery.data);
 	// A guess its files contradict owns no group: the album is its own page.
 	const providerAlbumId = $derived(
