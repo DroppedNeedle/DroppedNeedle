@@ -4,7 +4,8 @@
 	end ("THE RECEIPT >"). A `struck` figure is crossed out (counted, then
 	left out); a `total` prints large in Anton. A cell with no figure is a
 	line of its own, for a strip that only says something. `print` runs it
-	out across the rail in steps (0.9s), once, when it first shows.
+	out across the rail in steps (0.9s), once, when it first shows. In a
+	narrow place (a phone) the cells go two to a row, the link under them.
 -->
 <script lang="ts" module>
 	export interface ReceiptCell {
@@ -49,6 +50,7 @@
 <style>
 	/* the drop shadow follows the cut end */
 	.dn-rstrip {
+		container-type: inline-size;
 		rotate: -0.25deg;
 		filter: drop-shadow(0 8px 8px rgb(0 0 0 / 0.4));
 	}
@@ -95,6 +97,7 @@
 		gap: 0.1875rem;
 		min-width: 0;
 		padding: 0 0.75rem 0 1rem;
+		overflow-wrap: normal;
 	}
 	.dn-rstrip__cell + .dn-rstrip__cell::before {
 		content: '';
@@ -139,6 +142,30 @@
 
 	.dn-rstrip__link {
 		flex: none;
+	}
+
+	@container (max-width: 30rem) {
+		.dn-rstrip__paper {
+			flex-wrap: wrap;
+			padding: 0.625rem 0.75rem 0.25rem 0.375rem;
+		}
+		.dn-rstrip__cells {
+			display: grid;
+			flex-basis: 100%;
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+			row-gap: 0.75rem;
+		}
+		.dn-rstrip__cell:nth-child(odd)::before {
+			content: none;
+		}
+		.dn-rstrip__cell.is-total:nth-child(odd) {
+			grid-column: 1 / -1;
+		}
+		.dn-rstrip__link {
+			flex-basis: 100%;
+			display: flex;
+			justify-content: flex-end;
+		}
 	}
 
 	/* printing: the strip comes out left to right; the margin keeps its shadow */

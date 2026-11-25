@@ -110,9 +110,8 @@ fn at<E: Into<StepError>>(step: &'static str) -> impl FnOnce(E) -> ForgetError {
 /// moves on before the first step and again inside the taste, the pool, the
 /// sets' and the pages steps' writes, so a build of theirs claimed before
 /// those commits keeps no taste, no pool, no set, no page and records no
-/// pick. A built deck not yet written is dropped too. While such a build
-/// runs no rebuild starts here: their next visit builds the page, which is
-/// due because its row is gone. Fails at the first step that fails; the
+/// pick. While such a build runs no rebuild starts here: their next visit
+/// builds the page, which is due because its row is gone. Fails at the first step that fails; the
 /// rebuild is asked for only once every step ran.
 pub async fn forget(deps: &DiscoverDeps, user_id: &str) -> Result<Forgotten, ForgetError> {
     let stores = &deps.history;
@@ -143,7 +142,6 @@ pub async fn forget(deps: &DiscoverDeps, user_id: &str) -> Result<Forgotten, For
     let pages = cache::forget_user(&stores.db, &stores.forgets, user_id)
         .await
         .map_err(at("saved pages"))?;
-    deps.queues.forget_unsaved(user_id);
     if let Err(error) = deps.content.trigger_refresh(user_id).await {
         tracing::warn!(?error, "discover rebuild after a forget not started");
     }

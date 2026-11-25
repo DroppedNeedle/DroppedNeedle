@@ -1,8 +1,7 @@
 //! Discover's durable state: the Last.fm release to release-group map
 //! (`catalog_mbid_resolutions`) and the genres builds learned per artist
 //! (`catalog_artist_genres`). What people told Discover is
-//! [`feedback`](crate::discover::feedback)'s; the decks are rows of the
-//! page cache.
+//! [`feedback`](crate::discover::feedback)'s.
 //!
 //! Reads use the reader pool; every write goes through the writer lane.
 

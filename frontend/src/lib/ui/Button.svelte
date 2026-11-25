@@ -20,6 +20,8 @@
 		| 'paper'
 		| 'ghost'
 		| 'caps'
+		| 'caps-link'
+		| 'disc'
 		| 'danger'
 		| 'danger-ghost'
 		| 'danger-outline'
@@ -37,7 +39,9 @@
 	// neutral and outline a solid surface with an edge, paper an outline in
 	// a paper card's ink, danger-outline a red outline (a destructive
 	// action that sits beside outline buttons), caps a quiet mono
-	// uppercase link-like button (Back to top), and the service
+	// uppercase link-like button (Back to top), caps-link the same
+	// underlined (a card's "Why this?"), disc a round paper face with an ink
+	// edge that sits over a cover (a sample's play button), and the service
 	// variants (lastfm, listenbrainz, spotify) that service's own colour.
 	const buttonVariants: Record<ButtonVariant, string> = {
 		neutral: 'btn dn-btn-neutral',
@@ -47,6 +51,8 @@
 		paper: 'btn dn-btn-paper',
 		ghost: 'btn btn-ghost dn-btn-ghost',
 		caps: 'btn btn-ghost dn-btn-ghost dn-btn-caps',
+		'caps-link': 'btn btn-ghost dn-btn-ghost dn-btn-caps dn-btn-caps-link',
+		disc: 'btn dn-btn-disc',
 		danger: 'btn btn-error',
 		'danger-ghost': 'btn btn-ghost dn-btn-ghost text-error',
 		'danger-outline': 'btn dn-btn-danger-outline',

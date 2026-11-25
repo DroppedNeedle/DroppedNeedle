@@ -9,6 +9,9 @@
 
 use std::sync::Arc;
 
+use axum::http::StatusCode;
+use serde_json::json;
+
 use droppedneedle_catalog::discover::due::Due;
 use droppedneedle_catalog::discover::engine::weekly::{self, SetDay, ShortReason, WEEK_MS};
 use droppedneedle_catalog::discover::facts::KeptFacts;
@@ -27,7 +30,7 @@ use droppedneedle_providers::Providers;
 use crate::common::Probe;
 use crate::common::auth::AuthRig;
 use crate::discover_pool::id;
-use crate::discover_queue::{Script, discover_deps, insert, own};
+use crate::discover_queue::{Script, call, discover_deps, discover_routes, insert, own};
 
 const DAY: i64 = 86_400_000;
 const HOUR: i64 = 3_600_000;
@@ -481,6 +484,66 @@ async fn discover_week_a_complete_pool_of_five_writes_a_short_set() {
                 .as_ref()
                 .is_some_and(|id| pool_albums.contains(id))
     }));
+}
+
+/// Home's count of open picks reads the week, and what the page saw happen
+/// to a pick is stamped on its record: a pick shown counts once per UTC day
+/// however often it is shown, its first sample and opening are stamped, and
+/// an event about an album never offered writes nothing.
+#[tokio::test]
+async fn discover_week_counts_open_picks_and_stamps_what_was_seen() {
+    let dir = crate::common::ScratchDir::new("discover-week-events");
+    let rig = AuthRig::new("discover-week-events").await;
+    let db = rig.platform.db.clone();
+    to_friday(&rig);
+    let at = rig.clock().now_ms();
+    let mut rows = String::from(USERS);
+    rows += &taste("user-1", at - DAY, 40, 122 * DAY);
+    rows += &pool("user-1", at - HOUR, false, &[], 0..5);
+    insert(&db, rows).await;
+    let deps = deps(&rig, &dir, Script::default());
+    let app = discover_routes(deps.clone());
+    let (status, body) = call(&app, "GET", "/api/v3/discover/queue/status", None).await;
+    assert_eq!(
+        (status, &body),
+        (StatusCode::OK, &json!({"status": "idle"}))
+    );
+
+    build(&deps, "user-1").await;
+    let (_, body) = call(&app, "GET", "/api/v3/discover/queue/status", None).await;
+    assert_eq!(body["status"], "ready");
+    assert_eq!(body["item_count"], 5, "five picks, none answered");
+
+    let card = album(0);
+    let event = |id: &str, kind: &str| {
+        Some(json!({"release_group_mbid": id.to_uppercase(), "event": kind}))
+    };
+    let events = "/api/v3/discover/picks/events";
+    for _ in 0..2 {
+        let (status, body) = call(&app, "POST", events, event(&card, "shown")).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    }
+    let first = rig.clock().now_ms();
+    rig.clock().advance(DAY);
+    for kind in ["shown", "sampled", "opened", "sampled"] {
+        let (status, body) = call(&app, "POST", events, event(&card, kind)).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{kind}: {body}");
+    }
+    let next = rig.clock().now_ms();
+    let seen: (i64, i64, i64, i64, i64) = db.row(
+        "SELECT shown_days, first_shown_at, last_shown_at, sampled_at, opened_at \
+         FROM catalog_discover_picks WHERE user_id = 'user-1' AND release_group_mbid_lower = ?1",
+        [&card],
+    );
+    assert_eq!(seen, (2, first, next, next, next));
+
+    let offered: i64 = db.one("SELECT COUNT(*) FROM catalog_discover_picks", []);
+    let (status, _) = call(&app, "POST", events, event(&album(9), "shown")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let after: i64 = db.one("SELECT COUNT(*) FROM catalog_discover_picks", []);
+    assert_eq!(after, offered, "an album never offered writes nothing");
+    let (status, _) = call(&app, "POST", events, event("not-an-mbid", "shown")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 /// A linked person whose import is still being read gets "reading your

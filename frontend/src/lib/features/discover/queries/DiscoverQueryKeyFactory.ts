@@ -22,13 +22,7 @@ export const DiscoverQueryKeyFactory = {
 	v3: {
 		root,
 		home: (userId: DiscoverV3UserId) => [...root(userId), 'home'] as const,
-		queue: (userId: DiscoverV3UserId, count: number | null) =>
-			[...root(userId), 'queue', count] as const,
 		queueStatus: (userId: DiscoverV3UserId) => [...root(userId), 'queue-status'] as const,
-		// Where the person is in their deck.
-		savedDeck: (userId: DiscoverV3UserId) => [...root(userId), 'saved-deck'] as const,
-		queueEnrich: (userId: DiscoverV3UserId, releaseGroupMbid: string) =>
-			[...root(userId), 'queue-enrich', releaseGroupMbid] as const,
 		feedback: (userId: DiscoverV3UserId) => [...root(userId), 'feedback'] as const,
 		tunings: (userId: DiscoverV3UserId) => [...root(userId), 'tunings'] as const,
 		// The Later pile, and whether one album is on it, under the pile's prefix.
@@ -67,8 +61,6 @@ export const DiscoverQueryKeyFactory = {
 		trackPreview: (userId: DiscoverV3UserId, artist: string, track: string) =>
 			[...root(userId), 'track-preview', artist, track] as const,
 		youtubeTrackSearch: (userId: DiscoverV3UserId, artist: string, track: string) =>
-			[...root(userId), 'youtube-track-search', artist, track] as const,
-		queueValidate: (userId: DiscoverV3UserId, releaseGroupMbids: string[]) =>
-			[...root(userId), 'queue-validate', releaseGroupMbids] as const
+			[...root(userId), 'youtube-track-search', artist, track] as const
 	}
 };

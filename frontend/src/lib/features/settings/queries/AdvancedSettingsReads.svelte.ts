@@ -35,14 +35,3 @@ export function useDirectRemoteImages() {
 		}
 	};
 }
-
-/** Whether the Discover queue builds a new deck by itself. */
-export async function discoverQueueAutoGenerate(): Promise<boolean> {
-	if (!authStore.isAdmin) return true;
-	try {
-		const settings = await queryClient.ensureQueryData(advancedSettingsQueryOptions());
-		return settings.discover_queue_auto_generate ?? true;
-	} catch {
-		return true;
-	}
-}

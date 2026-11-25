@@ -420,8 +420,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Every user's latest discover page and queue deck numbers: counts only,
-         *     no music named.
+         * Every user's latest discover page numbers: counts only, no music
+         *     named.
          */
         get: operations["admin_discover_health"];
         put?: never;
@@ -1841,8 +1841,7 @@ export interface paths {
         /**
          * Record one thing the caller tells Discover about an album or an
          *     artist; a later answer about the same one replaces it. Every
-         *     recommending surface leaves out what it hides, and a new deck starts
-         *     building at once.
+         *     recommending surface leaves out what it hides.
          */
         post: operations["save_feedback"];
         delete?: never;
@@ -2021,84 +2020,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v3/discover/queue": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** The queue deck: the caller's last built deck, else one built now. */
-        get: operations["get_queue"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/discover/queue/enrich/{release_group_mbid}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Details behind one queue card: tags, release date, country, artist
-         *     bio, listen count and a video link when one is known.
-         */
-        get: operations["enrich_queue_item"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/discover/queue/generate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Start a background queue build. `action` says what happened:
-         *     `started`, `already_building`, or `already_ready` (a fresh deck exists
-         *     and `force` was not set).
-         */
-        post: operations["queue_generate"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/discover/queue/preview/{release_group_mbid}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * A video preview behind one queue card: a MusicBrainz video link when
-         *     one exists, else a YouTube search when an API key is set.
-         */
-        post: operations["preview_queue_item"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v3/discover/queue/status": {
         parameters: {
             query?: never;
@@ -2107,29 +2028,12 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Where the caller's background queue build stands: `idle`, `building`,
-         *     `ready` (with the deck's id, size, age and staleness) or `error`.
+         * How many of the caller's weekly picks wait for an answer: `ready` with
+         *     their count while a set is out and some are open, else `idle`.
          */
         get: operations["queue_status"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/discover/queue/validate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** The given cards whose albums the library already holds. */
-        post: operations["validate_queue"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2181,23 +2085,6 @@ export interface paths {
         put?: never;
         /** Build a complete track-level radio plan. */
         post: operations["radio_plan"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/discover/refresh": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Trigger a background discover rebuild for the caller. */
-        post: operations["refresh_discover"];
         delete?: never;
         options?: never;
         head?: never;
@@ -11104,7 +10991,7 @@ export interface components {
             /** @description One page of users. */
             users: components["schemas"]["UserResponse"][];
         };
-        /** @description Advanced tuning: discover queue, AudioDB, images and retention. */
+        /** @description Advanced tuning: Discover, AudioDB, images and retention. */
         AdvancedSettings: {
             /**
              * @description AudioDB key (encrypted at rest; v2 stored it plaintext). A missing
@@ -11135,27 +11022,11 @@ export interface components {
              */
             discover_blend_listening_services: boolean;
             /**
-             * @description Discover queue auto-generate.
-             * @default true
-             */
-            discover_queue_auto_generate: boolean;
-            /**
              * Format: int64
              * @description MusicBrainz lookups one Last.fm album batch may spend.
              * @default 10
              */
             discover_queue_lastfm_mbid_max_lookups: number;
-            /**
-             * Format: int64
-             * @description Discover queue size.
-             * @default 10
-             */
-            discover_queue_size: number;
-            /**
-             * @description Whether the background warm cycle may build queue decks.
-             * @default true
-             */
-            discover_queue_warm_cycle_build: boolean;
             /**
              * Format: int64
              * @description Ignored-releases retention days.
@@ -14253,27 +14124,6 @@ export interface components {
          * @enum {string}
          */
         DecisionSource: "automatic" | "manual" | "legacy_import" | "embedded";
-        /** @description The numbers of one queue deck build. */
-        DeckHealth: {
-            /** @description Cards in the deck. */
-            cards: number;
-            /** @description Distinct artists among them. */
-            distinct_artists: number;
-            /** @description The most cards any one artist has. */
-            max_cards_one_artist: number;
-        };
-        /** @description One user's latest queue deck numbers. */
-        DeckHealthRow: {
-            /**
-             * Format: int64
-             * @description When the deck was built, unix seconds.
-             */
-            built_at: number;
-            /** @description Its numbers. */
-            health: components["schemas"]["DeckHealth"];
-            /** @description The user's id. */
-            user_id: string;
-        };
         /**
          * @description The Deemix connection: Deemix downloads from Deezer, signed in with the
          *     Deezer sign-in saved in Deemix itself, so nothing here is secret.
@@ -14588,8 +14438,6 @@ export interface components {
         };
         /** @description Every user's latest discover numbers: counts only, no music named. */
         DiscoverHealthResponse: {
-            /** @description Queue decks, one per user. */
-            decks: components["schemas"]["DeckHealthRow"][];
             /** @description Discover pages, one per user. */
             pages: components["schemas"]["PageHealthRow"][];
         };
@@ -14617,47 +14465,19 @@ export interface components {
             /** @description Seed MusicBrainz artist id. */
             seed_artist_mbid: string;
         };
-        /** @description On-demand YouTube preview behind one queue card. */
-        DiscoverQueuePreview: {
-            /** @description Whether a preview was found. */
-            status: components["schemas"]["PreviewStatus"];
-            /** @description Search URL fallback, when there is one. */
-            youtube_search_url?: string | null;
-            /** @description Watch URL, when available. */
-            youtube_url?: string | null;
-        };
-        /** @description The queue deck: cards plus the build they came from. */
-        DiscoverQueueResponse: {
-            /** @description Deck cards in order. */
-            items?: components["schemas"]["QueueItemLight"][];
-            /** @description Build id behind the deck. */
-            queue_id: string;
-        };
-        /** @description Queue build state for polling. */
+        /** @description How many of a person's weekly picks wait for an answer. */
         DiscoverQueueStatusResponse: {
             /**
              * Format: int64
-             * @description Build timestamp (unix seconds), when built.
+             * @description When the set was built (unix seconds), while `ready`.
              */
             built_at?: number | null;
-            /** @description Build failure, when failed. */
-            error?: string | null;
             /**
              * Format: int64
-             * @description Card count, when there is one.
+             * @description Picks still open, while `ready`.
              */
             item_count?: number | null;
-            /** @description Build id, when there is one. */
-            queue_id?: string | null;
-            /**
-             * @description Why the deck is short (`source_down`, `thin` or `empty`), when it
-             *     is; `source_down` too while the last build failed a read and the
-             *     deck before it is kept.
-             */
-            reason?: null | components["schemas"]["SectionCondition"];
-            /** @description True when the deck is older than its TTL. */
-            stale?: boolean | null;
-            /** @description Build state. A saved queue past its age is `ready` with `stale` set. */
+            /** @description Whether any wait. */
             status: components["schemas"]["QueueBuildStatus"];
         };
         /**
@@ -22718,11 +22538,6 @@ export interface components {
             ready_album_count: number;
             selected_root_count: number;
         };
-        /**
-         * @description Whether a queue card's YouTube preview was found.
-         * @enum {string}
-         */
-        PreviewStatus: "available" | "not_found" | "unavailable";
         /** @description One previewed track. */
         PreviewTrackItem: {
             /** @description Artist name. */
@@ -23077,15 +22892,10 @@ export interface components {
             page: number;
         };
         /**
-         * @description What a generate trigger did.
+         * @description Whether a person's weekly picks wait for an answer.
          * @enum {string}
          */
-        QueueAction: "started" | "already_building" | "already_ready" | "disabled";
-        /**
-         * @description Where one user's queue build stands.
-         * @enum {string}
-         */
-        QueueBuildStatus: "idle" | "building" | "ready" | "error";
+        QueueBuildStatus: "idle" | "ready";
         /** @description How deep one job kind's queue is. */
         QueueDepthView: {
             /**
@@ -23106,77 +22916,6 @@ export interface components {
              */
             running: number;
         };
-        /** @description Enrichment behind one queue card. */
-        QueueEnrichment: {
-            /** @description Artist biography snippet, when known. */
-            artist_description?: string | null;
-            /** @description MusicBrainz artist id, when known. */
-            artist_mbid?: string | null;
-            /** @description Release country, when known. */
-            country?: string | null;
-            /**
-             * Format: int64
-             * @description Artist listen count, when known.
-             */
-            listen_count?: number | null;
-            /** @description Release date, when known. */
-            release_date?: string | null;
-            /** @description Genre/style tags. */
-            tags: string[];
-            /** @description Whether YouTube search is available at all. */
-            youtube_search_available: boolean;
-            /** @description YouTube search URL fallback. */
-            youtube_search_url: string;
-            /** @description YouTube URL for the album, when found. */
-            youtube_url?: string | null;
-        };
-        /** @description Body triggering a queue build. */
-        QueueGenerateRequest: {
-            /** @description Rebuild even when a fresh deck exists. */
-            force?: boolean;
-        };
-        /** @description What the generate trigger did, plus current build state. */
-        QueueGenerateResponse: {
-            /** @description What the trigger did. */
-            action: components["schemas"]["QueueAction"];
-            /**
-             * Format: int64
-             * @description Build timestamp (unix seconds), when built.
-             */
-            built_at?: number | null;
-            /** @description Build failure, when failed. */
-            error?: string | null;
-            /**
-             * Format: int64
-             * @description Card count, when there is one.
-             */
-            item_count?: number | null;
-            /** @description Build id, when there is one. */
-            queue_id?: string | null;
-            /** @description Why the deck is short, when it is, as the status says. */
-            reason?: null | components["schemas"]["SectionCondition"];
-            /** @description True when the deck is older than its TTL. */
-            stale?: boolean | null;
-            /** @description Build state after the trigger. */
-            status: components["schemas"]["QueueBuildStatus"];
-        };
-        /** @description One lightweight queue card: the deck renders these before enrichment. */
-        QueueItemLight: {
-            /** @description The artist's MusicBrainz id. */
-            artist_id: string;
-            /** @description Artist name. */
-            artist_name: string;
-            /** @description Cover URL, when known. */
-            cover_url?: string | null;
-            /** @description True when already owned. */
-            in_library: boolean;
-            /** @description MusicBrainz release-group id. */
-            musicbrainz_id: string;
-            /** @description Why it is offered. */
-            reason: components["schemas"]["PickReason"];
-            /** @description Album title. */
-            title: string;
-        };
         /** @description Background loops, job queues and the latest checkpoint pass. */
         QueueStatsResponse: {
             /**
@@ -23188,16 +22927,6 @@ export interface components {
             jobs: components["schemas"]["JobView"][];
             /** @description Job kinds with queued, running or failed jobs, in kind order. */
             queues: components["schemas"]["QueueDepthView"][];
-        };
-        /** @description Body checking which cards already landed in the library. */
-        QueueValidateRequest: {
-            /** @description Release-group ids to check. */
-            release_group_mbids: string[];
-        };
-        /** @description Library membership behind the checked cards. */
-        QueueValidateResponse: {
-            /** @description The checked ids that are already owned. */
-            in_library?: string[];
         };
         /**
          * @description Per-user quota overrides. `None` fields inherit the global download-policy
@@ -23607,13 +23336,6 @@ export interface components {
          * @enum {string}
          */
         RefreshCode: "EXTERNAL_REFRESH_NOT_CONFIGURED" | "EXTERNAL_REFRESH_AUTH_FAILED" | "EXTERNAL_REFRESH_NOT_FOUND" | "EXTERNAL_REFRESH_UNREACHABLE" | "EXTERNAL_REFRESH_FAILED" | "EXTERNAL_REFRESH_INTERRUPTED";
-        /** @description Acknowledgement of a triggered background refresh. */
-        RefreshResponse: {
-            /** @description Human message. */
-            message: string;
-            /** @description Always `ok` when the trigger lands. */
-            status: string;
-        };
         /**
          * @description Where a rescan stands.
          * @enum {string}
@@ -25678,7 +25400,7 @@ export interface components {
         };
         /**
          * @description Why a section switched on is not plainly built. The one list of these
-         *     reasons: the page's sections and the queue deck both use it.
+         *     reasons, for the page's sections.
          * @enum {string}
          */
         SectionCondition: "building" | "kept" | "source_down" | "needs_link" | "thin" | "empty";
@@ -33206,207 +32928,6 @@ export interface operations {
             };
         };
     };
-    get_queue: {
-        parameters: {
-            query?: {
-                /** @description Wanted card count, max 20 */
-                count?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Queue deck */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DiscoverQueueResponse"];
-                };
-            };
-            /** @description Bad query string */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description The library check failed */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    enrich_queue_item: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Release-group id */
-                release_group_mbid: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Card details */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["QueueEnrichment"];
-                };
-            };
-            /** @description Bad release-group id */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    queue_generate: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["QueueGenerateRequest"];
-            };
-        };
-        responses: {
-            /** @description Build state */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["QueueGenerateResponse"];
-                };
-            };
-            /** @description Bad request body */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    preview_queue_item: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Release-group id */
-                release_group_mbid: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Card preview */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DiscoverQueuePreview"];
-                };
-            };
-            /** @description Bad release-group id */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
     queue_status: {
         parameters: {
             query?: never;
@@ -33416,7 +32937,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Queue build status */
+            /** @description Open picks */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -33434,49 +32955,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-        };
-    };
-    validate_queue: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["QueueValidateRequest"];
-            };
-        };
-        responses: {
-            /** @description Library membership */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["QueueValidateResponse"];
-                };
-            };
-            /** @description Bad request body */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description The library check failed */
+            /** @description The week could not be read */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -33659,44 +33138,6 @@ export interface operations {
             };
             /** @description Unknown seed album or playlist */
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    refresh_discover: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Refresh triggered */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RefreshResponse"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
                 headers: {
                     [name: string]: unknown;
                 };

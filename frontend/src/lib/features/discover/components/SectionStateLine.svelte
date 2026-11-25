@@ -1,8 +1,8 @@
 <!--
 	One quiet line saying how a Discover section stands when it is not
 	plainly built: kept from an earlier build, its source down, waiting for a
-	linked account, thin, empty or still building. The queue deck uses it
-	for why a deck is short.
+	linked account, thin, empty or still building. The counter uses it for
+	a week with nothing set out yet.
 -->
 <script lang="ts">
 	import Button from '$lib/ui/Button.svelte';

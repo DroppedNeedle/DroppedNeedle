@@ -33,7 +33,7 @@ Everything user-editable lives in the web UI and is stored in the database, so a
 | Variable | Default | What it is |
 |-|-|-|
 | `CONTACT_EMAIL` | `contact@droppedneedle.com` | Contact address in the outbound User-Agent; MusicBrainz asks for one, so set your own if you run many lookups |
-| `DISCOVER_WARMER_ENABLED` | `true` | Keeps each user's Discover page and discover queue fresh in the background while they use them. `false` builds them only when someone opens the page |
+| `DISCOVER_WARMER_ENABLED` | `true` | Keeps each user's Discover page and weekly set fresh in the background while they use them. `false` builds them only when someone opens the page |
 | `ALLOW_PASSWORD_LOGIN` | `true` | Username and password sign-in. `false` turns off password login, recovery and changes, so people sign in only through Plex, Jellyfin or OIDC; first-admin setup, app passwords and the v2 admin password on the upgrade page still work. Set it back to `true` and restart if the identity provider is unreachable, and before using a host recovery code ([Forgotten passwords and recovery](accounts-and-sign-in.md#forgotten-passwords-and-recovery)) |
 | `SHUTDOWN_GRACE_PERIOD` | `10` | Seconds to finish open requests and stop background work on shutdown |
 | `HTTP_TIMEOUT` | `30` | Outbound request timeout, seconds |
@@ -123,7 +123,7 @@ services:
 | Scrobbling and discovery accounts | Profile > Scrobbling & Discovery |
 | Release types | Settings > Release Types |
 | Home layout | Settings > Home |
-| Discover page sections, the discover queue | Settings > Discover |
+| Discover page sections, the weekly set's day | Settings > Discover |
 | Sidebar | Settings > Sidebar |
 | Your own main listening source (ListenBrainz or Last.fm) | Profile > Scrobbling & Discovery; Settings > Music Source sets the same for the admin using it |
 | MusicBrainz server (official or your own mirror) | Settings > MusicBrainz |
@@ -134,7 +134,7 @@ services:
 | Library images, cache counts and clearing | Settings > Cache |
 | Wrapped API key ([Wrapped API](accounts-and-sign-in.md#wrapped-api)) | Settings > Wrapped API |
 | Outbound provider calls, rate limits and background jobs | Settings > Diagnostics |
-| Discover queue and top picks tuning | Settings > Advanced |
+| Discover tuning | Settings > Advanced |
 | AudioDB images: on or off, key, name search fallback, direct remote images | Settings > Advanced |
 | Request history, ignored albums and clean-up interval | Settings > Advanced |
 | App version, update check and release notes | Settings > About |

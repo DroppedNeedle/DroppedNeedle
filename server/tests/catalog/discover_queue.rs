@@ -1,8 +1,6 @@
-//! The discover queue deck end to end over a real database: a background
-//! build dealt from a scripted pool, what the person tells Discover
-//! honoured by every deck built or served after it, and both the answer and
-//! the deck surviving a restart. The scripted listening answers here also
-//! stand behind the page, radio and seed tests of other files.
+//! What a person tells Discover, and the seeds their shelves grow from,
+//! end to end over a real database. The scripted listening answers here
+//! also stand behind the page, radio, pool and week tests of other files.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -31,7 +29,6 @@ use droppedneedle_catalog::discover::wiring::{DiscoverInputs, deps_over, live_ne
 use droppedneedle_catalog::metadata::artist::ReleaseGroupItem;
 use droppedneedle_kernel::clock::Clock as _;
 use droppedneedle_kernel::db::{Db, Lane};
-use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_providers::listenbrainz::{
     ArtistPopularity, ReleaseGroupCounts, ScoredSimilarArtist,
 };
@@ -39,7 +36,6 @@ use droppedneedle_providers::{ProviderError, Providers, RequestPriority};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
-use crate::common::Probe;
 use crate::common::auth::{AuthRig, test_principal, with_test_principal};
 use crate::common::bundles::{NoDownloadSource, remotes_resolver};
 
@@ -748,13 +744,7 @@ where
     }
 }
 
-fn queue_app(rig: &AuthRig, dir: &Path, script: Script) -> Router {
-    rig.config
-        .save_secret_blocking(AdvancedSettings {
-            discover_queue_size: 5,
-            ..AdvancedSettings::default()
-        })
-        .expect("queue settings save");
+fn feedback_app(rig: &AuthRig, dir: &Path, script: Script) -> Router {
     discover_routes(discover_deps(rig, dir, Providers::closed(), |network| {
         *network = Arc::new(script);
     }))
@@ -800,18 +790,6 @@ pub(crate) async fn call(
     (status, json)
 }
 
-/// The build's status once it is no longer running. A finished build is
-/// marked ready before its deck is saved, so the save's commit wakes the
-/// last check.
-async fn settled(app: &Router, db: &Db) -> Value {
-    after_commits(db, "the queue build finished", || async {
-        let (status, body) = call(app, "GET", "/api/v3/discover/queue/status", None).await;
-        assert_eq!(status, StatusCode::OK);
-        (body["status"] != "building").then_some(body)
-    })
-    .await
-}
-
 /// Tell Discover `kind` about an album by the similar artist; answers the
 /// row as stored.
 async fn tell(app: &Router, kind: &str, release_group_mbid: &str) -> Value {
@@ -832,26 +810,8 @@ async fn tell(app: &Router, kind: &str, release_group_mbid: &str) -> Value {
     body
 }
 
-async fn ignore(app: &Router, release_group_mbid: &str) {
-    tell(app, "no", release_group_mbid).await;
-}
-
-fn deck_ids(body: &Value) -> Vec<String> {
-    body["items"]
-        .as_array()
-        .expect("items array")
-        .iter()
-        .map(|item| item["musicbrainz_id"].as_str().unwrap_or("").to_owned())
-        .collect()
-}
-
 const SEED_TWO: &str = "33333333-3333-4333-8333-333333333333";
 const OTHER: &str = "44444444-4444-4444-8444-444444444444";
-
-/// An artist's MusicBrainz id: `n` under one tag.
-fn artist(n: u8) -> String {
-    format!("{n:08x}-dddd-4ddd-8ddd-dddddddddddd")
-}
 
 /// One album of a scripted pool: its release group, its artist and the
 /// seed whose labs list leads to it.
@@ -903,265 +863,6 @@ pub(crate) fn pool_of(user: &str, seeds: &[(&str, &str)], albums: &[Pooled<'_>])
     rows
 }
 
-/// user-1's pool: two albums through Seed and one through Seed Two, each by
-/// an artist of its own.
-fn three_picks() -> String {
-    pool_of(
-        "user-1",
-        &[(SEED, "Seed"), (SEED_TWO, "Seed Two")],
-        &[
-            (group(1), SIMILAR.to_owned(), SEED),
-            (group(2), artist(2), SEED),
-            (group(3), artist(3), SEED_TWO),
-        ],
-    )
-}
-
-/// Each card's reason line, in deck order.
-fn lines(deck: &Value) -> Vec<String> {
-    deck["items"]
-        .as_array()
-        .expect("items")
-        .iter()
-        .map(|card| {
-            assert_eq!(card["reason"]["kind"], "your_artists", "{card}");
-            card["reason"]["line"].as_str().unwrap_or("").to_owned()
-        })
-        .collect()
-}
-
-/// A deck is dealt from the top of the person's pool, each card with the
-/// reason its paths give; it survives a restart, and an ignored album never
-/// returns.
-#[tokio::test]
-async fn queue_builds_honours_ignores_and_survives_restart() {
-    let dir = crate::common::ScratchDir::new("discover-queue");
-    let rig = AuthRig::new("discover-queue").await;
-    let db = rig.platform.db.clone();
-    seed_user(&db).await;
-    insert(&db, three_picks()).await;
-    let app = queue_app(&rig, &dir, queue_script());
-
-    let (_, idle) = call(&app, "GET", "/api/v3/discover/queue/status", None).await;
-    assert_eq!(idle["status"], "idle");
-    let (status, started) = call(
-        &app,
-        "POST",
-        "/api/v3/discover/queue/generate",
-        Some(json!({})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(started["action"], "started");
-    let ready = settled(&app, &db).await;
-    assert_eq!(ready["status"], "ready");
-    // Three picks for a deck of five: a deck short of picks stays short.
-    assert_eq!(ready["item_count"], 3);
-    assert_eq!(ready["stale"], false);
-
-    let (_, again) = call(
-        &app,
-        "POST",
-        "/api/v3/discover/queue/generate",
-        Some(json!({})),
-    )
-    .await;
-    assert_eq!(again["action"], "already_ready");
-
-    let (_, deck) = call(&app, "GET", "/api/v3/discover/queue", None).await;
-    let ids = deck_ids(&deck);
-    assert_eq!(ids, [group(1), group(2), group(3)], "the pool's order");
-    assert_eq!(
-        lines(&deck),
-        ["Close to Seed.", "Close to Seed.", "Close to Seed Two."]
-    );
-    let row = after_commits(&db, "the deck was saved", || async {
-        db.maybe::<String>(
-            "SELECT CAST(payload AS TEXT) FROM catalog_cached_pages \
-             WHERE user_id = 'user-1' AND page = 'queue'",
-            [],
-        )
-        .and_then(|payload| serde_json::from_str::<Value>(&payload).ok())
-    })
-    .await;
-    assert_eq!(
-        row["health"],
-        json!({
-            "cards": 3,
-            "distinct_artists": 3,
-            "max_cards_one_artist": 1,
-        }),
-        "the saved deck carries its health"
-    );
-
-    let ignored = ids[0].clone();
-    ignore(&app, &ignored).await;
-    // The ignore's build replaces the deck: wait for its new id.
-    let rebuilt = after_commits(&db, "the ignore rebuilt the deck", || async {
-        let (_, body) = call(&app, "GET", "/api/v3/discover/queue/status", None).await;
-        (body["status"] == "ready" && body["queue_id"] != ready["queue_id"]).then_some(body)
-    })
-    .await;
-    let (_, deck) = call(&app, "GET", "/api/v3/discover/queue", None).await;
-    assert_eq!(
-        deck_ids(&deck),
-        [group(2), group(3)],
-        "an ignored album never returns"
-    );
-
-    let (status, bad) = call(
-        &app,
-        "GET",
-        "/api/v3/discover/queue/enrich/not-an-mbid",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
-    let (status, details) = call(
-        &app,
-        "GET",
-        &format!("/api/v3/discover/queue/enrich/{}", group(1)),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(details["tags"], json!(["shoegaze"]));
-    assert_eq!(
-        details["youtube_url"],
-        "https://www.youtube.com/embed/dQw4w9WgXcQ"
-    );
-
-    // A restart: a new queue over the same database.
-    let restarted = queue_app(&rig, &dir, queue_script());
-    let (_, ledger) = call(&restarted, "GET", "/api/v3/discover/feedback", None).await;
-    assert_eq!(ledger["items"][0]["target_mbid"], ignored.as_str());
-    assert_eq!(ledger["items"][0]["kind"], "no");
-    assert_eq!(ledger["items"][0]["expires_at"], Value::Null);
-    // The deck reads as ready a moment before its row is written.
-    after_commits(&db, "the saved deck reloads", || async {
-        let (_, reloaded) = call(&restarted, "GET", "/api/v3/discover/queue/status", None).await;
-        (reloaded["status"] == "ready" && reloaded["queue_id"] == rebuilt["queue_id"]).then_some(())
-    })
-    .await;
-}
-
-/// A saved deck records each of its cards as offered on the deck, with the
-/// reason it showed and the paths that found it as its evidence. A card
-/// shown counts once per UTC day however often it is shown, its first
-/// sample and opening are stamped, and an event about an album never
-/// offered to the person writes nothing and answers the same.
-#[tokio::test]
-async fn a_saved_deck_records_its_picks_and_what_the_person_saw() {
-    let dir = crate::common::ScratchDir::new("discover-queue-picks");
-    let rig = AuthRig::new("discover-queue-picks").await;
-    let db = rig.platform.db.clone();
-    seed_user(&db).await;
-    insert(&db, three_picks()).await;
-    let app = queue_app(&rig, &dir, queue_script());
-    call(
-        &app,
-        "POST",
-        "/api/v3/discover/queue/generate",
-        Some(json!({})),
-    )
-    .await;
-    assert_eq!(settled(&app, &db).await["status"], "ready");
-    let (_, deck) = call(&app, "GET", "/api/v3/discover/queue", None).await;
-    let mut ids = deck_ids(&deck);
-    ids.sort();
-    let offered: Vec<(String, String)> = after_commits(&db, "the deck's picks", || async {
-        let rows: Vec<(String, String)> = db.rows(
-            "SELECT release_group_mbid_lower, evidence FROM catalog_discover_picks \
-             WHERE user_id = 'user-1' AND first_surface = 'deck' \
-             ORDER BY release_group_mbid_lower",
-            [],
-        );
-        (rows.len() == ids.len()).then_some(rows)
-    })
-    .await;
-    assert_eq!(
-        offered.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>(),
-        ids
-    );
-    let evidence: Vec<Value> = offered
-        .iter()
-        .map(|(_, evidence)| serde_json::from_str(evidence).expect("evidence is JSON"))
-        .collect();
-    assert!(
-        evidence.iter().all(|row| row["version"] == 2
-            && row["kind"] == "new_artist"
-            && row["reason"]["kind"] == "your_artists"),
-        "{evidence:?}"
-    );
-    let paths: Vec<(&Value, &Value, &Value)> = evidence
-        .iter()
-        .map(|row| {
-            let path = &row["paths"][0];
-            (
-                &row["reason"]["line"],
-                &path["source"],
-                &path["artist"]["mbid"],
-            )
-        })
-        .collect();
-    assert_eq!(
-        paths,
-        [
-            (
-                &json!("Close to Seed."),
-                &json!("listenbrainz_labs"),
-                &json!(SEED)
-            ),
-            (
-                &json!("Close to Seed."),
-                &json!("listenbrainz_labs"),
-                &json!(SEED)
-            ),
-            (
-                &json!("Close to Seed Two."),
-                &json!("listenbrainz_labs"),
-                &json!(SEED_TWO)
-            ),
-        ],
-        "each pick's line and the path it came by: {evidence:?}"
-    );
-
-    let card = ids[0].clone();
-    let event = |id: &str, kind: &str| {
-        Some(json!({"release_group_mbid": id.to_uppercase(), "event": kind}))
-    };
-    let events = "/api/v3/discover/picks/events";
-    for _ in 0..2 {
-        let (status, body) = call(&app, "POST", events, event(&card, "shown")).await;
-        assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
-    }
-    let first = rig.clock().now_ms();
-    rig.clock().advance(86_400_000);
-    for kind in ["shown", "sampled", "opened", "sampled"] {
-        let (status, body) = call(&app, "POST", events, event(&card, kind)).await;
-        assert_eq!(status, StatusCode::NO_CONTENT, "{kind}: {body}");
-    }
-    let next = rig.clock().now_ms();
-    let seen: (i64, i64, i64, i64, i64) = db.row(
-        "SELECT shown_days, first_shown_at, last_shown_at, sampled_at, opened_at \
-         FROM catalog_discover_picks WHERE user_id = 'user-1' AND release_group_mbid_lower = ?1",
-        [&card],
-    );
-    assert_eq!(seen, (2, first, next, next, next));
-
-    let stranger = group(99);
-    let (status, _) = call(&app, "POST", events, event(&stranger, "shown")).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
-    let rows: i64 = db.one("SELECT COUNT(*) FROM catalog_discover_picks", []);
-    assert_eq!(
-        rows as usize,
-        ids.len(),
-        "an album never offered writes nothing"
-    );
-    let (status, _) = call(&app, "POST", events, event("not-an-mbid", "shown")).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-}
-
 /// The library holds `groups`: one album with a file for each.
 pub(crate) async fn own(db: &Db, groups: &[String]) {
     let mut seed = String::from(
@@ -1192,135 +893,19 @@ pub(crate) async fn own(db: &Db, groups: &[String]) {
     .expect("owned albums");
 }
 
-/// A pool with fewer candidates than the deck asks for deals a short deck
-/// that says so: owned albums are left out before the deal, nothing tops
-/// the deck up, and no card is anything but a pick of the person's own.
+/// An answer is listed, and once undone it is off the list. An undo that
+/// names no album or artist is refused.
 #[tokio::test]
-async fn a_seeded_deck_holds_nothing_owned_and_is_never_refilled() {
-    let dir = crate::common::ScratchDir::new("discover-queue-owned");
-    let rig = AuthRig::new("discover-queue-owned").await;
-    let db = rig.platform.db.clone();
-    seed_user(&db).await;
-    insert(
-        &db,
-        pool_of(
-            "user-1",
-            &[(SEED, "Seed"), (SEED_TWO, "Seed Two")],
-            &[
-                (group(1), artist(1), SEED),
-                (group(2), artist(2), SEED),
-                (group(3), artist(3), SEED_TWO),
-                (group(4), artist(4), SEED_TWO),
-            ],
-        ),
-    )
-    .await;
-    let owned = [group(1), group(3)];
-    own(&db, &owned).await;
-    let app = queue_app(&rig, &dir, queue_script());
-
-    call(
-        &app,
-        "POST",
-        "/api/v3/discover/queue/generate",
-        Some(json!({})),
-    )
-    .await;
-    let ready = settled(&app, &db).await;
-    assert_eq!(ready["status"], "ready");
-    assert_eq!(ready["reason"], "thin", "two of five");
-    let (_, deck) = call(&app, "GET", "/api/v3/discover/queue", None).await;
-    assert_eq!(
-        deck_ids(&deck),
-        [group(2), group(4)],
-        "no owned card, none added"
-    );
-    assert_eq!(lines(&deck), ["Close to Seed.", "Close to Seed Two."]);
-}
-
-/// An answer that lands after a deck was dealt, before any build after it,
-/// never reaches the deck served: what the person told Discover is read
-/// again each time the deck is served.
-#[tokio::test]
-async fn an_answer_after_the_deal_never_reaches_the_served_deck() {
-    let dir = crate::common::ScratchDir::new("discover-queue-answer-after-deal");
-    let rig = AuthRig::new("discover-queue-answer-after-deal").await;
-    let db = rig.platform.db.clone();
-    seed_user(&db).await;
-    insert(&db, three_picks()).await;
-    let app = queue_app(&rig, &dir, queue_script());
-
-    call(
-        &app,
-        "POST",
-        "/api/v3/discover/queue/generate",
-        Some(json!({})),
-    )
-    .await;
-    let ready = settled(&app, &db).await;
-    assert_eq!(ready["item_count"], 3);
-    // Written as the answer lands while a build runs: no build follows it.
-    insert(
-        &db,
-        format!(
-            "INSERT INTO catalog_discover_feedback (user_id, target, target_mbid_lower, kind, \
-             created_at) VALUES ('user-1', 'album', '{}', 'no', 1)",
-            group(2)
-        ),
-    )
-    .await;
-
-    let (_, status) = call(&app, "GET", "/api/v3/discover/queue/status", None).await;
-    assert_eq!(status["queue_id"], ready["queue_id"], "the same deck");
-    let (_, deck) = call(&app, "GET", "/api/v3/discover/queue", None).await;
-    assert_eq!(
-        deck_ids(&deck),
-        [group(1), group(3)],
-        "the ignored album is not served"
-    );
-}
-
-/// A hidden album leaves the deck and the ledger shows it. Once un-hidden
-/// it is off the ledger and the next deck holds it again. The pool is
-/// smaller than the deck, so every album still allowed is always dealt.
-#[tokio::test]
-async fn an_unhidden_album_returns_to_the_queue() {
-    let dir = crate::common::ScratchDir::new("discover-queue-unhide");
-    let rig = AuthRig::new("discover-queue-unhide").await;
-    let db = rig.platform.db.clone();
-    seed_user(&db).await;
-    insert(&db, three_picks()).await;
-    let app = queue_app(&rig, &dir, queue_script());
+async fn an_answer_is_listed_until_it_is_undone() {
+    let dir = crate::common::ScratchDir::new("discover-answers-undo");
+    let rig = AuthRig::new("discover-answers-undo").await;
+    seed_user(&rig.platform.db).await;
+    let app = feedback_app(&rig, &dir, queue_script());
     let hidden = group(2);
-    let deck_once = |wanted: bool| {
-        let (app, db, hidden) = (&app, &db, &hidden);
-        async move {
-            after_commits(db, "the deck settled", || async {
-                let (_, status) = call(app, "GET", "/api/v3/discover/queue/status", None).await;
-                if status["status"] != "ready" {
-                    return None;
-                }
-                let (_, deck) = call(app, "GET", "/api/v3/discover/queue", None).await;
-                (deck_ids(&deck).contains(hidden) == wanted).then_some(())
-            })
-            .await;
-        }
-    };
 
-    call(
-        &app,
-        "POST",
-        "/api/v3/discover/queue/generate",
-        Some(json!({})),
-    )
-    .await;
-    deck_once(true).await;
-
-    ignore(&app, &hidden).await;
-    deck_once(false).await;
+    tell(&app, "no", &hidden).await;
     let (_, ledger) = call(&app, "GET", "/api/v3/discover/feedback", None).await;
     assert_eq!(ledger["items"][0]["target_mbid"], hidden.as_str());
-    settled(&app, &db).await;
 
     let (status, body) = call(
         &app,
@@ -1332,16 +917,6 @@ async fn an_unhidden_album_returns_to_the_queue() {
     assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
     let (_, ledger) = call(&app, "GET", "/api/v3/discover/feedback", None).await;
     assert_eq!(ledger["items"], json!([]));
-
-    let (_, started) = call(
-        &app,
-        "POST",
-        "/api/v3/discover/queue/generate",
-        Some(json!({"force": true})),
-    )
-    .await;
-    assert_eq!(started["action"], "started");
-    deck_once(true).await;
 
     for bad in ["album/not-an-mbid", &format!("label/{hidden}")] {
         let (status, body) = call(
@@ -1355,15 +930,13 @@ async fn an_unhidden_album_returns_to_the_queue() {
     }
 }
 
-/// "Not now" hides an album for three months and then lets it back; "not
-/// this artist" takes every card filed under them off the deck served at
-/// once, whichever deck that is, and their albums off radio shelves and
-/// playlist suggestions. The pool is smaller than the deck, so every album
-/// still allowed is always dealt.
+/// "Not now" hides an album for three months and then leaves the list;
+/// "not this artist" takes their albums off radio shelves and playlist
+/// suggestions at once, and must name the artist.
 #[tokio::test]
-async fn not_now_lapses_and_not_this_artist_clears_the_deck() {
-    let dir = crate::common::ScratchDir::new("discover-queue-typed");
-    let rig = AuthRig::new("discover-queue-typed").await;
+async fn not_now_lapses_and_not_this_artist_clears_radio() {
+    let dir = crate::common::ScratchDir::new("discover-answers-typed");
+    let rig = AuthRig::new("discover-answers-typed").await;
     let db = rig.platform.db.clone();
     seed_user(&db).await;
     insert(
@@ -1378,7 +951,7 @@ async fn not_now_lapses_and_not_this_artist_clears_the_deck() {
         ),
     )
     .await;
-    let app = queue_app(&rig, &dir, queue_script());
+    let app = feedback_app(&rig, &dir, queue_script());
     db.write(Lane::Foreground, "test.playlist", |tx| {
         tx.execute_batch(&format!(
             "INSERT INTO catalog_playlists (id, name, created_at, updated_at, user_id) \
@@ -1421,50 +994,16 @@ async fn not_now_lapses_and_not_this_artist_clears_the_deck() {
     };
     let shown = by_similar(app.clone()).await;
     assert!(shown.iter().all(|count| *count > 0), "{shown:?}");
-    let later = group(11);
-    let deck_once = |wanted: bool| {
-        let (app, db, later) = (&app, &db, &later);
-        async move {
-            after_commits(db, "the deck settled", || async {
-                let (_, status) = call(app, "GET", "/api/v3/discover/queue/status", None).await;
-                if status["status"] != "ready" {
-                    return None;
-                }
-                let (_, deck) = call(app, "GET", "/api/v3/discover/queue", None).await;
-                (deck_ids(&deck).contains(later) == wanted).then_some(())
-            })
-            .await;
-        }
-    };
-    call(
-        &app,
-        "POST",
-        "/api/v3/discover/queue/generate",
-        Some(json!({})),
-    )
-    .await;
-    deck_once(true).await;
 
     let now = rig.platform.clock.now_ms() / 1000;
-    let told = tell(&app, "not_now", &later).await;
+    let told = tell(&app, "not_now", &group(11)).await;
     assert_eq!(told["target"], "album");
     let expires = told["expires_at"].as_i64().expect("not now lapses");
     let days = (expires - now) as f64 / 86_400.0;
     assert!((89.0..=92.0).contains(&days), "three months: {days} days");
-    deck_once(false).await;
-    settled(&app, &db).await;
-
     rig.clock().advance((expires - now + 60) * 1000);
     let (_, ledger) = call(&app, "GET", "/api/v3/discover/feedback", None).await;
     assert_eq!(ledger["items"], json!([]), "a lapsed answer is not listed");
-    call(
-        &app,
-        "POST",
-        "/api/v3/discover/queue/generate",
-        Some(json!({"force": true})),
-    )
-    .await;
-    deck_once(true).await;
 
     let (status, body) = call(
         &app,
@@ -1476,13 +1015,6 @@ async fn not_now_lapses_and_not_this_artist_clears_the_deck() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["target"], "artist");
     assert_eq!(body["expires_at"], Value::Null);
-    let (_, deck) = call(&app, "GET", "/api/v3/discover/queue", None).await;
-    let cards = deck["items"].as_array().expect("items");
-    assert!(!cards.is_empty(), "the other artist's card stays: {deck}");
-    assert!(
-        cards.iter().all(|card| card["artist_id"] != SIMILAR),
-        "no card by the hidden artist is served: {deck}"
-    );
     assert_eq!(
         by_similar(app.clone()).await,
         [0, 0],
@@ -1493,7 +1025,7 @@ async fn not_now_lapses_and_not_this_artist_clears_the_deck() {
         &app,
         "POST",
         "/api/v3/discover/feedback",
-        Some(json!({"kind": "not_artist", "release_group_mbid": later})),
+        Some(json!({"kind": "not_artist", "release_group_mbid": group(11)})),
     )
     .await;
     assert_eq!(
@@ -1501,27 +1033,6 @@ async fn not_now_lapses_and_not_this_artist_clears_the_deck() {
         StatusCode::BAD_REQUEST,
         "an artist answer names the artist: {body}"
     );
-}
-
-/// A card whose MusicBrainz read failed is not cached for the day: once
-/// MusicBrainz answers, the next read fills the card in.
-#[tokio::test]
-async fn a_card_built_during_an_outage_is_not_kept() {
-    let dir = crate::common::ScratchDir::new("discover-queue-outage");
-    let rig = AuthRig::new("discover-queue-outage").await;
-    let script = Arc::new(queue_script());
-    let queue = discover_deps(&rig, &dir, Providers::closed(), |network| {
-        *network = script.clone();
-    })
-    .queues;
-
-    script.musicbrainz_down.store(true, Ordering::SeqCst);
-    let card = queue.enrich("user-1", &group(1)).await.unwrap();
-    assert!(card.tags.is_empty(), "MusicBrainz is down");
-
-    script.musicbrainz_down.store(false, Ordering::SeqCst);
-    let card = queue.enrich("user-1", &group(1)).await.unwrap();
-    assert_eq!(card.tags, ["shoegaze"], "the card fills in once it answers");
 }
 
 /// Last.fm answers are kept under keys every user shares, so a user who
@@ -1782,31 +1293,6 @@ async fn another_persons_rows_never_seed_this_one() {
     let mut expected = vec![own, played, rated, followed, listed, asked];
     expected.sort();
     assert_eq!(asked_for, expected, "made their own, the rows are seeds");
-}
-
-/// A person with no pool yet gets an empty deck that says so, never a deck
-/// of chart albums.
-#[tokio::test]
-async fn a_person_with_no_pool_gets_an_empty_deck_that_says_why() {
-    let dir = crate::common::ScratchDir::new("discover-queue-no-pool");
-    let rig = AuthRig::new("discover-queue-no-pool").await;
-    let db = rig.platform.db.clone();
-    seed_user(&db).await;
-    let app = queue_app(&rig, &dir, queue_script());
-
-    call(
-        &app,
-        "POST",
-        "/api/v3/discover/queue/generate",
-        Some(json!({})),
-    )
-    .await;
-    let ready = settled(&app, &db).await;
-    assert_eq!(ready["status"], "ready");
-    assert_eq!(ready["item_count"], 0);
-    assert_eq!(ready["reason"], "empty");
-    let (_, deck) = call(&app, "GET", "/api/v3/discover/queue", None).await;
-    assert_eq!(deck["items"], json!([]));
 }
 
 /// Plays fade with time: thirty plays two years ago weigh less than an

@@ -5,6 +5,7 @@ import { queryClient } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { apiError, fakeApi, type RouteData } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
+import { dayMonth, dayMonthYear } from '$lib/features/discover/state/weekWords';
 import ToldDiscoverModal from './ToldDiscoverModal.svelte';
 
 const LIST = 'GET /api/v3/discover/feedback';
@@ -16,8 +17,8 @@ type Tuning = RouteData<typeof TUNINGS>['items'][number];
 
 const TOLD_AT = Date.UTC(2026, 10, 22, 12) / 1000;
 const BACK_AT = Date.UTC(2027, 1, 22, 12) / 1000;
-const day = (seconds: number) =>
-	new Date(seconds * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+const ENDS_AT = Date.UTC(2027, 4, 1, 12) / 1000;
+const day = (seconds: number) => dayMonth(seconds * 1000);
 
 function entry(told: Partial<Entry> & Pick<Entry, 'kind' | 'target_mbid'>): Entry {
 	return {
@@ -35,6 +36,7 @@ function entry(told: Partial<Entry> & Pick<Entry, 'kind' | 'target_mbid'>): Entr
 const ENTRIES: Entry[] = [
 	entry({ kind: 'no', target_mbid: 'rg-1', release_name: 'Dreamhouse', artist_name: 'Tides' }),
 	entry({ kind: 'know_it', target_mbid: 'rg-2', release_name: 'Rumours' }),
+	entry({ kind: 'no', target_mbid: 'rg-4', release_name: 'Carried', expires_at: ENDS_AT }),
 	entry({ kind: 'not_now', target_mbid: 'rg-3', release_name: 'Later', expires_at: BACK_AT }),
 	entry({
 		kind: 'not_artist',
@@ -77,18 +79,19 @@ describe('ToldDiscoverModal.svelte', () => {
 		// The undo's effect sweeps the app's own client.
 		await renderWithQuery(ToldDiscoverModal, { open: true }, { client: queryClient });
 
-		const told = day(TOLD_AT);
-		await expect.element(page.getByText(`Passed · ${told} · Until you undo it`)).toBeVisible();
+		const dialog = page.getByRole('dialog', { name: 'What you told Discover' });
+		await expect.element(dialog.getByRole('heading', { name: 'Not this artist 1' })).toBeVisible();
+		await expect.element(dialog.getByRole('heading', { name: 'Less from this 1' })).toBeVisible();
+		await expect.element(dialog.getByRole('heading', { name: 'Not now 1' })).toBeVisible();
+		await expect.element(dialog.getByRole('heading', { name: 'Know it already 1' })).toBeVisible();
+		await expect.element(dialog.getByRole('heading', { name: 'No 2' })).toBeVisible();
+		await expect.element(dialog.getByText(`Back after ${day(BACK_AT)}`)).toBeVisible();
+		await expect.element(dialog.getByText(`Ends ${dayMonthYear(ENDS_AT * 1000)}`)).toBeVisible();
+		await expect.element(dialog.getByText(`Since ${day(TOLD_AT)}`).first()).toBeVisible();
+		await expect.element(dialog.getByText('Tides of Man')).toBeVisible();
 		await expect
-			.element(page.getByText(`Know it already · ${told} · Until you undo it`))
+			.element(dialog.getByText('Albums you put on Later are on their own page.'))
 			.toBeVisible();
-		await expect
-			.element(page.getByText(`Not now · ${told} · Back after ${day(BACK_AT)}`))
-			.toBeVisible();
-		await expect
-			.element(page.getByText(`Not this artist · ${told} · Until you undo it`))
-			.toBeVisible();
-		await expect.element(page.getByText('Tides of Man')).toBeVisible();
 
 		await page.getByRole('button', { name: 'Undo for Tides of Man' }).click();
 		await expect.element(page.getByText('Tides of Man')).not.toBeInTheDocument();
@@ -97,9 +100,6 @@ describe('ToldDiscoverModal.svelte', () => {
 		]);
 		await expect.element(page.getByText('Dreamhouse')).toBeVisible();
 
-		await expect
-			.element(page.getByText(`Less from this · ${told} · Until you undo it`))
-			.toBeVisible();
 		await page.getByRole('button', { name: 'Undo less from Circa Survive' }).click();
 		await expect.element(page.getByText('Circa Survive')).not.toBeInTheDocument();
 		expect(api.calls(UNDO_TUNING).map((call) => call.params)).toEqual([

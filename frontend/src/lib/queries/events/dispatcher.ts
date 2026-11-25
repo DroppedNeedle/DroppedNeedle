@@ -106,7 +106,7 @@ export const EVENT_TABLE: { [N in ServerEventName]: EventEntry<N> } = {
 		})
 	},
 	request_imported: {
-		effects: () => [playlistRequestStatesChanged()],
+		effects: (_, { userId }) => [requestsChanged(userId), playlistRequestStatesChanged()],
 		toast: (data) => ({
 			id: `request-imported:${data.event_id}`,
 			message: `${albumOr(data.album_title, 'An album')} is now in your library.`,

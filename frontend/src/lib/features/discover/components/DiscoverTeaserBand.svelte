@@ -7,7 +7,7 @@
 	import { ArrowRight, ChevronRight, Compass } from 'lucide-svelte';
 	import ArtistFan from '$lib/media/ArtistFan.svelte';
 	import { createDeckBeat } from '$lib/media/deckBeat.svelte';
-	import { getDiscoverQueueStatusQuery } from '$lib/features/discover/queries/DiscoverQueueQueries';
+	import { getDiscoverQueueStatusQuery } from '$lib/features/discover/queries/queueStatus';
 	import { withBasePath } from '$lib/utils/basePath';
 	import type { DiscoverPreview } from '$lib/features/discover/queries/types';
 	import FritEdge from '$lib/ui/FritEdge.svelte';
@@ -34,7 +34,7 @@
 	);
 	const headline = $derived(
 		queueCount
-			? `${queueCount} fresh albums are waiting in your Discover queue`
+			? `${queueCount} fresh albums are waiting on Discover`
 			: preview?.seed_artist
 				? `New music picked because you listen to ${preview.seed_artist}`
 				: 'Fresh recommendations are waiting for you'

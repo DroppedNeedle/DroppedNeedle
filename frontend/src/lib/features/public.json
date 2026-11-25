@@ -32,6 +32,7 @@
 		"queries/DiscoverDemand.svelte.ts",
 		"queries/later.svelte.ts",
 		"queries/types.ts",
+		"queries/week.svelte.ts",
 		"state/deckSampler.svelte.ts"
 	],
 	"downloads": [

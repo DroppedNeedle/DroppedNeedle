@@ -24,6 +24,7 @@ use axum::{
 use droppedneedle_catalog::discover::cache::{
     ForgetCounts, PageKind, Timing, UserPageCache, Variant, clear_all,
 };
+use droppedneedle_catalog::discover::content::LiveContent;
 use droppedneedle_catalog::discover::facts::{KeptFacts, job::FactJobs};
 use droppedneedle_catalog::discover::listening::shared;
 use droppedneedle_catalog::discover::listening::{
@@ -140,9 +141,17 @@ pub(crate) fn page_script() -> Script {
 }
 
 fn page_app(rig: &AuthRig, dir: &std::path::Path) -> Router {
-    discover_routes(discover_deps(rig, dir, Providers::closed(), |network| {
+    page_parts(rig, dir).0
+}
+
+/// The page's routes and the content service behind them, for a test that
+/// asks for a rebuild as the server's own triggers do.
+fn page_parts(rig: &AuthRig, dir: &std::path::Path) -> (Router, Arc<LiveContent>) {
+    let deps = discover_deps(rig, dir, Providers::closed(), |network| {
         *network = Arc::new(page_script());
-    }))
+    });
+    let content = Arc::clone(&deps.content);
+    (discover_routes(deps), content)
 }
 
 async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
@@ -311,9 +320,6 @@ async fn page_builds_in_the_background_is_saved_and_records_activity() {
         StatusCode::BAD_REQUEST,
         "artist activity needs an artist"
     );
-
-    let (status, _) = call(&restarted, "POST", "/api/v3/discover/refresh", None).await;
-    assert_eq!(status, StatusCode::ACCEPTED);
 }
 
 async fn seed_user(db: &droppedneedle_kernel::db::Db) {
@@ -710,10 +716,12 @@ async fn unreadable_settings_hold_builds_and_serve_the_saved_page() {
         .await
         .expect("settings reopen"),
     );
-    let restarted = page_app(&rig, &dir);
+    let (restarted, service) = page_parts(&rig, &dir);
 
-    let (status, _) = call(&restarted, "POST", "/api/v3/discover/refresh", None).await;
-    assert_eq!(status, StatusCode::ACCEPTED);
+    service
+        .trigger_refresh("user-1")
+        .await
+        .expect("refresh asked");
     let (_, page) = call(&restarted, "GET", "/api/v3/discover", None).await;
     assert_eq!(page["refreshing"], false, "no build started");
     assert_eq!(
@@ -725,7 +733,10 @@ async fn unreadable_settings_hold_builds_and_serve_the_saved_page() {
     rig.config
         .save_secret_blocking(AdvancedSettings::default())
         .expect("settings saved again");
-    call(&restarted, "POST", "/api/v3/discover/refresh", None).await;
+    service
+        .trigger_refresh("user-1")
+        .await
+        .expect("refresh asked");
     let (_, page) = call(&restarted, "GET", "/api/v3/discover", None).await;
     assert_eq!(page["refreshing"], true, "builds resume");
     settled_page(&rig, &restarted, "the rebuild finished").await;
@@ -810,9 +821,11 @@ async fn a_failed_read_keeps_the_sections_the_page_had() {
     let network = Arc::clone(&script);
     let providers = Providers::closed();
     let answers = providers.cache.clone();
-    let app = discover_routes(discover_deps(&rig, &dir, providers, |slot| {
+    let deps = discover_deps(&rig, &dir, providers, |slot| {
         *slot = network;
-    }));
+    });
+    let service = Arc::clone(&deps.content);
+    let app = discover_routes(deps);
 
     call(&app, "GET", "/api/v3/discover", None).await;
     let first = settled_page(&rig, &app, "the first page was built").await;
@@ -841,8 +854,10 @@ async fn a_failed_read_keeps_the_sections_the_page_had() {
         .await
         .expect("kept facts cleared");
     rig.clock().advance(60_000);
-    let (status, _) = call(&app, "POST", "/api/v3/discover/refresh", None).await;
-    assert_eq!(status, StatusCode::ACCEPTED);
+    service
+        .trigger_refresh("user-1")
+        .await
+        .expect("refresh asked");
     let page = page_after(&app, &first, "the rebuild landed").await;
     assert_eq!(
         content(&page, "radio_sections"),

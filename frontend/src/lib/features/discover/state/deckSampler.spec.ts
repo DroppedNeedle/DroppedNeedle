@@ -6,7 +6,7 @@ const { apiGet, focus, toastStore } = vi.hoisted(() => ({
 	toastStore: { notify: vi.fn(), hide: vi.fn() }
 }));
 // Every preview read goes straight to the scripted answer, never a cache.
-vi.mock('$lib/features/discover/queries/DiscoverQueueQueries', () => ({
+vi.mock('$lib/features/discover/queries/previews', () => ({
 	fetchTrackPreview: (...args: unknown[]) => apiGet(...args),
 	fetchAlbumPreview: (...args: unknown[]) => apiGet(...args)
 }));

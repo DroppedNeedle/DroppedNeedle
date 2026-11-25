@@ -5,7 +5,7 @@
 //! warm-cycle loop calls [`WarmScheduler::tick`] every 90 seconds: it
 //! prunes activity older than a day, takes the user whose due activity
 //! was serviced longest ago, and warms each of their features through
-//! its registration (the discover page, home, the queue deck). A feature
+//! its registration (the discover page and home). A feature
 //! that built is due again in twelve hours, and one that did not build,
 //! found nothing or timed out in 15 minutes, so a provider that is down or
 //! refusing is not asked again every pass. Activity recorded through the
@@ -44,7 +44,7 @@ pub enum Feature {
     Home,
     /// The discover page.
     Discover,
-    /// The queue deck.
+    /// The queue deck, from before the weekly set; recorded, never warmed.
     Queue,
     /// An artist page's discover sections.
     Artist,

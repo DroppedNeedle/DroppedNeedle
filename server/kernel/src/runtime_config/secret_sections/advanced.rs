@@ -1,24 +1,18 @@
-//! Advanced tuning: the discover queue, AudioDB, images and retention.
+//! Advanced tuning: Discover, AudioDB, images and retention.
 
 use super::*;
 
 // --- advanced_settings (closed export allowlist) ---------------------------
-// Kept: the discover queue tuning, the AudioDB switches and key,
+// Kept: the Discover tuning, the AudioDB switches and key,
 // image serving, and the retention and prune cadences. Cache lifetimes,
 // precache pacing, HTTP limits and the browser cache lifetimes are fixed
 // in code; a v2 export that carries them has them reported as dropped.
 // The AudioDB key is encrypted at rest now (v2 stored it plaintext).
 
-/// Advanced tuning: discover queue, AudioDB, images and retention.
+/// Advanced tuning: Discover, AudioDB, images and retention.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct AdvancedSettings {
-    /// Discover queue size.
-    pub discover_queue_size: i64,
-    /// Discover queue auto-generate.
-    pub discover_queue_auto_generate: bool,
-    /// Whether the background warm cycle may build queue decks.
-    pub discover_queue_warm_cycle_build: bool,
     /// MusicBrainz lookups one Last.fm album batch may spend.
     pub discover_queue_lastfm_mbid_max_lookups: i64,
     /// Whether Discover blends Last.fm and ListenBrainz for a user who
@@ -49,9 +43,6 @@ pub struct AdvancedSettings {
 impl Default for AdvancedSettings {
     fn default() -> Self {
         Self {
-            discover_queue_size: 10,
-            discover_queue_auto_generate: true,
-            discover_queue_warm_cycle_build: true,
             discover_queue_lastfm_mbid_max_lookups: 10,
             discover_blend_listening_services: true,
             audiodb_enabled: true,
@@ -72,7 +63,6 @@ impl Section for AdvancedSettings {
     fn validate(&self) -> Result<(), ConfigError> {
         let key = Self::KEY;
         let ints: &[(&str, i64, i64, i64)] = &[
-            ("discover_queue_size", self.discover_queue_size, 1, 20),
             (
                 "discover_queue_lastfm_mbid_max_lookups",
                 self.discover_queue_lastfm_mbid_max_lookups,

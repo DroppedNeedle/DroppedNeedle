@@ -310,13 +310,13 @@ async fn section_saves_mask_and_check_revisions() {
 
     let (service, effects, _scratch) = scratch_service();
     let body: Masked<AdvancedSettings> = serde_json::from_value(json!({
-        "discover_queue_size": 15,
-        "discover_queue_auto_generate": false,
+        "discover_queue_lastfm_mbid_max_lookups": 15,
+        "discover_blend_listening_services": false,
         "audiodb_api_key": "audiodb-secret",
     }))
     .expect("decodes");
     let echoed = service.save_masked(body).await.expect("saves");
-    assert_eq!(echoed.discover_queue_size, 15);
+    assert_eq!(echoed.discover_queue_lastfm_mbid_max_lookups, 15);
     assert_eq!(echoed.audiodb_api_key.expose(), SECRET_MASK);
     assert!(effects.calls().is_empty(), "a save clears no cache");
 
@@ -324,7 +324,7 @@ async fn section_saves_mask_and_check_revisions() {
         .store
         .get_raw::<AdvancedSettings>()
         .expect("raw reads");
-    assert_eq!(stored.discover_queue_size, 15);
+    assert_eq!(stored.discover_queue_lastfm_mbid_max_lookups, 15);
     assert_eq!(stored.audiodb_api_key.expose(), "audiodb-secret");
 
     // The echo re-saves cleanly: the mask keeps the stored key, the row is
@@ -339,7 +339,7 @@ async fn section_saves_mask_and_check_revisions() {
         .expect("raw reads");
     assert_eq!(stored.audiodb_api_key.expose(), "audiodb-secret");
 
-    assert!(!stored.discover_queue_auto_generate);
+    assert!(!stored.discover_blend_listening_services);
 
     // A row saved while the old deck's tuning was still a setting reads,
     // the fields nothing reads any more left out.
@@ -347,7 +347,9 @@ async fn section_saves_mask_and_check_revisions() {
         .store
         .replace_stored_for_test(
             AdvancedSettings::KEY,
-            r#"{"discover_queue_size": 9, "discover_queue_seed_artists": 3,
+            r#"{"discover_queue_lastfm_mbid_max_lookups": 9, "discover_queue_size": 9,
+                "discover_queue_auto_generate": false, "discover_queue_warm_cycle_build": false,
+                "discover_queue_seed_artists": 3,
                 "discover_queue_wildcard_slots": 2, "discover_queue_similar_artists_limit": 15,
                 "discover_queue_albums_per_similar": 5,
                 "discover_picks_genre_affinity_weight": 0.7, "discover_picks_count": 12}"#,
@@ -357,7 +359,7 @@ async fn section_saves_mask_and_check_revisions() {
         .store
         .get_raw::<AdvancedSettings>()
         .expect("an old row reads");
-    assert_eq!(stored.discover_queue_size, 9);
+    assert_eq!(stored.discover_queue_lastfm_mbid_max_lookups, 9);
 
     // Library settings: the advanced saves above recorded no effect, so the
     // library save's effects are all the recorder holds.

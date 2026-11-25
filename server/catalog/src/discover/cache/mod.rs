@@ -1,6 +1,6 @@
 //! One per-user page cache for discover: the discover page, home's
-//! provider shelves, the queue deck, and the Daily Mixes and Top Picks a
-//! discover build reuses.
+//! provider shelves, and the Daily Mixes and Top Picks a discover build
+//! reuses.
 //!
 //! Each page is one row of `catalog_cached_pages`, the only copy: nothing
 //! is kept in memory over it, so every page survives a restart. A page
@@ -44,7 +44,7 @@ pub enum PageKind {
     Discover,
     /// Home's provider shelves.
     Home,
-    /// The queue deck.
+    /// The queue deck's rows, left from before the weekly set.
     Queue,
     /// The Daily Mixes a discover build reuses.
     DailyMixes,
@@ -579,15 +579,13 @@ pub async fn forget_user(db: &Db, forgets: &ForgetCounts, user_id: &str) -> Resu
 pub struct StoredPage {
     /// The user's id.
     pub user_id: String,
-    /// Which page it is.
-    pub kind: PageKind,
     /// The page as saved.
     pub payload: Vec<u8>,
     /// When it was built, unix milliseconds.
     pub built_at: i64,
 }
 
-/// Every user's saved page of kind `a` or `b`, by user.
-pub async fn stored(db: &Db, a: PageKind, b: PageKind) -> Result<Vec<StoredPage>, DbError> {
-    rows::of_kinds(db, a, b).await
+/// Every user's saved page of kind `kind`, by user.
+pub async fn stored(db: &Db, kind: PageKind) -> Result<Vec<StoredPage>, DbError> {
+    rows::of_kind(db, kind).await
 }

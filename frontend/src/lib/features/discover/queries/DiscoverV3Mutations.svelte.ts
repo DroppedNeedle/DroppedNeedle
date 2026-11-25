@@ -4,17 +4,17 @@ import type { components } from '$lib/api/v3/openapi';
 import {
 	applyEffects,
 	createAppMutation,
-	discoverHomeChanged,
 	discoveryBatchChanged,
 	discoveryBatchesChanged,
 	downloadsChanged,
 	type Effect,
 	libraryCountsChanged,
+	pickHeard,
 	recommendationsChanged,
 	tuningsChanged
 } from '$lib/queries/effects';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { type FeedbackTarget, undoDiscoverFeedback } from './DiscoverQueueQueries';
+import { type FeedbackTarget, undoDiscoverFeedback } from './feedback';
 import { toastStore } from '$lib/stores/toast';
 import type {
 	DiscoveryBatchDetailV3,
@@ -60,36 +60,14 @@ export type PickEventV3 = components['schemas']['DiscoverPickEventRequest'];
 
 /**
  * Tells the pick record what the person saw happen to a pick: shown, its
- * sample started, or its album opened from the card. Nothing cached changes,
- * and nothing on the page waits on it.
+ * sample started, or its album opened from the card. A sample marks the
+ * pick heard on the week; nothing on the page waits on it.
  */
 export const createPickEventMutation = () =>
 	createAppMutation(() => ({
 		retry: false,
-		effects: () => [],
+		effects: (_, { event }) => (event === 'sampled' ? [pickHeard(authStore.user?.id)] : []),
 		mutationFn: (event: PickEventV3) => api.v3.POST(v3('/api/v3/discover/picks/events'), event)
-	}));
-
-export const createRefreshDiscoverV3Mutation = () =>
-	createAppMutation(() => ({
-		mutationFn: () => api.v3.POST(v3('/api/v3/discover/refresh')),
-		effects: () => [discoverHomeChanged(authStore.user?.id)]
-	}));
-
-export const createQueuePreviewV3Mutation = () =>
-	createAppMutation(() => ({
-		retry: false,
-		effects: () => [],
-		mutationFn: ({ mbid, signal }: { mbid: string; signal: AbortSignal }) =>
-			api.v3.POST(
-				v3('/api/v3/discover/queue/preview/{release_group_mbid}', {
-					path: { release_group_mbid: mbid }
-				}),
-				undefined,
-				{
-					signal
-				}
-			)
 	}));
 
 // Sweep only what the API result says changed:

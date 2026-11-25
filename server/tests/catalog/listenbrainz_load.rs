@@ -698,7 +698,7 @@ async fn journey(tag: &str, lastfm: bool) -> Measured {
             if matches!(hour, 0 | 5 | 12 | 19) {
                 let visit = hour / 5;
                 seen_now(&rig).await;
-                for feature in [Feature::Home, Feature::Discover, Feature::Queue] {
+                for feature in [Feature::Home, Feature::Discover] {
                     activity
                         .record(
                             Activity {
@@ -720,7 +720,6 @@ async fn journey(tag: &str, lastfm: bool) -> Measured {
                     })
                     .await;
                 }
-                get(&app, "/api/v3/discover/queue?count=10").await;
                 let found = enrich_with_degradation(&counts, USER, search_batch(day, visit)).await;
                 assert!(
                     found.degradations.is_empty(),

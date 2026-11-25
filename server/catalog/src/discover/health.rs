@@ -1,10 +1,8 @@
-//! Health numbers for each discover build: how much of a page or deck is
-//! about the person, how much repeats. The deck is dealt from the
-//! person's pool, whose every pick carries a reason, so a chart album has
-//! no way onto it.
+//! Health numbers for each discover page build: how much of the page is
+//! about the person, how much repeats.
 //!
-//! Each build counts its page or deck with [`page_health`] or
-//! [`deck_health`], logs the numbers and keeps them with the saved row;
+//! Each build counts its page with [`page_health`], logs the numbers and
+//! keeps them with the saved row;
 //! [`from_stored`] turns every user's saved rows into the admin's read.
 //! Nothing here reads or writes the database. They are counts only: no
 //! album, artist or seed is named, and shares are left for the reader to
@@ -17,8 +15,7 @@ use utoipa::ToSchema;
 
 use crate::discover::cache::{PageKind, StoredPage};
 use crate::discover::models::{
-    DeckHealthRow, DiscoverHealthResponse, DiscoverResponse, PageHealthRow, QueueItemLight,
-    SectionContent, SectionItem,
+    DiscoverHealthResponse, DiscoverResponse, PageHealthRow, SectionContent, SectionItem,
 };
 use crate::discover::sections::{self, Basis, Page, Requires, SectionDef, SectionKey};
 
@@ -52,17 +49,6 @@ pub struct PageHealth {
     pub max_cards_one_artist: usize,
     /// Whether a read failed or a shelf ran out of time.
     pub incomplete: bool,
-}
-
-/// The numbers of one queue deck build.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct DeckHealth {
-    /// Cards in the deck.
-    pub cards: usize,
-    /// Distinct artists among them.
-    pub distinct_artists: usize,
-    /// The most cards any one artist has.
-    pub max_cards_one_artist: usize,
 }
 
 /// What a page build knows beyond the page itself.
@@ -235,21 +221,6 @@ pub fn page_health(
     health
 }
 
-/// Count a built deck.
-pub fn deck_health(items: &[QueueItemLight]) -> DeckHealth {
-    let artists = || {
-        items
-            .iter()
-            .map(|item| item.artist_id.as_str())
-            .filter(|id| !id.is_empty())
-    };
-    DeckHealth {
-        cards: items.len(),
-        distinct_artists: artists().collect::<HashSet<_>>().len(),
-        max_cards_one_artist: max_per_artist(artists()),
-    }
-}
-
 /// The one log line of a discover page build.
 pub fn log_page_health(user_id: &str, seconds: f64, health: &PageHealth) {
     tracing::info!(
@@ -271,19 +242,7 @@ pub fn log_page_health(user_id: &str, seconds: f64, health: &PageHealth) {
     );
 }
 
-/// The one log line of a queue deck build.
-pub fn log_deck_health(user_id: &str, seconds: f64, health: &DeckHealth) {
-    tracing::info!(
-        user = %user_id,
-        seconds,
-        cards = health.cards,
-        distinct_artists = health.distinct_artists,
-        max_cards_one_artist = health.max_cards_one_artist,
-        "discover deck built"
-    );
-}
-
-/// The numbers a saved page or deck carries; the rest of the payload is
+/// The numbers a saved page carries; the rest of the payload is
 /// skipped.
 #[derive(Deserialize)]
 struct Kept<H> {
@@ -302,37 +261,19 @@ fn kept<H: serde::de::DeserializeOwned>(payload: &[u8], page: &str) -> Option<H>
     }
 }
 
-/// Every user's latest discover page and deck numbers, from their saved
+/// Every user's latest discover page numbers, from their saved Discover
 /// rows. A row without them is left out until it is built again.
 pub fn from_stored(rows: Vec<StoredPage>) -> DiscoverHealthResponse {
-    let mut answer = DiscoverHealthResponse {
-        pages: Vec::new(),
-        decks: Vec::new(),
-    };
-    for row in rows {
-        let built_at = row.built_at / 1000;
-        let page = row.kind.as_str();
-        match row.kind {
-            PageKind::Discover => {
-                if let Some(health) = kept(&row.payload, page) {
-                    answer.pages.push(PageHealthRow {
-                        user_id: row.user_id,
-                        built_at,
-                        health,
-                    });
-                }
-            }
-            PageKind::Queue => {
-                if let Some(health) = kept(&row.payload, page) {
-                    answer.decks.push(DeckHealthRow {
-                        user_id: row.user_id,
-                        built_at,
-                        health,
-                    });
-                }
-            }
-            PageKind::Home | PageKind::DailyMixes | PageKind::TopPicks => {}
-        }
-    }
-    answer
+    let page = PageKind::Discover.as_str();
+    let pages = rows
+        .into_iter()
+        .filter_map(|row| {
+            kept(&row.payload, page).map(|health| PageHealthRow {
+                user_id: row.user_id,
+                built_at: row.built_at / 1000,
+                health,
+            })
+        })
+        .collect();
+    DiscoverHealthResponse { pages }
 }

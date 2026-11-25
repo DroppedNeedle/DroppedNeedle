@@ -1,11 +1,4 @@
-//! Dealing one deck, and the album pools other surfaces share.
-//!
-//! A deck is the top of the person's ranked pool ([`top_of_pool`]), which
-//! Top Picks read too. The pool's live gates leave out what the library
-//! holds or is fetching, what the person told Discover and any pick whose
-//! reason no longer holds; the engine's selection deals from what is left.
-//! A deck short of picks stays short: nothing tops it up, and no chart
-//! album ever fills it.
+//! What one build reads from, and the album pools other surfaces share.
 //!
 //! The pools of similar artists' albums ([`similar_artist_pools`],
 //! [`lastfm_pools`]) are what radio, the Radio shelves, Daily Mixes and
@@ -15,18 +8,11 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-use droppedneedle_kernel::db::{Db, DbError};
 use futures_util::future::join_all;
 
 use super::QueueSettings;
 use super::store::QueueDb;
-use crate::discover::engine::candidate::Candidate;
-use crate::discover::engine::rank::proposed;
-use crate::discover::engine::select::{self, Exposure, Floors, Share};
-use crate::discover::engine::{pool_store, reason};
 use crate::discover::listening::{ArtistRow, Ask, LastFmAlbum, ListeningData, ScoredArtist};
-use crate::discover::models::{PickReason, QueueItemLight};
-use crate::discover::record::Offer;
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
 /// The "Various Artists" placeholder; never a real recommendation.
@@ -114,95 +100,6 @@ pub(in crate::discover) async fn timed<T: Default, E: std::fmt::Display>(
             T::default()
         }
     }
-}
-
-/// One pick from the top of a person's pool, with the reason it is
-/// offered.
-#[derive(Debug, Clone)]
-pub struct Pick {
-    /// The candidate, with every path that found it.
-    pub candidate: Candidate,
-    /// Its reason, built from those paths.
-    pub reason: PickReason,
-}
-
-impl Pick {
-    /// The pick as a deck card.
-    pub fn card(&self) -> QueueItemLight {
-        let candidate = &self.candidate;
-        QueueItemLight {
-            musicbrainz_id: candidate.release_group_mbid.clone(),
-            title: candidate.title.clone(),
-            artist_name: candidate.artist_name.clone(),
-            artist_id: candidate.artist_mbid.clone(),
-            reason: self.reason.clone(),
-            cover_url: Some(cover_url(&candidate.release_group_mbid)),
-            in_library: false,
-        }
-    }
-
-    /// What the pick record keeps of it.
-    pub fn offer(&self) -> Offer {
-        Offer::from_pick(&self.candidate, &self.reason)
-    }
-}
-
-/// Up to `n` picks from the top of `user_id`'s ranked pool at `now_ms`, as
-/// the engine selects them: slots shared by their taste groups, one album
-/// an artist, and what they were shown and passed over resting. The pool's
-/// live gates have already left out what the library holds or is fetching,
-/// what the person told Discover and picks whose reason no longer holds.
-/// Nothing refills a short answer, and a person with no taste build yet
-/// has no picks.
-///
-/// # Errors
-///
-/// A read's failure.
-pub(in crate::discover) async fn top_of_pool(
-    db: &Db,
-    user_id: &str,
-    now_ms: i64,
-    n: usize,
-) -> Result<Vec<Pick>, DbError> {
-    let pool = pool_store::ranked(db, user_id, now_ms).await?;
-    if pool.is_empty() || n == 0 {
-        return Ok(Vec::new());
-    }
-    let Some(taste) = pool_store::taste(db, user_id).await? else {
-        return Ok(Vec::new());
-    };
-    let shares: Vec<Share> = taste
-        .groups
-        .iter()
-        .map(|&(group, share)| Share { group, share })
-        .collect();
-    let shown = pool_store::shown(db, user_id, now_ms - proposed::REST_MS).await?;
-    let exposure = Exposure::from_shown(&shown, now_ms);
-    let seeds = pool_store::seed_ids(db, user_id).await?;
-    let selection = select::select(&pool, n, &shares, &exposure, Floors::PROPOSED);
-    Ok(selection
-        .picks
-        .into_iter()
-        .filter_map(|candidate| {
-            Some(Pick {
-                reason: reason::reason(candidate, &seeds)?,
-                candidate: candidate.clone(),
-            })
-        })
-        .collect())
-}
-
-/// Deal one deck of up to `count` picks for the user from the top of their
-/// pool ([`top_of_pool`]). Fails when a read fails: a deck that skipped the
-/// library or what the person told Discover would be wrong.
-pub async fn build_deck(
-    ctx: &BuildContext<'_>,
-    user_id: &str,
-    count: usize,
-) -> Result<Vec<Pick>, String> {
-    top_of_pool(ctx.db.db(), user_id, ctx.now_ms, count)
-        .await
-        .map_err(|cause| format!("the pool could not be read: {cause}"))
 }
 
 /// Up to `limit` artists similar to `seed`, best first (see

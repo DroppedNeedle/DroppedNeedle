@@ -106,9 +106,6 @@ pub(crate) fn is_removed_section(section: &str) -> bool {
 
 /// The `advanced_settings` fields v3 still reads.
 pub(crate) const ADVANCED_KEPT: &[&str] = &[
-    "discover_queue_size",
-    "discover_queue_auto_generate",
-    "discover_queue_warm_cycle_build",
     "discover_queue_lastfm_mbid_max_lookups",
     "audiodb_enabled",
     "audiodb_name_search_fallback",
@@ -152,6 +149,9 @@ pub(crate) const REMOVED_FIELDS: &[&str] = &[
     "advanced_settings.recent_metadata_max_size_mb",
     "advanced_settings.recent_covers_max_size_mb",
     "advanced_settings.persistent_metadata_ttl_hours",
+    "advanced_settings.discover_queue_size",
+    "advanced_settings.discover_queue_auto_generate",
+    "advanced_settings.discover_queue_warm_cycle_build",
     "advanced_settings.discover_queue_ttl",
     "advanced_settings.discover_queue_polling_interval",
     "advanced_settings.discover_queue_enrich_ttl",

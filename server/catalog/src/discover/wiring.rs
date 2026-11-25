@@ -1,7 +1,7 @@
 //! The builder that wires the discover services.
 //!
 //! ListenBrainz and Last.fm charts, Deezer/iTunes previews, YouTube search
-//! when a key is set, the queue deck and radio. A part
+//! when a key is set, the weekly set and radio. A part
 //! that cannot run answers empty or with a typed "not available", never
 //! with invented rows.
 
@@ -11,8 +11,8 @@ use std::sync::Arc;
 use crate::discover::listening::{ListeningData, ListeningNetwork, LiveNetwork};
 use crate::discover::services::DiscoverDeps;
 use crate::discover::{
-    cache, charts, content, due, engine, facts, forget, home, later, page, previews, queue, radio,
-    record, scheduler, tunings, youtube,
+    cache, charts, content, due, engine, facts, feedback, forget, home, later, page, previews,
+    queue, radio, record, scheduler, tunings, youtube,
 };
 use crate::metadata::library::LocalCatalog;
 use crate::metadata::ports::{NoDetails, NoFollows, NoPurchaseLinks};
@@ -152,15 +152,11 @@ fn deps_with(
     let settings = config.live();
     // One count per person, shared by every page cache and the forget.
     let forgets = cache::ForgetCounts::default();
-    let queues = Arc::new(queue::LiveQueue::new(queue::QueueInputs {
-        listening: listening.clone(),
-        db: inputs.db.clone(),
-        clock: Arc::clone(&inputs.clock),
-        youtube: youtube.clone(),
-        cache: inputs.providers.cache.clone(),
-        settings: settings.clone(),
-        forgets: forgets.clone(),
-    }));
+    let answers = Arc::new(feedback::Answers::new(
+        inputs.db.clone(),
+        Arc::clone(&inputs.clock),
+        settings.clone(),
+    ));
     let radio = radio::LiveRadio::new(radio::RadioInputs {
         listening: listening.clone(),
         queue_db: queue::store::QueueDb::new(inputs.db.clone()),
@@ -220,6 +216,7 @@ fn deps_with(
             listening: listening.clone(),
             forgets: forgets.clone(),
             due: Arc::clone(&due),
+            answers: Arc::clone(&answers),
         },
     ));
     let warm_scheduler = Arc::new(scheduler::WarmScheduler::new(
@@ -228,11 +225,7 @@ fn deps_with(
         Arc::clone(&inputs.clock),
         inputs.discover_warmer,
         Arc::clone(&due),
-        vec![
-            Arc::new(pages.clone()),
-            Arc::new(home.clone()),
-            Arc::clone(&queues) as Arc<dyn scheduler::Warm>,
-        ],
+        vec![Arc::new(pages.clone()), Arc::new(home.clone())],
     ));
     let page = page::LiveDiscover::new(pages, warm_scheduler);
     DiscoverDeps {
@@ -244,7 +237,7 @@ fn deps_with(
             genre_art,
             Arc::clone(&due),
         )),
-        queues,
+        answers,
         charts: Arc::new(charts),
         previews: Arc::new(previews::LivePreviews::new(
             inputs.providers.previews.clone(),

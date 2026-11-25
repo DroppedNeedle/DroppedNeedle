@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 pub use super::feedback::{FeedbackKind, FeedbackTarget};
-pub use super::health::{DeckHealth, PageHealth};
+pub use super::health::PageHealth;
 pub use super::record::{MadeFrom, PickEvent};
 pub use super::sections::{SectionKey, SectionZone};
 pub use super::tunings::TuningKind;
@@ -474,7 +474,7 @@ pub enum ServiceState {
 }
 
 /// Why a section switched on is not plainly built. The one list of these
-/// reasons: the page's sections and the queue deck both use it.
+/// reasons, for the page's sections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SectionCondition {
@@ -602,15 +602,6 @@ pub struct DiscoverActivityResponse {
     pub generation: i64,
 }
 
-/// Acknowledgement of a triggered background refresh.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct RefreshResponse {
-    /// Always `ok` when the trigger lands.
-    pub status: String,
-    /// Human message.
-    pub message: String,
-}
-
 /// One user's latest discover page numbers.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PageHealthRow {
@@ -622,203 +613,38 @@ pub struct PageHealthRow {
     pub health: PageHealth,
 }
 
-/// One user's latest queue deck numbers.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct DeckHealthRow {
-    /// The user's id.
-    pub user_id: String,
-    /// When the deck was built, unix seconds.
-    pub built_at: i64,
-    /// Its numbers.
-    pub health: DeckHealth,
-}
-
 /// Every user's latest discover numbers: counts only, no music named.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DiscoverHealthResponse {
     /// Discover pages, one per user.
     pub pages: Vec<PageHealthRow>,
-    /// Queue decks, one per user.
-    pub decks: Vec<DeckHealthRow>,
 }
 
 // ---------------------------------------------------------------------------
-// Queue
+// Queue status
 // ---------------------------------------------------------------------------
 
-/// One lightweight queue card: the deck renders these before enrichment.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct QueueItemLight {
-    /// MusicBrainz release-group id.
-    pub musicbrainz_id: String,
-    /// Album title.
-    pub title: String,
-    /// Artist name.
-    pub artist_name: String,
-    /// The artist's MusicBrainz id.
-    pub artist_id: String,
-    /// Why it is offered.
-    pub reason: PickReason,
-    /// Cover URL, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cover_url: Option<String>,
-    /// True when already owned.
-    pub in_library: bool,
-}
-
-/// Enrichment behind one queue card.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct QueueEnrichment {
-    /// MusicBrainz artist id, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub artist_mbid: Option<String>,
-    /// Release date, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub release_date: Option<String>,
-    /// Release country, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub country: Option<String>,
-    /// Genre/style tags.
-    pub tags: Vec<String>,
-    /// YouTube URL for the album, when found.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub youtube_url: Option<String>,
-    /// YouTube search URL fallback.
-    pub youtube_search_url: String,
-    /// Whether YouTube search is available at all.
-    pub youtube_search_available: bool,
-    /// Artist biography snippet, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub artist_description: Option<String>,
-    /// Artist listen count, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub listen_count: Option<i64>,
-}
-
-/// The queue deck: cards plus the build they came from.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct DiscoverQueueResponse {
-    /// Deck cards in order.
-    #[serde(default)]
-    pub items: Vec<QueueItemLight>,
-    /// Build id behind the deck.
-    pub queue_id: String,
-}
-
-/// Where one user's queue build stands.
+/// Whether a person's weekly picks wait for an answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum QueueBuildStatus {
-    /// No build has run since the server started.
+    /// No set is out, or every pick is answered.
     Idle,
-    /// A build is running.
-    Building,
-    /// A built queue is saved.
+    /// A set is out with picks still open.
     Ready,
-    /// The last build failed.
-    Error,
 }
 
-/// Queue build state for polling.
+/// How many of a person's weekly picks wait for an answer.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DiscoverQueueStatusResponse {
-    /// Build state. A saved queue past its age is `ready` with `stale` set.
+    /// Whether any wait.
     pub status: QueueBuildStatus,
-    /// Build id, when there is one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub queue_id: Option<String>,
-    /// Card count, when there is one.
+    /// Picks still open, while `ready`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub item_count: Option<i64>,
-    /// Build timestamp (unix seconds), when built.
+    /// When the set was built (unix seconds), while `ready`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub built_at: Option<i64>,
-    /// True when the deck is older than its TTL.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stale: Option<bool>,
-    /// Build failure, when failed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    /// Why the deck is short (`source_down`, `thin` or `empty`), when it
-    /// is; `source_down` too while the last build failed a read and the
-    /// deck before it is kept.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<SectionCondition>,
-}
-
-/// Body triggering a queue build.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct QueueGenerateRequest {
-    /// Rebuild even when a fresh deck exists.
-    #[serde(default)]
-    pub force: bool,
-}
-
-/// What a generate trigger did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum QueueAction {
-    /// A build started.
-    Started,
-    /// A build was already running.
-    AlreadyBuilding,
-    /// A fresh deck is saved; nothing started.
-    AlreadyReady,
-    /// Scheduled builds are switched off; nothing started.
-    Disabled,
-}
-
-/// What the generate trigger did, plus current build state.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct QueueGenerateResponse {
-    /// What the trigger did.
-    pub action: QueueAction,
-    /// Build state after the trigger.
-    pub status: QueueBuildStatus,
-    /// Build id, when there is one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub queue_id: Option<String>,
-    /// Card count, when there is one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub item_count: Option<i64>,
-    /// Build timestamp (unix seconds), when built.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub built_at: Option<i64>,
-    /// True when the deck is older than its TTL.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stale: Option<bool>,
-    /// Build failure, when failed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    /// Why the deck is short, when it is, as the status says.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<SectionCondition>,
-}
-
-/// Whether a queue card's YouTube preview was found.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum PreviewStatus {
-    /// A video was found.
-    Available,
-    /// The search ran and found nothing.
-    NotFound,
-    /// No search could run (no key, no quota left, or no names); the
-    /// search link still works.
-    Unavailable,
-}
-
-/// On-demand YouTube preview behind one queue card.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct DiscoverQueuePreview {
-    /// Whether a preview was found.
-    pub status: PreviewStatus,
-    /// Watch URL, when available.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub youtube_url: Option<String>,
-    /// Search URL fallback, when there is one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub youtube_search_url: Option<String>,
 }
 
 /// One thing a person tells Discover: about an album (`no`, `know_it`,
@@ -1268,21 +1094,6 @@ pub struct DiscoverPrefs {
     pub set_day: SetDay,
 }
 
-/// Body checking which cards already landed in the library.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct QueueValidateRequest {
-    /// Release-group ids to check.
-    pub release_group_mbids: Vec<String>,
-}
-
-/// Library membership behind the checked cards.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct QueueValidateResponse {
-    /// The checked ids that are already owned.
-    #[serde(default)]
-    pub in_library: Vec<String>,
-}
-
 // ---------------------------------------------------------------------------
 // Radio and playlist suggestions
 // ---------------------------------------------------------------------------
@@ -1489,7 +1300,7 @@ pub struct AlbumPreviewResponse {
 }
 
 // ---------------------------------------------------------------------------
-// YouTube helpers behind the queue deck
+// YouTube video lookups
 // ---------------------------------------------------------------------------
 
 /// A resolved YouTube video. `error: "not_found"` means the search ran and

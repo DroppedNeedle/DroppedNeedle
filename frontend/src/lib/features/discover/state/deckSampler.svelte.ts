@@ -17,10 +17,7 @@ import { audioFocus } from '$lib/features/player/state/audioFocus.svelte';
 import { toastStore } from '$lib/stores/toast';
 import { outsideLink } from '$lib/ui/outsideLink';
 import type { PreviewTrackItem } from '$lib/features/discover/queries/types';
-import {
-	fetchAlbumPreview,
-	fetchTrackPreview
-} from '$lib/features/discover/queries/DiscoverQueueQueries';
+import { fetchAlbumPreview, fetchTrackPreview } from '$lib/features/discover/queries/previews';
 
 const FOCUS_ID = 'deck-sampler';
 const CROSSFADE_S = 0.5;

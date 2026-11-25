@@ -215,9 +215,9 @@ impl LiveContent {
         })
     }
 
-    /// Every user's latest discover page and deck numbers.
+    /// Every user's latest discover page numbers.
     pub async fn health(&self) -> Result<DiscoverHealthResponse, ProviderFailure> {
-        let rows = cache::stored(&self.db, PageKind::Discover, PageKind::Queue)
+        let rows = cache::stored(&self.db, PageKind::Discover)
             .await
             .map_err(|error| ProviderFailure::failed(format!("discover health read: {error}")))?;
         Ok(health::from_stored(rows))

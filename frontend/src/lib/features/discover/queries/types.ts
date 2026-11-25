@@ -30,8 +30,6 @@ export type SectionCondition = Schemas['SectionCondition'];
 export type SectionKey = Schemas['SectionKey'];
 export type SectionZone = Schemas['SectionZone'];
 export type GenreDetailResponse = Schemas['GenreDetailResponse'];
-export type QueueItemLight = Schemas['QueueItemLight'];
-export type QueueEnrichment = Schemas['QueueEnrichment'];
 export type PlaylistSuggestionsResponse = Schemas['PlaylistSuggestionsResponse'];
 export type RadioSeedKind = Schemas['RadioSeedKind'];
 export type RadioPlanRequest = Schemas['RadioPlanRequest'];
@@ -41,10 +39,3 @@ export type PreviewTrackItem = Schemas['PreviewTrackItem'];
 
 /** A section row of one kind. */
 export type SectionRow<K extends SectionItem['kind']> = Extract<SectionItem, { kind: K }>;
-
-/** A queue card as the deck holds it: the card, its enrichment once read, and
- * whether the user requested it from the deck. */
-export type DeckCard = QueueItemLight & {
-	enrichment?: QueueEnrichment;
-	requested?: boolean;
-};

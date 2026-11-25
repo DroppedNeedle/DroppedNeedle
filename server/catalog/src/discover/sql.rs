@@ -586,11 +586,10 @@ droppedneedle_kernel::sql! {
     pub(super) NEXT_PAGE_GENERATION = "UPDATE catalog_page_generations \
          SET generation = generation + 1 WHERE singleton = 1";
     /// Every user's saved page of two kinds.
-    pub(super) SAVED_PAGES_OF_KINDS = "SELECT user_id, page, payload, built_at \
-         FROM catalog_cached_pages WHERE page IN (?1, ?2) ORDER BY user_id, page";
-    pub(super) row SavedPageColumns for [SAVED_PAGES_OF_KINDS] {
+    pub(super) SAVED_PAGES_OF_KIND = "SELECT user_id, payload, built_at \
+         FROM catalog_cached_pages WHERE page = ?1 ORDER BY user_id";
+    pub(super) row SavedPageColumns for [SAVED_PAGES_OF_KIND] {
         user_id: String,
-        page: String,
         payload: Vec<u8>,
         built_at: Millis,
     }

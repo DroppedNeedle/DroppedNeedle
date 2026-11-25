@@ -676,10 +676,6 @@ const EXEMPT_READS: &[(&str, &str)] = &[
     ("/api/v3/artists/", "shared catalog artists"),
     ("/api/v3/covers/", "shared cover art"),
     (
-        "/api/v3/discover/queue/",
-        "catalog release groups behind the discover deck",
-    ),
-    (
         "/api/v3/download/local/",
         "library files, shared by everyone",
     ),
@@ -738,11 +734,6 @@ const EXACT_EXEMPTIONS: &[(&str, &str, &str)] = &[
         "POST",
         "/api/v3/albums/{album_id}/refresh",
         "refreshes shared catalog metadata",
-    ),
-    (
-        "POST",
-        "/api/v3/discover/queue/preview/{release_group_mbid}",
-        "looks up a preview for a catalog release group",
     ),
     (
         "PUT",

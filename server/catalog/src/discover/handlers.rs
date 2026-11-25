@@ -23,14 +23,12 @@ use super::{
         AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection, DigFurtherPick,
         DiscoverActivityRequest, DiscoverActivityResponse, DiscoverFeedbackEntry,
         DiscoverFeedbackRequest, DiscoverFeedbackResponse, DiscoverHealthResponse,
-        DiscoverPickEventRequest, DiscoverPrefs, DiscoverQueuePreview, DiscoverQueueResponse,
-        DiscoverQueueStatusResponse, DiscoverResponse, DiscoverTuningEntry, DiscoverTuningRequest,
-        DiscoverTuningsResponse, FeedbackTarget, GenreDetailResponse, HomeResponse,
-        IntegrationStatus, LaterAlbum, LaterRequest, ListenSource, PickEvidence,
-        PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, QueueEnrichment,
-        QueueGenerateRequest, QueueGenerateResponse, QueueValidateRequest, QueueValidateResponse,
-        RadioPlanRequest, RadioPlanResponse, RadioRequest, RefreshResponse, StatsRange,
-        TrackPreviewResponse, TuningKind, WeekResponse, YouTubeSearchResponse,
+        DiscoverPickEventRequest, DiscoverPrefs, DiscoverQueueStatusResponse, DiscoverResponse,
+        DiscoverTuningEntry, DiscoverTuningRequest, DiscoverTuningsResponse, FeedbackTarget,
+        GenreDetailResponse, HomeResponse, IntegrationStatus, LaterAlbum, LaterRequest,
+        ListenSource, PickEvidence, PlaylistSuggestionsRequest, PlaylistSuggestionsResponse,
+        RadioPlanRequest, RadioPlanResponse, RadioRequest, StatsRange, TrackPreviewResponse,
+        TuningKind, WeekResponse, YouTubeSearchResponse,
     },
     services::{self, DiscoverDeps},
 };
@@ -38,13 +36,6 @@ use super::{
 // ---------------------------------------------------------------------------
 // Query shapes
 // ---------------------------------------------------------------------------
-
-/// `GET /discover/queue` params.
-#[derive(Debug, Deserialize)]
-pub struct QueueQuery {
-    /// Wanted card count (clamped to 20).
-    pub count: Option<i64>,
-}
 
 /// Chart page params shared by the three range routes.
 #[derive(Debug, Deserialize)]
@@ -143,8 +134,8 @@ pub async fn get_discover(
         .map_err(ApiError::from)
 }
 
-/// Every user's latest discover page and queue deck numbers: counts only,
-/// no music named.
+/// Every user's latest discover page numbers: counts only, no music
+/// named.
 #[utoipa::path(
     get,
     tag = "discover",
@@ -162,27 +153,6 @@ pub async fn admin_discover_health(
     services::discover_health(&deps, &admin)
         .await
         .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Trigger a background discover rebuild for the caller.
-#[utoipa::path(
-    post,
-    tag = "discover",
-    path = "/api/v3/discover/refresh",
-    responses(
-        (status = 202, description = "Refresh triggered", body = RefreshResponse),
-        (status = 401, description = "Not authenticated"),
-        (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
-    )
-)]
-pub async fn refresh_discover(
-    State(deps): State<DiscoverDeps>,
-    User(user): User,
-) -> Result<(StatusCode, Json<RefreshResponse>), ApiError> {
-    services::refresh_discover(&deps, user.user_id())
-        .await
-        .map(|body| (StatusCode::ACCEPTED, Json(body)))
         .map_err(ApiError::from)
 }
 
@@ -289,116 +259,23 @@ pub async fn playlist_suggestions(
 // Queue
 // ---------------------------------------------------------------------------
 
-/// The queue deck: the caller's last built deck, else one built now.
-#[utoipa::path(
-    get,
-    tag = "discover",
-    path = "/api/v3/discover/queue",
-    params(("count" = Option<i64>, Query, description = "Wanted card count, max 20")),
-    responses(
-        (status = 200, description = "Queue deck", body = DiscoverQueueResponse),
-        (status = 400, description = "Bad query string"),
-        (status = 401, description = "Not authenticated"),
-        (status = 500, description = "The library check failed"),
-        (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
-    )
-)]
-pub async fn get_queue(
-    State(deps): State<DiscoverDeps>,
-    User(user): User,
-    ValidQuery(query): ValidQuery<QueueQuery>,
-) -> Result<Json<DiscoverQueueResponse>, ApiError> {
-    services::queue(&deps, user.user_id(), query.count)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Where the caller's background queue build stands: `idle`, `building`,
-/// `ready` (with the deck's id, size, age and staleness) or `error`.
+/// How many of the caller's weekly picks wait for an answer: `ready` with
+/// their count while a set is out and some are open, else `idle`.
 #[utoipa::path(
     get,
     tag = "discover",
     path = "/api/v3/discover/queue/status",
     responses(
-        (status = 200, description = "Queue build status", body = DiscoverQueueStatusResponse),
+        (status = 200, description = "Open picks", body = DiscoverQueueStatusResponse),
         (status = 401, description = "Not authenticated"),
+        (status = 500, description = "The week could not be read"),
     )
 )]
 pub async fn queue_status(
     State(deps): State<DiscoverDeps>,
     User(user): User,
-) -> Json<DiscoverQueueStatusResponse> {
-    Json(services::queue_status(&deps, user.user_id()).await)
-}
-
-/// Start a background queue build. `action` says what happened:
-/// `started`, `already_building`, or `already_ready` (a fresh deck exists
-/// and `force` was not set).
-#[utoipa::path(
-    post,
-    tag = "discover",
-    path = "/api/v3/discover/queue/generate",
-    request_body = QueueGenerateRequest,
-    responses(
-        (status = 200, description = "Build state", body = QueueGenerateResponse),
-        (status = 400, description = "Bad request body"),
-        (status = 401, description = "Not authenticated"),
-    )
-)]
-pub async fn queue_generate(
-    State(deps): State<DiscoverDeps>,
-    User(user): User,
-    ValidJson(body): ValidJson<QueueGenerateRequest>,
-) -> Json<QueueGenerateResponse> {
-    Json(services::queue_generate(&deps, user.user_id(), &body).await)
-}
-
-/// Details behind one queue card: tags, release date, country, artist
-/// bio, listen count and a video link when one is known.
-#[utoipa::path(
-    get,
-    tag = "discover",
-    path = "/api/v3/discover/queue/enrich/{release_group_mbid}",
-    params(("release_group_mbid" = String, Path, description = "Release-group id")),
-    responses(
-        (status = 200, description = "Card details", body = QueueEnrichment),
-        (status = 400, description = "Bad release-group id"),
-        (status = 401, description = "Not authenticated"),
-        (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
-    )
-)]
-pub async fn enrich_queue_item(
-    State(deps): State<DiscoverDeps>,
-    User(user): User,
-    Path(release_group_mbid): Path<String>,
-) -> Result<Json<QueueEnrichment>, ApiError> {
-    services::enrich_queue_item(&deps, user.user_id(), &release_group_mbid)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// A video preview behind one queue card: a MusicBrainz video link when
-/// one exists, else a YouTube search when an API key is set.
-#[utoipa::path(
-    post,
-    tag = "discover",
-    path = "/api/v3/discover/queue/preview/{release_group_mbid}",
-    params(("release_group_mbid" = String, Path, description = "Release-group id")),
-    responses(
-        (status = 200, description = "Card preview", body = DiscoverQueuePreview),
-        (status = 400, description = "Bad release-group id"),
-        (status = 401, description = "Not authenticated"),
-        (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
-    )
-)]
-pub async fn preview_queue_item(
-    State(deps): State<DiscoverDeps>,
-    _user: User,
-    Path(release_group_mbid): Path<String>,
-) -> Result<Json<DiscoverQueuePreview>, ApiError> {
-    services::preview_queue_item(&deps, &release_group_mbid)
+) -> Result<Json<DiscoverQueueStatusResponse>, ApiError> {
+    services::queue_status(&deps, user.user_id())
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -406,8 +283,7 @@ pub async fn preview_queue_item(
 
 /// Record one thing the caller tells Discover about an album or an
 /// artist; a later answer about the same one replaces it. Every
-/// recommending surface leaves out what it hides, and a new deck starts
-/// building at once.
+/// recommending surface leaves out what it hides.
 #[utoipa::path(
     post,
     tag = "discover",
@@ -839,30 +715,6 @@ pub async fn forget_history(
         .map_err(ApiError::from)
 }
 
-/// The given cards whose albums the library already holds.
-#[utoipa::path(
-    post,
-    tag = "discover",
-    path = "/api/v3/discover/queue/validate",
-    request_body = QueueValidateRequest,
-    responses(
-        (status = 200, description = "Library membership", body = QueueValidateResponse),
-        (status = 400, description = "Bad request body"),
-        (status = 401, description = "Not authenticated"),
-        (status = 500, description = "The library check failed"),
-    )
-)]
-pub async fn validate_queue(
-    State(deps): State<DiscoverDeps>,
-    _user: User,
-    ValidJson(body): ValidJson<QueueValidateRequest>,
-) -> Result<Json<QueueValidateResponse>, ApiError> {
-    services::validate_queue(&deps, &body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
 /// Track video lookup with the cached flag.
 #[utoipa::path(
     get,
@@ -1151,16 +1003,11 @@ pub async fn your_top_albums(
 pub fn routes() -> Routes<DiscoverDeps> {
     Routes::new()
         .user(routes!(get_discover))
-        .user(routes!(refresh_discover))
         .user(routes!(record_activity))
         .user(routes!(discover_radio))
         .user(routes!(radio_plan))
         .user(routes!(playlist_suggestions))
-        .user(routes!(get_queue))
         .user(routes!(queue_status))
-        .user(routes!(queue_generate))
-        .user(routes!(enrich_queue_item))
-        .user(routes!(preview_queue_item))
         .user(routes!(save_feedback))
         .user(routes!(list_feedback))
         .user(routes!(undo_feedback))
@@ -1177,7 +1024,6 @@ pub fn routes() -> Routes<DiscoverDeps> {
         .user(routes!(get_discover_prefs))
         .user(routes!(save_discover_prefs))
         .user(routes!(forget_history))
-        .user(routes!(validate_queue))
         .user(routes!(youtube_track_search))
         .user(routes!(track_preview))
         .user(routes!(album_preview))

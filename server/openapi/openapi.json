@@ -913,7 +913,7 @@
         "tags": [
           "discover"
         ],
-        "summary": "Every user's latest discover page and queue deck numbers: counts only,\nno music named.",
+        "summary": "Every user's latest discover page numbers: counts only, no music\nnamed.",
         "operationId": "admin_discover_health",
         "responses": {
           "200": {
@@ -5584,7 +5584,7 @@
         "tags": [
           "discover"
         ],
-        "summary": "Record one thing the caller tells Discover about an album or an\nartist; a later answer about the same one replaces it. Every\nrecommending surface leaves out what it hides, and a new deck starts\nbuilding at once.",
+        "summary": "Record one thing the caller tells Discover about an album or an\nartist; a later answer about the same one replaces it. Every\nrecommending surface leaves out what it hides.",
         "operationId": "save_feedback",
         "requestBody": {
           "content": {
@@ -6322,292 +6322,16 @@
         ]
       }
     },
-    "/api/v3/discover/queue": {
-      "get": {
-        "tags": [
-          "discover"
-        ],
-        "summary": "The queue deck: the caller's last built deck, else one built now.",
-        "operationId": "get_queue",
-        "parameters": [
-          {
-            "name": "count",
-            "in": "query",
-            "description": "Wanted card count, max 20",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Queue deck",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DiscoverQueueResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad query string",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "The library check failed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/discover/queue/enrich/{release_group_mbid}": {
-      "get": {
-        "tags": [
-          "discover"
-        ],
-        "summary": "Details behind one queue card: tags, release date, country, artist\nbio, listen count and a video link when one is known.",
-        "operationId": "enrich_queue_item",
-        "parameters": [
-          {
-            "name": "release_group_mbid",
-            "in": "path",
-            "description": "Release-group id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Card details",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/QueueEnrichment"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad release-group id",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/discover/queue/generate": {
-      "post": {
-        "tags": [
-          "discover"
-        ],
-        "summary": "Start a background queue build. `action` says what happened:\n`started`, `already_building`, or `already_ready` (a fresh deck exists\nand `force` was not set).",
-        "operationId": "queue_generate",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/QueueGenerateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Build state",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/QueueGenerateResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request body",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/discover/queue/preview/{release_group_mbid}": {
-      "post": {
-        "tags": [
-          "discover"
-        ],
-        "summary": "A video preview behind one queue card: a MusicBrainz video link when\none exists, else a YouTube search when an API key is set.",
-        "operationId": "preview_queue_item",
-        "parameters": [
-          {
-            "name": "release_group_mbid",
-            "in": "path",
-            "description": "Release-group id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Card preview",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DiscoverQueuePreview"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad release-group id",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
     "/api/v3/discover/queue/status": {
       "get": {
         "tags": [
           "discover"
         ],
-        "summary": "Where the caller's background queue build stands: `idle`, `building`,\n`ready` (with the deck's id, size, age and staleness) or `error`.",
+        "summary": "How many of the caller's weekly picks wait for an answer: `ready` with\ntheir count while a set is out and some are open, else `idle`.",
         "operationId": "queue_status",
         "responses": {
           "200": {
-            "description": "Queue build status",
+            "description": "Open picks",
             "content": {
               "application/json": {
                 "schema": {
@@ -6625,67 +6349,9 @@
                 }
               }
             }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/discover/queue/validate": {
-      "post": {
-        "tags": [
-          "discover"
-        ],
-        "summary": "The given cards whose albums the library already holds.",
-        "operationId": "validate_queue",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/QueueValidateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Library membership",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/QueueValidateResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request body",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
           },
           "500": {
-            "description": "The library check failed",
+            "description": "The week could not be read",
             "content": {
               "application/json": {
                 "schema": {
@@ -6930,54 +6596,6 @@
           },
           "404": {
             "description": "Unknown seed album or playlist",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/discover/refresh": {
-      "post": {
-        "tags": [
-          "discover"
-        ],
-        "summary": "Trigger a background discover rebuild for the caller.",
-        "operationId": "refresh_discover",
-        "responses": {
-          "202": {
-            "description": "Refresh triggered",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RefreshResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
             "content": {
               "application/json": {
                 "schema": {
@@ -40284,7 +39902,7 @@
       },
       "AdvancedSettings": {
         "type": "object",
-        "description": "Advanced tuning: discover queue, AudioDB, images and retention.",
+        "description": "Advanced tuning: Discover, AudioDB, images and retention.",
         "properties": {
           "audiodb_api_key": {
             "type": "string",
@@ -40311,27 +39929,11 @@
             "description": "Whether Discover blends Last.fm and ListenBrainz for a user who\nlinks both, instead of following only their primary service.",
             "default": true
           },
-          "discover_queue_auto_generate": {
-            "type": "boolean",
-            "description": "Discover queue auto-generate.",
-            "default": true
-          },
           "discover_queue_lastfm_mbid_max_lookups": {
             "type": "integer",
             "format": "int64",
             "description": "MusicBrainz lookups one Last.fm album batch may spend.",
             "default": 10
-          },
-          "discover_queue_size": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Discover queue size.",
-            "default": 10
-          },
-          "discover_queue_warm_cycle_build": {
-            "type": "boolean",
-            "description": "Whether the background warm cycle may build queue decks.",
-            "default": true
           },
           "ignored_releases_retention_days": {
             "type": "integer",
@@ -46985,56 +46587,6 @@
           "embedded"
         ]
       },
-      "DeckHealth": {
-        "type": "object",
-        "description": "The numbers of one queue deck build.",
-        "required": [
-          "cards",
-          "distinct_artists",
-          "max_cards_one_artist"
-        ],
-        "properties": {
-          "cards": {
-            "type": "integer",
-            "description": "Cards in the deck.",
-            "minimum": 0
-          },
-          "distinct_artists": {
-            "type": "integer",
-            "description": "Distinct artists among them.",
-            "minimum": 0
-          },
-          "max_cards_one_artist": {
-            "type": "integer",
-            "description": "The most cards any one artist has.",
-            "minimum": 0
-          }
-        }
-      },
-      "DeckHealthRow": {
-        "type": "object",
-        "description": "One user's latest queue deck numbers.",
-        "required": [
-          "user_id",
-          "built_at",
-          "health"
-        ],
-        "properties": {
-          "built_at": {
-            "type": "integer",
-            "format": "int64",
-            "description": "When the deck was built, unix seconds."
-          },
-          "health": {
-            "$ref": "#/components/schemas/DeckHealth",
-            "description": "Its numbers."
-          },
-          "user_id": {
-            "type": "string",
-            "description": "The user's id."
-          }
-        }
-      },
       "DeemixConnection": {
         "type": "object",
         "description": "The Deemix connection: Deemix downloads from Deezer, signed in with the\nDeezer sign-in saved in Deemix itself, so nothing here is secret.",
@@ -47945,17 +47497,9 @@
         "type": "object",
         "description": "Every user's latest discover numbers: counts only, no music named.",
         "required": [
-          "pages",
-          "decks"
+          "pages"
         ],
         "properties": {
-          "decks": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/DeckHealthRow"
-            },
-            "description": "Queue decks, one per user."
-          },
           "pages": {
             "type": "array",
             "items": {
@@ -48022,56 +47566,9 @@
           }
         }
       },
-      "DiscoverQueuePreview": {
-        "type": "object",
-        "description": "On-demand YouTube preview behind one queue card.",
-        "required": [
-          "status"
-        ],
-        "properties": {
-          "status": {
-            "$ref": "#/components/schemas/PreviewStatus",
-            "description": "Whether a preview was found."
-          },
-          "youtube_search_url": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Search URL fallback, when there is one."
-          },
-          "youtube_url": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Watch URL, when available."
-          }
-        }
-      },
-      "DiscoverQueueResponse": {
-        "type": "object",
-        "description": "The queue deck: cards plus the build they came from.",
-        "required": [
-          "queue_id"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/QueueItemLight"
-            },
-            "description": "Deck cards in order."
-          },
-          "queue_id": {
-            "type": "string",
-            "description": "Build id behind the deck."
-          }
-        }
-      },
       "DiscoverQueueStatusResponse": {
         "type": "object",
-        "description": "Queue build state for polling.",
+        "description": "How many of a person's weekly picks wait for an answer.",
         "required": [
           "status"
         ],
@@ -48082,14 +47579,7 @@
               "null"
             ],
             "format": "int64",
-            "description": "Build timestamp (unix seconds), when built."
-          },
-          "error": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Build failure, when failed."
+            "description": "When the set was built (unix seconds), while `ready`."
           },
           "item_count": {
             "type": [
@@ -48097,36 +47587,11 @@
               "null"
             ],
             "format": "int64",
-            "description": "Card count, when there is one."
-          },
-          "queue_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Build id, when there is one."
-          },
-          "reason": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/SectionCondition"
-              }
-            ],
-            "description": "Why the deck is short (`source_down`, `thin` or `empty`), when it\nis; `source_down` too while the last build failed a read and the\ndeck before it is kept."
-          },
-          "stale": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "True when the deck is older than its TTL."
+            "description": "Picks still open, while `ready`."
           },
           "status": {
             "$ref": "#/components/schemas/QueueBuildStatus",
-            "description": "Build state. A saved queue past its age is `ready` with `stale` set."
+            "description": "Whether any wait."
           }
         }
       },
@@ -65650,15 +65115,6 @@
           }
         }
       },
-      "PreviewStatus": {
-        "type": "string",
-        "description": "Whether a queue card's YouTube preview was found.",
-        "enum": [
-          "available",
-          "not_found",
-          "unavailable"
-        ]
-      },
       "PreviewTrackItem": {
         "type": "object",
         "description": "One previewed track.",
@@ -66338,24 +65794,12 @@
           }
         }
       },
-      "QueueAction": {
-        "type": "string",
-        "description": "What a generate trigger did.",
-        "enum": [
-          "started",
-          "already_building",
-          "already_ready",
-          "disabled"
-        ]
-      },
       "QueueBuildStatus": {
         "type": "string",
-        "description": "Where one user's queue build stands.",
+        "description": "Whether a person's weekly picks wait for an answer.",
         "enum": [
           "idle",
-          "building",
-          "ready",
-          "error"
+          "ready"
         ]
       },
       "QueueDepthView": {
@@ -66392,196 +65836,6 @@
           }
         }
       },
-      "QueueEnrichment": {
-        "type": "object",
-        "description": "Enrichment behind one queue card.",
-        "required": [
-          "tags",
-          "youtube_search_url",
-          "youtube_search_available"
-        ],
-        "properties": {
-          "artist_description": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Artist biography snippet, when known."
-          },
-          "artist_mbid": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "MusicBrainz artist id, when known."
-          },
-          "country": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Release country, when known."
-          },
-          "listen_count": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Artist listen count, when known."
-          },
-          "release_date": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Release date, when known."
-          },
-          "tags": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Genre/style tags."
-          },
-          "youtube_search_available": {
-            "type": "boolean",
-            "description": "Whether YouTube search is available at all."
-          },
-          "youtube_search_url": {
-            "type": "string",
-            "description": "YouTube search URL fallback."
-          },
-          "youtube_url": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "YouTube URL for the album, when found."
-          }
-        }
-      },
-      "QueueGenerateRequest": {
-        "type": "object",
-        "description": "Body triggering a queue build.",
-        "properties": {
-          "force": {
-            "type": "boolean",
-            "description": "Rebuild even when a fresh deck exists."
-          }
-        }
-      },
-      "QueueGenerateResponse": {
-        "type": "object",
-        "description": "What the generate trigger did, plus current build state.",
-        "required": [
-          "action",
-          "status"
-        ],
-        "properties": {
-          "action": {
-            "$ref": "#/components/schemas/QueueAction",
-            "description": "What the trigger did."
-          },
-          "built_at": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Build timestamp (unix seconds), when built."
-          },
-          "error": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Build failure, when failed."
-          },
-          "item_count": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Card count, when there is one."
-          },
-          "queue_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Build id, when there is one."
-          },
-          "reason": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/SectionCondition"
-              }
-            ],
-            "description": "Why the deck is short, when it is, as the status says."
-          },
-          "stale": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "True when the deck is older than its TTL."
-          },
-          "status": {
-            "$ref": "#/components/schemas/QueueBuildStatus",
-            "description": "Build state after the trigger."
-          }
-        }
-      },
-      "QueueItemLight": {
-        "type": "object",
-        "description": "One lightweight queue card: the deck renders these before enrichment.",
-        "required": [
-          "musicbrainz_id",
-          "title",
-          "artist_name",
-          "artist_id",
-          "reason",
-          "in_library"
-        ],
-        "properties": {
-          "artist_id": {
-            "type": "string",
-            "description": "The artist's MusicBrainz id."
-          },
-          "artist_name": {
-            "type": "string",
-            "description": "Artist name."
-          },
-          "cover_url": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Cover URL, when known."
-          },
-          "in_library": {
-            "type": "boolean",
-            "description": "True when already owned."
-          },
-          "musicbrainz_id": {
-            "type": "string",
-            "description": "MusicBrainz release-group id."
-          },
-          "reason": {
-            "$ref": "#/components/schemas/PickReason",
-            "description": "Why it is offered."
-          },
-          "title": {
-            "type": "string",
-            "description": "Album title."
-          }
-        }
-      },
       "QueueStatsResponse": {
         "type": "object",
         "description": "Background loops, job queues and the latest checkpoint pass.",
@@ -66614,35 +65868,6 @@
               "$ref": "#/components/schemas/QueueDepthView"
             },
             "description": "Job kinds with queued, running or failed jobs, in kind order."
-          }
-        }
-      },
-      "QueueValidateRequest": {
-        "type": "object",
-        "description": "Body checking which cards already landed in the library.",
-        "required": [
-          "release_group_mbids"
-        ],
-        "properties": {
-          "release_group_mbids": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Release-group ids to check."
-          }
-        }
-      },
-      "QueueValidateResponse": {
-        "type": "object",
-        "description": "Library membership behind the checked cards.",
-        "properties": {
-          "in_library": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "The checked ids that are already owned."
           }
         }
       },
@@ -67563,24 +66788,6 @@
           "EXTERNAL_REFRESH_FAILED",
           "EXTERNAL_REFRESH_INTERRUPTED"
         ]
-      },
-      "RefreshResponse": {
-        "type": "object",
-        "description": "Acknowledgement of a triggered background refresh.",
-        "required": [
-          "status",
-          "message"
-        ],
-        "properties": {
-          "message": {
-            "type": "string",
-            "description": "Human message."
-          },
-          "status": {
-            "type": "string",
-            "description": "Always `ok` when the trigger lands."
-          }
-        }
       },
       "RefreshState": {
         "type": "string",
@@ -72265,7 +71472,7 @@
       },
       "SectionCondition": {
         "type": "string",
-        "description": "Why a section switched on is not plainly built. The one list of these\nreasons: the page's sections and the queue deck both use it.",
+        "description": "Why a section switched on is not plainly built. The one list of these\nreasons, for the page's sections.",
         "enum": [
           "building",
           "kept",

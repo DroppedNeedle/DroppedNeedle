@@ -39,17 +39,22 @@ export const getLaterAlbumQuery = (getMbid: Getter<string | null>) =>
 		};
 	});
 
+/** An album to put on Later; `quiet` when the caller says the failure itself. */
+export type LaterMark = LaterRequest & { mbid: string; quiet?: boolean };
+
 /** Puts one album on the caller's Later pile. */
 export const createMarkLaterMutation = () =>
 	createAppMutation(() => ({
-		mutationFn: ({ mbid, ...body }: LaterRequest & { mbid: string }) =>
+		mutationFn: ({ mbid, quiet: _quiet, ...body }: LaterMark) =>
 			api.v3.PUT(
 				v3('/api/v3/discover/later/{release_group_mbid}', { path: { release_group_mbid: mbid } }),
 				body
 			),
 		effects: () => [laterChanged(authStore.user?.id)],
-		onError: () =>
-			toastStore.show({ message: "Couldn't put that on your Later pile.", type: 'error' })
+		onError: (_error, { quiet }) => {
+			if (!quiet)
+				toastStore.show({ message: "Couldn't put that on your Later pile.", type: 'error' });
+		}
 	}));
 
 /** Takes one album off the caller's Later pile. */

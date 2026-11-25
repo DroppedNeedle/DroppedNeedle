@@ -11,12 +11,13 @@
 //! [`Feedback`] holds one person's answers in effect, read once, and
 //! answers [`Feedback::hides_album`] and [`Feedback::hides_artist`]. Every
 //! build that makes album or artist rows for a person filters through it,
-//! and so does every serve of a saved page, teaser or deck, so an answer
+//! and so does every serve of a saved page or teaser, so an answer
 //! takes effect at once. Only the sections that recommend to the person
 //! ([`applies`]) are filtered: charts, the library, the person's own
 //! history, search and an artist's own lists are not.
 
 use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use time::{Date, OffsetDateTime};
@@ -24,12 +25,16 @@ use utoipa::ToSchema;
 
 use crate::discover::models::{
     AlbumRef, ArtistRef, DiscoverFeedbackEntry, DiscoverFeedbackRequest, PageSection,
-    QueueItemLight, RadioPlanTrack, RadioSeedKind, SectionContent, SectionItem, SectionKey,
+    RadioPlanTrack, RadioSeedKind, SectionContent, SectionItem, SectionKey,
 };
+use crate::discover::queue::QueueSettings;
 use crate::discover::sections::{self, Basis, Page};
 use crate::discover::{read_all, sql};
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::time::Millis;
 use droppedneedle_kernel::db::{Db, DbError, writer::Lane};
+use droppedneedle_kernel::runtime_config::Live;
+use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 
 /// Whether an answer is about an album or an artist.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
@@ -275,6 +280,90 @@ pub async fn prune(db: &Db, now_ms: i64, carried_before: i64) -> Result<usize, D
     .await
 }
 
+/// What people told Discover, as its routes reach it. The weekly build
+/// drops the lapsed ones, at most once per prune interval, so a save never
+/// waits on it.
+pub struct Answers {
+    db: Db,
+    clock: Arc<dyn Clock>,
+    settings: Live<AdvancedSettings>,
+    last_prune: Mutex<i64>,
+}
+
+impl Answers {
+    /// The answers in `db`, dated by `clock`, pruned as `settings` say.
+    pub fn new(db: Db, clock: Arc<dyn Clock>, settings: Live<AdvancedSettings>) -> Self {
+        Self {
+            db,
+            clock,
+            settings,
+            last_prune: Mutex::new(0),
+        }
+    }
+
+    /// Record one answer for the user and return it as stored.
+    ///
+    /// # Errors
+    ///
+    /// A request that says nothing it can be about, or the store's failure.
+    pub async fn save(
+        &self,
+        user_id: &str,
+        request: &DiscoverFeedbackRequest,
+    ) -> Result<DiscoverFeedbackEntry, FeedbackError> {
+        save(&self.db, user_id, request, self.clock.now_ms()).await
+    }
+
+    /// Take back one of the user's answers.
+    ///
+    /// # Errors
+    ///
+    /// The store's failure.
+    pub async fn undo(
+        &self,
+        user_id: &str,
+        target: FeedbackTarget,
+        mbid_lower: &str,
+    ) -> Result<(), DbError> {
+        undo(&self.db, user_id, target, mbid_lower).await
+    }
+
+    /// The user's answers in effect, newest first.
+    ///
+    /// # Errors
+    ///
+    /// The store's failure.
+    pub async fn list(&self, user_id: &str) -> Result<Vec<DiscoverFeedbackEntry>, DbError> {
+        list(&self.db, user_id, self.clock.now_ms()).await
+    }
+
+    /// Drop answers past their expiry, and carried hides past their
+    /// retention, when the prune interval has passed. While the settings
+    /// cannot be read nothing is dropped.
+    pub async fn prune_if_due(&self) {
+        let Some(settings) = QueueSettings::read(&self.settings) else {
+            return;
+        };
+        let now = self.clock.now_ms();
+        {
+            let mut last = self
+                .last_prune
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if now - *last < settings.prune_interval_ms {
+                return;
+            }
+            *last = now;
+        }
+        let cutoff = now - settings.ignored_retention_days * 86_400_000;
+        match prune(&self.db, now, cutoff).await {
+            Ok(0) => {}
+            Ok(dropped) => tracing::info!(dropped, "lapsed discover answers removed"),
+            Err(cause) => tracing::warn!(%cause, "discover answers not pruned; trying again later"),
+        }
+    }
+}
+
 /// Whether the filter applies to section `key` of `page`: a section about
 /// the person, never a chart, the library or their own history. Missing
 /// Essentials is built from the library but recommends albums the person
@@ -316,7 +405,7 @@ impl Feedback {
         Ok(feedback)
     }
 
-    /// [`Self::load`] for a page, deck or list: when the rows cannot be
+    /// [`Self::load`] for a page, set or list: when the rows cannot be
     /// read it logs and hides nothing, so the surface is served as built.
     pub async fn load_or_none(db: &Db, user_id: &str, now_ms: i64, surface: &str) -> Self {
         Self::load(db, user_id, now_ms)
@@ -343,11 +432,6 @@ impl Feedback {
     /// Whether an artist is hidden.
     pub fn hides_artist(&self, artist: Option<&str>) -> bool {
         artist.is_some_and(|id| self.artists.contains(&id.trim().to_ascii_lowercase()))
-    }
-
-    /// Whether a deck card is hidden.
-    pub fn hides_card(&self, card: &QueueItemLight) -> bool {
-        self.hides_album(Some(&card.musicbrainz_id), Some(&card.artist_id))
     }
 
     /// Whether a shelf row is hidden. Genre rows never are.
@@ -429,10 +513,5 @@ impl Feedback {
     /// Plan tracks without those on an album the person hid.
     pub fn keep_tracks(&self, tracks: &mut Vec<RadioPlanTrack>) {
         tracks.retain(|track| !self.hides_album(track.album_mbid.as_deref(), None));
-    }
-
-    /// Deck cards without the hidden ones.
-    pub fn keep_cards(&self, cards: &mut Vec<QueueItemLight>) {
-        cards.retain(|card| !self.hides_card(card));
     }
 }

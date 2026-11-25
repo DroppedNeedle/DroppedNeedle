@@ -10,7 +10,7 @@ use droppedneedle_providers::ProviderError;
 
 use crate::discover::{
     content::LiveContent,
-    feedback::{self, FeedbackError},
+    feedback::{self, Answers, FeedbackError},
     forget::{self, HistoryStores},
     genre::WithGenrePages,
     later::{LaterError, LaterKey, LaterPile},
@@ -18,17 +18,15 @@ use crate::discover::{
         AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection, DigFurtherPick,
         DiscoverActivityResponse, DiscoverFeedbackEntry, DiscoverFeedbackRequest,
         DiscoverFeedbackResponse, DiscoverHealthResponse, DiscoverPickEventRequest, DiscoverPrefs,
-        DiscoverQueuePreview, DiscoverQueueResponse, DiscoverQueueStatusResponse, DiscoverResponse,
-        DiscoverTuningEntry, DiscoverTuningRequest, DiscoverTuningsResponse, GenreDetailResponse,
-        HomeResponse, IntegrationStatus, LaterAlbum, LaterRequest, ListenSource, PickEvidence,
-        PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, QueueEnrichment,
-        QueueGenerateRequest, QueueGenerateResponse, QueueValidateRequest, QueueValidateResponse,
-        RadioPlanRequest, RadioPlanResponse, RadioRequest, RadioSeedKind, RefreshResponse,
-        StatsRange, TrackPreviewResponse, WeekResponse, YouTubeSearchResponse,
+        DiscoverQueueStatusResponse, DiscoverResponse, DiscoverTuningEntry, DiscoverTuningRequest,
+        DiscoverTuningsResponse, GenreDetailResponse, HomeResponse, IntegrationStatus, LaterAlbum,
+        LaterRequest, ListenSource, PickEvidence, PickState, PlaylistSuggestionsRequest,
+        PlaylistSuggestionsResponse, QueueBuildStatus, RadioPlanRequest, RadioPlanResponse,
+        RadioRequest, RadioSeedKind, StatsRange, TrackPreviewResponse, WeekResponse, WeekStatus,
+        YouTubeSearchResponse,
     },
-    ports::{ProviderFailure, QueueTrigger, RadioFailure},
+    ports::{ProviderFailure, RadioFailure},
     previews::LivePreviews,
-    queue::LiveQueue,
     radio::LiveRadio,
     record::{EventError, PickRecord},
     scheduler::{ArtistDetail, Feature},
@@ -36,14 +34,10 @@ use crate::discover::{
     youtube::LiveYouTube,
 };
 
-/// Max cards served from one queue read.
-pub const QUEUE_COUNT_MAX: i64 = 20;
 /// Max rows on a chart page.
 pub const CHART_RANGE_LIMIT_MAX: i64 = 100;
 /// Max album-preview samples.
 pub const ALBUM_PREVIEW_MAX: i64 = 8;
-/// Max pairs per cache-check call.
-pub const CACHE_CHECK_MAX_ITEMS: usize = 100;
 /// Max artist/track string length accepted anywhere in discover.
 pub const NAME_MAX_LEN: usize = 200;
 /// Fewest radio plan tracks.
@@ -103,8 +97,8 @@ fn owned_store_failure(failure: ProviderFailure) -> ServiceError {
 pub struct DiscoverDeps {
     /// Shelf content.
     pub content: Arc<LiveContent>,
-    /// Queue builds and what people told Discover.
-    pub queues: Arc<LiveQueue>,
+    /// What people told Discover.
+    pub answers: Arc<Answers>,
     /// Chart pages and genre detail.
     pub charts: Arc<WithGenrePages>,
     /// 30-second previews.
@@ -165,25 +159,13 @@ pub async fn discover(
         .map_err(owned_store_failure)
 }
 
-/// Every user's latest discover page and deck numbers, for an admin. The
+/// Every user's latest discover page numbers, for an admin. The
 /// rows are ours, so a failed read is an internal fault (500).
 pub async fn discover_health(
     deps: &DiscoverDeps,
     _admin: &Admin,
 ) -> Result<DiscoverHealthResponse, ServiceError> {
     deps.content.health().await.map_err(owned_store_failure)
-}
-
-/// Trigger a background discover rebuild for the user.
-pub async fn refresh_discover(
-    deps: &DiscoverDeps,
-    user_id: &str,
-) -> Result<RefreshResponse, ServiceError> {
-    deps.content.trigger_refresh(user_id).await?;
-    Ok(RefreshResponse {
-        status: "ok".to_owned(),
-        message: "Discover refresh triggered".to_owned(),
-    })
 }
 
 /// Record one discover interaction.
@@ -322,96 +304,47 @@ fn radio_failure(failure: RadioFailure) -> ServiceError {
     }
 }
 
-/// The queue deck: the user's last built deck when there is one, stale or
-/// not (the page asks for a fresh build through `generate`). Quirk (v2): a
-/// stale deck is served as it is. Otherwise a deck built now and not kept.
-pub async fn queue(
+/// How many of the user's weekly picks wait for an answer, for Home's way
+/// into Discover: `ready` with their count while a set is out and some
+/// are open, else `idle`.
+pub async fn queue_status(
     deps: &DiscoverDeps,
     user_id: &str,
-    count: Option<i64>,
-) -> Result<DiscoverQueueResponse, ServiceError> {
-    if let Some(deck) = deps.queues.current(user_id).await {
-        let items = match count {
-            Some(wanted) => {
-                let take = wanted.clamp(1, QUEUE_COUNT_MAX) as usize;
-                deck.items.into_iter().take(take).collect()
-            }
-            None => deck.items,
-        };
-        return Ok(DiscoverQueueResponse {
-            items,
-            queue_id: deck.queue_id,
-        });
+) -> Result<DiscoverQueueStatusResponse, ServiceError> {
+    let week = week(deps, user_id).await?;
+    let set = match week.status {
+        WeekStatus::Ready | WeekStatus::KeptLastWeek => week.set,
+        _ => None,
+    };
+    let open = set.as_ref().map_or(0, |set| {
+        set.picks
+            .iter()
+            .filter(|pick| pick.state == PickState::Open)
+            .count()
+    });
+    let mut status = DiscoverQueueStatusResponse {
+        status: QueueBuildStatus::Idle,
+        item_count: None,
+        built_at: None,
+    };
+    if let Some(set) = set.filter(|_| open > 0) {
+        status.status = QueueBuildStatus::Ready;
+        status.item_count = Some(i64::try_from(open).unwrap_or(i64::MAX));
+        status.built_at = Some(set.built_at / 1000);
     }
-    let clamped = count.map(|wanted| wanted.clamp(1, QUEUE_COUNT_MAX) as usize);
-    let deck = deps
-        .queues
-        .build_now(user_id, clamped)
-        .await
-        .map_err(owned_store_failure)?;
-    Ok(DiscoverQueueResponse {
-        items: deck.items,
-        queue_id: deck.queue_id,
-    })
+    Ok(status)
 }
 
-/// Where the user's background queue build stands.
-pub async fn queue_status(deps: &DiscoverDeps, user_id: &str) -> DiscoverQueueStatusResponse {
-    deps.queues.status(user_id).await
-}
-
-/// Start a background queue build, or say why none started.
-pub async fn queue_generate(
-    deps: &DiscoverDeps,
-    user_id: &str,
-    body: &QueueGenerateRequest,
-) -> QueueGenerateResponse {
-    deps.queues
-        .start_build(user_id, QueueTrigger::Request { force: body.force })
-        .await
-}
-
-/// A release-group id from a path or body, lowercased; anything that is
-/// not a MusicBrainz id is a bad request.
-fn checked_release_group(value: &str) -> Result<String, ServiceError> {
-    let trimmed = value.trim();
-    if !droppedneedle_providers::musicbrainz::is_valid_mbid(trimmed) {
-        return Err(ServiceError::InvalidInput(
-            "release_group_mbid must be a MusicBrainz id".to_owned(),
-        ));
-    }
-    Ok(trimmed.to_ascii_lowercase())
-}
-
-/// Details behind one queue card.
-pub async fn enrich_queue_item(
-    deps: &DiscoverDeps,
-    user_id: &str,
-    release_group_mbid: &str,
-) -> Result<QueueEnrichment, ServiceError> {
-    let mbid = checked_release_group(release_group_mbid)?;
-    Ok(deps.queues.enrich(user_id, &mbid).await?)
-}
-
-/// An on-demand video preview behind one queue card.
-pub async fn preview_queue_item(
-    deps: &DiscoverDeps,
-    release_group_mbid: &str,
-) -> Result<DiscoverQueuePreview, ServiceError> {
-    let mbid = checked_release_group(release_group_mbid)?;
-    Ok(deps.queues.preview(&mbid).await?)
-}
-
-/// Record one thing the user told Discover, rebuild the queue without
-/// what it hides, and ask discover to refresh. Answers it as stored.
+/// Record one thing the user told Discover and ask discover to refresh.
+/// Answers it as stored.
 pub async fn save_feedback(
     deps: &DiscoverDeps,
     user_id: &str,
     body: &DiscoverFeedbackRequest,
 ) -> Result<DiscoverFeedbackEntry, ServiceError> {
     let stored = deps
-        .queues
-        .save_feedback(user_id, body)
+        .answers
+        .save(user_id, body)
         .await
         .map_err(|error| match error {
             FeedbackError::Invalid(reason) => ServiceError::InvalidInput(reason),
@@ -419,9 +352,6 @@ pub async fn save_feedback(
                 ServiceError::Internal(format!("feedback save: {error}"))
             }
         })?;
-    deps.queues
-        .start_build(user_id, QueueTrigger::Request { force: true })
-        .await;
     deps.content.trigger_refresh(user_id).await?;
     Ok(stored)
 }
@@ -441,8 +371,8 @@ pub async fn record_pick_event(
         })
 }
 
-/// Take back one thing the user told Discover. The current deck stays as
-/// it is: what it hid can come up in a later one.
+/// Take back one thing the user told Discover. What it hid can come up
+/// again in later builds.
 pub async fn undo_feedback(
     deps: &DiscoverDeps,
     user_id: &str,
@@ -451,10 +381,10 @@ pub async fn undo_feedback(
 ) -> Result<(), ServiceError> {
     let (target, mbid) =
         feedback::checked_target(target, mbid).map_err(ServiceError::InvalidInput)?;
-    deps.queues
-        .undo_feedback(user_id, target, &mbid)
+    deps.answers
+        .undo(user_id, target, &mbid)
         .await
-        .map_err(owned_store_failure)
+        .map_err(|error| ServiceError::Internal(format!("feedback undo: {error}")))
 }
 
 /// Forget the user's history (see [`forget`]). An error means a step
@@ -483,10 +413,10 @@ pub async fn list_feedback(
     user_id: &str,
 ) -> Result<DiscoverFeedbackResponse, ServiceError> {
     let items = deps
-        .queues
-        .feedback(user_id)
+        .answers
+        .list(user_id)
         .await
-        .map_err(owned_store_failure)?;
+        .map_err(|error| ServiceError::Internal(format!("feedback read: {error}")))?;
     Ok(DiscoverFeedbackResponse { items })
 }
 
@@ -646,25 +576,6 @@ pub async fn save_discover_prefs(
         .save_prefs(user_id, prefs)
         .await
         .map_err(|error| ServiceError::Internal(format!("discover prefs: {error}")))
-}
-
-/// The given cards whose albums the library already holds.
-pub async fn validate_queue(
-    deps: &DiscoverDeps,
-    body: &QueueValidateRequest,
-) -> Result<QueueValidateResponse, ServiceError> {
-    if body.release_group_mbids.len() > CACHE_CHECK_MAX_ITEMS {
-        return Err(ServiceError::InvalidInput(format!(
-            "At most {CACHE_CHECK_MAX_ITEMS} ids per call"
-        )));
-    }
-    Ok(QueueValidateResponse {
-        in_library: deps
-            .queues
-            .validate(&body.release_group_mbids)
-            .await
-            .map_err(owned_store_failure)?,
-    })
 }
 
 /// Track video lookup with the cached flag.

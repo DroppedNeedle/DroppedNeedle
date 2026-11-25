@@ -1607,6 +1607,7 @@ async fn removed_settings_import_and_are_reported() {
     let mut export = fixture.shell();
     export["settings"]["advanced_settings"] = json!({
         "discover_queue_size": 12,
+        "discover_queue_lastfm_mbid_max_lookups": 12,
         "discover_queue_wildcard_slots": 2,
         "discover_picks_count": 12,
         "discover_picks_genre_affinity_weight": 0.7,
@@ -1666,6 +1667,7 @@ async fn removed_settings_import_and_are_reported() {
             "advanced_settings.cache_ttl_album_library",
             "advanced_settings.discover_picks_count",
             "advanced_settings.discover_picks_genre_affinity_weight",
+            "advanced_settings.discover_queue_size",
             "advanced_settings.discover_queue_wildcard_slots",
             "advanced_settings.frontend_ttl_home",
             "advanced_settings.http_timeout",
@@ -1685,7 +1687,7 @@ async fn removed_settings_import_and_are_reported() {
     let stored = stored_settings(&target_db);
     assert_eq!(
         stored["advanced_settings"],
-        json!({"discover_queue_size": 12})
+        json!({"discover_queue_lastfm_mbid_max_lookups": 12})
     );
     assert_eq!(stored["_internal"], json!({"plex_client_id": "plex-1"}));
     assert!(stored.get("scrobble_settings").is_none());

@@ -115,18 +115,14 @@ pub(super) async fn forget(db: &Db, user_id: &str, kind: PageKind) -> Result<(),
     .await
 }
 
-/// Every user's row of kind `a` or `b`.
-pub(super) async fn of_kinds(
-    db: &Db,
-    a: PageKind,
-    b: PageKind,
-) -> Result<Vec<StoredPage>, DbError> {
+/// Every user's row of kind `kind`.
+pub(super) async fn of_kind(db: &Db, kind: PageKind) -> Result<Vec<StoredPage>, DbError> {
     let rows = db
-        .read::<_, DbError, _>("discover.page_cache.of_kinds", move |conn| {
+        .read::<_, DbError, _>("discover.page_cache.of_kind", move |conn| {
             let rows = conn
-                .prepare(sql::SAVED_PAGES_OF_KINDS.text())?
+                .prepare(sql::SAVED_PAGES_OF_KIND.text())?
                 .query_map(
-                    rusqlite::params![a.as_str(), b.as_str()],
+                    rusqlite::params![kind.as_str()],
                     sql::SavedPageColumns::read,
                 )?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -137,7 +133,6 @@ pub(super) async fn of_kinds(
         .into_iter()
         .map(|row| StoredPage {
             user_id: row.user_id,
-            kind: if row.page == a.as_str() { a } else { b },
             payload: row.payload,
             built_at: row.built_at.0,
         })

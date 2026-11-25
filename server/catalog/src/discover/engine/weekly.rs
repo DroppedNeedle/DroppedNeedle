@@ -52,6 +52,7 @@ use crate::discover::cache::ForgetCounts;
 use crate::discover::due::Due;
 use crate::discover::facts::FactSource;
 use crate::discover::facts::plan::SEEN_WINDOW_MS;
+use crate::discover::feedback::Answers;
 use crate::discover::listening::ListeningData;
 use crate::discover::models::{
     AlbumRef, DigFurtherPick, DiscoverPrefs, PickReason, PickReasonKind, SetCounts, SetPick,
@@ -332,6 +333,8 @@ pub struct WeeklyInputs {
     pub forgets: ForgetCounts,
     /// Where a pool build a set needs is queued.
     pub due: Arc<Due>,
+    /// What people told Discover, whose lapsed answers a build drops.
+    pub answers: Arc<Answers>,
 }
 
 /// Builds each person's weekly set ([`KIND`]) and answers its routes.
@@ -343,6 +346,7 @@ pub struct WeeklySets {
     forgets: ForgetCounts,
     due: Arc<Due>,
     evidence: Evidence,
+    answers: Arc<Answers>,
 }
 
 impl WeeklySets {
@@ -355,6 +359,7 @@ impl WeeklySets {
             listening: inputs.listening,
             forgets: inputs.forgets,
             due: inputs.due,
+            answers: inputs.answers,
         }
     }
 
@@ -498,6 +503,7 @@ impl WeeklySets {
         user_id: &str,
         complete: impl FnOnce(&Transaction) -> Result<(), JobError> + Send + 'static,
     ) -> Result<(), JobError> {
+        self.answers.prune_if_due().await;
         let forgets_at = self.forgets.of(user_id);
         let now_ms = self.clock.now_ms();
         let Some(context) = weekly_store::context(&self.db, user_id).await? else {

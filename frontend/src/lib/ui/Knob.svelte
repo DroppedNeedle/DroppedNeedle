@@ -7,7 +7,8 @@
 	click returns it to `resetTo` when one is given. Over the face, the
 	mouse wheel turns it one arrow-key step per notch. `label` is its
 	accessible name and is printed under it with the value, which `format`
-	writes for the readout and for screen readers. `xs` (58px) sits on a
+	writes for the readout and for screen readers; `caption="beside"` prints
+	them to its right, for a knob in a short rail. `xs` (58px) sits on a
 	small plate; `lit="sound"` turns the tick and the lit dots plum, for the
 	controls of what was found by sound.
 -->
@@ -31,6 +32,8 @@
 		/** Numbers printed beside the scale, at a value each. */
 		marks?: { at: number; text: string }[];
 		size?: 'xs' | 'sm' | 'lg';
+		/** Where the label and value print: under the dial, or to its right. */
+		caption?: 'below' | 'beside';
 		/** The colour of the tick and the lit dots. */
 		lit?: 'action' | 'sound';
 		format?: (value: number) => string;
@@ -54,6 +57,7 @@
 		dots = 11,
 		marks = [],
 		size = 'lg',
+		caption = 'below',
 		lit = 'action',
 		format = (v: number) => String(v),
 		disabled = false,
@@ -203,6 +207,7 @@
 <div
 	class="dn-knob {className}"
 	data-size={size}
+	data-caption={caption}
 	data-lit={lit}
 	class:is-disabled={disabled}
 	title={disabled ? disabledReason : undefined}
@@ -373,6 +378,10 @@
 			inset 0 1px 0 rgb(255 255 255 / 0.12),
 			inset 0 -2px 4px rgb(0 0 0 / 0.6);
 	}
+	.dn-knob[data-caption='beside'] {
+		flex-direction: row;
+		gap: 0.625rem;
+	}
 	.dn-knob__caption {
 		display: flex;
 		flex-direction: column;
@@ -380,6 +389,9 @@
 		line-height: 1.15;
 		font-family: var(--font-mono);
 		text-transform: uppercase;
+	}
+	.dn-knob[data-caption='beside'] .dn-knob__caption {
+		align-items: flex-start;
 	}
 	.dn-knob__label {
 		font-size: 0.6875rem;

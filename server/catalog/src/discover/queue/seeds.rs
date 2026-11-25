@@ -1,4 +1,4 @@
-//! Seed artists: who a person's own shelves and deck grow from.
+//! Seed artists: who a person's own shelves and picks grow from.
 //!
 //! Every input is that person's own: their plays, hearts and ratings in
 //! the app, the artists they follow, their own playlists, the albums they

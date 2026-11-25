@@ -23,7 +23,7 @@
 	let openAudioDB = $state(false);
 	let openRetention = $state(false);
 
-	const QUEUE_FIELDS = ['discover_queue_size', 'discover_queue_lastfm_mbid_max_lookups'];
+	const QUEUE_FIELDS = ['discover_queue_lastfm_mbid_max_lookups'];
 	const RETENTION_FIELDS = [
 		'request_history_retention_days',
 		'ignored_releases_retention_days',
@@ -34,17 +34,14 @@
 </script>
 
 <div class="space-y-6">
-	<SettingsPaneHeader
-		title="Advanced Settings"
-		description="Control the Discover Queue and image loading."
-	/>
+	<SettingsPaneHeader title="Advanced Settings" description="Control Discover and image loading." />
 
 	<QueryBoundary query={section} what="the advanced settings">
 		{#snippet children(draft)}
 			<div class="space-y-6">
 				<SettingsSectionCollapse
-					title="Discover Queue"
-					description="Set how the Discover Queue is built"
+					title="Discover"
+					description="Set how Discover reads Last.fm and ListenBrainz"
 					icon={Database}
 					iconBgClass="bg-warning/10"
 					iconTextClass="text-warning"
@@ -91,7 +88,7 @@
 						/>
 						<NumberField
 							label="Ignored Albums (days)"
-							help="Ignored albums stay out of the Discover queue this long (default: 365)"
+							help="Ignored albums stay out of Discover this long (default: 365)"
 							bind:value={draft.ignored_releases_retention_days}
 							min={30}
 							max={3650}

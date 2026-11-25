@@ -148,9 +148,9 @@ pub struct Built {
     pub listenbrainz: bool,
     /// Whether the user's Last.fm sections could fill.
     pub lastfm: bool,
-    /// How each section on the page came out, in page order. The
-    /// deck and the playlist tool, served by routes of their own, are
-    /// left out.
+    /// How each section on the page came out, in page order. The weekly
+    /// set and the playlist tool, served by routes of their own, are left
+    /// out.
     pub outcomes: Vec<(SectionKey, Outcome)>,
 }
 

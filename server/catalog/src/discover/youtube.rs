@@ -1,4 +1,4 @@
-//! YouTube video lookups behind the queue deck, over the one YouTube client
+//! YouTube video lookups, over the one YouTube client
 //! the server builds for its quota file. The settings are read per call
 //! and pushed into the client, so a new key or limit applies at once.
 //! Without a client (its quota file could not be read) search is off and

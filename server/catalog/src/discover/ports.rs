@@ -1,5 +1,5 @@
-//! Shared discover types: the failures the services answer with, the
-//! queue trigger and deck, and radio failures.
+//! Shared discover types: the failures the services answer with and
+//! radio failures.
 //!
 //! Every fallible service call returns a [`ProviderFailure`]: a provider's
 //! typed error, or a local cause that stays in the log.
@@ -8,7 +8,7 @@ pub use futures_util::future::BoxFuture;
 
 use droppedneedle_providers::ProviderError;
 
-use crate::discover::models::{PreviewTrackItem, QueueItemLight};
+use crate::discover::models::PreviewTrackItem;
 
 /// Why a discover service could not answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,28 +47,6 @@ impl std::fmt::Display for ProviderFailure {
             Self::NotConfigured(sentence) | Self::Exhausted(sentence) => f.write_str(sentence),
         }
     }
-}
-
-/// What asked for a queue build.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QueueTrigger {
-    /// A person asked (generate, or an ignore that reshuffles the deck).
-    Request {
-        /// Rebuild even when the current deck is fresh.
-        force: bool,
-    },
-    /// The background warm cycle. Skipped while the warm-cycle setting is
-    /// off, and replaced by any request that arrives while it runs.
-    Scheduled,
-}
-
-/// One deck as the queue route serves it.
-#[derive(Debug, Clone)]
-pub struct QueueDeck {
-    /// Build id.
-    pub queue_id: String,
-    /// Deck cards in order.
-    pub items: Vec<QueueItemLight>,
 }
 
 /// Ordered album samples plus the provider that served them.
