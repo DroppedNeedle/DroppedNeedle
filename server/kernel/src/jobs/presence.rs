@@ -92,7 +92,7 @@ pub fn default_schedule() -> Schedule {
 /// isolation. Returns the cycle outcome for backoff accounting: a sweep picks
 /// up no failures (it cannot fail loudly), so only source polls count, and a
 /// cycle with every source failing still schedules the next one.
-pub async fn run_once<T, P>(store: &T, sources: &P) -> Result<(), ()>
+pub async fn run_once<T, P>(store: &T, sources: &P) -> Result<(), TickError>
 where
     T: PresenceStore,
     P: PresenceSources,
@@ -133,7 +133,11 @@ where
     } else {
         store.reconcile("plex", Vec::new()).await;
     }
-    if failures == 0 { Ok(()) } else { Err(()) }
+    if failures == 0 {
+        Ok(())
+    } else {
+        Err(TickError::new(FAILED, "a presence source failed"))
+    }
 }
 
 /// Row code of a cycle where a source failed.
@@ -162,7 +166,6 @@ where
                 run_once(store.as_ref(), sources.as_ref())
                     .await
                     .map(|()| Next::Continue)
-                    .map_err(|()| TickError::new(FAILED, "a presence source failed"))
             }
         }),
     )

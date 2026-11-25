@@ -347,7 +347,7 @@ impl Runner {
                 let kind = self.kind();
                 let streak = self.busy_streak.entry(lease.id()).or_default();
                 *streak += 1;
-                if *streak % BUSY_WARN_EVERY == 0 {
+                if streak.is_multiple_of(BUSY_WARN_EVERY) {
                     tracing::warn!(
                         kind,
                         id = lease.id(),

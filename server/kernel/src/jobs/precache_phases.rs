@@ -263,7 +263,7 @@ impl Run<'_> {
     /// to check, so every [`CHECK_BEAT_EVERY`] checks count as progress for
     /// the stall watchdog.
     fn checked(&self, index: usize) {
-        if index % CHECK_BEAT_EVERY == 0 {
+        if index.is_multiple_of(CHECK_BEAT_EVERY) {
             self.progress.beat(None);
         }
     }

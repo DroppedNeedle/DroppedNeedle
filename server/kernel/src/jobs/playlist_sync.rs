@@ -105,7 +105,10 @@ pub fn default_schedule() -> Schedule {
 /// (sync off) and clean syncs reset failures; only exporter-reported failure
 /// counts. Removal failures log loud but do not count: the files stay and the
 /// next cycle retries them.
-pub async fn run_once<E>(connection: &Live<NavidromeConnection>, exporter: &E) -> Result<(), ()>
+pub async fn run_once<E>(
+    connection: &Live<NavidromeConnection>,
+    exporter: &E,
+) -> Result<(), TickError>
 where
     E: PlaylistExporter,
 {
@@ -122,7 +125,14 @@ where
     } else if !result.success {
         tracing::warn!(message = %result.message, "Navidrome playlist export reported no success");
     }
-    if result.success { Ok(()) } else { Err(()) }
+    if result.success {
+        Ok(())
+    } else {
+        Err(TickError::new(
+            FAILED,
+            "the playlist export reported no success",
+        ))
+    }
 }
 
 /// Row code of a cycle the exporter reported failed.
@@ -151,7 +161,6 @@ where
                 run_once(connection.as_ref(), exporter.as_ref())
                     .await
                     .map(|()| Next::Continue)
-                    .map_err(|()| TickError::new(FAILED, "the playlist export reported no success"))
             }
         }),
     )
