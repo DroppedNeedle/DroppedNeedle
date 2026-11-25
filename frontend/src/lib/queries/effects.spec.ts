@@ -115,20 +115,28 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 		key('admin', 'downloads', 'sabnzbd-status'),
 		key('admin', 'downloads', 'nzbget-status'),
 		key('admin', 'downloads', 'deemix-status'),
-		every('home')
+		every('home'),
+		key('admin', 'health', 'problems')
 	],
-	slskdSettingsChanged: [key('admin', 'downloads', 'client-config')],
+	slskdSettingsChanged: [
+		key('admin', 'downloads', 'client-config'),
+		key('admin', 'health', 'problems')
+	],
 	usenetSettingsChanged: [
 		key('admin', 'downloads', 'sabnzbd'),
 		key('admin', 'downloads', 'nzbget'),
 		key('admin', 'downloads', 'prowlarr'),
-		key('admin', 'downloads', 'indexers')
+		key('admin', 'downloads', 'indexers'),
+		key('admin', 'health', 'problems')
 	],
-	deemixSettingsChanged: [key('admin', 'downloads', 'deemix')],
+	deemixSettingsChanged: [key('admin', 'downloads', 'deemix'), key('admin', 'health', 'problems')],
 	sourcePriorityChanged: [key('admin', 'downloads', 'source-priority')],
 	downloadPolicyChanged: [key('admin', 'downloads', 'policy')],
 	wantedSettingsChanged: [key('admin', 'downloads', 'wanted-settings')],
-	importFolderChanged: [key(U, 'settings', 'import-folder-status')],
+	importFolderChanged: [
+		key(U, 'settings', 'import-folder-status'),
+		key('admin', 'health', 'problems')
+	],
 	anyDownloadChanged: [every('downloads')],
 	anyRequestChanged: [every('requests')],
 	albumStatusChanged: [key(U, 'library', 'album', 'job')],
@@ -176,7 +184,7 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 		key('admin', 'me', 'scrobble-preferences', 'personal-mix-approvals')
 	],
 	sessionsChanged: [key(U, 'auth', 'sessions', 'list')],
-	backupsChanged: [key('admin', 'system', 'backups')],
+	backupsChanged: [key('admin', 'system', 'backups'), key('admin', 'health', 'problems')],
 	cacheStatsChanged: [key(U, 'admin', 'cache', 'stats')],
 	anyArtistChanged: [every('artist')],
 	lyricsChanged: [every('lyrics')],
