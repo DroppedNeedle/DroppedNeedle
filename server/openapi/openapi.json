@@ -4765,7 +4765,7 @@
           {
             "name": "size",
             "in": "query",
-            "description": "Preferred size: 250, 500, 1200, or original for full size",
+            "description": "Preferred size: 250, 375, 500, 1200, or original for full size",
             "required": false,
             "schema": {
               "type": "string"
@@ -4835,7 +4835,7 @@
           {
             "name": "size",
             "in": "query",
-            "description": "Preferred size: 250, 500, 1200, or original for full size",
+            "description": "Preferred size: 250, 375, 500, 1200, or original for full size",
             "required": false,
             "schema": {
               "type": "string"
@@ -13351,7 +13351,7 @@
           {
             "name": "size",
             "in": "query",
-            "description": "250, 500, 1200, or original (the default) for full size",
+            "description": "250, 375, 500, 1200, or original (the default) for full size",
             "required": false,
             "schema": {
               "type": "string"
@@ -14724,7 +14724,7 @@
           {
             "name": "size",
             "in": "query",
-            "description": "250, 500, 1200, or original (the default) for full size",
+            "description": "250, 375, 500, 1200, or original (the default) for full size",
             "required": false,
             "schema": {
               "type": "string"

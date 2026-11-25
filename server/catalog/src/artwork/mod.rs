@@ -8,18 +8,22 @@
 //!    (see [`local`]).
 //! 2. Otherwise, or when there is none, the Cover Art Archive front cover at
 //!    the requested size. The archive renders 500 and 1200 pixel thumbnails
-//!    itself. A 250 is scaled down from the 500, so one archive trip serves
-//!    both sizes.
+//!    itself. A 250 or 375 is scaled down from the 500, so one archive trip
+//!    serves all three sizes.
 //! 3. With the preference off, local art is the fallback when the archive
 //!    has nothing.
 //!
-//! Local art larger than the asked size (250, 500 or 1200) is scaled down
-//! once (see [`resize`]) and only the rendition is cached, under a key that
-//! carries the file's path and stat. A grid tile then costs a stat and a
-//! small read; the original is opened again only when its stat changes. A
-//! full-size request reads the file. Originals stay out of the cache, so
+//! Local art larger than the asked size (250, 375, 500 or 1200) is scaled
+//! down once (see [`resize`]) and only the rendition is cached, under a key
+//! that carries the file's path and stat. A grid tile then costs a stat and
+//! a small read; the original is opened again only when its stat changes.
+//! A full-size request reads the file. Originals stay out of the cache, so
 //! they never push downloaded covers out; art already no larger than the
-//! asked size is kept as that size's rendition.
+//! asked size is kept as that size's rendition. A rendition is a JPEG
+//! unless the picture has real transparency. Rendition and mosaic keys
+//! carry the version of that rule (`RENDITION_VERSION`), so a rendition
+//! made by an older rule, such as the lossless PNG once kept for every
+//! PNG, is never served again.
 //!
 //! Every image lands in the content-addressed [`cache`], so a cover is
 //! fetched from the archive once and served from disk afterwards, and a
@@ -845,7 +849,7 @@ impl ArtworkService {
         let Some(max) = size.and_then(|size| size.parse::<u32>().ok()) else {
             return original;
         };
-        let key = format!("rendition:{}:{max}", original.hash);
+        let key = format!("rendition:{RENDITION_VERSION}:{}:{max}", original.hash);
         if let Some(KeyEntry::Hit { hash, content_type }) = self.cache.key(&key).await
             && let Some(bytes) = self.cache.blob(&hash).await
         {
@@ -888,9 +892,9 @@ impl ArtworkService {
         }
     }
 
-    /// Archive cover through the cache, waiting up to `wait`. A 250 is made
-    /// from the 500 file, so the two sizes share one fetch and one "no art"
-    /// answer.
+    /// Archive cover through the cache, waiting up to `wait`. A 250 or 375
+    /// is made from the 500 file, so the three sizes share one fetch and one
+    /// "no art" answer.
     async fn remote_cover(
         &self,
         entity: EntityKind,
@@ -899,13 +903,9 @@ impl ArtworkService {
         wait: Duration,
         priority: RequestPriority,
     ) -> CoverLookup {
-        let asked = download_size(size);
-        let file = match asked {
-            DownloadSize::Size250 => DownloadSize::Size500,
-            other => other,
-        };
+        let (file, scaled) = archive_source(size);
         match self.archive_file(entity, mbid, file, wait, priority).await {
-            CoverLookup::Found(cover) if asked == DownloadSize::Size250 => {
+            CoverLookup::Found(cover) if scaled => {
                 CoverLookup::Found(self.sized(cover, size).await)
             }
             other => other,
@@ -1221,11 +1221,16 @@ fn failure_marker(error: &ProviderError) -> Marker {
     }
 }
 
+/// Version of the rule renditions are encoded by, carried in every
+/// rendition and mosaic key. Bump it when the encoding changes, so a
+/// rendition made by the old rule misses and is made again.
+const RENDITION_VERSION: u32 = 2;
+
 /// Cache key of a local art rendition: the file and the stat it had when the
 /// rendition was made, so a replaced image misses and is read again.
 fn local_rendition_key(art: &LocalArt, stamp: &str, max: u32) -> String {
     format!(
-        "local:{}:{}:{stamp}:{max}",
+        "local:{RENDITION_VERSION}:{}:{}:{stamp}:{max}",
         art.source,
         art.path.to_string_lossy()
     )
@@ -1247,7 +1252,10 @@ fn mosaic_key(candidates: &[(LocalArt, String)], max: u32) -> String {
             )
         })
         .collect();
-    format!("mosaic:{}:{max}", sha256_hex(sources.join("\n").as_bytes()))
+    format!(
+        "mosaic:{RENDITION_VERSION}:{}:{max}",
+        sha256_hex(sources.join("\n").as_bytes())
+    )
 }
 
 /// Cache key of an artist's full-size image.
@@ -1269,12 +1277,13 @@ fn audiodb_cover_key(mbid: &str) -> String {
 /// size-bounded cache.
 pub const ARTIST_STORED_MAX: u32 = 1200;
 
-/// Snap a requested artist image width to the renditions kept (250, 500);
-/// anything larger, or no width, is the stored image.
+/// Snap a requested artist image width to the renditions kept (250, 375,
+/// 500); anything larger, or no width, is the stored image.
 fn artist_size(size_px: Option<u32>) -> Option<&'static str> {
     match size_px? {
         0..=250 => Some("250"),
-        251..=500 => Some("500"),
+        251..=375 => Some("375"),
+        376..=500 => Some("500"),
         _ => None,
     }
 }
@@ -1345,14 +1354,15 @@ async fn resolve_artist(
     }
 }
 
-/// Map a validated size (`250`, `500`, `1200`, or `None` for full size)
-/// onto the archive's renditions.
-fn download_size(size: Option<&str>) -> DownloadSize {
+/// The archive file a validated size (`250`, `375`, `500`, `1200`, or
+/// `None` for full size) is served from, and whether it is scaled down from
+/// it. 250 and 375 are cut from the 500, so they cost no fetch of their own.
+fn archive_source(size: Option<&str>) -> (DownloadSize, bool) {
     match size {
-        Some("250") => DownloadSize::Size250,
-        Some("500") => DownloadSize::Size500,
-        Some("1200") => DownloadSize::Size1200,
-        _ => DownloadSize::Full,
+        Some("250" | "375") => (DownloadSize::Size500, true),
+        Some("500") => (DownloadSize::Size500, false),
+        Some("1200") => (DownloadSize::Size1200, false),
+        _ => (DownloadSize::Full, false),
     }
 }
 

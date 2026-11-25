@@ -39,7 +39,7 @@ use super::cache::ImageCredit;
 use crate::local::stores::StoreError;
 
 /// Sizes the release cover routes accept.
-const ALLOWED_SIZES: &[&str] = &["250", "500", "1200"];
+const ALLOWED_SIZES: &[&str] = &["250", "375", "500", "1200"];
 /// Aliases meaning "full size".
 const SIZE_ALIAS_ORIGINAL: &[&str] = &["", "original", "full", "max", "largest"];
 /// Default release cover size.
@@ -197,7 +197,7 @@ pub struct ArtistImageCredit {
 /// `size` query for the release cover routes.
 #[derive(Debug, Deserialize)]
 pub struct SizeQuery {
-    /// Preferred size: 250, 500, 1200, or `original` for full size.
+    /// Preferred size: 250, 375, 500, 1200, or `original` for full size.
     #[serde(default = "default_size_param")]
     pub size: String,
 }
@@ -218,7 +218,7 @@ pub struct ArtistSizeQuery {
 pub struct AlbumArtQuery {
     /// Art version the caller holds (`cover_version`).
     pub v: Option<i64>,
-    /// 250, 500, 1200, or absent / `original` for full size.
+    /// 250, 375, 500, 1200, or absent / `original` for full size.
     #[serde(default)]
     pub size: String,
 }
@@ -226,7 +226,7 @@ pub struct AlbumArtQuery {
 /// Query for the library artist artwork route.
 #[derive(Debug, Deserialize)]
 pub struct ArtistArtQuery {
-    /// 250, 500, 1200, or absent / `original` for full size.
+    /// 250, 375, 500, 1200, or absent / `original` for full size.
     #[serde(default)]
     pub size: String,
 }
@@ -242,7 +242,7 @@ fn normalize_size(size: &str) -> Result<Option<String>, String> {
         return Ok(Some(normalized));
     }
     Err(format!(
-        "Unsupported size '{size}'. Choose one of 250, 500, 1200 or original."
+        "Unsupported size '{size}'. Choose one of 250, 375, 500, 1200 or original."
     ))
 }
 
@@ -343,7 +343,7 @@ fn lookup_response(lookup: CoverLookup, headers: &HeaderMap) -> Response {
     path = "/api/v3/covers/release-group/{release_group_id}",
     params(
         ("release_group_id" = String, Path, description = "MusicBrainz release group id"),
-        ("size" = Option<String>, Query, description = "Preferred size: 250, 500, 1200, or original for full size"),
+        ("size" = Option<String>, Query, description = "Preferred size: 250, 375, 500, 1200, or original for full size"),
     ),
     responses(
         (status = 200, description = "Cover bytes"),
@@ -379,7 +379,7 @@ pub async fn cover_from_release_group(
     path = "/api/v3/covers/release/{release_id}",
     params(
         ("release_id" = String, Path, description = "MusicBrainz release id"),
-        ("size" = Option<String>, Query, description = "Preferred size: 250, 500, 1200, or original for full size"),
+        ("size" = Option<String>, Query, description = "Preferred size: 250, 375, 500, 1200, or original for full size"),
     ),
     responses(
         (status = 200, description = "Cover bytes"),
@@ -481,7 +481,7 @@ pub async fn artist_cover_credit(
     params(
         ("id" = String, Path, description = "Local album id"),
         ("v" = Option<i64>, Query, description = "Art version the caller holds"),
-        ("size" = Option<String>, Query, description = "250, 500, 1200, or original (the default) for full size"),
+        ("size" = Option<String>, Query, description = "250, 375, 500, 1200, or original (the default) for full size"),
     ),
     responses(
         (status = 200, description = "Image bytes"),
@@ -531,7 +531,7 @@ pub async fn album_artwork(
     path = "/api/v3/library/artists/{id}/artwork",
     params(
         ("id" = String, Path, description = "Local artist id"),
-        ("size" = Option<String>, Query, description = "250, 500, 1200, or original (the default) for full size"),
+        ("size" = Option<String>, Query, description = "250, 375, 500, 1200, or original (the default) for full size"),
     ),
     responses(
         (status = 200, description = "Image bytes"),

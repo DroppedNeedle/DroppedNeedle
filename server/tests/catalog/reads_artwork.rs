@@ -57,6 +57,11 @@ struct FakeArchive {
 
 impl FakeArchive {
     fn new() -> Self {
+        Self::with_front(PNG_BYTES)
+    }
+
+    /// An archive whose front cover for [`RG`] is `front`.
+    fn with_front(front: &[u8]) -> Self {
         let wire = Arc::new(ScriptedWire::new());
         let providers = Arc::new(Providers::over_wire(
             wire.clone(),
@@ -67,7 +72,7 @@ impl FakeArchive {
             },
         ));
         wire.answer(&front_url(RG), 307, &[("location", CDN)], "");
-        wire.answer(CDN, 200, &[("content-type", "image/png")], PNG_BYTES);
+        wire.answer(CDN, 200, &[("content-type", "image/png")], front);
         Self { wire, providers }
     }
 
@@ -221,6 +226,39 @@ async fn archive_cover_is_fetched_once_then_served_from_cache() {
             "https://archive.org/download/mbid-x/front_500.png".to_owned(),
         ],
         "one fetch (the front plus its redirect hop), then the disk cache"
+    );
+}
+
+/// The 250 and 375 covers are cut from the archive's 500 file, so the three
+/// sizes cost one fetch. An opaque PNG comes back from the cut as a JPEG.
+#[tokio::test]
+async fn smaller_covers_are_cut_from_the_cached_500() {
+    let mut rig = rig(None).await;
+    rig.archive = FakeArchive::with_front(&solid_png(RED, 500));
+    let mut sides = Vec::new();
+    for size in [500, 375, 250] {
+        let uri = format!("/api/v3/covers/release-group/{RG}?size={size}");
+        let (status, headers, body) = get(rig.app(true), &uri).await;
+        assert_eq!(status, StatusCode::OK, "size {size}");
+        let cover = image::load_from_memory(&body).unwrap();
+        sides.push((
+            size,
+            cover.width(),
+            header(&headers, "content-type").map(str::to_owned),
+        ));
+    }
+    assert_eq!(
+        sides,
+        vec![
+            (500, 500, Some("image/png".to_owned())),
+            (375, 375, Some("image/jpeg".to_owned())),
+            (250, 250, Some("image/jpeg".to_owned())),
+        ]
+    );
+    assert_eq!(
+        rig.archive.calls().len(),
+        2,
+        "one fetch (the front plus its redirect hop) serves every size"
     );
 }
 

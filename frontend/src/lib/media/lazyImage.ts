@@ -26,12 +26,31 @@ interface Watcher {
 
 const watcherOf = new WeakMap<HTMLImageElement, Watcher>();
 const pendingImages: Set<HTMLImageElement> = new Set();
+/** Images whose `sizes` this module set from their box, not their caller. */
+const measuredSizes = new WeakSet<HTMLImageElement>();
+
+/**
+ * Hands an image its `srcset`. Unless the caller gave its own `sizes`, that is
+ * set first to the width of the image's box, so the browser picks the
+ * smallest candidate that fills it. A box with no width keeps the single src.
+ */
+function applySrcset(img: HTMLImageElement) {
+	const srcset = img.dataset.srcset;
+	if (!srcset) return;
+	if (measuredSizes.has(img) || !img.hasAttribute('sizes')) {
+		const width = Math.ceil((img.parentElement ?? img).getBoundingClientRect().width);
+		if (width <= 0) return;
+		img.sizes = `${width}px`;
+		measuredSizes.add(img);
+	}
+	img.srcset = srcset;
+}
 
 function loadImage(img: HTMLImageElement) {
 	watcherOf.get(img)?.unobserve(img);
 	const src = img.dataset.src;
 	if (!src || img.src === src) return;
-	if (img.dataset.srcset) img.srcset = img.dataset.srcset;
+	applySrcset(img);
 	img.src = src;
 }
 
@@ -152,21 +171,20 @@ export function cancelPendingImages() {
 	pendingImages.clear();
 }
 
-export function lazyImage(img: HTMLImageElement) {
-	const watcher = acquireWatcher(img);
-
-	pendingImages.add(img);
+/**
+ * Loads an image from its `data-src` and `data-srcset` once it nears the
+ * visible area, or at once with `eager`, which an image that must not wait
+ * uses for its srcset and `sizes`.
+ */
+export function lazyImage(img: HTMLImageElement, options: { eager?: boolean } = {}) {
+	const watcher = options.eager ? null : acquireWatcher(img);
 
 	if (watcher) {
+		pendingImages.add(img);
 		watcherOf.set(img, watcher);
 		watcher.observe(img);
 	} else {
-		const src = img.dataset.src;
-		if (src) {
-			if (img.dataset.srcset) img.srcset = img.dataset.srcset;
-			img.src = src;
-			pendingImages.delete(img);
-		}
+		loadImage(img);
 	}
 
 	const handleLoad = () => pendingImages.delete(img);
@@ -199,6 +217,7 @@ export function resetLazyImage(img: HTMLImageElement, newSrc: string, newSrcset?
 	img.classList.add('opacity-0');
 	img.src = BLANK_GIF;
 	img.removeAttribute('srcset');
+	if (measuredSizes.delete(img)) img.removeAttribute('sizes');
 	img.dataset.src = newSrc;
 	if (newSrcset) img.dataset.srcset = newSrcset;
 	else delete img.dataset.srcset;

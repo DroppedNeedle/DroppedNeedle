@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { coverSrc, type CoverKind } from '$lib/api/covers';
+	import { coverSrc, coverSrcset, type CoverKind } from '$lib/api/covers';
 	import { useDirectRemoteImages } from '$lib/features/settings/queries/AdvancedSettingsReads.svelte';
 	import { onDestroy } from 'svelte';
 	import { lazyImage, resetLazyImage } from '$lib/media/lazyImage';
@@ -21,7 +21,9 @@
 		mbid: string;
 		alt?: string;
 		size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | 'hero' | 'full';
+		/** The largest cover size the box may need; our own covers get smaller candidates too. */
 		requestSize?: 250 | 500 | 1200;
+		/** `sizes` for a direct AudioDB picture asked at 250; our own covers measure their box. */
 		responsiveSizes?: string;
 		lazy?: boolean;
 		/** Load at once and ahead of other images: for a page's main picture. */
@@ -142,9 +144,6 @@
 	let fallbackCoverUrl = $derived(
 		hasValidMbid ? coverSrc(apiEndpoint, mbid, requestedPixels) : null
 	);
-	let responsiveCoverUrl = $derived(
-		requestSize === 250 && responsiveSizes && hasValidMbid ? coverSrc(apiEndpoint, mbid, 500) : null
-	);
 	let coverUrl = $derived(
 		imageType === 'album'
 			? (canonicalAlbumCoverUrl ?? resolvedCustomUrl ?? fallbackCoverUrl ?? '')
@@ -155,11 +154,13 @@
 	);
 	let displayCoverUrl = $derived(warmResolvedUrl ?? coverUrl);
 	let displayCoverSrcset = $derived.by(() => {
-		if (warmResolvedUrl || !responsiveSizes) return undefined;
-		if (useRemoteUrl && resolvedRemoteUrl && !remoteError && responsiveRemoteUrl) {
-			return `${resolvedRemoteUrl} 250w, ${responsiveRemoteUrl} 500w`;
+		if (warmResolvedUrl) return undefined;
+		if (useRemoteUrl && resolvedRemoteUrl && !remoteError) {
+			return responsiveRemoteUrl
+				? `${resolvedRemoteUrl} 250w, ${responsiveRemoteUrl} 500w`
+				: undefined;
 		}
-		return responsiveCoverUrl ? `${coverUrl} 250w, ${responsiveCoverUrl} 500w` : undefined;
+		return coverSrcset(coverUrl);
 	});
 	let visualSourceKey = $derived(
 		useRemoteUrl && resolvedRemoteUrl && !remoteError ? resolvedRemoteUrl : coverUrl
@@ -349,7 +350,6 @@
 				src={BLANK_GIF}
 				data-src={displayCoverUrl}
 				data-srcset={displayCoverSrcset}
-				sizes={responsiveSizes}
 				{alt}
 				class="relative w-full h-full object-cover opacity-0 transition-opacity duration-300"
 				decoding="async"
@@ -359,20 +359,24 @@
 				onload={onImgLoad}
 			/>
 		{:else}
-			<img
-				data-testid={testId}
-				src={displayCoverUrl}
-				srcset={displayCoverSrcset}
-				sizes={responsiveSizes}
-				{alt}
-				class="relative w-full h-full object-cover transition-opacity duration-300"
-				class:opacity-0={!imgLoaded}
-				loading="eager"
-				fetchpriority={fetchPriority}
-				decoding="async"
-				onerror={onImgError}
-				onload={onImgLoad}
-			/>
+			<!-- A srcset waits for the box to be measured, so the src is not fetched first. -->
+			{#key displayCoverUrl}
+				<img
+					data-testid={testId}
+					src={displayCoverSrcset ? BLANK_GIF : displayCoverUrl}
+					data-src={displayCoverSrcset ? displayCoverUrl : undefined}
+					data-srcset={displayCoverSrcset}
+					{alt}
+					class="relative w-full h-full object-cover transition-opacity duration-300"
+					class:opacity-0={!imgLoaded}
+					loading="eager"
+					fetchpriority={fetchPriority}
+					decoding="async"
+					use:lazyImage={{ eager: true }}
+					onerror={onImgError}
+					onload={onImgLoad}
+				/>
+			{/key}
 		{/if}
 	{/if}
 </div>

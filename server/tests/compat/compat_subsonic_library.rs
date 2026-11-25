@@ -1422,30 +1422,35 @@ async fn cover_art_buckets_caching_and_misses() {
     let client = Client::player(&rig);
     let [album, artist, song] = covered(&rig, &client).await;
     let immutable = Some("public, max-age=31536000, immutable");
-    for (id, size, colour, side) in [
-        (&album, None, SLEEVE, 500),
-        (&album, Some("100"), SLEEVE, 250),
+    // A resized cover is a JPEG; one served at its own size keeps its PNG.
+    for (id, size, colour, side, kind) in [
+        (&album, None, SLEEVE, 500, "image/jpeg"),
+        (&album, Some("100"), SLEEVE, 250, "image/jpeg"),
         // The largest bucket never enlarges a smaller picture.
-        (&album, Some("2000"), SLEEVE, 600),
-        (&song, None, SLEEVE, 500),
-        (&artist, None, PORTRAIT, 500),
+        (&album, Some("2000"), SLEEVE, 600, "image/png"),
+        (&song, None, SLEEVE, 500, "image/jpeg"),
+        (&artist, None, PORTRAIT, 500, "image/jpeg"),
     ] {
         let mut pairs = vec![("id", id.as_str())];
         pairs.extend(size.map(|size| ("size", size)));
         let answer = client.get("getCoverArt", &pairs).await;
         assert_eq!(
             (answer.status, answer.content_type()),
-            (StatusCode::OK, "image/png"),
+            (StatusCode::OK, kind),
             "{id} {size:?}"
         );
         assert_eq!(answer.header("cache-control"), immutable, "{id} {size:?}");
         let picture = image::load_from_memory(&answer.body)
             .expect("a picture")
             .to_rgb8();
-        assert_eq!(
-            (picture.width(), picture.get_pixel(0, 0).0),
-            (side, colour),
-            "{id} {size:?}"
+        let corner = picture.get_pixel(0, 0).0;
+        assert_eq!(picture.width(), side, "{id} {size:?}");
+        assert!(
+            corner
+                .iter()
+                .zip(colour)
+                .all(|(got, want)| got.abs_diff(want) <= 30),
+            "{id} {size:?}: corner {corner:?}, wanted {colour:?}"
         );
     }
     let made = client
@@ -1458,7 +1463,8 @@ async fn cover_art_buckets_caching_and_misses() {
         playlist.header("cache-control"),
         Some("private, max-age=3600")
     );
-    assert_eq!(playlist.content_type(), "image/png");
+    // A playlist mosaic is drawn opaque, so it comes as a JPEG.
+    assert_eq!(playlist.content_type(), "image/jpeg");
     // A known album without art gets a WebP placeholder drawn from its id:
     // the same id always gets the same bytes, another album other colours.
     // An unknown id is code 70, enveloped, as Navidrome 0.62.0 answers it.

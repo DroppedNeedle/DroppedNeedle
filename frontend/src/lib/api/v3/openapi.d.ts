@@ -31160,7 +31160,7 @@ export interface operations {
     cover_from_release_group: {
         parameters: {
             query?: {
-                /** @description Preferred size: 250, 500, 1200, or original for full size */
+                /** @description Preferred size: 250, 375, 500, 1200, or original for full size */
                 size?: string;
             };
             header?: never;
@@ -31223,7 +31223,7 @@ export interface operations {
     cover_from_release: {
         parameters: {
             query?: {
-                /** @description Preferred size: 250, 500, 1200, or original for full size */
+                /** @description Preferred size: 250, 375, 500, 1200, or original for full size */
                 size?: string;
             };
             header?: never;
@@ -37132,7 +37132,7 @@ export interface operations {
             query?: {
                 /** @description Art version the caller holds */
                 v?: number;
-                /** @description 250, 500, 1200, or original (the default) for full size */
+                /** @description 250, 375, 500, 1200, or original (the default) for full size */
                 size?: string;
             };
             header?: never;
@@ -38070,7 +38070,7 @@ export interface operations {
     library_artist_artwork: {
         parameters: {
             query?: {
-                /** @description 250, 500, 1200, or original (the default) for full size */
+                /** @description 250, 375, 500, 1200, or original (the default) for full size */
                 size?: string;
             };
             header?: never;

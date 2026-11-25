@@ -53,12 +53,16 @@
 	// `albumId` is a library album's local id. When `available` says it has art
 	// of its own, that art is shown; otherwise `mbid` (its release group, when
 	// linked) gives the release-group cover, and an unlinked album shows the
-	// fallback. A local id is never sent where an MBID belongs. BaseImage builds
-	// its srcset from release-group URLs, so local art goes without one. Art the
-	// server knows is missing is never requested.
+	// fallback. A local id is never sent where an MBID belongs. Local art is
+	// asked at the size a release-group cover of this box would be, never at
+	// full size. Art the server knows is missing is never requested.
 	let localArtUrl = $derived(
 		albumId && available && !artMissing
-			? albumArtworkPath(albumId, coverVersion, requestSize)
+			? albumArtworkPath(
+					albumId,
+					coverVersion,
+					requestSize ?? (size === 'xs' || size === 'sm' || size === 'md' ? 250 : 500)
+				)
 			: null
 	);
 </script>
