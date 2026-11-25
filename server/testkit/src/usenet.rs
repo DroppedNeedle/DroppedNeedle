@@ -105,6 +105,9 @@ pub enum SabErrorForm {
     JsonFalseString(String),
     /// Plain-text `error: …`.
     PlainText(String),
+    /// HTTP 403 refusing the name the request used, the way SABnzbd
+    /// answers a host missing from its whitelist (5.0.4).
+    HostNotWhitelisted,
 }
 
 /// Mutable SABnzbd mock state, shared with the tests.
@@ -361,6 +364,12 @@ async fn sab_api(
                 StatusCode::OK,
                 [(header::CONTENT_TYPE, "text/plain")],
                 format!("error: {message}"),
+            )
+                .into_response(),
+            SabErrorForm::HostNotWhitelisted => (
+                StatusCode::FORBIDDEN,
+                "Access denied - Hostname verification failed: \
+                 https://sabnzbd.org/hostname-check",
             )
                 .into_response(),
         };

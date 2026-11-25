@@ -321,6 +321,34 @@ async fn a_direct_nzb_link_redirects_only_where_a_grab_goes() {
     );
 }
 
+/// A SABnzbd that refuses the name in its address says so on the health
+/// card, and is never read as a refused key.
+#[tokio::test]
+async fn sab_host_not_whitelisted_names_the_whitelist() {
+    use droppedneedle_testkit::usenet::SabErrorForm;
+
+    let mock = SabnzbdMock::new();
+    mock.state().api_error = Some(SabErrorForm::HostNotWhitelisted);
+    let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
+
+    let err = sab_client(&base)
+        .version(TIMEOUT)
+        .await
+        .expect_err("refused");
+    assert!(!err.is_auth(), "not a key problem: {err:?}");
+
+    let mount = temp_dir("sab-host-refused");
+    let health = queue_for(&mock, &base, mount.to_path_buf())
+        .health_check()
+        .await;
+    assert_eq!(health.status, "error");
+    assert!(
+        health.message.contains("host whitelist"),
+        "{}",
+        health.message
+    );
+}
+
 /// All three SABnzbd error forms, plus auth detection by message. Idempotent
 /// GETs retry 5xx with backoff; queue mutations never retry (a retried add
 /// could double-add the job).

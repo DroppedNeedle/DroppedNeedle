@@ -94,7 +94,8 @@ fn sab_error(error: SabnzbdError) -> SourceError {
         SabnzbdError::Api(_)
         | SabnzbdError::NzbRefused { .. }
         | SabnzbdError::NzbPaced { .. }
-        | SabnzbdError::AmbiguousIdentity => SourceError::Unavailable(error.to_string()),
+        | SabnzbdError::AmbiguousIdentity
+        | SabnzbdError::HostNotWhitelisted => SourceError::Unavailable(error.to_string()),
     }
 }
 

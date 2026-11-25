@@ -7,6 +7,7 @@ Common problems and what fixes them. Messages from the upgrade from v2 are liste
 - **Downloads finish in the client but never import.** `SLSKD_DOWNLOADS_PATH` must point at the exact completions directory, visible read-write. The Download Client page shows the path status and the reason. Every few minutes DroppedNeedle also checks whether slskd's finished downloads can actually be found in that folder, and if they can't, the page says why: the folder looks empty, or it holds other files (usually because the mount is a parent folder such as your whole media share). It also shows where slskd itself saves, so you can line the two up. A wrong path is usually fixed with the downloads subfolder box on that page. See [the mount rules](download-clients.md#slskd).
 - **Separate-mount warning.** Imports still work through copy-and-remove, which briefly needs room for both copies. One shared `/data` parent with no nested binds restores fast moves.
 - **Client connection fails or returns 401.** Wrong URL or API key, or slskd's CIDR allowlist for the key leaves out DroppedNeedle's address. Re-enter the URL and key under Settings > Download Client and press **Test connection**.
+- **SABnzbd refused the name in this address.** SABnzbd only answers names on its host whitelist. Add the name from the URL (`sabnzbd` on a compose network) under Config > Special in SABnzbd, then test again.
 - **Searches return nothing or the network drops you.** slskd needs shared folders and a healthy Soulseek connection. Leechers get banned.
 
 ## Library

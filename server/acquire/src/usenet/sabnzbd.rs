@@ -91,7 +91,17 @@ pub enum SabnzbdError {
     /// Enqueue without an NZB URL is meaningless for Usenet.
     #[error("enqueue requires an nzb_url for the usenet source")]
     MissingNzbUrl,
+    /// SABnzbd refused the host name in the address it was called on: the
+    /// name is missing from its host whitelist. Not a key problem.
+    #[error(
+        "SABnzbd refused the name in this address. Add it to SABnzbd's host whitelist (Config > Special)."
+    )]
+    HostNotWhitelisted,
 }
+
+/// What SABnzbd's 403 body says when the name in the address is not on its
+/// host whitelist (5.0.4: "Access denied - Hostname verification failed").
+pub const HOSTNAME_REFUSED: &str = "Hostname verification failed";
 
 impl SabnzbdError {
     /// Whether this failure means bad credentials.
@@ -731,6 +741,9 @@ impl SabnzbdClient {
         if status >= 300 {
             let wait = retry_after(response.headers());
             let snippet = response_snippet(response).await;
+            if status == 403 && snippet.contains(HOSTNAME_REFUSED) {
+                return Err(SabnzbdError::HostNotWhitelisted);
+            }
             return Err(ClientError::for_status(
                 Service::Sabnzbd,
                 status,
@@ -1235,6 +1248,11 @@ impl SabnzbdQueue {
                 },
             },
             Err(SabnzbdError::Client(error @ ClientError::Redirected { .. })) => Health {
+                status: "error".to_owned(),
+                version: None,
+                message: error.to_string(),
+            },
+            Err(error @ SabnzbdError::HostNotWhitelisted) => Health {
                 status: "error".to_owned(),
                 version: None,
                 message: error.to_string(),

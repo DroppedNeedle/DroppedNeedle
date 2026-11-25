@@ -14,6 +14,7 @@
 
 use std::net::IpAddr;
 
+use droppedneedle_acquire::usenet::sabnzbd::HOSTNAME_REFUSED;
 use droppedneedle_kernel::http_client::{
     BodyError, LAN_PROBE_TIMEOUT, LanProbeFailure, keep_lan_address, lan_probe_failure, read_capped,
 };
@@ -145,7 +146,7 @@ fn judge(
         }
         SetupServiceKind::Sabnzbd => {
             if status == StatusCode::FORBIDDEN
-                && String::from_utf8_lossy(body).contains("Hostname verification failed")
+                && String::from_utf8_lossy(body).contains(HOSTNAME_REFUSED)
             {
                 return Some(Verdict {
                     note: Some(ServiceNote::SabnzbdHostNotWhitelisted),
