@@ -14,6 +14,16 @@ use droppedneedle_auth::listed_user;
 use droppedneedle_library::{copy_of_group, owns_group};
 
 droppedneedle_kernel::sql! {
+    fragment SMART_PLAYLIST_COLUMNS = "SELECT id, name, min_rating FROM catalog_smart_playlists WHERE user_id = ?1";
+    pub(super) LIST_SMART = SMART_PLAYLIST_COLUMNS + " ORDER BY name COLLATE NOCASE, id";
+    pub(super) GET_SMART = SMART_PLAYLIST_COLUMNS + " AND id = ?2";
+    pub(super) row SmartPlaylistRow for [LIST_SMART, GET_SMART] {
+        id: String, name: String, min_rating: u8,
+    }
+    pub(super) INSERT_SMART = "INSERT INTO catalog_smart_playlists (user_id, id, name, min_rating) VALUES (?1, ?2, ?3, ?4)";
+    pub(super) UPDATE_SMART = "UPDATE catalog_smart_playlists SET name = ?3, min_rating = ?4 WHERE user_id = ?1 AND id = ?2";
+    pub(super) DELETE_SMART = "DELETE FROM catalog_smart_playlists WHERE user_id = ?1 AND id = ?2";
+
     /// The caller may read the playlist: it is theirs, it is public, or it
     /// is shared with them.
     fragment READABLE = "(COALESCE(p.user_id = ?1, 0) OR p.is_public != 0 \

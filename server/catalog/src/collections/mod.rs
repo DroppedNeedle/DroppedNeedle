@@ -17,6 +17,7 @@ pub mod library_links;
 pub mod models;
 pub mod remote_import;
 pub mod service;
+pub mod smart_playlists;
 pub(crate) mod sql;
 pub mod state;
 pub mod store;

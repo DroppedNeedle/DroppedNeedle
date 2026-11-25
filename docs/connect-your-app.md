@@ -48,3 +48,17 @@ An admin registers the app once under Settings > Connect Apps > Sign-in from app
 ## What apps get
 
 Apps list your own playlists and those shared with you, plus other people's public playlists if you turn on the switch under Profile > Connect Apps. Plays in an app count like plays in the web player, and ratings are shared with Subsonic apps. A track is transcoded only when the app asks for another format or a lower bitrate. The details, including sign-in limits, pictures and ids, are in [Music apps](discovery.md#music-apps).
+
+### Saved smart playlists
+
+A client signed in to the native v3 API can save a private playlist of library tracks rated by that listener.
+Send `{"name":"Five stars","min_rating":5}` to `POST /api/v3/smart-playlists`.
+A minimum of 1 through 5 stars is supported. The response includes the new playlist's
+`id`. List the listener's definitions with `GET /api/v3/smart-playlists`, or use
+`GET`, `PUT` and `DELETE` on `/api/v3/smart-playlists/{id}` to read, replace or
+remove a definition.
+
+Read matching tracks at `GET /api/v3/smart-playlists/{id}/tracks?limit=50`.
+Follow `next` as the next request's `after` until it is null. A page holds at most
+500 tracks. The playlist can span any number of pages, and reads reflect current
+ratings and file availability. Start at the first page again after editing the rule.

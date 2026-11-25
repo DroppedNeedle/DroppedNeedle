@@ -232,6 +232,9 @@ fn mount(m: Mount<'_>) -> Mount<'_> {
             state.library_services.clone()
         })
         .area(local::routes(), |state| state.catalog.local.clone())
+        .area(collections::smart_playlists::routes(), |state| {
+            state.catalog.local.clone()
+        })
         .area(discover::routes(), |state| state.catalog.discover.clone())
         .area(collections::routes(), |state| {
             state.catalog.collections.clone()

@@ -188,6 +188,7 @@ catalog_playlist_members
 catalog_playlist_source_songs
 catalog_playlist_tracks
 catalog_playlists
+catalog_smart_playlists
 catalog_taste_artists
 catalog_taste_builds
 catalog_taste_groups
