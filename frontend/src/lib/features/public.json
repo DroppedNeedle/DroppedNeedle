@@ -121,6 +121,7 @@
 	"player": [
 		"components/AudioQualityBadge.svelte",
 		"components/EqPanel.svelte",
+		"components/LinkedPlayers.svelte",
 		"components/LyricsPanel.svelte",
 		"components/NowPlayingIndicator.svelte",
 		"components/NowPlayingWidget.svelte",

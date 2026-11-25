@@ -50,6 +50,7 @@
 	import AppearanceCard from '$lib/features/profile/components/AppearanceCard.svelte';
 	import ScrobblingDiscoveryCard from '$lib/features/profile/components/ScrobblingDiscoveryCard.svelte';
 	import SpotifyConnectionCard from '$lib/features/profile/components/SpotifyConnectionCard.svelte';
+	import LinkedPlayers from '$lib/features/player/components/LinkedPlayers.svelte';
 	import ProfileConnectApps from '$lib/features/profile/components/ProfileConnectApps.svelte';
 	import YearReviewCard from '$lib/features/year/components/YearReviewCard.svelte';
 	import '$lib/features/profile/components/profile.css';
@@ -158,6 +159,7 @@
 		return [
 			{ id: 'account', label: 'Account', icon: UserCog },
 			{ id: 'connect-apps', label: 'Connect Apps', icon: Waypoints },
+			{ id: 'handoff', label: 'Player handoff', icon: RadioTower },
 			{ id: 'appearance', label: 'Appearance', icon: SunMoon },
 			{ id: 'sessions', label: 'Sessions', icon: KeyRound },
 			{ id: 'connected-services', label: 'Connected Services', icon: Link2 },
@@ -342,6 +344,17 @@
 						{/if}
 					{/snippet}
 					<ProfileConnectApps />
+				</ProfileSection>
+
+				<ProfileSection
+					id="handoff"
+					title="Player handoff"
+					icon={RadioTower}
+					blurb="Continue listening on another player."
+					open={isOpen('handoff')}
+					ontoggle={(open) => setOpen('handoff', open)}
+				>
+					<LinkedPlayers />
 				</ProfileSection>
 
 				<ProfileSection
