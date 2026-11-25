@@ -8,6 +8,15 @@ const envPublicStub = fileURLToPath(new URL('./src/lib/test/env-public-stub.ts',
 
 export default defineConfig({
 	plugins: [sveltekit()],
+	build: {
+		rollupOptions: {
+			output: {
+				// Each lucide icon is its own tiny module. One chunk with every icon
+				// the app uses costs Home fewer files and fewer bytes than one each.
+				manualChunks: (id) => (id.includes('/node_modules/lucide-svelte/') ? 'icons' : undefined)
+			}
+		}
+	},
 	test: {
 		expect: { requireAssertions: true },
 		projects: [

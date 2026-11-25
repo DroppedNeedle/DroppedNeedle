@@ -1,7 +1,7 @@
 <script lang="ts">
 	import '$lib/shell/release-notes.css';
 	import { goto } from '$app/navigation';
-	import { isWhatsNewDismissed, dismissWhatsNew } from '$lib/stores/version.svelte';
+	import { dismissWhatsNew } from '$lib/stores/version.svelte';
 	import SafeHtml from '$lib/ui/SafeHtml.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Modal from '$lib/ui/Modal.svelte';
@@ -11,27 +11,14 @@
 
 	interface Props {
 		currentVersion: string | null;
-		buildDate: string | null;
 		releases: GitHubRelease[];
+		/** The release these notes are for; closing marks it seen. */
+		dismissKey: string;
 	}
-	let { currentVersion, buildDate, releases }: Props = $props();
+	let { currentVersion, releases, dismissKey }: Props = $props();
 
-	let open = $state(false);
-
-	const isDev = $derived(currentVersion === 'dev');
-	const latestRelease = $derived(releases.length > 0 ? releases[0] : null);
-
-	// In dev: key dismissal to build_date so modal shows once per rebuild, not every refresh
-	// In prod: key to latest release tag so modal re-shows when a new patch lands
-	const dismissKey = $derived(
-		isDev ? (buildDate ?? 'dev') : (latestRelease?.tag_name ?? currentVersion)
-	);
-
-	const hasContent = $derived(releases.some((r) => r.body && r.body.trim().length > 0));
-
-	const shouldShow = $derived(
-		currentVersion !== null && dismissKey !== null && hasContent && !isWhatsNewDismissed(dismissKey)
-	);
+	// Mounted only when there are notes for a release not yet seen.
+	let open = $state(true);
 
 	const sections = $derived(
 		releases.flatMap((r) =>
@@ -39,13 +26,9 @@
 		)
 	);
 
-	$effect(() => {
-		if (shouldShow) open = true;
-	});
-
 	// However it closes, this release has been seen.
 	function dismiss() {
-		if (dismissKey) dismissWhatsNew(dismissKey);
+		dismissWhatsNew(dismissKey);
 	}
 
 	function close() {

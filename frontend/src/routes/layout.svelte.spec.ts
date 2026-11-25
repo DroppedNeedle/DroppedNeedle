@@ -190,7 +190,8 @@ vi.mock('$lib/shell/lazyComponentLoaders', () => ({
 		}
 		return (await import('$lib/features/downloads/components/DiscographyDownloadModal.svelte'))
 			.default;
-	}
+	},
+	loadWhatsNewModal: async () => (await import('$lib/shell/WhatsNewModal.svelte')).default
 }));
 
 import Layout from './+layout.svelte';

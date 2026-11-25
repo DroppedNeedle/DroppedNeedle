@@ -31,8 +31,9 @@ export const getUpdateCheckQuery = () =>
 		refetchOnReconnect: false
 	}));
 
-export const getReleaseHistoryQuery = () =>
+export const getReleaseHistoryQuery = (getEnabled: () => boolean = () => true) =>
 	createQuery(() => ({
+		enabled: getEnabled(),
 		staleTime: STALE_SLOW,
 		queryKey: VersionQueryKeyFactory.releases(),
 		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/version/releases'), { signal }),

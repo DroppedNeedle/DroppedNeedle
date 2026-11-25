@@ -4,19 +4,30 @@
 		getVersionQuery,
 		getReleaseHistoryQuery
 	} from '$lib/shell/version.svelte';
+	import { loadWhatsNewModal } from '$lib/shell/lazyComponentLoaders';
 	import UpdateBanner from '$lib/shell/UpdateBanner.svelte';
-	import WhatsNewModal from '$lib/shell/WhatsNewModal.svelte';
+	import type WhatsNewModalComponent from '$lib/shell/WhatsNewModal.svelte';
+	import { isWhatsNewDismissed } from '$lib/stores/version.svelte';
 
 	// eslint-disable-next-line no-useless-assignment -- bindable default is the parent-visible initial value; this prop is write-only in-component by design
 	let { updateAvailable = $bindable(false) }: { updateAvailable: boolean } = $props();
 
 	const updateCheckQuery = getUpdateCheckQuery();
 	const versionQuery = getVersionQuery();
-	const releaseHistoryQuery = getReleaseHistoryQuery();
 
 	const currentVersion = $derived(versionQuery.data?.version ?? null);
 	const buildDate = $derived(versionQuery.data?.build_date ?? null);
 	const isDev = $derived(currentVersion === 'dev');
+
+	// The key What's New is closed under for this build, known before the
+	// release history: the build date on a dev build, else the version. Once
+	// it is closed the history is not read again.
+	const buildKey = $derived(
+		currentVersion === null ? null : isDev ? (buildDate ?? 'dev') : currentVersion
+	);
+	const releaseHistoryQuery = getReleaseHistoryQuery(
+		() => buildKey !== null && !isWhatsNewDismissed(buildKey)
+	);
 
 	function getMinorPrefix(tag: string): string | null {
 		const m = tag.replace(/^v/, '').match(/^(\d+\.\d+)\./);
@@ -51,6 +62,33 @@
 		return sameMinor.slice(currentIdx);
 	});
 
+	// When What's New shows: notes for this release not yet closed. Worked out
+	// here only, so the modal's code loads only when it will open.
+	const dismissKey = $derived(
+		isDev ? (buildDate ?? 'dev') : (minorReleases[0]?.tag_name ?? currentVersion)
+	);
+	const hasNotes = $derived(
+		currentVersion !== null &&
+			dismissKey !== null &&
+			minorReleases.some((r) => r.body && r.body.trim().length > 0) &&
+			!isWhatsNewDismissed(dismissKey)
+	);
+
+	let WhatsNewModal = $state<typeof WhatsNewModalComponent | null>(null);
+	$effect(() => {
+		if (!hasNotes || WhatsNewModal) return;
+		let cancelled = false;
+		loadWhatsNewModal()
+			.then((component) => {
+				if (!cancelled) WhatsNewModal = component;
+			})
+			// Not shown this time; the next load tries again.
+			.catch(() => undefined);
+		return () => {
+			cancelled = true;
+		};
+	});
+
 	$effect(() => {
 		updateAvailable = updateCheckQuery.data?.update_available ?? false;
 	});
@@ -61,4 +99,6 @@
 	latestVersion={updateCheckQuery.data?.latest_version ?? null}
 	releaseUrl={updateCheckQuery.data?.latest_release?.html_url ?? null}
 />
-<WhatsNewModal {currentVersion} {buildDate} releases={minorReleases} />
+{#if WhatsNewModal && hasNotes && dismissKey}
+	<WhatsNewModal {currentVersion} releases={minorReleases} {dismissKey} />
+{/if}

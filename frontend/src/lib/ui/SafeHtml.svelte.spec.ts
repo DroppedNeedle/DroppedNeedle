@@ -98,7 +98,7 @@ describe('third-party HTML', () => {
 		await render(WhatsNewModal, {
 			props: {
 				currentVersion: 'v3.0.0',
-				buildDate: null,
+				dismissKey: 'v3.0.0',
 				releases: [
 					{
 						tag_name: 'v3.0.0',
