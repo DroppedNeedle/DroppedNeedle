@@ -1353,6 +1353,44 @@ async fn lists_filter_by_formats_and_minimum_tracks() {
     );
 }
 
+#[tokio::test]
+async fn track_page_includes_only_the_callers_requested_play_history() {
+    let fixture = sqlite_fixture().await;
+    seed(&fixture, "INSERT INTO auth_users (id, display_name, role, created_at) VALUES ('user-ada', 'Ada', 'user', 1);
+        INSERT INTO library_play_history (id, user_id, local_track_id, track_name, artist_name, played_at) VALUES
+        ('listen1', 'user-ada', 't1', 'First', 'Artist', 10000),
+        ('listen2', 'user-ada', 't1', 'First', 'Artist', 25000),
+        ('listen3', 'u1', 't2', 'Second', 'Artist', 40000)").await;
+    let auth = AuthRig::new("track-page-history").await;
+    let router = |caller| app(deps(&auth, fixture.runtime.db(), None), Some(caller));
+    let path = "/api/v3/library/tracks?formats=flac&include_play_stats=true";
+    let (status, plain) = get(router(ADA), "/api/v3/library/tracks").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(plain.get("play_stats").is_none());
+    for (caller, played, other, count, last) in [
+        (ADA, "t1", "t2", 2, 25.0),
+        (("u1", Role::User), "t2", "t1", 1, 40.0),
+    ] {
+        let (status, page) = get(router(caller), path).await;
+        assert_eq!(status, StatusCode::OK);
+        let stats = page["play_stats"].as_object().expect("play history");
+        assert_eq!(stats.len(), page["items"].as_array().expect("tracks").len());
+        assert_eq!(
+            stats[played],
+            serde_json::json!({"play_count":count, "last_played":last})
+        );
+        assert_eq!(
+            stats[other],
+            serde_json::json!({"play_count":0, "last_played":null})
+        );
+    }
+    let (_, first) = get(router(ADA), &format!("{path}&limit=1")).await;
+    let id = first["items"][0]["id"].as_str().expect("track id");
+    let stats = first["play_stats"].as_object().expect("play history");
+    assert_eq!(stats.len(), 1);
+    assert!(stats.contains_key(id));
+}
+
 /// The lists keep what the caller rated within a span of stars, at least
 /// or at most so many, and leave out what they did not rate or only
 /// someone else did; the track bound reads either way. Each list's total
