@@ -11,9 +11,11 @@ mod follows;
 mod play_marks;
 mod playlists;
 mod ratings;
+mod rotation;
 
 pub use follows::follow_status;
 pub(crate) use playlists::MAX_COVER_BYTES;
+pub(in crate::collections) use playlists::import_entry;
 pub use playlists::{SavedPlaylist, Visible};
 
 use super::state::CollectionsState;

@@ -1620,8 +1620,8 @@ async fn seeds_of(rig: &AuthRig, script: Arc<Script>) -> Vec<String> {
 /// on their own playlist (filed under the artist's MusicBrainz id, not its
 /// library id). One play is not enough, a one-star rating takes an artist
 /// back below the line, Various Artists never counts however often it is
-/// played or listed, and the Weekly Mix the app made for them is not their
-/// taste.
+/// played or listed, and the Weekly Mix and the lists on rotation the app
+/// made for them are not their taste.
 #[tokio::test]
 async fn local_seeds_come_heaviest_first() {
     let rig = AuthRig::new("discover-queue-local-seeds").await;
@@ -1667,8 +1667,11 @@ async fn local_seeds_come_heaviest_first() {
          VALUES ('user-1', '{followed}', '{followed}', 'Followed', 1, 1); \
          INSERT INTO catalog_playlists (id, name, created_at, updated_at, source_ref, user_id) \
          VALUES ('mix', 'Your Weekly Mix', 1, 1, 'personal-mix:user-1', 'user-1'), \
-         ('mine', 'Mine', 1, 1, NULL, 'user-1');"
+         ('mine', 'Mine', 1, 1, NULL, 'user-1'), ('rot', 'On repeat', 1, 1, NULL, 'user-1'); \
+         INSERT INTO catalog_rotation_lists (user_id, idea, playlist_id) \
+         VALUES ('user-1', 'on_repeat', 'rot');"
     ));
+    let rotated = mbid_of(8);
     let entry = |id: &str, list: &str, at: usize, artist: &str| {
         format!(
             "INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name, \
@@ -1678,6 +1681,7 @@ async fn local_seeds_come_heaviest_first() {
     };
     for n in 0..10 {
         rows.push_str(&entry(&format!("mix-{n}"), "mix", n, &mixed));
+        rows.push_str(&entry(&format!("rot-{n}"), "rot", n, &rotated));
         // The library's own Various Artists row, which has no MusicBrainz id.
         rows.push_str(&entry(
             &format!("va-{n}"),

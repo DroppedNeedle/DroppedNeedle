@@ -16,6 +16,7 @@ mod import;
 pub mod library_links;
 pub mod models;
 pub mod remote_import;
+pub mod rotation;
 pub mod service;
 pub(crate) mod sql;
 pub mod state;
@@ -77,4 +78,7 @@ pub fn routes() -> Routes<CollectionsState> {
         .user(routes!(list_recent_releases_handler))
         .user(routes!(unseen_count_handler))
         .user(routes!(mark_seen_handler))
+        .user(routes!(get_rotation_handler, set_rotation_handler))
+        .user(routes!(pin_rotation_handler))
+        .user(routes!(copy_rotation_handler))
 }

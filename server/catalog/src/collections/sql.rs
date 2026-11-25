@@ -13,6 +13,34 @@ use super::models::{AlbumPick, FiledKind, SourceAlbumKind};
 use droppedneedle_auth::listed_user;
 use droppedneedle_library::{copy_of_group, owns_group};
 
+/// The playlist over an alias is not a list on rotation: only the app's
+/// refresh writes those (`super::rotation`).
+macro_rules! not_rotation {
+    ($playlist:literal) => {
+        concat!(
+            "NOT EXISTS (SELECT 1 FROM catalog_rotation_lists rl WHERE rl.playlist_id = ",
+            $playlist,
+            ".id)"
+        )
+    };
+}
+
+/// The playlist over an alias is one the app made for its owner: the Weekly
+/// Mix or a list on rotation. Their songs are not the person's own choice.
+macro_rules! made_by_app {
+    ($playlist:literal) => {
+        concat!(
+            "(COALESCE(",
+            $playlist,
+            ".source_ref, '') LIKE 'personal-mix:%' OR NOT ",
+            $crate::collections::sql::not_rotation!($playlist),
+            ")"
+        )
+    };
+}
+
+pub(crate) use {made_by_app, not_rotation};
+
 droppedneedle_kernel::sql! {
     /// The caller may read the playlist: it is theirs, it is public, or it
     /// is shared with them.
@@ -22,10 +50,10 @@ droppedneedle_kernel::sql! {
     /// The playlist is the caller's.
     fragment OWNED = "p.user_id = ?1";
     /// The caller may change the playlist's songs: it is theirs, or it is
-    /// shared with them to edit.
-    fragment EDITABLE = "(COALESCE(p.user_id = ?1, 0) OR EXISTS (SELECT 1 \
+    /// shared with them to edit. A list on rotation is nobody's to change.
+    fragment EDITABLE = "((COALESCE(p.user_id = ?1, 0) OR EXISTS (SELECT 1 \
          FROM catalog_playlist_members m WHERE m.playlist_id = p.id AND m.user_id = ?1 \
-         AND m.can_edit = 1))";
+         AND m.can_edit = 1)) AND " + (not_rotation!("p")) + ")";
     /// One playlist with its aggregates, in `PlaylistRow`'s mapper order.
     /// The owner's name comes twice: as it reads to the owner, then only
     /// when they chose it, which is all anyone else may see.
@@ -43,11 +71,14 @@ droppedneedle_kernel::sql! {
          (SELECT m.can_edit FROM catalog_playlist_members m \
           WHERE m.playlist_id = p.id AND m.user_id = ?1), \
          EXISTS (SELECT 1 FROM catalog_playlist_members m WHERE m.playlist_id = p.id), \
-         CASE WHEN " + (listed_user!("u")) + " THEN u.display_name END";
-    /// The tables a playlist row is read from.
+         CASE WHEN " + (listed_user!("u")) + " THEN u.display_name END, \
+         r.idea, r.decade, r.pinned";
+    /// The tables a playlist row is read from. A list on rotation has its
+    /// row in `catalog_rotation_lists`.
     fragment PLAYLIST_FROM = " FROM catalog_playlists p \
          LEFT JOIN auth_users u ON u.id = p.user_id \
-         LEFT JOIN catalog_playlist_covers c ON c.playlist_id = p.id";
+         LEFT JOIN catalog_playlist_covers c ON c.playlist_id = p.id \
+         LEFT JOIN catalog_rotation_lists r ON r.playlist_id = p.id";
     /// The list order.
     fragment BY_NAME = " ORDER BY p.name COLLATE NOCASE, p.id";
     /// One entry, in `PlaylistTrack`'s mapper order.
@@ -58,8 +89,11 @@ droppedneedle_kernel::sql! {
 
     /// Every playlist, then whether the caller may read it. A private
     /// playlist with no owner is left out unless `?2`, an admin asking.
+    /// Another person's list on rotation is left out for everyone, even as
+    /// a private stub.
     pub(super) LIST_ALL = PLAYLIST_COLUMNS + ", " + READABLE + PLAYLIST_FROM
-        + " WHERE (p.user_id IS NOT NULL OR p.is_public != 0 OR ?2)" + BY_NAME;
+        + " WHERE (p.user_id IS NOT NULL OR p.is_public != 0 OR ?2) \
+         AND (r.playlist_id IS NULL OR p.user_id = ?1)" + BY_NAME;
     /// The playlists the caller may read.
     pub(super) LIST_READABLE = PLAYLIST_COLUMNS + PLAYLIST_FROM + " WHERE " + READABLE + BY_NAME;
     /// The first `?2` entry covers of each playlist the caller may read.
@@ -112,22 +146,28 @@ droppedneedle_kernel::sql! {
          JOIN catalog_playlists p ON p.id = t.playlist_id WHERE " + READABLE
         + " ORDER BY q.idx, t.playlist_id";
 
-    /// Whether playlist `?1` is user `?2`'s.
-    pub(super) OWNED_GUARD = "SELECT 1 FROM catalog_playlists WHERE id = ?1 AND user_id = ?2";
+    /// Whether playlist `?1` is user `?2`'s to change: theirs and not a
+    /// list on rotation.
+    pub(super) OWNED_GUARD = "SELECT 1 FROM catalog_playlists p WHERE p.id = ?1 \
+         AND p.user_id = ?2 AND " + (not_rotation!("p"));
     /// Whether user `?1` may change the songs of playlist `?2`.
     pub(super) EDIT_GUARD = "SELECT 1 FROM catalog_playlists p WHERE p.id = ?2 AND " + EDITABLE;
     /// Stamp playlist `?2` as changed at `?1`, milliseconds.
     pub(super) STAMP = "UPDATE catalog_playlists SET updated_at = ?1 WHERE id = ?2";
-    /// Stamp user `?3`'s playlist `?2` as changed at `?1`, milliseconds.
+    /// Stamp user `?3`'s playlist `?2` as changed at `?1`, milliseconds,
+    /// unless it is a list on rotation.
     pub(super) TOUCH = "UPDATE catalog_playlists SET updated_at = ?1 \
-         WHERE id = ?2 AND user_id = ?3";
+         WHERE id = ?2 AND user_id = ?3 AND " + (not_rotation!("catalog_playlists"));
     /// One empty private playlist made at `?3`, milliseconds.
     pub(super) INSERT_PLAYLIST = "INSERT INTO catalog_playlists (id, name, created_at, \
          updated_at, source_ref, user_id, is_public) VALUES (?1, ?2, ?3, ?3, ?4, ?5, 0)";
-    /// Rename user `?3`'s playlist `?2`.
-    pub(super) RENAME = "UPDATE catalog_playlists SET name = ?1 WHERE id = ?2 AND user_id = ?3";
-    /// Set the public flag of user `?3`'s playlist `?2`.
-    pub(super) SET_PUBLIC = "UPDATE catalog_playlists SET is_public = ?1 WHERE id = ?2 AND user_id = ?3";
+    /// Rename user `?3`'s playlist `?2`, unless it is a list on rotation.
+    pub(super) RENAME = "UPDATE catalog_playlists SET name = ?1 WHERE id = ?2 AND user_id = ?3 \
+         AND " + (not_rotation!("catalog_playlists"));
+    /// Set the public flag of user `?3`'s playlist `?2`, unless it is a
+    /// list on rotation.
+    pub(super) SET_PUBLIC = "UPDATE catalog_playlists SET is_public = ?1 \
+         WHERE id = ?2 AND user_id = ?3 AND " + (not_rotation!("catalog_playlists"));
     /// Delete user `?2`'s playlist `?1`; its entries and cover go with it.
     pub(super) DELETE_PLAYLIST = "DELETE FROM catalog_playlists WHERE id = ?1 AND user_id = ?2";
     /// Delete playlist `?1` if it has no owner; its entries and cover go

@@ -423,7 +423,7 @@ droppedneedle_kernel::sql! {
         recording_artist_mbid: Option<String>,
     }
     /// Every entry of a user's own playlists, leaving out the ones the app
-    /// makes for them (the Weekly Mix), with whether its stored artist id
+    /// makes for them (the Weekly Mix, lists on rotation), with whether its stored artist id
     /// names a library artist and that artist's MusicBrainz id.
     pub(super) SEED_PLAYLIST_ENTRIES = PLAYLIST_ENTRY_SELECT
         + ", EXISTS (SELECT 1 FROM local_artists la WHERE la.id = p.artist_id) AS local_artist, \
@@ -432,7 +432,7 @@ droppedneedle_kernel::sql! {
            AS local_artist_mbid \
          FROM catalog_playlists l JOIN catalog_playlist_tracks p ON p.playlist_id = l.id \
          WHERE l.user_id = ?1 \
-           AND (l.source_ref IS NULL OR l.source_ref NOT LIKE 'personal-mix:%')";
+           AND NOT " + (crate::collections::sql::made_by_app!("l"));
     pub(super) row SeedPlaylistEntry for [SEED_PLAYLIST_ENTRIES] {
         artist_id: Option<String>,
         artist_name: String,

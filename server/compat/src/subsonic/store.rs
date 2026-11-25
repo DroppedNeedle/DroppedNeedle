@@ -882,7 +882,7 @@ impl SubsonicStore {
             .map(|visible| PlaylistSummary {
                 record: record(visible),
                 is_owner: visible.is_owner,
-                can_edit: visible.is_owner || visible.row.shared_to_edit,
+                can_edit: visible.can_edit(),
                 owner_name: visible.row.owner_listed_name.clone().unwrap_or_default(),
                 song_count: visible.row.streamable_count as i64,
                 duration: visible.row.streamable_duration.round() as i64,
@@ -926,7 +926,7 @@ impl SubsonicStore {
             record: record(&visible),
             tracks,
             is_owner: visible.is_owner,
-            can_edit: visible.is_owner || visible.row.shared_to_edit,
+            can_edit: visible.can_edit(),
             owner_name: visible.row.owner_listed_name.clone().unwrap_or_default(),
         }))
     }

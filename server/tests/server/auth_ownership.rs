@@ -236,6 +236,20 @@ const PATH_ID_ROWS: &[(Owned, &str, &str, u16, u16)] = &[
     ),
     (
         Owned::Playlist,
+        "PUT",
+        "/api/v3/playlists/{playlist_id}/rotation",
+        404,
+        404,
+    ),
+    (
+        Owned::Playlist,
+        "POST",
+        "/api/v3/playlists/{playlist_id}/rotation/copy",
+        404,
+        404,
+    ),
+    (
+        Owned::Playlist,
         "GET",
         "/api/v3/playlists/{playlist_id}/members",
         404,
@@ -345,6 +359,20 @@ const PATH_ID_ROWS: &[(Owned, &str, &str, u16, u16)] = &[
         Owned::PublicPlaylist,
         "PATCH",
         "/api/v3/playlists/{playlist_id}/visibility",
+        403,
+        403,
+    ),
+    (
+        Owned::PublicPlaylist,
+        "PUT",
+        "/api/v3/playlists/{playlist_id}/rotation",
+        403,
+        403,
+    ),
+    (
+        Owned::PublicPlaylist,
+        "POST",
+        "/api/v3/playlists/{playlist_id}/rotation/copy",
         403,
         403,
     ),
@@ -1019,6 +1047,7 @@ fn body(method: &str, template: &str, ids: &Ids) -> Option<Value> {
         }
         ("PUT", "/api/v3/playlists/{playlist_id}/members") => Some(json!({"user_ids": []})),
         ("PUT", "/api/v3/playlists/{playlist_id}/sync") => Some(json!({"enabled": true})),
+        ("PUT", "/api/v3/playlists/{playlist_id}/rotation") => Some(json!({"pinned": true})),
         ("PATCH", "/api/v3/playlists/{playlist_id}/visibility") => {
             Some(json!({"is_public": id("visibility") != "public"}))
         }

@@ -212,12 +212,14 @@ impl CatalogSetup {
     }
 
     /// Start catalog's loops on `supervisor`: linking playlist entries to
-    /// the library as albums land.
+    /// the library as albums land, and queueing each active person's lists
+    /// on rotation.
     pub fn start_loops(
         &self,
         supervisor: &droppedneedle_kernel::jobs::Supervisor,
     ) -> Result<(), droppedneedle_kernel::jobs::AlreadyRunning> {
-        collections::library_links::start(&self.collections, supervisor)
+        collections::library_links::start(&self.collections, supervisor)?;
+        collections::rotation::job::start(&self.collections, supervisor)
     }
 }
 

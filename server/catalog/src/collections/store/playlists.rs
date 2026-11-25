@@ -28,6 +28,7 @@ use super::super::db::{CollectionsDb, StoreError};
 use super::super::entry_cover::entry_cover;
 use super::super::identify_job::{IDENTIFY, IdentifyJob, identify_key};
 use super::super::models::{AlbumPick, FiledKind, PlaylistMember, PlaylistTrack, SourceAlbumKind};
+use super::super::rotation::RotationIdea;
 use super::super::sql::{self, PlaylistExportRow};
 use droppedneedle_auth::users::roles::Admin;
 use droppedneedle_kernel::db::{DbError, fold_text};
@@ -77,6 +78,20 @@ pub struct PlaylistRow {
     pub has_members: bool,
     /// Up to four entry covers in position order.
     pub cover_urls: Vec<String>,
+    /// The list on rotation it is, when it is one.
+    pub rotation: Option<RotationMark>,
+}
+
+/// What makes a playlist a list on rotation: its row in
+/// `catalog_rotation_lists`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RotationMark {
+    /// The idea it is made from.
+    pub idea: RotationIdea,
+    /// The decade it shows, for the decade idea.
+    pub decade: Option<i32>,
+    /// True when its owner keeps it on rotation.
+    pub pinned: bool,
 }
 
 /// One row of the full list: a playlist the caller may read, or only the
@@ -423,6 +438,14 @@ fn playlist_from_row(row: &Row<'_>) -> rusqlite::Result<PlaylistRow> {
         has_members: row.get::<_, i64>(14)? != 0,
         owner_listed_name: row.get(15)?,
         cover_urls: Vec::new(),
+        rotation: match row.get::<_, Option<RotationIdea>>(16)? {
+            Some(idea) => Some(RotationMark {
+                idea,
+                decade: row.get(17)?,
+                pinned: row.get::<_, Option<bool>>(18)?.unwrap_or(false),
+            }),
+            None => None,
+        },
     })
 }
 
@@ -729,7 +752,7 @@ fn touch_editable(
 }
 
 /// Insert one empty playlist row made at `now`, milliseconds.
-fn insert_playlist(
+pub(in crate::collections) fn insert_playlist(
     tx: &Transaction,
     id: &str,
     name: &str,
@@ -766,7 +789,7 @@ fn write_order(tx: &Transaction, order: &[String]) -> rusqlite::Result<()> {
 
 /// Insert `entries` at `position` (clamped; None appends) and renumber.
 /// The caller has checked the playlist is the user's.
-fn insert_entries(
+pub(in crate::collections) fn insert_entries(
     tx: &Transaction,
     playlist_id: &str,
     position: Option<usize>,
@@ -1642,7 +1665,7 @@ impl VisiblePlaylists<'_> {
                 let mut stmt = conn.prepare(sql::LIST_ALL.text())?;
                 let mut listed = stmt
                     .query_map(params![user_id, with_private_strays], |row| {
-                        if row.get::<_, i64>(16)? != 0 {
+                        if row.get::<_, i64>(19)? != 0 {
                             Ok(Listed::Readable(playlist_from_row(row)?))
                         } else {
                             Ok(Listed::Hidden {

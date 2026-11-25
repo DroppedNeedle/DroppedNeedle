@@ -25464,6 +25464,100 @@
         ]
       }
     },
+    "/api/v3/me/rotation": {
+      "get": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "The caller's lists on rotation: the switch, when they next change and\nthe ideas waiting their turn.",
+        "operationId": "get_rotation_handler",
+        "responses": {
+          "200": {
+            "description": "Lists on rotation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RotationStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Turn the caller's lists on rotation on or off. Off deletes them.",
+        "operationId": "set_rotation_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RotationSwitchBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Lists on rotation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RotationStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/me/scrobble-preferences": {
       "get": {
         "tags": [
@@ -27411,6 +27505,184 @@
           },
           "404": {
             "description": "Unknown playlist id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/playlists/{playlist_id}/rotation": {
+      "put": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Keep one of the caller's lists on rotation on past Monday, or let it go.",
+        "operationId": "pin_rotation_handler",
+        "parameters": [
+          {
+            "name": "playlist_id",
+            "in": "path",
+            "description": "Playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RotationPinBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaylistSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown playlist id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not on rotation, or always on",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/playlists/{playlist_id}/rotation/copy": {
+      "post": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Save one of the caller's lists on rotation as an ordinary playlist.",
+        "operationId": "copy_rotation_handler",
+        "parameters": [
+          {
+            "name": "playlist_id",
+            "in": "path",
+            "description": "Playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The copy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaylistDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown playlist id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not on rotation",
             "content": {
               "application/json": {
                 "schema": {
@@ -63405,7 +63677,8 @@
           "is_shared",
           "can_edit",
           "can_delete",
-          "is_redacted"
+          "is_redacted",
+          "kind"
         ],
         "properties": {
           "can_delete": {
@@ -63456,6 +63729,10 @@
             "type": "boolean",
             "description": "True when the caller owns the playlist and shares it with chosen\npeople."
           },
+          "kind": {
+            "$ref": "#/components/schemas/PlaylistKind",
+            "description": "Where it came from."
+          },
           "name": {
             "type": "string",
             "description": "Display name."
@@ -63466,6 +63743,17 @@
               "null"
             ],
             "description": "Owner display name. To anyone but the owner, only a name the owner\nchose; None when they chose none or it has no owner."
+          },
+          "rotation": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RotationInfo"
+              }
+            ],
+            "description": "The list on rotation it is, when it is one."
           },
           "source_ref": {
             "type": [
@@ -63574,6 +63862,16 @@
             "description": "The filled playlist."
           }
         }
+      },
+      "PlaylistKind": {
+        "type": "string",
+        "description": "Where a playlist came from, as the server tells it.",
+        "enum": [
+          "own",
+          "imported",
+          "weekly_mix",
+          "rotation"
+        ]
       },
       "PlaylistListItem": {
         "oneOf": [
@@ -63853,7 +64151,8 @@
           "is_shared",
           "can_edit",
           "can_delete",
-          "is_redacted"
+          "is_redacted",
+          "kind"
         ],
         "properties": {
           "can_delete": {
@@ -63904,6 +64203,10 @@
             "type": "boolean",
             "description": "True when the caller owns the playlist and shares it with chosen\npeople."
           },
+          "kind": {
+            "$ref": "#/components/schemas/PlaylistKind",
+            "description": "Where it came from."
+          },
           "name": {
             "type": "string",
             "description": "Display name."
@@ -63914,6 +64217,17 @@
               "null"
             ],
             "description": "Owner display name. To anyone but the owner, only a name the owner\nchose; None when they chose none or it has no owner."
+          },
+          "rotation": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RotationInfo"
+              }
+            ],
+            "description": "The list on rotation it is, when it is one."
           },
           "source_ref": {
             "type": [
@@ -70103,6 +70417,123 @@
           "role": {
             "$ref": "#/components/schemas/Role",
             "description": "New role."
+          }
+        }
+      },
+      "RotationIdea": {
+        "type": "string",
+        "description": "One rule a list on rotation is made from: the values of\n`catalog_rotation_lists.idea`.",
+        "enum": [
+          "added_recently",
+          "on_repeat",
+          "forgotten_favourites",
+          "deep_cuts",
+          "five_stars",
+          "never_played",
+          "followed_artists",
+          "lossless",
+          "a_year_ago",
+          "decade",
+          "long_ones"
+        ]
+      },
+      "RotationInfo": {
+        "type": "object",
+        "description": "A list on rotation, as its owner reads it.",
+        "required": [
+          "idea",
+          "pinned",
+          "always_on",
+          "next_change_at"
+        ],
+        "properties": {
+          "always_on": {
+            "type": "boolean",
+            "description": "True for the ideas that stay on whenever they have songs."
+          },
+          "decade": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The decade it shows, for the decade idea: 1990 for the 1990s."
+          },
+          "idea": {
+            "$ref": "#/components/schemas/RotationIdea",
+            "description": "The idea it is made from."
+          },
+          "next_change_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the lists on rotation next change: Monday 00:00 UTC, epoch\nseconds.",
+            "minimum": 0
+          },
+          "pinned": {
+            "type": "boolean",
+            "description": "True when the owner keeps it on rotation past Monday."
+          }
+        }
+      },
+      "RotationPinBody": {
+        "type": "object",
+        "description": "Body that keeps a list on rotation past Monday, or lets it go.",
+        "required": [
+          "pinned"
+        ],
+        "properties": {
+          "pinned": {
+            "type": "boolean",
+            "description": "True keeps it on rotation."
+          }
+        }
+      },
+      "RotationStatus": {
+        "type": "object",
+        "description": "A person's lists on rotation, from their stored rows.",
+        "required": [
+          "enabled",
+          "next_change_at",
+          "waiting",
+          "thin"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "False when they turned lists on rotation off."
+          },
+          "next_change_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the lists next change: Monday 00:00 UTC, epoch seconds.",
+            "minimum": 0
+          },
+          "thin": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RotationIdea"
+            },
+            "description": "Ideas with some songs but too few to go live, in idea order."
+          },
+          "waiting": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RotationIdea"
+            },
+            "description": "Ideas with enough songs that are not live now, in idea order."
+          }
+        }
+      },
+      "RotationSwitchBody": {
+        "type": "object",
+        "description": "Body that turns lists on rotation on or off.",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "True turns them on."
           }
         }
       },

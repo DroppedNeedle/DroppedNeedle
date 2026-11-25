@@ -70,6 +70,7 @@ pub fn statement_files() -> Vec<StatementFile> {
     vec![
         crate::artwork::sql::registered(),
         crate::collections::sql::registered(),
+        crate::collections::rotation::sql::registered(),
         crate::concerts::sql::registered(),
         crate::discover::engine::sql::registered(),
         crate::discover::sql::registered(),

@@ -72,7 +72,7 @@ fn schema_rows(connection: &Connection) -> Vec<(String, String, String, Option<S
 fn fresh_migrate_marks_version_and_seeds() {
     let connection = migrated();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), latest_version());
-    assert_eq!(table_names(&connection).len(), 204);
+    assert_eq!(table_names(&connection).len(), 206);
     assert_eq!(
         scalar(
             &connection,
@@ -473,6 +473,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0175_loudness_edges.sql",
         "e378e687719d946eb8fb84c7565ce818754b56e4aeb2d484b9c3113e5e6abdde",
+    ),
+    (
+        "0176_rotation_lists.sql",
+        "50d97def1285f6d22d736f10aeac057815816ff725a2b13bef80d505325a1174",
     ),
 ];
 
@@ -4421,6 +4425,120 @@ fn artist_join_undo_upgrade_keeps_the_action_log() {
     );
 }
 
+/// 0176 adds the lists on rotation and their switch, empty, and changes
+/// nothing else. A person has one row an idea, an idea outside the list is
+/// refused, a playlist is one list at most and its delete leaves the row
+/// with no playlist, and an account's rows go with it.
+#[test]
+fn rotation_lists_upgrade_adds_two_empty_tables() {
+    let dir = ScratchDir::new("rotation-lists-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 176)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 175);
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, created_at)
+                 VALUES ('u1', 'One', 1), ('u2', 'Two', 1);
+             INSERT INTO catalog_playlists (id, name, created_at, updated_at, user_id)
+                 VALUES ('p1', 'Lossless', 1, 1, 'u1'), ('p2', 'Deep cuts', 1, 1, 'u2');",
+        )
+        .unwrap();
+    let before_schema = schema_rows(&connection);
+    let playlists = table_rows(&connection, "catalog_playlists", "rowid, *");
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON")
+        .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 176);
+    assert_eq!(
+        table_rows(&connection, "catalog_playlists", "rowid, *"),
+        playlists
+    );
+    let added = ["catalog_rotation_lists", "catalog_rotation_prefs"];
+    let mut after_schema = schema_rows(&connection);
+    for table in added {
+        let table_sql = after_schema
+            .iter()
+            .find(|(_, name, _, _)| name == table)
+            .and_then(|(_, _, _, sql)| sql.clone());
+        assert!(
+            table_sql
+                .as_deref()
+                .is_some_and(|sql| sql.ends_with("STRICT")),
+            "{table}: {table_sql:?}"
+        );
+        assert_eq!(
+            scalar(&connection, &format!("SELECT COUNT(*) FROM {table}")),
+            0,
+            "{table} starts empty"
+        );
+    }
+    after_schema.retain(|(_, _, table, _)| !added.contains(&table.as_str()));
+    assert_eq!(after_schema, before_schema, "nothing else changes");
+
+    connection
+        .execute_batch(
+            "INSERT INTO catalog_rotation_lists (user_id, idea, playlist_id, match_count,
+                 last_live_at, checked_at) VALUES ('u1', 'lossless', 'p1', 30, 5, 5);
+             INSERT INTO catalog_rotation_lists (user_id, idea, decade, match_count)
+                 VALUES ('u1', 'decade', 1990, 25);
+             INSERT INTO catalog_rotation_lists (user_id, idea, playlist_id)
+                 VALUES ('u2', 'deep_cuts', 'p2');
+             INSERT INTO catalog_rotation_prefs (user_id, enabled, updated_at)
+                 VALUES ('u2', 0, 1);",
+        )
+        .expect("lists and a switch are stored");
+    for refused in [
+        "INSERT INTO catalog_rotation_lists (user_id, idea) VALUES ('u1', 'lossless')",
+        "INSERT INTO catalog_rotation_lists (user_id, idea) VALUES ('u1', 'mood')",
+        "INSERT INTO catalog_rotation_lists (user_id, idea, playlist_id)
+             VALUES ('u1', 'five_stars', 'p1')",
+        "INSERT INTO catalog_rotation_lists (user_id, idea) VALUES ('nobody', 'lossless')",
+        "UPDATE catalog_rotation_lists SET decade = 1995 WHERE idea = 'decade'",
+        "UPDATE catalog_rotation_lists SET pinned = 2",
+        "UPDATE catalog_rotation_prefs SET enabled = 2",
+    ] {
+        assert!(connection.execute_batch(refused).is_err(), "{refused}");
+    }
+    connection
+        .execute("DELETE FROM catalog_playlists WHERE id = 'p1'", [])
+        .unwrap();
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT idea || ' ' || COALESCE(playlist_id, '-') || ' ' || last_live_at
+                 FROM catalog_rotation_lists WHERE user_id = 'u1' AND idea = 'lossless'",
+            []
+        ),
+        ["lossless - 5"],
+        "a deleted list keeps its row and when it was live"
+    );
+    connection
+        .execute("DELETE FROM auth_users WHERE id = 'u2'", [])
+        .unwrap();
+    for table in added {
+        assert_eq!(
+            scalar(
+                &connection,
+                &format!("SELECT COUNT(*) FROM {table} WHERE user_id = 'u2'")
+            ),
+            0,
+            "{table}: an account's rows go with it"
+        );
+    }
+}
+
 /// Every foreign key and what deleting its parent does. A rebuild that
 /// drops or changes a key's action, or adds a key, fails here: the list
 /// changes in the same commit, on purpose.
@@ -4471,6 +4589,9 @@ const FOREIGN_KEYS: &[(&str, &str, &str, &str)] = &[
     ("catalog_playlist_source_songs", "playlist_id", "catalog_playlists", "CASCADE"),
     ("catalog_playlist_tracks", "playlist_id", "catalog_playlists", "CASCADE"),
     ("catalog_playlists", "user_id", "auth_users", "CASCADE"),
+    ("catalog_rotation_lists", "playlist_id", "catalog_playlists", "SET NULL"),
+    ("catalog_rotation_lists", "user_id", "auth_users", "CASCADE"),
+    ("catalog_rotation_prefs", "user_id", "auth_users", "CASCADE"),
     ("catalog_taste_artists", "user_id", "auth_users", "CASCADE"),
     ("catalog_taste_builds", "user_id", "auth_users", "CASCADE"),
     ("catalog_taste_groups", "user_id", "auth_users", "CASCADE"),
@@ -5036,6 +5157,7 @@ fn state_columns() -> Vec<StateColumn> {
     use droppedneedle_auth::session::store::SessionKind;
     use droppedneedle_auth::users::roles::Role;
     use droppedneedle_catalog::collections::models::{AlbumPick, FiledKind, SourceAlbumKind};
+    use droppedneedle_catalog::collections::rotation::RotationIdea;
     use droppedneedle_catalog::collections::store::favorites::FavoriteKind;
     use droppedneedle_catalog::collections::store::ratings::RatedKind;
     use droppedneedle_catalog::concerts::matching::{Confidence, TmBasis};
@@ -5154,6 +5276,7 @@ fn state_columns() -> Vec<StateColumn> {
         state("catalog_playlist_source_songs", "album_kind", &SourceAlbumKind::ALL, SourceAlbumKind::as_str),
         state("catalog_playlist_source_songs", "album_pick", &AlbumPick::ALL, AlbumPick::as_str),
         state("catalog_playlist_source_songs", "filed_kind", &FiledKind::ALL, FiledKind::as_str),
+        state("catalog_rotation_lists", "idea", &RotationIdea::ALL, RotationIdea::as_str),
         state("catalog_taste_groups", "trend", &Trend::ALL, Trend::as_str),
         state("catalog_user_favorites", "item_kind", &FavoriteKind::ALL, FavoriteKind::as_str),
         state("catalog_user_ratings", "item_kind", &RatedKind::ALL, RatedKind::as_str),
@@ -5724,9 +5847,18 @@ fn every_registered_statement_prepares() {
 /// library: it reads every tagged file to find the groups' owners.
 /// The playlist import's one read: every live track once, to build the index
 /// it matches the file's entries against, on a request a person started.
+/// The lists on rotation's reads by a fact of every track (the newest, the
+/// unplayed, the lossless, the long, one decade's and the decades' counts),
+/// once a day for each active person, in the background.
 /// The support bundle's counts, which count every track once when an admin
 /// downloads it.
 const TRACK_WALKS: &[&str] = &[
+    "droppedneedle_catalog::collections::rotation::sql::ADDED_RECENTLY",
+    "droppedneedle_catalog::collections::rotation::sql::NEVER_PLAYED",
+    "droppedneedle_catalog::collections::rotation::sql::LOSSLESS",
+    "droppedneedle_catalog::collections::rotation::sql::LONG_ONES",
+    "droppedneedle_catalog::collections::rotation::sql::DECADE",
+    "droppedneedle_catalog::collections::rotation::sql::DECADE_SONGS",
     "droppedneedle_library::scan::sql::ALBUM_TRACKS",
     "droppedneedle_library::corrections::sql::CANDIDATE_ALBUMS",
     "droppedneedle_library::corrections::sql::CANDIDATES",

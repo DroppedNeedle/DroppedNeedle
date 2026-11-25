@@ -669,6 +669,12 @@ pub(crate) async fn build_on(
             droppedneedle_catalog::collections::identify_job::SPEC,
             acquire.playlist_identify_jobs.clone(),
         )
+        .with(
+            droppedneedle_catalog::collections::rotation::job::SPEC,
+            droppedneedle_catalog::collections::rotation::job::RefreshJobs::new(
+                catalog_setup.collections.clone(),
+            ),
+        )
         .with(library_removal::SPEC, album_cleanup);
     let jobs = JobsSetup::build(
         p,

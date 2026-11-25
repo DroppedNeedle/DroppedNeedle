@@ -26,8 +26,8 @@ use super::{
         PlaylistDetail, PlaylistListResponse, PlaylistSummary, PlaylistTrack, RatingLookupBody,
         RatingLookupResponse, RatingStatusResponse, RecentReleasesQuery, RemoveTracksBody,
         RemoveTracksResponse, ReorderBody, ReorderResponse, ResolveSourcesResponse,
-        SetFavoriteBody, SetRatingBody, StatusResponse, UnseenCountResponse, UpdatePlaylistBody,
-        UpdateTrackBody, VisibilityBody,
+        RotationPinBody, RotationStatus, RotationSwitchBody, SetFavoriteBody, SetRatingBody,
+        StatusResponse, UnseenCountResponse, UpdatePlaylistBody, UpdateTrackBody, VisibilityBody,
     },
     service::CollectionsService,
     state::CollectionsState,
@@ -838,4 +838,104 @@ pub async fn mark_seen_handler(
             .mark_seen(caller.user_id())
             .await?,
     ))
+}
+
+/// The caller's lists on rotation: the switch, when they next change and
+/// the ideas waiting their turn.
+#[utoipa::path(
+    get,
+    path = "/api/v3/me/rotation",
+    tag = "collections",
+    responses(
+        (status = 200, description = "Lists on rotation", body = RotationStatus),
+        (status = 401, description = "Not authenticated"),
+    )
+)]
+pub async fn get_rotation_handler(
+    State(state): State<CollectionsState>,
+    User(caller): User,
+) -> HttpResult<Json<RotationStatus>> {
+    Ok(Json(
+        CollectionsService::new(&state)
+            .rotation_status(caller.user_id())
+            .await?,
+    ))
+}
+
+/// Turn the caller's lists on rotation on or off. Off deletes them.
+#[utoipa::path(
+    put,
+    path = "/api/v3/me/rotation",
+    tag = "collections",
+    request_body = RotationSwitchBody,
+    responses(
+        (status = 200, description = "Lists on rotation", body = RotationStatus),
+        (status = 400, description = "Bad request body"),
+        (status = 401, description = "Not authenticated"),
+    )
+)]
+pub async fn set_rotation_handler(
+    State(state): State<CollectionsState>,
+    User(caller): User,
+    ValidJson(body): ValidJson<RotationSwitchBody>,
+) -> HttpResult<Json<RotationStatus>> {
+    Ok(Json(
+        CollectionsService::new(&state)
+            .set_rotation(caller.user_id(), body.enabled)
+            .await?,
+    ))
+}
+
+/// Keep one of the caller's lists on rotation on past Monday, or let it go.
+#[utoipa::path(
+    put,
+    path = "/api/v3/playlists/{playlist_id}/rotation",
+    tag = "collections",
+    params(("playlist_id" = String, Path, description = "Playlist id")),
+    request_body = RotationPinBody,
+    responses(
+        (status = 200, description = "Updated summary", body = PlaylistSummary),
+        (status = 400, description = "Bad request body"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Owner only"),
+        (status = 404, description = "Unknown playlist id"),
+        (status = 409, description = "Not on rotation, or always on"),
+    )
+)]
+pub async fn pin_rotation_handler(
+    State(state): State<CollectionsState>,
+    User(caller): User,
+    Path(playlist_id): Path<String>,
+    ValidJson(body): ValidJson<RotationPinBody>,
+) -> HttpResult<Json<PlaylistSummary>> {
+    Ok(Json(
+        CollectionsService::new(&state)
+            .pin_rotation(caller.user_id(), &playlist_id, body.pinned)
+            .await?,
+    ))
+}
+
+/// Save one of the caller's lists on rotation as an ordinary playlist.
+#[utoipa::path(
+    post,
+    path = "/api/v3/playlists/{playlist_id}/rotation/copy",
+    tag = "collections",
+    params(("playlist_id" = String, Path, description = "Playlist id")),
+    responses(
+        (status = 201, description = "The copy", body = PlaylistDetail),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Owner only"),
+        (status = 404, description = "Unknown playlist id"),
+        (status = 409, description = "Not on rotation"),
+    )
+)]
+pub async fn copy_rotation_handler(
+    State(state): State<CollectionsState>,
+    User(caller): User,
+    Path(playlist_id): Path<String>,
+) -> HttpResult<(StatusCode, Json<PlaylistDetail>)> {
+    let copy = CollectionsService::new(&state)
+        .copy_rotation(caller.user_id(), &playlist_id)
+        .await?;
+    Ok((StatusCode::CREATED, Json(copy)))
 }

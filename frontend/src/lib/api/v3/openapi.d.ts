@@ -6579,6 +6579,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/me/rotation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The caller's lists on rotation: the switch, when they next change and
+         *     the ideas waiting their turn.
+         */
+        get: operations["get_rotation_handler"];
+        /** Turn the caller's lists on rotation on or off. Off deletes them. */
+        put: operations["set_rotation_handler"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/me/scrobble-preferences": {
         parameters: {
             query?: never;
@@ -6989,6 +7010,40 @@ export interface paths {
         put?: never;
         /** Resolve each track's known sources. */
         post: operations["resolve_sources_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/playlists/{playlist_id}/rotation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Keep one of the caller's lists on rotation on past Monday, or let it go. */
+        put: operations["pin_rotation_handler"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/playlists/{playlist_id}/rotation/copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Save one of the caller's lists on rotation as an ordinary playlist. */
+        post: operations["copy_rotation_handler"];
         delete?: never;
         options?: never;
         head?: never;
@@ -21775,6 +21830,8 @@ export interface components {
              *     people.
              */
             is_shared: boolean;
+            /** @description Where it came from. */
+            kind: components["schemas"]["PlaylistKind"];
             /** @description Display name. */
             name: string;
             /**
@@ -21782,6 +21839,8 @@ export interface components {
              *     chose; None when they chose none or it has no owner.
              */
             owner_name?: string | null;
+            /** @description The list on rotation it is, when it is one. */
+            rotation?: null | components["schemas"]["RotationInfo"];
             /** @description Import provenance (`<source>:<id>`), when the playlist was imported. */
             source_ref?: string | null;
             /**
@@ -21821,6 +21880,11 @@ export interface components {
             /** @description The filled playlist. */
             playlist_id: string;
         };
+        /**
+         * @description Where a playlist came from, as the server tells it.
+         * @enum {string}
+         */
+        PlaylistKind: "own" | "imported" | "weekly_mix" | "rotation";
         /** @description One row of the playlist list: a full summary or a redacted stub. */
         PlaylistListItem: components["schemas"]["PlaylistSummary"] | components["schemas"]["RedactedPlaylist"];
         /** @description Playlist list answer. */
@@ -21977,6 +22041,8 @@ export interface components {
              *     people.
              */
             is_shared: boolean;
+            /** @description Where it came from. */
+            kind: components["schemas"]["PlaylistKind"];
             /** @description Display name. */
             name: string;
             /**
@@ -21984,6 +22050,8 @@ export interface components {
              *     chose; None when they chose none or it has no owner.
              */
             owner_name?: string | null;
+            /** @description The list on rotation it is, when it is one. */
+            rotation?: null | components["schemas"]["RotationInfo"];
             /** @description Import provenance (`<source>:<id>`), when the playlist was imported. */
             source_ref?: string | null;
             /**
@@ -24797,6 +24865,56 @@ export interface components {
         RoleUpdate: {
             /** @description New role. */
             role: components["schemas"]["Role"];
+        };
+        /**
+         * @description One rule a list on rotation is made from: the values of
+         *     `catalog_rotation_lists.idea`.
+         * @enum {string}
+         */
+        RotationIdea: "added_recently" | "on_repeat" | "forgotten_favourites" | "deep_cuts" | "five_stars" | "never_played" | "followed_artists" | "lossless" | "a_year_ago" | "decade" | "long_ones";
+        /** @description A list on rotation, as its owner reads it. */
+        RotationInfo: {
+            /** @description True for the ideas that stay on whenever they have songs. */
+            always_on: boolean;
+            /**
+             * Format: int32
+             * @description The decade it shows, for the decade idea: 1990 for the 1990s.
+             */
+            decade?: number | null;
+            /** @description The idea it is made from. */
+            idea: components["schemas"]["RotationIdea"];
+            /**
+             * Format: int64
+             * @description When the lists on rotation next change: Monday 00:00 UTC, epoch
+             *     seconds.
+             */
+            next_change_at: number;
+            /** @description True when the owner keeps it on rotation past Monday. */
+            pinned: boolean;
+        };
+        /** @description Body that keeps a list on rotation past Monday, or lets it go. */
+        RotationPinBody: {
+            /** @description True keeps it on rotation. */
+            pinned: boolean;
+        };
+        /** @description A person's lists on rotation, from their stored rows. */
+        RotationStatus: {
+            /** @description False when they turned lists on rotation off. */
+            enabled: boolean;
+            /**
+             * Format: int64
+             * @description When the lists next change: Monday 00:00 UTC, epoch seconds.
+             */
+            next_change_at: number;
+            /** @description Ideas with some songs but too few to go live, in idea order. */
+            thin: components["schemas"]["RotationIdea"][];
+            /** @description Ideas with enough songs that are not live now, in idea order. */
+            waiting: components["schemas"]["RotationIdea"][];
+        };
+        /** @description Body that turns lists on rotation on or off. */
+        RotationSwitchBody: {
+            /** @description True turns them on. */
+            enabled: boolean;
         };
         /** @description Run detail: the run, its scopes, and its discovered files. */
         RunDetailResponse: {
@@ -46263,6 +46381,77 @@ export interface operations {
             };
         };
     };
+    get_rotation_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Lists on rotation */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RotationStatus"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    set_rotation_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RotationSwitchBody"];
+            };
+        };
+        responses: {
+            /** @description Lists on rotation */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RotationStatus"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     get_scrobble_preferences: {
         parameters: {
             query?: never;
@@ -47689,6 +47878,137 @@ export interface operations {
             };
             /** @description Unknown playlist id */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    pin_rotation_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RotationPinBody"];
+            };
+        };
+        responses: {
+            /** @description Updated summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaylistSummary"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Owner only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unknown playlist id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not on rotation, or always on */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    copy_rotation_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The copy */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaylistDetail"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Owner only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unknown playlist id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not on rotation */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

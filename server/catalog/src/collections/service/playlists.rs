@@ -20,10 +20,11 @@ use crate::collections::import;
 use crate::collections::models::{
     AddTracksBody, AddTracksResponse, CheckTracksBody, CheckTracksResponse, CoverUploadBody,
     CreatePlaylistBody, ExportFormat, ImportPlaylistBody, ImportPlaylistResponse,
-    ImportUnmatchedReason as Reason, MembersResponse, PlaylistDetail, PlaylistListItem,
-    PlaylistListResponse, PlaylistSummary, PlaylistTrack, RedactedPlaylist, ResolveSourcesResponse,
-    TrackInput, UpdatePlaylistBody, UpdateTrackBody,
+    ImportUnmatchedReason as Reason, MembersResponse, PlaylistDetail, PlaylistKind,
+    PlaylistListItem, PlaylistListResponse, PlaylistSummary, PlaylistTrack, RedactedPlaylist,
+    ResolveSourcesResponse, RotationInfo, TrackInput, UpdatePlaylistBody, UpdateTrackBody,
 };
+use crate::collections::rotation;
 use crate::collections::sql::PlaylistExportRow;
 use crate::collections::store::PlaylistStore;
 pub use crate::collections::store::playlists::SavedPlaylist;
@@ -52,6 +53,9 @@ const SOURCE_TYPES: [(&str, &str); 8] = [
     ("plex", "plex"),
     ("youtube", "youtube"),
 ];
+
+/// The provenance of the Weekly Mix acquisition makes for each person.
+const WEEKLY_MIX_PREFIX: &str = "personal-mix:";
 
 /// Most tracks one membership check accepts.
 const MAX_CHECK_TRACKS: usize = 1000;
@@ -143,7 +147,47 @@ fn can_delete(owner_id: Option<&str>, user_id: &str, admin: bool) -> bool {
     owner_id.map_or(admin, |owner| owner == user_id)
 }
 
-fn summary(row: &PlaylistRow, user_id: &str, admin: bool) -> PlaylistSummary {
+/// Where a playlist came from: a list on rotation by its row, the Weekly
+/// Mix and imports by their provenance.
+fn kind(row: &PlaylistRow) -> PlaylistKind {
+    match (&row.rotation, row.source_ref.as_deref()) {
+        (Some(_), _) => PlaylistKind::Rotation,
+        (None, Some(source)) if source.starts_with(WEEKLY_MIX_PREFIX) => PlaylistKind::WeeklyMix,
+        (None, Some(_)) => PlaylistKind::Imported,
+        (None, None) => PlaylistKind::Own,
+    }
+}
+
+/// A list on rotation as its owner reads it at `now_ms`.
+fn rotation_info(row: &PlaylistRow, now_ms: i64) -> Option<RotationInfo> {
+    row.rotation.map(|mark| RotationInfo {
+        idea: mark.idea,
+        decade: mark.decade,
+        pinned: mark.pinned,
+        always_on: mark.idea.always_on(),
+        next_change_at: rotation::next_change_at(now_ms),
+    })
+}
+
+/// Whether the caller may change the playlist's songs: they own it or it
+/// is shared with them to edit, and it is not a list on rotation.
+fn can_edit(row: &PlaylistRow, user_id: &str) -> bool {
+    row.rotation.is_none() && (owns(row, user_id) || row.shared_to_edit)
+}
+
+impl Visible {
+    /// Whether the caller may change its songs.
+    pub fn can_edit(&self) -> bool {
+        self.row.rotation.is_none() && (self.is_owner || self.row.shared_to_edit)
+    }
+}
+
+pub(super) fn summary(
+    row: &PlaylistRow,
+    user_id: &str,
+    admin: bool,
+    now_ms: i64,
+) -> PlaylistSummary {
     PlaylistSummary {
         id: row.id.clone(),
         name: row.name.clone(),
@@ -157,7 +201,7 @@ fn summary(row: &PlaylistRow, user_id: &str, admin: bool) -> PlaylistSummary {
         is_public: row.is_public,
         is_owner: owns(row, user_id),
         is_shared: owns(row, user_id) && row.has_members,
-        can_edit: owns(row, user_id) || row.shared_to_edit,
+        can_edit: can_edit(row, user_id),
         can_delete: can_delete(row.owner_id.as_deref(), user_id, admin),
         owner_name: if owns(row, user_id) {
             row.owner_name.clone()
@@ -165,6 +209,8 @@ fn summary(row: &PlaylistRow, user_id: &str, admin: bool) -> PlaylistSummary {
             row.owner_listed_name.clone()
         },
         is_redacted: false,
+        kind: kind(row),
+        rotation: rotation_info(row, now_ms),
     }
 }
 
@@ -172,9 +218,10 @@ fn detail(
     row: &PlaylistRow,
     user_id: &str,
     admin: bool,
+    now_ms: i64,
     tracks: Vec<PlaylistTrack>,
 ) -> PlaylistDetail {
-    let summary = summary(row, user_id, admin);
+    let summary = summary(row, user_id, admin, now_ms);
     PlaylistDetail {
         id: summary.id,
         name: summary.name,
@@ -193,6 +240,15 @@ fn detail(
         can_delete: summary.can_delete,
         owner_name: summary.owner_name,
         is_redacted: false,
+        kind: summary.kind,
+        rotation: summary.rotation,
+    }
+}
+
+/// The 403 for a change to a list on rotation.
+pub(super) fn rotation_read_only() -> CollectionsError {
+    CollectionsError::Forbidden {
+        message: "Lists on rotation are made by the app and can't be changed".to_owned(),
     }
 }
 
@@ -281,7 +337,7 @@ fn kept_entry(entry: &import::ParsedEntry) -> NewEntry {
 /// The playlist entry for one matched library track: the file's names, its
 /// album's artwork when the album has some, its local id and its recording
 /// id, as a local track the web UI adds.
-fn import_entry(track: &PlayerTrack) -> NewEntry {
+pub(in crate::collections) fn import_entry(track: &PlayerTrack) -> NewEntry {
     let cover_url = track.cover_available.then(|| {
         let version = track
             .art_version
@@ -314,13 +370,13 @@ fn import_entry(track: &PlayerTrack) -> NewEntry {
 }
 
 impl CollectionsService<'_> {
-    fn playlists(&self) -> &PlaylistStore {
+    pub(super) fn playlists(&self) -> &PlaylistStore {
         &self.state.stores.playlists
     }
 
     /// Ok when the caller owns the playlist. Otherwise private plus
     /// non-owner (or gone) is 404, public plus non-owner is 403.
-    async fn require_owner(
+    pub(super) async fn require_owner(
         &self,
         user_id: &str,
         playlist_id: &str,
@@ -340,8 +396,9 @@ impl CollectionsService<'_> {
     }
 
     /// The outcome of an owner-scoped write. A write that found nothing
-    /// answers as [`Self::require_owner`] does, and 404 for the caller's
-    /// own playlist (the entry is gone).
+    /// answers as [`Self::require_owner`] does, 403 for the caller's own
+    /// list on rotation (nobody changes one), and 404 for another of their
+    /// own (the entry is gone).
     async fn found<T>(
         &self,
         user_id: &str,
@@ -352,6 +409,12 @@ impl CollectionsService<'_> {
             Written::Done(value) => Ok(value),
             Written::Missing => {
                 self.require_owner(user_id, playlist_id).await?;
+                if rotation::store::idea_of(&self.state.db, user_id, playlist_id)
+                    .await?
+                    .is_some()
+                {
+                    return Err(rotation_read_only());
+                }
                 Err(CollectionsError::NotFound)
             }
         }
@@ -419,6 +482,7 @@ impl CollectionsService<'_> {
         user_id: &str,
         admin: bool,
     ) -> Result<PlaylistListResponse, CollectionsError> {
+        let now = self.state.db.now_ms();
         let playlists = self
             .playlists()
             .visible_to(user_id)
@@ -426,7 +490,7 @@ impl CollectionsService<'_> {
             .await?
             .into_iter()
             .map(|listed| match listed {
-                Listed::Readable(row) => PlaylistListItem::Full(summary(&row, user_id, admin)),
+                Listed::Readable(row) => PlaylistListItem::Full(summary(&row, user_id, admin, now)),
                 Listed::Hidden {
                     id,
                     owner_id,
@@ -570,7 +634,7 @@ impl CollectionsService<'_> {
             .visible_to(user_id)
             .tracks(playlist_id)
             .await?;
-        Ok(detail(&row, user_id, admin, tracks))
+        Ok(detail(&row, user_id, admin, self.state.db.now_ms(), tracks))
     }
 
     /// The stub the caller's list shows for a playlist they may not read.
@@ -884,7 +948,7 @@ impl CollectionsService<'_> {
     ) -> Result<PlaylistSummary, CollectionsError> {
         self.set_public(user_id, playlist_id, public).await?;
         let row = self.readable_playlist(user_id, playlist_id).await?;
-        Ok(summary(&row, user_id, false))
+        Ok(summary(&row, user_id, false, self.state.db.now_ms()))
     }
 
     /// Flip visibility, reading nothing back.

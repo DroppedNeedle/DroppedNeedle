@@ -113,6 +113,35 @@ impl CollectionsDb {
             .map_err(StoreError::from)
     }
 
+    /// A background read that may run long, on the long pool.
+    pub async fn read_long<F, R>(&self, name: &'static str, op: F) -> Result<R, StoreError>
+    where
+        F: FnOnce(&Connection) -> Result<R, DbError> + Send + 'static,
+        R: Send + 'static,
+    {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            db.read_long(name, &droppedneedle_kernel::db::CancelFlag::never(), op)
+        })
+        .await
+        .map_err(|error| StoreError::Internal(format!("{name} task failed: {error}")))?
+        .map_err(StoreError::from)
+    }
+
+    /// One background write transaction, for work no request waits on.
+    pub async fn write_background<F, R>(&self, name: &'static str, op: F) -> Result<R, StoreError>
+    where
+        F: FnOnce(&Transaction) -> Result<R, StoreError> + Send + 'static,
+        R: Send + 'static,
+    {
+        self.db.write(Lane::Background, name, op).await
+    }
+
+    /// The database itself, for the reads other areas offer over it.
+    pub fn database(&self) -> &Db {
+        &self.db
+    }
+
     /// [`Self::write`] for a write that also queues a job, so its closure
     /// fails with the store's own error.
     pub async fn write_queueing<F, R>(&self, name: &'static str, op: F) -> Result<R, StoreError>

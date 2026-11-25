@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
+pub use super::rotation::RotationIdea;
 use super::state::AutoDownloadState;
 use super::store::ratings::RatedKind;
 
@@ -106,6 +107,63 @@ pub struct PlaylistTrack {
     pub recording_mbid: Option<String>,
 }
 
+/// Where a playlist came from, as the server tells it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaylistKind {
+    /// Made by a person.
+    Own,
+    /// Imported from another service or a file.
+    Imported,
+    /// The Weekly Mix the app makes.
+    WeeklyMix,
+    /// A list on rotation the app makes from the owner's library.
+    Rotation,
+}
+
+/// A list on rotation, as its owner reads it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct RotationInfo {
+    /// The idea it is made from.
+    pub idea: RotationIdea,
+    /// The decade it shows, for the decade idea: 1990 for the 1990s.
+    pub decade: Option<i32>,
+    /// True when the owner keeps it on rotation past Monday.
+    pub pinned: bool,
+    /// True for the ideas that stay on whenever they have songs.
+    pub always_on: bool,
+    /// When the lists on rotation next change: Monday 00:00 UTC, epoch
+    /// seconds.
+    pub next_change_at: u64,
+}
+
+/// A person's lists on rotation, from their stored rows.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RotationStatus {
+    /// False when they turned lists on rotation off.
+    pub enabled: bool,
+    /// When the lists next change: Monday 00:00 UTC, epoch seconds.
+    pub next_change_at: u64,
+    /// Ideas with enough songs that are not live now, in idea order.
+    pub waiting: Vec<RotationIdea>,
+    /// Ideas with some songs but too few to go live, in idea order.
+    pub thin: Vec<RotationIdea>,
+}
+
+/// Body that turns lists on rotation on or off.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RotationSwitchBody {
+    /// True turns them on.
+    pub enabled: bool,
+}
+
+/// Body that keeps a list on rotation past Monday, or lets it go.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RotationPinBody {
+    /// True keeps it on rotation.
+    pub pinned: bool,
+}
+
 /// Playlist summary for lists and visibility answers.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PlaylistSummary {
@@ -145,6 +203,10 @@ pub struct PlaylistSummary {
     pub owner_name: Option<String>,
     /// Always false on a full summary; true on redacted rows.
     pub is_redacted: bool,
+    /// Where it came from.
+    pub kind: PlaylistKind,
+    /// The list on rotation it is, when it is one.
+    pub rotation: Option<RotationInfo>,
 }
 
 /// Full playlist detail: summary fields plus tracks.
@@ -188,6 +250,10 @@ pub struct PlaylistDetail {
     pub owner_name: Option<String>,
     /// Always false on a full detail; true on redacted rows.
     pub is_redacted: bool,
+    /// Where it came from.
+    pub kind: PlaylistKind,
+    /// The list on rotation it is, when it is one.
+    pub rotation: Option<RotationInfo>,
 }
 
 /// A private playlist the caller may not read: existence, count, and owner

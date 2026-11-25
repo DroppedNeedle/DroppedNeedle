@@ -49,6 +49,8 @@ catalog_user_favorite_names kept: the names shown with those hearts
 catalog_user_ratings kept: ratings on artists, albums and songs
 catalog_playlists kept: their playlists
 catalog_playlist_members kept: playlists shared with them
+catalog_rotation_lists kept: their lists on rotation, built from plays and marks, which Forget keeps
+catalog_rotation_prefs kept: whether they want lists on rotation, a person's setting
 library_album_looks_wrong kept: albums they marked as looking wrong
 catalog_new_release_seen_marks kept: when they last looked at new releases, for the unseen count
 catalog_event_seen_marks kept: when they last looked at concerts, for the unseen count
