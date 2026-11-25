@@ -131,7 +131,7 @@
 					<TextField
 						label="Plex URL"
 						type="url"
-						placeholder="http://plex-server:32400"
+						placeholder="http://plex:32400"
 						bind:value={draft.plex_url}
 						error={section.fieldError('plex_url', 'Plex URL')}
 					/>

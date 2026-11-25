@@ -101,7 +101,7 @@
 					<TextField
 						label="Navidrome URL"
 						type="url"
-						placeholder="http://localhost:4533"
+						placeholder="http://navidrome:4533"
 						bind:value={draft.navidrome_url}
 						error={section.fieldError('navidrome_url', 'Navidrome URL')}
 					/>
