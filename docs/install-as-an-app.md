@@ -48,8 +48,8 @@ For a desktop player with more features, Feishin connects to DroppedNeedle as a 
 
 ## What to expect
 
-- **Lock screen and media keys:** play and pause work. The lock screen shows no song name or cover yet, and has no next or previous buttons.
-- **Screen locked on iPhone and iPad:** the sound stops while the screen is locked, though the song plays on silently and play and pause still work; the sound comes back when you unlock. Android keeps playing.
+- **Lock screen and media keys:** the lock screen and your device's media controls show the song, artist and cover, its time, play and pause, and next and previous. Media keys and headphone buttons work too.
+- **Screen locked on iPhone and iPad:** on iOS 17.5 or later (checked on iOS 27), music keeps playing with the screen locked and the next song starts by itself. Android keeps playing too.
 - **Changing the base path:** if an admin changes `BASE_PATH`, the installed app no longer opens the server. Remove it and install it again from the new address.
 - **No offline mode:** the app needs to reach your server, as the web UI does in a browser.
 

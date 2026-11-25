@@ -45,6 +45,7 @@
 	import { cancelPendingImages } from '$lib/media/lazyImage';
 	import { nowPlayingStore } from '$lib/features/player/state/nowPlayingSessions.svelte';
 	import { nowPlayingReporter } from '$lib/features/player/state/nowPlayingReporter.svelte';
+	import { startMediaSession } from '$lib/features/player/playback/mediaSession.svelte';
 	import { createNavigationProgressController } from '$lib/shell/navigationProgress';
 	import type { Component, Snippet } from 'svelte';
 	import { serverEvents } from '$lib/queries/events/dispatcher';
@@ -229,6 +230,8 @@
 	$effect(() => {
 		const sessionUserId = authStore.user?.id;
 		if (!sessionUserId) return;
+		// The lock screen's song and buttons, cleared at sign-out.
+		const stopMediaSession = untrack(() => startMediaSession(playerStore));
 		untrack(() => {
 			serverEvents.start({ userId: sessionUserId, isAdmin: authStore.isAdmin });
 			// presence is server-driven now (the backend polls upstream servers itself),
@@ -246,6 +249,7 @@
 			serverEvents.stop();
 			nowPlayingStore.stop();
 			nowPlayingReporter.stop();
+			stopMediaSession();
 			muxEventStream.disconnect();
 		};
 	});

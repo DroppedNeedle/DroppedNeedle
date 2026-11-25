@@ -236,6 +236,9 @@ function createPlayerStore() {
 	// The load whose next track was asked for, so each play preloads once;
 	// null lets the next position ask again.
 	let preloadFor: number | null = null;
+	// The listener paused this song and has not played it since: a reload
+	// after a failure waits for them to press play.
+	let listenerPaused = false;
 	// Each deck's level with "Even out volume" on, as set when its song loaded,
 	// and the level of the song playing, by its play, which a reload keeps.
 	const deckLevels: number[] = [];
@@ -503,6 +506,7 @@ function createPlayerStore() {
 		unplayable = {};
 		converting = false;
 		floorStopped = false;
+		listenerPaused = false;
 		session.clear();
 		storeSessionData(null);
 	}
@@ -590,6 +594,8 @@ function createPlayerStore() {
 			prevItem = currentSource ? (queue[currentIndex] ?? null) : null;
 		// A reload of the same track picks up where the listener was.
 		const resumeAt = kind === 'fresh' ? 0 : prevProgress;
+		if (kind === 'fresh') listenerPaused = false;
+		const stayPaused = (kind === 'retry' || kind === 'fallback') && listenerPaused;
 		transition.reset();
 		currentSource = null;
 		if (kind === 'fresh') {
@@ -665,7 +671,7 @@ function createPlayerStore() {
 			if (!isCurrent(gen)) return;
 			currentLevel = { playId, factor };
 			levelDeck(source, factor);
-			if (activeItem.sourceType !== 'youtube') {
+			if (activeItem.sourceType !== 'youtube' && !stayPaused) {
 				source.play();
 			}
 			await loadPromise;
@@ -673,7 +679,9 @@ function createPlayerStore() {
 				source.seekTo(resumeAt);
 				progress = resumeAt;
 			}
-			if (isCurrent(gen) && activeItem.sourceType === 'youtube') {
+			if (isCurrent(gen) && stayPaused) {
+				playbackState = 'paused';
+			} else if (isCurrent(gen) && activeItem.sourceType === 'youtube') {
 				source.play();
 			}
 		} catch (e) {
@@ -893,11 +901,13 @@ function createPlayerStore() {
 			if (!isCurrent(gen)) return;
 			playbackState = state;
 			if (state === 'playing') {
+				listenerPaused = false;
 				floorStopped = false;
 				recovery.failed = [];
 				session.playing();
 			}
 			if (state === 'paused') {
+				listenerPaused = true;
 				session.paused(progress);
 				transition.interrupt();
 			}
@@ -1328,11 +1338,13 @@ function createPlayerStore() {
 		},
 
 		play(): void {
+			listenerPaused = false;
 			void resumeAudioEngine();
 			currentSource?.play();
 		},
 
 		pause(): void {
+			listenerPaused = true;
 			currentSource?.pause();
 			transition.interrupt();
 			session.paused(progress);
@@ -1340,6 +1352,7 @@ function createPlayerStore() {
 		},
 
 		togglePlay(): void {
+			listenerPaused = isPlaying;
 			if (isPlaying) {
 				currentSource?.pause();
 				transition.interrupt();
@@ -1405,6 +1418,8 @@ function createPlayerStore() {
 			const gen = beginLoad('loading');
 			playEnd = 'stopped';
 			playId++;
+			// A restored song waits for play, as one the listener paused.
+			listenerPaused = true;
 
 			void (async () => {
 				try {

@@ -9,6 +9,7 @@ const hoisted = vi.hoisted(() => {
 		currentTime: 0,
 		duration: 180,
 		ended: false,
+		paused: true,
 		error: null as MediaError | null,
 		play: vi.fn(() => Promise.resolve()),
 		pause: vi.fn(),
@@ -36,6 +37,7 @@ const hoisted = vi.hoisted(() => {
 		audio.currentTime = 0;
 		audio.duration = 180;
 		audio.ended = false;
+		audio.paused = true;
 		audio.error = null;
 		audio.play.mockReset();
 		audio.play.mockImplementation(() => Promise.resolve());
@@ -166,5 +168,37 @@ describe('NativeAudioSource', () => {
 		await Promise.resolve();
 		expect(audioSession.type).toBe('playback');
 		vi.unstubAllGlobals();
+	});
+
+	it('never counts a paused deck as stalled, so nothing plays it again', async () => {
+		fresh();
+		vi.useFakeTimers();
+		const source = new NativeAudioSource('local', { deck, url: '/a.mp3', seekable: true });
+		const onError = vi.fn();
+		source.onError(onError);
+		const loadPromise = source.load();
+		hoisted.dispatch('canplay');
+		await loadPromise;
+		source.play();
+		hoisted.audio.paused = false;
+		hoisted.dispatch('playing');
+
+		// Paused while waiting for data, then iOS stops fetching the paused stream.
+		hoisted.dispatch('waiting');
+		hoisted.audio.paused = true;
+		hoisted.dispatch('pause');
+		hoisted.dispatch('stalled');
+		vi.advanceTimersByTime(60_000);
+
+		expect(onError).not.toHaveBeenCalled();
+		expect(hoisted.audio.play).toHaveBeenCalledTimes(1);
+
+		// Playing again and starved of data for 15 seconds is a stall.
+		hoisted.audio.paused = false;
+		hoisted.dispatch('playing');
+		hoisted.dispatch('waiting');
+		vi.advanceTimersByTime(15_000);
+		expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'NETWORK_STALL' }));
+		vi.useRealTimers();
 	});
 });

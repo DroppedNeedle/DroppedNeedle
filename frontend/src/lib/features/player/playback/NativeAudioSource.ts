@@ -112,6 +112,8 @@ export class NativeAudioSource implements PlaybackSource {
 			};
 
 			const onPause = () => {
+				// A paused deck waits for its listener: data it stops fetching is not a stall.
+				this.clearStallTimeout();
 				if (this.audio.ended) return;
 				this.emitStateChange('paused');
 			};
@@ -326,11 +328,12 @@ export class NativeAudioSource implements PlaybackSource {
 	}
 
 	private startStallTimeout(): void {
-		// A preloaded deck waits for its turn; it has not stalled.
-		if (!this.started) return;
+		// A preloaded deck waits for its turn and a paused one for its listener;
+		// neither has stalled, and a stall's retry would play it.
+		if (!this.started || this.audio.paused) return;
 		this.clearStallTimeout();
 		this.stallTimeoutHandle = setTimeout(() => {
-			if (this.destroyed) return;
+			if (this.destroyed || this.audio.paused) return;
 			this.emitError('NETWORK_STALL', `Playback stalled for ${STALL_TIMEOUT_MS}ms`);
 			this.emitStateChange('error');
 		}, STALL_TIMEOUT_MS);

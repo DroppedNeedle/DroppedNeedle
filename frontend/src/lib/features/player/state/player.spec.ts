@@ -840,6 +840,30 @@ describe('track failure reporting', () => {
 		expect(playerStore.progress).toBe(95);
 	});
 
+	it('reloads a paused track that failed without playing it', async () => {
+		playerStore.playQueue(singleSourceItems(2));
+		await vi.advanceTimersByTimeAsync(0);
+		capturedStateCallbacks.forEach((cb) => cb('playing'));
+		capturedProgressCallbacks.forEach((cb) => cb(95, 600));
+		playerStore.pause();
+		capturedStateCallbacks.forEach((cb) => cb('paused'));
+
+		capturedStateCallbacks.forEach((cb) => cb('error'));
+		fireCurrentTrackError();
+		await vi.advanceTimersByTimeAsync(0);
+
+		const reloaded = vi.mocked(createPlaybackSource).mock.results.at(-1)?.value;
+		expect(vi.mocked(createPlaybackSource)).toHaveBeenCalledTimes(2);
+		expect(reloaded.load).toHaveBeenCalled();
+		expect(reloaded.seekTo).toHaveBeenCalledWith(95);
+		expect(reloaded.play).not.toHaveBeenCalled();
+		expect(playerStore.playbackState).toBe('paused');
+
+		// Play resumes it.
+		playerStore.play();
+		expect(reloaded.play).toHaveBeenCalledTimes(1);
+	});
+
 	function playFor(seconds: number): void {
 		for (let t = 1; t <= seconds; t++) {
 			capturedProgressCallbacks.forEach((cb) => cb(t, 600));
