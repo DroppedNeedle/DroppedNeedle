@@ -3,7 +3,8 @@
 	A solid surface with an edge and icon in the toast's tone; the words carry
 	the meaning, never the colour alone. A toast may lead with bold words and
 	carry up to four buttons: its action, then a question and its choices,
-	which wrap to a second row when they do not fit.
+	which wrap to a second row when they do not fit. An error's ref is shown in a
+	box to select, with Copy where the page has a clipboard.
 -->
 <script lang="ts">
 	import { Check, Info, TriangleAlert, X } from 'lucide-svelte';
@@ -32,12 +33,21 @@
 		toastStore.hide();
 		void run();
 	}
+
+	// Plain-http pages have no clipboard; the ref stays selectable there.
+	const canCopy = typeof navigator !== 'undefined' && !!navigator.clipboard?.writeText;
+
+	function copyRef(ref: string) {
+		// A refused write leaves the ref selectable in the toast.
+		void navigator.clipboard.writeText(ref).catch(() => undefined);
+	}
 </script>
 
 {#if $toastStore}
 	{@const tone: string = $toastStore.type}
 	{@const look = tones[tone] ?? tones.info}
 	{@const choices = $toastStore.choices}
+	{@const ref = $toastStore.ref}
 	<div
 		class="droppedneedle-toast fixed left-1/2 z-50 -translate-x-1/2"
 		class:droppedneedle-toast--player={abovePlayer}
@@ -60,6 +70,19 @@
 					{#if $toastStore.title}<strong>{$toastStore.title}</strong>{/if}
 					{$toastStore.message}
 				</span>
+				{#if ref}
+					<div class="flex w-full flex-wrap items-center gap-2">
+						<span class="text-sm text-muted">Ref</span>
+						<span
+							class="rounded border border-line px-2 py-0.5 font-mono text-sm font-semibold break-all select-all"
+							>{ref}</span
+						>
+						{#if canCopy}
+							<Button variant="outline" size="xs" onclick={() => copyRef(ref)}>Copy</Button>
+						{/if}
+					</div>
+					<p class="w-full text-xs text-muted">Give this ref to your admin.</p>
+				{/if}
 				{#if $toastStore.action || choices}
 					<div class="flex flex-wrap items-center gap-2">
 						{#if $toastStore.action}

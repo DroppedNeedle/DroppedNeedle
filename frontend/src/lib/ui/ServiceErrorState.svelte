@@ -14,6 +14,14 @@
 
 	let { error, what, onretry }: Props = $props();
 	const view = $derived(describeServiceError(error, what));
+
+	// Plain-http pages have no clipboard; the ref stays selectable there.
+	const canCopy = typeof navigator !== 'undefined' && !!navigator.clipboard?.writeText;
+
+	function copyRef(ref: string) {
+		// A refused write leaves the ref selectable.
+		void navigator.clipboard.writeText(ref).catch(() => undefined);
+	}
 </script>
 
 <div class="mt-16 flex flex-col items-center justify-center px-4 text-center" role="status">
@@ -28,6 +36,20 @@
 	{/if}
 	<h2 class="text-lg font-semibold">{view.title}</h2>
 	<p class="mt-1 max-w-md text-muted">{view.message}</p>
+	{#if view.ref}
+		{@const ref = view.ref}
+		<div class="mt-3 flex flex-wrap items-center justify-center gap-2">
+			<span class="text-sm text-muted">Ref</span>
+			<span
+				class="rounded border border-line px-2 py-0.5 font-mono text-sm font-semibold break-all select-all"
+				>{ref}</span
+			>
+			{#if canCopy}
+				<Button variant="outline" size="xs" onclick={() => copyRef(ref)}>Copy</Button>
+			{/if}
+		</div>
+		<p class="mt-1 text-sm text-muted">Give this ref to your admin.</p>
+	{/if}
 	<div class="mt-4 flex gap-2">
 		{#if view.settingsHref && authStore.isAdmin}
 			<Button variant="primary" href={withBasePath(view.settingsHref)}>Open settings</Button>

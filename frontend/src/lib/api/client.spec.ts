@@ -178,6 +178,47 @@ describe('api client', () => {
 				expect((e as ApiError).message).toBe('Internal Server Error');
 			}
 		});
+
+		it('keeps an internal error id and quotes its short ref in the message', async () => {
+			const errorId = '4f1c2a9e-7d3b-4c1a-9e2f-0123456789ab';
+			mockGlobalFetch.mockResolvedValue(
+				errorResponse(500, {
+					error: {
+						code: 'INTERNAL_ERROR',
+						message: 'Internal server error',
+						details: { error_id: errorId }
+					}
+				})
+			);
+
+			const error = await api.v3.GET(HEALTH).catch((e: unknown) => e);
+
+			expect(error).toBeInstanceOf(ApiError);
+			expect(error).toMatchObject({
+				message: 'Internal server error (ref 4f1c2a9e)',
+				errorRef: errorId
+			});
+		});
+
+		it('leaves a busy answer as it was, with no ref', async () => {
+			mockGlobalFetch.mockResolvedValue(
+				errorResponse(503, {
+					error: {
+						code: 'SERVER_BUSY',
+						message: 'The server is busy. Try again in a moment.',
+						details: { error_id: '4f1c2a9e-7d3b-4c1a-9e2f-0123456789ab' }
+					}
+				})
+			);
+
+			const error = await api.v3.GET(HEALTH).catch((e: unknown) => e);
+
+			expect(error).toBeInstanceOf(ApiError);
+			expect(error).toMatchObject({
+				message: 'The server is busy. Try again in a moment.',
+				errorRef: null
+			});
+		});
 	});
 
 	describe('transport failures', () => {

@@ -31,3 +31,14 @@ it('reads a not-configured answer as not set up, and names a service that is dow
 		expect(view.canRetry).toBe(true);
 	}
 });
+
+it("shows a server error's ref apart from its message", () => {
+	const error = new ApiError(500, 'Internal server error (ref 4f1c2a9e)', 'INTERNAL_ERROR', {
+		error_id: '4f1c2a9e-7d3b-4c1a-9e2f-0123456789ab'
+	});
+	const view = describeServiceError(error, 'Home');
+
+	expect(view.kind).toBe('failed');
+	expect(view.message).toBe('Internal server error');
+	expect(view.ref).toBe('4f1c2a9e');
+});

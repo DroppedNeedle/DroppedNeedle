@@ -1,4 +1,9 @@
 import { writable } from 'svelte/store';
+import { splitErrorRef } from '$lib/api/errors';
+
+const TOAST_MS = 3000;
+/** Long enough to read and copy an error's ref. */
+const REF_TOAST_MS = 10000;
 
 /** One button on a toast. The toast closes when it runs. */
 export interface ToastAction {
@@ -19,6 +24,8 @@ interface Toast {
 	 * in "Undo, or was it: Know it already, Not now".
 	 */
 	choices?: { ask: string; actions: ToastAction[] };
+	/** The ref an error message ends with; the store takes it out of the message. */
+	ref?: string;
 }
 
 function createToastStore() {
@@ -31,12 +38,17 @@ function createToastStore() {
 	}
 
 	function show(toast: Toast): void {
+		const { text, ref } =
+			toast.type === 'error' ? splitErrorRef(toast.message) : { text: toast.message, ref: null };
+		const duration = ref
+			? Math.max(toast.duration ?? 0, REF_TOAST_MS)
+			: (toast.duration ?? TOAST_MS);
 		clearTimer();
-		set(toast);
+		set({ ...toast, message: text, ref: ref ?? undefined });
 		timer = setTimeout(() => {
 			timer = null;
 			set(null);
-		}, toast.duration ?? 3000);
+		}, duration);
 	}
 
 	return {

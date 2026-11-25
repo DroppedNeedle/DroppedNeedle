@@ -1,4 +1,4 @@
-import { ApiError, TransportError } from '$lib/api/errors';
+import { ApiError, splitErrorRef, TransportError } from '$lib/api/errors';
 
 /** How a page explains a failed read: one plain reason and what to do. */
 export interface ServiceErrorView {
@@ -10,6 +10,8 @@ export interface ServiceErrorView {
 	canRetry: boolean;
 	/** Where the person can fix it, when an admin setting is the cause. */
 	settingsHref?: string;
+	/** The ref a failed request answers with, shown apart from the message. */
+	ref?: string;
 }
 
 /**
@@ -142,10 +144,12 @@ export function describeServiceError(error: unknown, what: string): ServiceError
 			};
 		}
 	}
+	const { text, ref } = splitErrorRef(serverMessage);
 	return {
 		kind: 'failed',
 		title: `${what} didn't load`,
-		message: serverMessage || 'Something went wrong on the server.',
-		canRetry: true
+		message: text || 'Something went wrong on the server.',
+		canRetry: true,
+		ref: ref ?? undefined
 	};
 }

@@ -15,6 +15,7 @@ Common problems and what fixes them. Messages from the upgrade from v2 are liste
 
 ## Web UI and reverse proxy
 
+- **A message says "Internal server error".** It comes with a short ref, such as `4f1c2a9e`. Give that ref to your admin, who can search the server log for it.
 - **Now playing, scan progress and "download started" pop-ups only change when you reload.** Each open tab keeps one long-lived connection to `/api/v3/events/stream` for live updates, and something in between is holding it back. Behind nginx, add `proxy_buffering off;` and `proxy_read_timeout 1h;` for that path (the app already sends `X-Accel-Buffering: no`). Other proxies have a similar "don't buffer" switch. Don't let the proxy compress `text/event-stream` either.
 - **Signed in, but every save answers `403 Origin not allowed`.** That is the reverse proxy, not the account. See [Public address](reverse-proxy-and-security.md#public-address), which ends with `droppedneedle-tool public-address`, the host command for it.
 - **The web UI is a blank page and the browser console names the content-security policy.** Usually a reverse proxy that rewrites the page or injects a script, such as Cloudflare's Rocket Loader. Turn that off for DroppedNeedle, or switch the policy to report-only from the host: see [Content-security policy](reverse-proxy-and-security.md#content-security-policy).

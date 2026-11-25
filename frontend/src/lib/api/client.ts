@@ -6,7 +6,13 @@ import { authStore } from '$lib/stores/authStore.svelte';
 import { providerUnavailableMessage } from '$lib/utils/serviceError';
 import { clearUserSessionState } from '$lib/utils/userSessionCleanup';
 import { createV3Client, type V3Client } from './v3/client';
-import { ApiError, SessionExpiredError, TransportError, type TransportErrorCode } from './errors';
+import {
+	ApiError,
+	SessionExpiredError,
+	TransportError,
+	type TransportErrorCode,
+	withErrorRef
+} from './errors';
 
 export interface RequestOptions extends Omit<RequestInit, 'method' | 'body'> {
 	signal?: AbortSignal;
@@ -58,8 +64,11 @@ async function handleResponse<T = void>(res: Response): Promise<T> {
 			window.location.href = withBasePath(UPGRADE_PATH);
 		}
 		const error = new ApiError(res.status, message, code, details);
-		// Every toast that shows an error's message names the service that is down.
-		error.message = providerUnavailableMessage(error) ?? message;
+		// Every toast that shows an error's message names the service that is down,
+		// and an internal error's message ends with the ref an admin can look up.
+		error.message =
+			providerUnavailableMessage(error) ??
+			(error.errorRef ? withErrorRef(message, error.errorRef) : message);
 		throw error;
 	}
 
