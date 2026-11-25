@@ -5724,6 +5724,8 @@ fn every_registered_statement_prepares() {
 /// library: it reads every tagged file to find the groups' owners.
 /// The playlist import's one read: every live track once, to build the index
 /// it matches the file's entries against, on a request a person started.
+/// The support bundle's counts, which count every track once when an admin
+/// downloads it.
 const TRACK_WALKS: &[&str] = &[
     "droppedneedle_library::scan::sql::ALBUM_TRACKS",
     "droppedneedle_library::corrections::sql::CANDIDATE_ALBUMS",
@@ -5763,6 +5765,7 @@ const TRACK_WALKS: &[&str] = &[
     "droppedneedle::settings::sql::SCOPE_TOTALS",
     "droppedneedle::settings::sql::CATALOG_ROOTS",
     "droppedneedle::settings::sql::ANY_TRACK",
+    "droppedneedle::admin::sql::BUNDLE_COUNTS",
 ];
 
 /// Before the first ANALYZE (a fresh install) the planner has no
