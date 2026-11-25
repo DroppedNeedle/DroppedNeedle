@@ -84,7 +84,7 @@ On Unraid, keep `/app/cache` on a pool path such as `/mnt/cache/appdata/droppedn
 
 A database on tmpfs or ramfs (a folder held in memory) still starts, but it and its backups are lost when the machine restarts, and a Docker `tmpfs` mount is emptied each time the container stops. The server log warns at boot and Settings > Backups shows a warning. On Unraid this happens when the Data path's `/mnt/cache` names a pool the box does not have. To fix it there, stop the container, move the folder to a pool or disk path such as `/mnt/disk1/appdata/droppedneedle/cache`, point Data at it and start the container again. On a `tmpfs` mount, stopping the container loses everything, so first press Back up now under Settings > Backups and copy the `backups` folder out while the container runs: `docker exec droppedneedle tar -C /app/cache -cf - backups > backups.tar` (`docker cp` cannot read a tmpfs mount). Then stop it, mount a disk folder at `/app/cache`, unpack the copy into that folder with `tar -xf backups.tar -C /path/to/cache`, and [restore the newest backup](backups-and-restore.md#restoring-a-backup) before you start the server.
 
-For the media mount, one shared parent (`/data`) with the library and the download client's completions under it keeps imports fast; see [Download clients](download-clients.md#slskd).
+For the media mount, one shared parent (`/data`) with the library and the download client's completions under it keeps imports fast; see [Download clients](download-clients.md#slskd). Keep each library folder beside the download folders and the import folder, not around or inside one: files there come and go by themselves. Settings > Library still saves such a folder, and warns about it when you save.
 
 ### Import folder
 

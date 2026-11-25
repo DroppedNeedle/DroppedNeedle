@@ -29,11 +29,12 @@ use crate::settings_models::{
     LibraryPolicyTreeResponse, LibraryRemovedRoot, LibraryRestorableRoot, LibrarySettingsResponse,
     PolicyNodeKind,
 };
-use droppedneedle_kernel::runtime_config::Masked;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     IdentificationPolicy, LibraryPathRule, LibraryRoot, TypedLibrary,
 };
+use droppedneedle_kernel::runtime_config::sections::ImportFolder;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
+use droppedneedle_kernel::runtime_config::{Live, Masked};
 
 /// Canonical JSON: sorted keys, compact separators, ASCII-escaped
 /// strings, byte-identical to Python's
@@ -351,6 +352,70 @@ pub fn availability_warnings(normalized: &TypedLibrary) -> Vec<String> {
     }
     warnings.extend(overlap_warnings(normalized));
     warnings
+}
+
+/// The download folders and the import folder, which a library folder
+/// should stay clear of: files there come and go by themselves. An overlap
+/// is a warning, never a refusal.
+#[derive(Clone)]
+pub struct OtherFolders {
+    downloads: crate::publish::bin::DownloadTrees,
+    import_folder: Live<ImportFolder>,
+}
+
+impl OtherFolders {
+    /// Over the download folders `downloads` names and the saved import
+    /// folder.
+    pub fn new(
+        downloads: crate::publish::bin::DownloadTrees,
+        import_folder: Live<ImportFolder>,
+    ) -> Self {
+        Self {
+            downloads,
+            import_folder,
+        }
+    }
+
+    /// One warning per library folder and download or import folder that
+    /// overlap, compared by real path where the folders resolve. A
+    /// setting that does not read adds nothing: the unreadable sections
+    /// already name it. Blocking: it resolves paths.
+    pub fn overlap_warnings(&self, library: &TypedLibrary) -> Vec<String> {
+        let mut others: Vec<(&str, PathBuf)> = Vec::new();
+        for folder in (self.downloads)().unwrap_or_default() {
+            if !others.iter().any(|(_, seen)| *seen == folder) {
+                others.push(("download", folder));
+            }
+        }
+        if let Some(import) = self.import_folder.read() {
+            let path = import.path.trim();
+            if !path.is_empty() {
+                others.push(("import", PathBuf::from(path)));
+            }
+        }
+        let real = |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+        let others: Vec<(&str, PathBuf, PathBuf)> = others
+            .into_iter()
+            .map(|(kind, path)| {
+                let resolved = real(&path);
+                (kind, path, resolved)
+            })
+            .collect();
+        let mut warnings = Vec::new();
+        for root in &library.library_roots {
+            let root_real = real(Path::new(&root.path));
+            for (kind, path, resolved) in &others {
+                if paths_overlap(&root_real, resolved) {
+                    warnings.push(format!(
+                        "Library folder {} overlaps the {kind} folder {}.",
+                        root.label,
+                        path.display()
+                    ));
+                }
+            }
+        }
+        warnings
+    }
 }
 
 /// Warnings for roots whose real folders overlap through a link: the one

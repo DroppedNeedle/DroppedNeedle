@@ -960,7 +960,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("src/settings/library_policy_service.rs", 1, REQUEST),
     ("src/settings/registry.rs", 1, REQUEST),
     ("src/settings/services.rs", 3, REQUEST),
-    ("src/settings/wiring.rs", 2, REQUEST),
+    ("src/settings/wiring.rs", 3, REQUEST),
     ("src/upgrade_mode/mod.rs", 2, BOOT_STEP),
     ("src/upgrade_mode/mod.rs", 1, HTTP_SERVER),
     ("src/upgrade_mode/mod.rs", 2, UPGRADE_RUN),

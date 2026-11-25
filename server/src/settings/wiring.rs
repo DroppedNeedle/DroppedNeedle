@@ -32,11 +32,15 @@ use droppedneedle_auth::sqlite::LastFmLinks;
 use droppedneedle_catalog::metadata::library::LocalCatalog;
 use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_kernel::platform::Platform;
+use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_library::management::settings::service::LibraryManagementService;
+use droppedneedle_library::policy::OtherFolders;
 use droppedneedle_library::publish::bin::BinSource;
 use droppedneedle_library::removed_roots::RemovedRootCleanup;
-use droppedneedle_library::settings_models::LibraryManagementSettingsResponse;
+use droppedneedle_library::settings_models::{
+    LibraryManagementSettingsResponse, LibrarySettingsResponse,
+};
 use droppedneedle_providers::Providers;
 
 /// Everything the settings routers need, built once at boot.
@@ -49,6 +53,9 @@ pub struct SettingsSetup {
     policy: Arc<LibraryPolicyService>,
     /// Checks the recycle bin path the Library Management settings show.
     bins: BinSource,
+    /// The download and import folders the library settings warn a
+    /// library folder overlaps.
+    other_folders: OtherFolders,
     /// The scan history the schedule shows its last scan from.
     scans: Arc<LocalCatalog>,
     /// The appearance routes, which save the site section through the
@@ -104,6 +111,15 @@ impl SettingsSetup {
                 lastfm,
             )),
             bins,
+            other_folders: OtherFolders::new(
+                droppedneedle_acquire::wiring::recycle_guard(
+                    &platform.settings,
+                    platform.config.imports_dir(),
+                    platform.config.slskd_downloads_path.clone(),
+                    platform.config.plugins_dir(),
+                ),
+                platform.settings.live(),
+            ),
             scans: Arc::new(LocalCatalog::new(platform.db.clone())),
             deemix,
             second_folder: SecondFolderSite::new(platform),
@@ -185,6 +201,33 @@ impl SettingsSetup {
             Err(error) => tracing::warn!(%error, "recycle bin check did not run"),
         }
         response
+    }
+
+    /// `response` with a warning for each library folder that overlaps a
+    /// download folder or the import folder.
+    pub async fn with_folder_warnings(
+        &self,
+        mut response: LibrarySettingsResponse,
+    ) -> LibrarySettingsResponse {
+        let warnings = self
+            .folder_warnings(response.settings.clone().into_inner())
+            .await;
+        response.warnings.extend(warnings);
+        response
+    }
+
+    /// A warning for each folder of `library` that overlaps a download
+    /// folder or the import folder. The check resolves paths, so it runs
+    /// on the blocking pool.
+    pub async fn folder_warnings(&self, library: TypedLibrary) -> Vec<String> {
+        let others = self.other_folders.clone();
+        match tokio::task::spawn_blocking(move || others.overlap_warnings(&library)).await {
+            Ok(warnings) => warnings,
+            Err(error) => {
+                tracing::warn!(%error, "library folder overlap check did not run");
+                Vec::new()
+            }
+        }
     }
 
     /// The library policy routes' service.

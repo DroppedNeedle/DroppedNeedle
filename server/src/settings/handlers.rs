@@ -200,12 +200,8 @@ pub async fn get_library(
     State(settings): State<SettingsSetup>,
     _caller: Admin,
 ) -> JsonResult<LibrarySettingsResponse> {
-    settings
-        .service()
-        .get_library()
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
+    let response = settings.service().get_library().await?;
+    Ok(Json(settings.with_folder_warnings(response).await))
 }
 
 /// Save the typed library settings. The expected revision must match
@@ -227,12 +223,8 @@ pub async fn put_library(
     _caller: Admin,
     ValidJson(body): ValidJson<LibrarySettingsSaveRequest>,
 ) -> JsonResult<LibrarySettingsResponse> {
-    settings
-        .library_policy()
-        .save(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
+    let response = settings.library_policy().save(body).await?;
+    Ok(Json(settings.with_folder_warnings(response).await))
 }
 
 /// The saved roots and their path rules as a tree, with catalog file
@@ -294,12 +286,12 @@ pub async fn preview_library_policy_impact(
     _caller: Admin,
     ValidJson(body): ValidJson<LibraryPolicyImpactRequest>,
 ) -> JsonResult<LibraryPolicyImpactResponse> {
-    settings
-        .library_policy()
-        .preview_impact(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
+    let candidate = body.settings.clone().into_inner();
+    let mut response = settings.library_policy().preview_impact(body).await?;
+    response
+        .warnings
+        .extend(settings.folder_warnings(candidate).await);
+    Ok(Json(response))
 }
 
 /// Preview a reconcile of saved policy scopes: how many catalog files
@@ -367,12 +359,8 @@ pub async fn restore_library_roots(
     _caller: Admin,
     ValidJson(body): ValidJson<LibraryRestoreRootsRequest>,
 ) -> JsonResult<LibrarySettingsResponse> {
-    settings
-        .library_policy()
-        .restore_roots(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
+    let response = settings.library_policy().restore_roots(body).await?;
+    Ok(Json(settings.with_folder_warnings(response).await))
 }
 
 /// Removed library roots that still hold indexed tracks in the catalog.

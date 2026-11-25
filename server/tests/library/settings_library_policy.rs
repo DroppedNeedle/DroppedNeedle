@@ -690,3 +690,109 @@ async fn drop_removed_root_tracks_enforces_revision_configured_and_active_scan_g
         .expect("drop succeeds once scan finishes");
     assert_eq!(ok.marked_missing_count, 1);
 }
+
+/// A library folder inside a download folder or the import folder is
+/// saved as asked, with a warning naming the overlap; a folder clear of
+/// both gets none.
+#[tokio::test]
+async fn a_library_folder_inside_a_download_or_import_folder_is_warned_about() {
+    let folders = ScratchDir::new("library-overlaps");
+    let downloads = folders.join("slskd");
+    let import = folders.join("import");
+    let (inside_downloads, inside_import, clear) = (
+        downloads.join("music"),
+        import.join("music"),
+        folders.join("music"),
+    );
+    for dir in [&inside_downloads, &inside_import, &clear] {
+        std::fs::create_dir_all(dir).expect("folder builds");
+    }
+    let slskd_downloads = downloads.clone();
+    let app = crate::common::TestApp::start_configured("library-overlaps", move |mut config| {
+        config.slskd_downloads_path = slskd_downloads;
+        config
+    })
+    .await;
+    let admin = app.login_admin().await;
+    let headers = [("authorization", admin.as_str())];
+    for (url, body) in [
+        (
+            "/api/v3/settings/download-client/config",
+            json!({"enabled": true, "url": app.slskd.base_url(), "api_key": "slskd-key"}),
+        ),
+        (
+            "/api/v3/settings/library/import-folder",
+            json!({"path": import.to_string_lossy()}),
+        ),
+    ] {
+        let (status, body) = app.call("PUT", url, &headers, Some(body)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    let overlap_warnings = |body: &serde_json::Value| -> Vec<String> {
+        body["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .filter_map(|warning| warning.as_str())
+            .filter(|warning| warning.contains(" overlaps the "))
+            .map(str::to_owned)
+            .collect()
+    };
+
+    let (status, settings) = app
+        .call("GET", "/api/v3/settings/library", &headers, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{settings}");
+    let mut proposed = settings.clone();
+    proposed["library_roots"] = json!([
+        {"id": "r-clear", "label": "Clear", "path": clear.to_string_lossy()},
+        {"id": "r-dl", "label": "Downloads", "path": inside_downloads.to_string_lossy()},
+        {"id": "r-imp", "label": "Imports", "path": inside_import.to_string_lossy()},
+    ]);
+    let (status, saved) = app
+        .call(
+            "PUT",
+            "/api/v3/settings/library",
+            &headers,
+            Some(json!({
+                "settings": proposed,
+                "expected_policy_revision": settings["policy_revision"],
+            })),
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a warning, never a refusal: {saved}"
+    );
+    let expected = vec![
+        format!(
+            "Library folder Downloads overlaps the download folder {}.",
+            downloads.display()
+        ),
+        format!(
+            "Library folder Imports overlaps the import folder {}.",
+            import.display()
+        ),
+    ];
+    assert_eq!(overlap_warnings(&saved), expected, "{saved}");
+
+    // The save dialog's preview shows them before the save.
+    let (status, impact) = app
+        .call(
+            "POST",
+            "/api/v3/settings/library/policy-impact",
+            &headers,
+            Some(json!({"settings": proposed})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{impact}");
+    assert_eq!(overlap_warnings(&impact), expected, "{impact}");
+
+    let (status, read) = app
+        .call("GET", "/api/v3/settings/library", &headers, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    assert_eq!(overlap_warnings(&read), expected, "{read}");
+    app.stop().await;
+}
