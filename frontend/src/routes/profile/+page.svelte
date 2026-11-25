@@ -52,6 +52,7 @@
 	import SpotifyConnectionCard from '$lib/features/profile/components/SpotifyConnectionCard.svelte';
 	import ProfileConnectApps from '$lib/features/profile/components/ProfileConnectApps.svelte';
 	import YearReviewCard from '$lib/features/year/components/YearReviewCard.svelte';
+	import RotationSwitch from '$lib/features/playlists/components/RotationSwitch.svelte';
 	import '$lib/features/profile/components/profile.css';
 	import SpotifyIcon from '$lib/media/icons/SpotifyIcon.svelte';
 	import JumpTabs, { type JumpSection } from '$lib/ui/JumpTabs.svelte';
@@ -448,6 +449,7 @@
 						{/if}
 					{/snippet}
 					<ScrobblingDiscoveryCard {navidromeEnabled} />
+					<RotationSwitch />
 				</ProfileSection>
 
 				<ProfileSection

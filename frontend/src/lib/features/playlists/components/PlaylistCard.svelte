@@ -4,7 +4,8 @@
 	Play, Shuffle and Delete buttons at the bottom right. The whole card opens
 	the playlist; the buttons stay separate targets. An imported playlist
 	carries its source as a tab on the card's top edge, in the source's
-	colour; your own carry a globe or a lock.
+	colour; your own carry a globe or a lock. A list on rotation carries "On
+	rotation", "Kept on" or "Always on" and one line saying how it is made.
 -->
 <script lang="ts">
 	import { onDestroy } from 'svelte';
@@ -18,7 +19,8 @@
 	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { formatTotalDurationSec } from '$lib/utils/formatting';
-	import { getSourceColor, getSourceLabel } from '$lib/utils/sources';
+	import { getSourceColor, getSourceLabel, playlistSourceType } from '$lib/utils/sources';
+	import { ideaRule } from './rotationIdeas';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { Play, Shuffle, Trash2, Lock, Globe, Users } from 'lucide-svelte';
 	import JellyfinIcon from '$lib/media/icons/JellyfinIcon.svelte';
@@ -52,9 +54,21 @@
 	let deleting = $state(false);
 	let confirmTimer: ReturnType<typeof setTimeout> | undefined;
 
-	let sourceType = $derived(playlist.source_ref?.split(':')[0] ?? null);
+	let sourceType = $derived(playlistSourceType(playlist));
 	let sourceColor = $derived(sourceType ? getSourceColor(sourceType) : null);
 	let sourceLabel = $derived(sourceType ? getSourceLabel(sourceType) : null);
+
+	// A list on rotation says how it is made, under a tab of its own.
+	let rotation = $derived(playlist.rotation);
+	let rotationTab = $derived(
+		rotation
+			? rotation.always_on
+				? 'Always on'
+				: rotation.pinned
+					? 'Kept on'
+					: 'On rotation'
+			: null
+	);
 
 	let durationText = $derived(
 		playlist.total_duration ? formatTotalDurationSec(playlist.total_duration) : ''
@@ -153,7 +167,12 @@
 	});
 </script>
 
-<article class="pl-card" class:pl-card--sourced={sourceColor} style:--pl-source={sourceColor}>
+<article
+	class="pl-card"
+	class:pl-card--sourced={sourceColor && !rotationTab}
+	class:pl-card--tabbed={sourceColor || rotationTab}
+	style:--pl-source={sourceColor}
+>
 	<div class="pl-card__art">
 		<PlaylistMosaic
 			coverUrls={playlist.cover_urls}
@@ -169,8 +188,11 @@
 	>
 		<div class="pl-card__text">
 			<h3 class="pl-card__name">{playlist.name}</h3>
+			{#if rotation}
+				<p class="pl-card__rule">{ideaRule(rotation)}</p>
+			{/if}
 			<p class="pl-card__meta">
-				{#if playlist.is_owner}
+				{#if playlist.is_owner && !rotation}
 					<span class="pl-card__mark" title={visibility} aria-label={visibility} role="img">
 						{#if playlist.is_public}
 							<Globe class="size-3.5" aria-hidden="true" />
@@ -194,7 +216,14 @@
 		</div>
 	</a>
 
-	{#if sourceType && sourceLabel}
+	{#if rotationTab}
+		<span
+			class="pl-card__tab pl-card__tab--rotation"
+			class:pl-card__tab--live={rotationTab === 'On rotation'}
+		>
+			{rotationTab}
+		</span>
+	{:else if sourceType && sourceLabel}
 		<span class="pl-card__tab">
 			{#if sourceType === 'jellyfin'}
 				<JellyfinIcon class="size-3" />
@@ -373,6 +402,27 @@
 		pointer-events: none;
 	}
 
+	/* a list on rotation: acid while it rotates, quiet while it stays */
+	.pl-card__tab--rotation {
+		background-color: var(--color-neutral);
+		color: var(--dn-title);
+	}
+	.pl-card__tab--live {
+		background-color: var(--dn-action);
+		color: var(--dn-action-content);
+	}
+
+	.pl-card__rule {
+		display: -webkit-box;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		overflow: hidden;
+		font-size: 0.8125rem;
+		line-height: 1.35;
+		color: var(--dn-muted);
+	}
+
 	.pl-card__actions {
 		position: relative;
 		z-index: 1;
@@ -389,7 +439,7 @@
 			align-items: start;
 			padding: 0.75rem;
 		}
-		.pl-card--sourced {
+		.pl-card--tabbed {
 			padding-top: 1.5rem;
 		}
 		.pl-card__art {

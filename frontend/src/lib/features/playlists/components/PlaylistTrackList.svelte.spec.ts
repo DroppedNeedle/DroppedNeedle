@@ -63,6 +63,7 @@ function playlist(
 		can_delete: false,
 		owner_name: 'Ada',
 		is_redacted: false,
+		kind: 'own',
 		tracks
 	});
 }

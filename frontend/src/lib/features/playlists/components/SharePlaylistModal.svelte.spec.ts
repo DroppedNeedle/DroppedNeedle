@@ -25,7 +25,8 @@ const summary = (isPublic: boolean) => ({
 	can_edit: true,
 	can_delete: true,
 	owner_name: 'Ada',
-	is_redacted: false
+	is_redacted: false,
+	kind: 'own' as const
 });
 
 /** Ada's playlist, shared with `members`, among Ada, Bob and Cara. */

@@ -16,6 +16,7 @@
 - [Library Management](library-management.md): profiles, tags, artwork, previews and Apply, undo, editions.
 - [Requests and downloads](downloads.md): editions and single tracks, following artists, held files, upgrades, choosing a copy.
 - [Your year in review](year-in-review.md): what the page shows, what counts, and who sees it.
+- [Lists on rotation](playlists-on-rotation.md): the five playlists made from your library, how they change, keeping and copying one.
 - [Discovery](discovery.md): Home, Discover, radio, Weekly Mix, covers, Last.fm, ListenBrainz, Spotify import, music apps in depth.
 - [Install as an app](install-as-an-app.md): the web UI on a phone, tablet or computer, with its own icon and window.
 - [Connect your music app](connect-your-app.md): what to enter in Symfonium, Finamp, Feishin and other Subsonic or Jellyfin apps.

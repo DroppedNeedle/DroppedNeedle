@@ -94,7 +94,9 @@ function toPageSummary(summary: PlaylistSummaryV3): PlaylistSummary {
 		can_edit: summary.can_edit,
 		can_delete: summary.can_delete,
 		owner_name: summary.owner_name ?? null,
-		is_redacted: false
+		is_redacted: false,
+		kind: summary.kind,
+		rotation: summary.rotation ?? null
 	};
 }
 

@@ -161,6 +161,7 @@ function makePlaylist(overrides: Record<string, unknown> = {}): PlaylistDetailV3
 		can_delete: true,
 		owner_name: null,
 		is_redacted: false,
+		kind: 'own',
 		tracks: [
 			makeTrack({ id: 'trk-1', position: 0, track_name: 'First Track', duration: 240 }),
 			makeTrack({

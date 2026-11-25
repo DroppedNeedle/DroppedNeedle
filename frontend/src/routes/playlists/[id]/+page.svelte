@@ -37,6 +37,7 @@
 	import PlaylistNotice from '$lib/features/playlists/components/PlaylistNotice.svelte';
 	import PlaylistRequestBanner from '$lib/features/playlists/components/PlaylistRequestBanner.svelte';
 	import PlaylistSyncBand from '$lib/features/playlists/components/PlaylistSyncBand.svelte';
+	import RotationBand from '$lib/features/playlists/components/RotationBand.svelte';
 
 	let { data }: { data: PageData } = $props();
 
@@ -269,7 +270,7 @@
 		<PlaylistHeader
 			bind:this={header}
 			{playlist}
-			canEdit={isOwner}
+			canEdit={isOwner && !playlist.rotation}
 			{canDelete}
 			onplayall={playAll}
 			onshuffleall={shuffleAll}
@@ -280,7 +281,9 @@
 		/>
 
 		<div class="mx-auto max-w-7xl space-y-6 px-4 pb-10 sm:px-6 lg:px-8">
-			{#if canRequest}
+			{#if playlist.rotation && isOwner}
+				<RotationBand playlistId={playlist.id} rotation={playlist.rotation} />
+			{:else if canRequest}
 				<PlaylistSyncBand playlistId={playlist.id} {isOwner} />
 				<PlaylistRequestBanner playlistId={playlist.id} />
 			{/if}

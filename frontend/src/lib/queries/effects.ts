@@ -457,6 +457,11 @@ export const EFFECTS = {
 	homeChanged: (): Sweep[] => [{ everyScope: [HomeQueryKeyFactory.feature] }],
 	/** The caller's playlist list. */
 	playlistListChanged: (userId: UserId): Sweep[] => [{ key: PlaylistQueryKeyFactory.list(userId) }],
+	/** The caller's lists on rotation: the switch, what waits, and the lists. */
+	playlistRotationChanged: (userId: UserId): Sweep[] => [
+		{ key: PlaylistQueryKeyFactory.rotation(userId) },
+		{ key: PlaylistQueryKeyFactory.list(userId) }
+	],
 	/** One playlist, and whom it is shared with. */
 	playlistChanged: (userId: UserId, playlistId: string): Sweep[] => [
 		{ key: PlaylistQueryKeyFactory.detail(userId, playlistId) },
@@ -677,6 +682,7 @@ export const lidarrCandidatesChanged = fact('lidarrCandidatesChanged');
 export const anyFollowChanged = fact('anyFollowChanged');
 export const homeChanged = fact('homeChanged');
 export const playlistListChanged = fact('playlistListChanged');
+export const playlistRotationChanged = fact('playlistRotationChanged');
 export const playlistChanged = fact('playlistChanged');
 export const playlistRequestStatesChanged = fact('playlistRequestStatesChanged');
 export const pluginsChanged = fact('pluginsChanged');

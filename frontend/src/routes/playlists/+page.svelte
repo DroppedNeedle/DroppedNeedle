@@ -17,6 +17,7 @@
 	import PlaylistCard from '$lib/features/playlists/components/PlaylistCard.svelte';
 	import PlaylistImport from '$lib/features/playlists/components/PlaylistImport.svelte';
 	import RedactedPlaylistCard from '$lib/features/playlists/components/RedactedPlaylistCard.svelte';
+	import RotationShelf from '$lib/features/playlists/components/RotationShelf.svelte';
 	import PlaylistCardSkeleton from '$lib/features/playlists/components/PlaylistCardSkeleton.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Input from '$lib/ui/Input.svelte';
@@ -32,8 +33,15 @@
 	const createMutation = createPlaylistV3Mutation();
 
 	let items = $derived(toPageList(query.data ?? []));
+	let rotationLists = $derived(
+		items.filter(
+			(p): p is PlaylistSummary => !isRedactedPlaylist(p) && p.is_owner && p.kind === 'rotation'
+		)
+	);
 	let myPlaylists = $derived(
-		items.filter((p): p is PlaylistSummary => !isRedactedPlaylist(p) && p.is_owner)
+		items.filter(
+			(p): p is PlaylistSummary => !isRedactedPlaylist(p) && p.is_owner && p.kind !== 'rotation'
+		)
 	);
 	let sharedPlaylists = $derived(
 		items.filter((p): p is PlaylistSummary => !isRedactedPlaylist(p) && !p.is_owner)
@@ -156,6 +164,8 @@
 				</Button>
 			</div>
 		{:else}
+			<RotationShelf lists={rotationLists} ondelete={handleCardDelete} />
+
 			<section>
 				<SectionHead title="My Playlists" />
 				<div class="pl-grid">

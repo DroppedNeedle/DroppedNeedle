@@ -19,7 +19,8 @@
 	import PlaylistExportModal from '$lib/features/playlists/components/PlaylistExportModal.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { formatTotalDurationSec, formatRelativeTime } from '$lib/utils/formatting';
-	import { getSourceColor, getSourceLabel } from '$lib/utils/sources';
+	import { getSourceColor, getSourceLabel, playlistSourceType } from '$lib/utils/sources';
+	import { changeDay } from './rotationIdeas';
 	import { withBasePath } from '$lib/utils/basePath';
 	import PlaylistMosaic from '$lib/media/PlaylistMosaic.svelte';
 	import ContextMenu from '$lib/ui/ContextMenu.svelte';
@@ -97,7 +98,13 @@
 			.toUpperCase() || '?'
 	);
 
-	let sourceType = $derived(playlist.source_ref?.split(':')[0] ?? null);
+	let sourceType = $derived(playlistSourceType(playlist));
+	// "Made from your library · until Mon 30 Nov" on a list on rotation.
+	let rotationFact = $derived(
+		playlist.rotation
+			? `Made from your library${playlist.rotation.always_on ? '' : ` · until ${changeDay(playlist.rotation.next_change_at)}`}`
+			: null
+	);
 	let sourceColor = $derived(sourceType ? getSourceColor(sourceType) : null);
 	let sourceLabel = $derived(sourceType ? getSourceLabel(sourceType) : null);
 
@@ -391,7 +398,9 @@
 							<span>{durationText}</span>
 						{/if}
 						<span aria-hidden="true">·</span>
-						{#if sourceType && sourceLabel}
+						{#if rotationFact}
+							<span>{rotationFact}</span>
+						{:else if sourceType && sourceLabel}
 							<span class="inline-flex items-center gap-2" style:--pl-source={sourceColor}>
 								<span class="pl-hero__source" aria-hidden="true">
 									{#if sourceType === 'jellyfin'}
@@ -402,7 +411,9 @@
 										<PlexIcon class="size-3.5" />
 									{/if}
 								</span>
-								Imported from {sourceLabel}
+								{sourceType === 'weekly_mix'
+									? 'Made by DroppedNeedle'
+									: `Imported from ${sourceLabel}`}
 							</span>
 						{:else}
 							<span>Created {formatRelativeTime(new Date(playlist.created_at))}</span>
