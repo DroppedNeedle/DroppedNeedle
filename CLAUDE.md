@@ -469,6 +469,14 @@ Run from the repo root. `make help` lists every target.
 - Addresses of outside services that are fixed in code live in
   `bootstrap::Outbound`. `Outbound::live()` is the only production source:
   never read one from the environment or from settings.
+- The setup guide (`/settings/setup`) only suggests. It asks only the names
+  and ports in `bootstrap::Outbound`, through the factory's `lan_probe`
+  client: one fixed GET each with no key, cookie or sign-in, no redirect,
+  three seconds in all, read through `read_capped` into typed shapes, and
+  only to private or loopback addresses. It reads folder listings without
+  opening files or following links, and checks each suggestion with the code
+  the save uses. Nothing from an answer becomes an address or a setting: it
+  fills in the forms Settings shows, and only each form's Save writes.
 - Treat every outside server as hostile, the user's own media server and
   download client included. Read a response body only through
   `http_client::read_capped`. Never join a value from a request or from a
