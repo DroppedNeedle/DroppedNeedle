@@ -8,6 +8,7 @@
 	import { watchMusicBrainzSourceScope } from '$lib/queries/musicbrainz/sourceScope.svelte';
 	import { libraryStore } from '$lib/stores/library';
 	import { getIntegrationStatusQuery } from '$lib/features/home/queries/home.svelte';
+	import { provideAlbumCardAccess } from '$lib/features/album/queries/albumCardAccess.svelte';
 	import { loadAdvancedSettings } from '$lib/features/settings/queries/AdvancedSettingsReads.svelte';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
@@ -79,6 +80,7 @@
 
 	// Session-wide reads: the sidebar, page gates, album cards and images use them.
 	getIntegrationStatusQuery();
+	provideAlbumCardAccess();
 	loadAdvancedSettings();
 	const viewer = $derived({ isAdmin: authStore.isAdmin, isCurator: authStore.isTrusted });
 	// The account's theme, the site's CSS and the person's own, swapped when the account changes.

@@ -4,7 +4,6 @@
 	import ContextMenu from '$lib/ui/ContextMenu.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
-	import { useIntegrationStatus } from '$lib/features/home/queries/home.svelte';
 	import {
 		cardQuickPlay,
 		cardQuickShuffle,
@@ -15,10 +14,10 @@
 	} from '$lib/features/album/components/albumCardPlayback';
 	import { openGlobalPlaylistModal } from '$lib/features/playlists/state/playlistModal.svelte';
 	import { downloadAlbumArchive } from '$lib/features/album/components/downloadActions';
-	import { getDownloadAccessQuery } from '$lib/features/album/queries/DownloadAccessQuery.svelte';
-	import { authStore } from '$lib/stores/authStore.svelte';
+	import { getAlbumCardAccess } from '$lib/features/album/queries/albumCardAccess.svelte';
 
-	const integrations = useIntegrationStatus();
+	// The app shell provides this once for every tile.
+	const access = getAlbumCardAccess();
 
 	interface Props {
 		mbid: string;
@@ -43,16 +42,6 @@
 
 	let isPlaying = $state(false);
 	let isShuffling = $state(false);
-
-	let hasPlaybackSource = $derived(
-		integrations.current.localfiles ||
-			integrations.current.navidrome ||
-			integrations.current.jellyfin
-	);
-
-	const downloadAccessQuery = getDownloadAccessQuery(() => authStore.user?.id);
-	// Download offers wait for the admin's "Library downloads" answer.
-	const downloadAllowed = $derived(downloadAccessQuery.data?.allowed === true);
 
 	function getMeta(): AlbumCardMeta {
 		return { mbid, albumName, artistName, coverUrl, artistId };
@@ -79,7 +68,7 @@
 				}
 			}
 		];
-		if (integrations.current.localfiles && downloadAllowed) {
+		if (access.canDownload) {
 			items.push({
 				label: 'Download Album',
 				icon: Download,
@@ -117,7 +106,7 @@
 	}
 </script>
 
-{#if hasPlaybackSource}
+{#if access.canPlay}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		class="absolute top-2 right-2 z-20"
