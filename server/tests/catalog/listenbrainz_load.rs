@@ -211,7 +211,9 @@ fn lb_answer(uri: &Uri, body: &[u8]) -> Value {
                         {"artists": [{"artist_mbid": mbid('a', 1 + n % 8)}]}}}}))
                 .collect::<Vec<_>>()}})
         }
-        ["popularity", "top-release-groups-for-artist", artist] if number_of(artist) % 5 == 0 => {
+        ["popularity", "top-release-groups-for-artist", artist]
+            if number_of(artist).is_multiple_of(5) =>
+        {
             json!([])
         }
         ["popularity", "top-release-groups-for-artist", artist] => {
@@ -294,7 +296,7 @@ fn labs_answer(uri: &Uri) -> Value {
         .find_map(|pair| pair.strip_prefix("artist_mbids="))
         .unwrap_or_default()
         .to_owned();
-    if number_of(&artist) % 5 == 0 {
+    if number_of(&artist).is_multiple_of(5) {
         return json!([]);
     }
     let base = number_of(&artist) % SIMILAR_POOL;
@@ -362,7 +364,7 @@ fn musicbrainz_answer(uri: &Uri) -> Value {
         ["musicbrainz", "release-group"] => match query_value(uri, "artist") {
             // An artist's discography: none for one artist in five, else
             // twelve groups, a single in every four and one live album.
-            Some(artist) if number_of(&artist) % 5 != 0 => {
+            Some(artist) if !number_of(&artist).is_multiple_of(5) => {
                 let base = number_of(&artist) % 100_000;
                 let groups: Vec<Value> = (0..12)
                     .map(|n| {

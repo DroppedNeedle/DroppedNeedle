@@ -2684,8 +2684,10 @@ pub(crate) fn id3_strings(payload: &[u8]) -> Vec<String> {
             .collect(),
         1 | 2 => {
             let units: Vec<u16> = body
-                .chunks_exact(2)
-                .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|&pair| u16::from_be_bytes(pair))
                 .collect();
             // A string with no byte-order mark keeps the one before's.
             let mut order = false;
@@ -5156,7 +5158,7 @@ fn flac_behind_id3v23_tag_saves_and_preserves_prefix() {
         after.starts_with(&prefix),
         "ID3v2.3 prefix was stripped or mutated by save (expected {} bytes {:?}, got start {:?})",
         prefix.len(),
-        &prefix,
+        prefix,
         &after[..after.len().min(prefix.len().max(16))]
     );
     let (_, after_audio) = flac_blocks(&after[prefix.len()..]);
@@ -5225,7 +5227,7 @@ fn flac_behind_id3v24_tag_saves_and_preserves_prefix() {
         after.starts_with(&prefix),
         "ID3v2.4 prefix was stripped or mutated by save (expected {} bytes {:?}, got start {:?})",
         prefix.len(),
-        &prefix,
+        prefix,
         &after[..after.len().min(prefix.len().max(16))]
     );
     let (_, after_audio) = flac_blocks(&after[prefix.len()..]);
@@ -5278,7 +5280,7 @@ fn flac_without_vorbis_comments_behind_id3v2_tag_saves_and_preserves_prefix() {
         after.starts_with(&prefix),
         "ID3v2 prefix on commentless FLAC was stripped or mutated (expected {} bytes {:?}, got start {:?})",
         prefix.len(),
-        &prefix,
+        prefix,
         &after[..after.len().min(prefix.len().max(16))]
     );
     let (_, after_audio) = flac_blocks(&after[prefix.len()..]);

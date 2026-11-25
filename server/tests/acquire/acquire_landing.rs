@@ -7866,7 +7866,7 @@ impl LandingLibrary for Shaky {
         use std::sync::atomic::Ordering;
         let changed = self
             .changes
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
                 left.checked_sub(1)
             })
             .is_ok();
