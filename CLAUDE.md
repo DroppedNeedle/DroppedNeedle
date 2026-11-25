@@ -163,9 +163,13 @@ Run from the repo root. `make help` lists every target.
   logged. A 5xx answers the fixed internal error with the request id, except
   the closed list in `Unavailable` (server busy, media server down, GitHub
   refusing, limiting or failing a plugin install, the server waiting for its
-  upgrade from v2), each with a fixed sentence. A compat 5xx gets its
-  protocol's failure shape. A message a user must read needs an honest 4xx
-  or a new `Unavailable` row.
+  upgrade from v2, or a full disk), each with a fixed sentence. A compat 5xx
+  gets its protocol's failure shape. A message a user must read needs an
+  honest 4xx or a new `Unavailable` row.
+- A full disk is `DISK_FULL` (507, no `Retry-After`): the boundary, upgrade
+  mode's included, gives it instead of the fixed internal error while the
+  data or temp folder has under 64 MiB free. It reads that space through the
+  free-space probe it is built with, never from the error's text.
 - Request bodies and query strings are read through `ValidJson` and
   `ValidQuery` from `server/kernel/src/extract.rs`, never an area's own
   copy.
