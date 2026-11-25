@@ -61,6 +61,8 @@ export interface PlaybackSource {
 		duration?: number;
 	}): Promise<void>;
 	play(): void;
+	/** Resolves when the browser accepts playback of a received queue. */
+	playConfirmed?(signal: AbortSignal): Promise<void>;
 	pause(): void;
 	seekTo(seconds: number): void;
 	setVolume(level: number): void;

@@ -473,6 +473,45 @@ describe('playerStore queue methods', () => {
 		});
 	});
 
+	it('keeps the existing receiver queue if the incoming track fails to load', async () => {
+		const original = makeItem({ sourceType: 'local', trackSourceId: 'original' });
+		playerStore.playQueue([original]);
+		await vi.waitFor(() => expect(playerStore.currentSource).toBeTruthy());
+		const playingSource = playerStore.currentSource;
+		const create = vi.mocked(createPlaybackSource);
+		const factory = create.getMockImplementation()!;
+		create.mockImplementationOnce((...args) => {
+			const staged = factory(...args);
+			vi.mocked(staged.load).mockRejectedValueOnce(new Error('No such track'));
+			return staged;
+		});
+		const incoming = makeItem({ sourceType: 'local', trackSourceId: 'incoming' });
+		expect(
+			await playerStore.receiveQueue([incoming], 0, 3, true, new AbortController().signal)
+		).toBe(false);
+		expect(playerStore.currentQueueItem?.trackSourceId).toBe('original');
+		expect(playerStore.currentSource).toBe(playingSource);
+		expect(playingSource?.destroy).not.toHaveBeenCalled();
+	});
+
+	it('restores a paused handoff at the selected occurrence without starting the audio', async () => {
+		const track = makeItem({ sourceType: 'local' });
+		const accepted = await playerStore.receiveQueue(
+			[track, track],
+			1,
+			37.5,
+			false,
+			new AbortController().signal
+		);
+		expect(accepted).toBe(true);
+		expect(playerStore.currentIndex).toBe(1);
+		expect(playerStore.progress).toBe(37.5);
+		expect(playerStore.playbackState).toBe('paused');
+		const source = vi.mocked(createPlaybackSource).mock.results.at(-1)?.value;
+		expect(source.seekTo).toHaveBeenCalledWith(37.5);
+		expect(source.play).not.toHaveBeenCalled();
+	});
+
 	describe('session migration with queueOrigin', () => {
 		it('defaults missing queueOrigin to context during resume', () => {
 			authStore.setUser({

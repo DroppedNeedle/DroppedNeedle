@@ -23,6 +23,8 @@ type NativeSourceType = 'jellyfin' | 'local' | 'navidrome' | 'plex';
 export interface LiveTranscode {
 	/** The track's length in seconds, 0 when it is not known. */
 	duration: number;
+	/** Offset of the initial pipe, when continuing an existing play. */
+	startSeconds?: number;
 	urlAt(seconds: number): string;
 }
 
@@ -68,6 +70,7 @@ export class NativeAudioSource implements PlaybackSource {
 		// A pipe of unknown length has no scale to seek on.
 		this.seekable = opts.seekable && !(opts.transcode && !opts.transcode.duration);
 		this.transcode = opts.transcode;
+		this.pipeStart = opts.transcode?.startSeconds ?? 0;
 		this.whyRefused = opts.whyRefused;
 		this.lease = opts.deck;
 		this.audio = opts.deck.element;
@@ -203,6 +206,12 @@ export class NativeAudioSource implements PlaybackSource {
 	play(): void {
 		this.started = true;
 		void this.playWithEngineResume();
+	}
+
+	/** A receiving player acknowledges a handoff only after playback actually starts. */
+	playConfirmed(signal: AbortSignal): Promise<void> {
+		this.started = true;
+		return this.playWithEngineResume(signal);
 	}
 
 	/** Enough is buffered to start now and keep going. */
@@ -341,7 +350,7 @@ export class NativeAudioSource implements PlaybackSource {
 		this.stallTimeoutHandle = null;
 	}
 
-	private async playWithEngineResume(): Promise<void> {
+	private async playWithEngineResume(signal?: AbortSignal): Promise<void> {
 		// Waits only for a context that is not running, so a deck started on time plays at once.
 		const engine = tryGetAudioEngine();
 		if (engine && !engine.running) {
@@ -351,13 +360,21 @@ export class NativeAudioSource implements PlaybackSource {
 				// Keep native playback attempt alive even if Web Audio resume fails.
 			}
 		}
+		signal?.throwIfAborted();
+		if (this.destroyed || !this.lease.held()) {
+			if (signal) throw new Error('Playback was replaced.');
+			return;
+		}
 		try {
 			await this.audio.play();
 			this.lease.played();
 		} catch (err: unknown) {
 			const name = err instanceof DOMException || err instanceof Error ? err.name : '';
 			// A new load interrupted this play: a seek or a track change, not a failure.
-			if (name === 'AbortError') return;
+			if (name === 'AbortError') {
+				if (signal) throw err;
+				return;
+			}
 			if (name === 'NotAllowedError') {
 				this.emitError('AUTOPLAY_BLOCKED', 'Playback failed. Browser may be blocking autoplay.');
 			} else {
@@ -367,6 +384,7 @@ export class NativeAudioSource implements PlaybackSource {
 				);
 			}
 			this.emitStateChange('error');
+			if (signal) throw err;
 		}
 	}
 

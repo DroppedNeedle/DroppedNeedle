@@ -368,13 +368,18 @@ function createPlayerStore() {
 		item: QueueItem,
 		previous: QueueItem | null,
 		index: number,
-		wait?: Promise<void>
+		wait?: Promise<void>,
+		following?: QueueItem | null
 	): Promise<number> {
 		// With no engine nothing is levelled, so nothing is read.
 		if (!tryGetAudioEngine()) return 1;
 		const read = readLoudness(item);
 		const loudness = await (wait ? Promise.race([read, wait.then(() => null)]) : read);
-		return levelFor(item, loudness, inAlbumOrder(previous, item, nextAfter(index)));
+		return levelFor(
+			item,
+			loudness,
+			inAlbumOrder(previous, item, following === undefined ? nextAfter(index) : following)
+		);
 	}
 
 	/** Sets a deck's level before its song plays, or ramps it while it plays. */
@@ -534,10 +539,13 @@ function createPlayerStore() {
 	 * Builds the source for an item on a free deck, touching none of the
 	 * player's state: the load that plays it applies what it says.
 	 */
-	function buildSource(item: QueueItem, directFailed: boolean): BuiltSource {
+	function buildSource(item: QueueItem, directFailed: boolean, startSeconds = 0): BuiltSource {
 		const format =
 			item.sourceType === 'youtube' ? null : transcodeTarget(item.format, directFailed);
-		const url = streamUrlFor(item, format ? { format } : undefined);
+		const url = streamUrlFor(
+			item,
+			format ? { format, start_seconds: startSeconds || undefined } : undefined
+		);
 		if (item.sourceType === 'youtube') {
 			return { source: createPlaybackSource('youtube'), url, format: null, seekable: true };
 		}
@@ -554,6 +562,7 @@ function createPlayerStore() {
 			transcode: format
 				? {
 						duration: item.duration ?? 0,
+						startSeconds,
 						urlAt: (seconds) =>
 							streamUrlFor(
 								{ sourceType, trackSourceId: item.trackSourceId },
@@ -936,6 +945,95 @@ function createPlayerStore() {
 		});
 	}
 
+	/** Prepare the incoming occurrence on a spare deck. The current queue stays usable on failure. */
+	async function receiveQueue(
+		items: QueueItem[],
+		index: number,
+		seconds: number,
+		playing: boolean,
+		signal: AbortSignal
+	) {
+		const item = items[index];
+		if (!item || item.sourceType !== 'local' || signal.aborted) return false;
+		const original = recovery.generation;
+		transition.drop();
+		preloadFor = null;
+		const factor = levelOf(
+			item,
+			items[index - 1] ?? null,
+			index,
+			delay(LOUDNESS_WAIT_MS),
+			items[index + 1] ?? null
+		);
+		for (const convert of [false, true]) {
+			let staged: BuiltSource | undefined;
+			let decodeFailed = false;
+			const discard = () => staged?.source.destroy();
+			try {
+				if (!isCurrent(original) || signal.aborted) return false;
+				staged = buildSource(item, convert, seconds);
+				const { source, format } = staged;
+				source.setVolume(0);
+				signal.addEventListener('abort', discard, { once: true });
+				source.onError((error) => {
+					decodeFailed = error.code === UNPLAYABLE_ERROR;
+				});
+				await source.load({
+					trackSourceId: item.trackSourceId,
+					url: staged.url,
+					format: item.format
+				});
+				if (!isCurrent(original) || signal.aborted) return false;
+				if (seconds > 0 && !format) source.seekTo(seconds);
+				const level = await factor;
+				if (!isCurrent(original) || signal.aborted) return false;
+				if (playing) {
+					if (!source.playConfirmed) return false;
+					await source.playConfirmed(signal);
+				}
+				if (!isCurrent(original) || signal.aborted) return false;
+				void session.end(progress);
+				radioSession.end();
+				playEnd = playEndFrom(playbackState, 'skipped');
+				const gen = beginLoad('loading');
+				playId++;
+				transition.reset();
+				queue = items;
+				currentIndex = index;
+				shuffleEnabled = false;
+				shuffleOrder = [];
+				unplayable = {};
+				recovery.failed = [];
+				recovery.directFailed = convert;
+				recovery.fellBack = false;
+				applyBuilt(staged);
+				currentSource = source;
+				currentLevel = { playId, factor: level };
+				levelDeck(source, level);
+				transition.follow({ source, item, transcoded: !!format });
+				subscribeToSource(source, gen);
+				progress = seconds;
+				duration = source.getDuration();
+				nowPlaying = buildNowPlayingMetadata(item);
+				isPlayerVisible = true;
+				playbackState = playing ? 'playing' : 'paused';
+				session.begin(sessionKeyFor(item));
+				if (playing) session.playing();
+				source.setVolume(volume);
+				persist();
+				staged = undefined;
+				return true;
+			} catch {
+				// The ordinary player retries a rejected codec with DN conversion once.
+				if (convert || !decodeFailed || staged?.format) return false;
+			} finally {
+				signal.removeEventListener('abort', discard);
+				discard();
+			}
+		}
+		return false;
+	}
+
 	return {
 		get currentSource() {
 			return currentSource;
@@ -1033,6 +1131,7 @@ function createPlayerStore() {
 		},
 
 		unplayableReasonFor,
+		receiveQueue,
 
 		playAlbum(source: PlaybackSource, metadata: NowPlaying): void {
 			radioSession.end();

@@ -72,6 +72,19 @@ function fresh(): void {
 }
 
 describe('NativeAudioSource', () => {
+	it('declines a handoff when autoplay is blocked or the receiver has withdrawn', async () => {
+		fresh();
+		const source = new NativeAudioSource('local', { deck, url: '/audio.mp3', seekable: true });
+		const blocked = new DOMException('Autoplay blocked', 'NotAllowedError');
+		hoisted.audio.play.mockRejectedValueOnce(blocked);
+		await expect(source.playConfirmed(new AbortController().signal)).rejects.toBe(blocked);
+		await expect(source.playConfirmed(AbortSignal.abort())).rejects.toHaveProperty(
+			'name',
+			'AbortError'
+		);
+		expect(hoisted.audio.play).toHaveBeenCalledTimes(1);
+	});
+
 	it('loads on canplay, and fails on a timeout, a blocked autoplay or a media error, then plays after a seek', async () => {
 		{
 			// Loads successfully on canplay.

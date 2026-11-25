@@ -48,6 +48,7 @@ pub mod error;
 pub mod events;
 pub mod forwarding;
 pub mod handlers;
+pub mod handoff;
 pub mod listening;
 pub mod listening_routes;
 pub mod models;
@@ -92,6 +93,8 @@ pub struct PlaybackDeps {
     pub remotes: Arc<dyn RemoteReporters>,
     /// Bounded playback sessions.
     pub sessions: SessionStore,
+    /// Players currently participating in queue handoff.
+    pub handoff: handoff::HandoffRegistry,
     /// Live presence registry.
     pub presence: PresenceRegistry,
     /// Scrobble name dedup.

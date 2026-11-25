@@ -13,6 +13,7 @@ use axum::{
 
 use super::{
     PlaybackDeps, events,
+    handoff::models::{HandoffHeartbeat, HandoffRequest, HandoffUpdate},
     models::{
         NowPlayingDeleteQuery, NowPlayingHeartbeat, PlaybackEventRequest, PlaybackProgressRequest,
         PlaybackProgressResponse, PlaybackStartRequest, PlaybackStartResponse, PlaybackStopRequest,
@@ -243,6 +244,55 @@ pub async fn clear_now_playing(
     StatusCode::NO_CONTENT
 }
 
+/// Sign this player up for handoff, read peers and acknowledge any outstanding transfer.
+#[utoipa::path(
+    post,
+    tag = "playback",
+    path = "/api/v3/playback/handoff/sync",
+    request_body = HandoffHeartbeat,
+    responses(
+        (status = 200, description = "Your active players and this player's next step", body = HandoffUpdate),
+        (status = 400, description = "Invalid player identity or name"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Player unavailable"),
+        (status = 409, description = "Player capacity reached"),
+    )
+)]
+pub async fn sync_handoff(
+    State(deps): State<PlaybackDeps>,
+    User(caller): User,
+    ValidJson(body): ValidJson<HandoffHeartbeat>,
+) -> Result<Json<HandoffUpdate>, ApiError> {
+    Ok(Json(deps.handoff.sync(
+        &caller,
+        body,
+        deps.clock.now_ms(),
+    )?))
+}
+
+/// Start a local queue transfer between two of the caller's active players.
+#[utoipa::path(
+    post,
+    tag = "playback",
+    path = "/api/v3/playback/handoff",
+    request_body = HandoffRequest,
+    responses(
+        (status = 204, description = "Transfer queued"),
+        (status = 400, description = "Invalid transfer"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Player unavailable"),
+        (status = 409, description = "Transfer busy or source unavailable"),
+    )
+)]
+pub async fn start_handoff(
+    State(deps): State<PlaybackDeps>,
+    User(caller): User,
+    ValidJson(body): ValidJson<HandoffRequest>,
+) -> Result<StatusCode, ApiError> {
+    deps.handoff.start(&caller, body, deps.clock.now_ms())?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -254,6 +304,8 @@ where
     PlaybackDeps: FromRef<S>,
 {
     Routes::new()
+        .user(routes!(sync_handoff))
+        .user(routes!(start_handoff))
         .user(routes!(start_playback))
         .user(routes!(report_progress))
         .user(routes!(stop_playback))

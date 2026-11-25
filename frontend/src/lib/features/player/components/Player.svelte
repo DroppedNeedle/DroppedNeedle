@@ -10,6 +10,8 @@
 	sound settings).
 -->
 <script lang="ts">
+	import { untrack } from 'svelte';
+	import { connectHandoff } from '../state/handoff.svelte';
 	import { isValidMbid } from '$lib/utils/formatting';
 	import { part } from '$lib/ui/parts';
 	import { formatLabel, playerStore } from '$lib/features/player/state/player.svelte';
@@ -60,6 +62,11 @@
 		ListFilter,
 		Star
 	} from 'lucide-svelte';
+
+	$effect(() => {
+		const id = authStore.user?.id;
+		if (id) return untrack(() => connectHandoff(id));
+	});
 
 	const floor = $derived(skipByRating.floor);
 	const floorLabel = $derived(
