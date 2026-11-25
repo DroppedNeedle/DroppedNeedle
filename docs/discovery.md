@@ -165,7 +165,7 @@ The owner and anyone the playlist is shared with to edit see what each missing s
 
 ## Song links
 
-Paste a song link from Deezer, Apple Music, Spotify or YouTube into search, a Deezer short link (`link.deezer.com`), or a song.link address made from a Deezer, Apple Music or Spotify link, and search shows that song: it plays when your library has it, and you can request it when it doesn't. The clipboard button at the end of the search box pastes and searches in one tap, and on Android, once DroppedNeedle is installed as an app, Share > DroppedNeedle in another app opens the search with the link.
+Paste a song link from Deezer, Apple Music, Spotify or YouTube into search, a Deezer short link (`link.deezer.com`), or a song.link address made from a Deezer, Apple Music or Spotify link, and search shows that song: it plays when your library has it, and you can request it when it doesn't. The clipboard button at the end of the search box pastes and searches in one tap, and on Android, once DroppedNeedle is [installed as an app](install-as-an-app.md), Share > DroppedNeedle in another app opens the search with the link.
 
 A song link searched from a Subsonic app that searches on the server finds your library's copy of that song in the app's song results; a song you don't have yet shows nothing there.
 

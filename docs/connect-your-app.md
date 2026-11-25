@@ -52,6 +52,8 @@ Music Assistant (Home Assistant's music server) asks for the address in three fi
 
 Put the app password in the API key field. To have plays count here, add Music Assistant's "Subsonic Scrobbler" plugin. Leave Music Assistant's own ListenBrainz and Last.fm scrobbling off while DroppedNeedle forwards your plays, or each play counts twice.
 
+On a computer you can also install the web UI itself as an app, in its own window: see [Install as an app](install-as-an-app.md).
+
 ## Signing in from the browser
 
 An admin registers the app once under Settings > Connect Apps > Sign-in from apps. In the app, choose browser sign-in, sign in to your DroppedNeedle server as usual, review the access shown and tap Allow. A Subsonic or Jellyfin app gets an app password that you can revoke under Profile > Connect Apps. An app registered for the DroppedNeedle API gets a device session that you can revoke under Profile > Sessions. See [Signing in apps from the browser](app-connect.md).

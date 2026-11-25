@@ -1,6 +1,7 @@
 {
   "name": "DroppedNeedle",
   "short_name": "DroppedNeedle",
+  "description": "Your music library, requests and discovery.",
   "id": "/__DROPPEDNEEDLE_BASE__/",
   "start_url": "/__DROPPEDNEEDLE_BASE__/",
   "scope": "/__DROPPEDNEEDLE_BASE__/",
@@ -21,6 +22,12 @@
       "src": "/__DROPPEDNEEDLE_BASE__/android-chrome-512x512.png",
       "sizes": "512x512",
       "type": "image/png"
+    },
+    {
+      "src": "/__DROPPEDNEEDLE_BASE__/android-chrome-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ],
   "theme_color": "#090e0b",

@@ -8,6 +8,7 @@ Everything DroppedNeedle does, one row each, with links to the page that covers 
 | Wanted | Failed album requests get re-searched on their own until a verified copy shows up, and partial ones too while "Also watch albums with missing tracks" is on (the default). Song requests are not watched |
 | Quality | An ordered list of formats and qualities to try, automatic upgrades when a better copy appears, storage caps and quotas |
 | Player | Queue, shuffle, gapless playback, crossfade with smart fades (the next song starts where this one fades out), even volume, 10-band EQ, lyrics for library tracks (from your files, or from LRCLIB when it is on) and from Jellyfin and Navidrome, live now-playing updates |
+| Install as an app | The web UI installs on Android, iPhone, iPad and computers, opens in its own window, and on Android takes song links shared from other apps. See [Install as an app](install-as-an-app.md) |
 | Discovery | Trending, charts, genre browsing, recommendations from your ListenBrainz and Last.fm history, an album-by-album discover queue, and a weekly mix that can queue up to five missing albums. See [Discovery](discovery.md) |
 | Live events | Upcoming Ticketmaster and Skiddle gigs for artists you follow, each user with their own cities, with a badge on Following in the sidebar for the ones you haven't seen |
 | Following | New-release radar with optional auto-download, release-type filters, and sidebar badges |
