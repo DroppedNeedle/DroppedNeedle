@@ -149,7 +149,9 @@ pub(super) async fn playlist_items_inner(
     let start = params::qint(q, "startIndex", 0).max(0) as usize;
     let limit = params::qint(q, "limit", 0).max(0) as usize;
     // One batch read for every linked file; entries whose file is gone
-    // drop out before paging, so the total counts what is served.
+    // drop out before paging, so the total counts what is served. The
+    // read is bounded by one playlist's size; only the page, capped like
+    // every Jellyfin list, is built into items.
     let file_ids = detail
         .entries
         .iter()

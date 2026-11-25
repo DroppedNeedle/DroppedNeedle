@@ -349,8 +349,12 @@ pub enum ItemSort {
     By(super::params::SortKey, bool),
 }
 
-/// Everything from `start`; the page reads stop at the match total.
-pub const ALL: usize = usize::MAX;
+/// The most items one Jellyfin list answers, whatever its `Limit` says
+/// (`Limit=0` and a missing `Limit` included). Every item of a page is
+/// built in memory before the answer is sent, so an unbounded ask would
+/// hold a large library at once. `TotalRecordCount` still counts every
+/// match, so an app that pages gets the rest.
+pub const MAX_ITEMS: usize = 20_000;
 
 // ===== Streaming =====
 

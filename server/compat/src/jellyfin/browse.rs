@@ -11,10 +11,10 @@ use droppedneedle_kernel::error::ApiError;
 use super::builders::{self, Builder, LIBRARY_INTERNAL_ID};
 use super::models::{BaseItemDto, BaseItemDtoQueryResult};
 use super::params::{self, CiParams, SortKey};
-use super::query::{page, primary_type};
+use super::query::{capped, page, primary_type};
 use super::router::*;
 use super::views::{
-    ALL, AlbumFilter, AlbumView, ArtistScope, ArtistView, ItemSort, ReadFailed, TrackFilter,
+    AlbumFilter, AlbumView, ArtistScope, ArtistView, ItemSort, MAX_ITEMS, ReadFailed, TrackFilter,
     TrackView,
 };
 
@@ -152,9 +152,14 @@ fn nothing(start: usize) -> Response {
     result(Vec::new(), Some(0), start)
 }
 
-/// `Limit=0` means everything from `start`.
-fn or_all(limit: usize) -> usize {
-    if limit == 0 { ALL } else { limit }
+/// The page size of a whole-library list: `Limit=0` gives 100, and no
+/// page is longer than [`MAX_ITEMS`].
+fn unscoped(limit: usize) -> usize {
+    if limit == 0 {
+        100
+    } else {
+        limit.min(MAX_ITEMS)
+    }
 }
 
 /// One page as a request asks for it: `start` is `StartIndex`, the offset
@@ -279,7 +284,7 @@ pub(super) async fn browse(
                 &filter,
                 ItemSort::Disc,
                 start,
-                or_all(limit),
+                capped(limit),
                 counted,
             )
             .await?;
@@ -288,7 +293,7 @@ pub(super) async fn browse(
 
     match primary_type(&types) {
         "MusicArtist" => {
-            let size = if limit == 0 { 100_000 } else { limit };
+            let size = capped(limit);
             let (artists, total) = state
                 .library
                 .artist_page(&user_id, ArtistScope::All, search.as_deref(), start, size)
@@ -439,7 +444,7 @@ pub(super) async fn audio_browse(
             album_artists,
             ..TrackFilter::default()
         };
-        (filter, or_all(limit))
+        (filter, capped(limit))
     } else if !artist_ids.is_empty() {
         let artists = decode_artists(state, artist_ids).await?;
         if artists.is_empty() {
@@ -449,13 +454,13 @@ pub(super) async fn audio_browse(
             artists,
             ..TrackFilter::default()
         };
-        (filter, or_all(limit))
+        (filter, capped(limit))
     } else {
         let filter = TrackFilter {
             search: search.map(str::to_owned),
             ..TrackFilter::default()
         };
-        (filter, if limit == 0 { 100 } else { limit })
+        (filter, unscoped(limit))
     };
     filter.played = played;
     let (tracks, total) = state
@@ -496,7 +501,7 @@ pub(super) async fn album_browse(
             ..AlbumFilter::default()
         };
         let newest = ItemSort::By(SortKey::Recent, true);
-        (filter, sort_or(sort_key, sort_desc, newest), or_all(limit))
+        (filter, sort_or(sort_key, sort_desc, newest), capped(limit))
     } else if !album_artist_ids.is_empty() || !artist_ids.is_empty() {
         let ids = album_artist_ids
             .iter()
@@ -514,7 +519,7 @@ pub(super) async fn album_browse(
         (
             filter,
             sort_or(sort_key, sort_desc, ItemSort::Catalog),
-            or_all(limit),
+            capped(limit),
         )
     } else {
         let filter = AlbumFilter {
@@ -524,7 +529,7 @@ pub(super) async fn album_browse(
         (
             filter,
             sort_or(sort_key, sort_desc, ItemSort::Catalog),
-            if limit == 0 { 100 } else { limit },
+            unscoped(limit),
         )
     };
     let filter = AlbumFilter { played, ..filter };
@@ -554,6 +559,7 @@ pub(super) async fn latest(
     if limit <= 0 {
         limit = 10;
     }
+    let limit = (limit as usize).min(MAX_ITEMS);
     let b = builder(&state);
     let (albums, _) = state
         .library
@@ -562,7 +568,7 @@ pub(super) async fn latest(
             &AlbumFilter::default(),
             ItemSort::By(SortKey::Recent, true),
             0,
-            limit as usize,
+            limit,
             false,
         )
         .await?;
@@ -595,7 +601,7 @@ pub(super) async fn artists_scoped(
     let q = CiParams::parse(raw_query.as_deref());
     let start = params::qint(&q, "StartIndex", 0).max(0) as usize;
     let limit = params::qint(&q, "Limit", 100).max(0) as usize;
-    let size = if limit == 0 { 100_000 } else { limit };
+    let size = capped(limit);
     let (artists, total) = state
         .library
         .artist_page(
@@ -706,7 +712,7 @@ pub(super) async fn similar(
     if limit == 0 {
         limit = 50;
     }
-    let limit = limit.max(1) as usize;
+    let limit = (limit.max(1) as usize).min(MAX_ITEMS);
     let empty = BaseItemDtoQueryResult {
         items: Vec::new(),
         total_record_count: 0,

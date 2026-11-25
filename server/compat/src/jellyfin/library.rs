@@ -412,7 +412,7 @@ fn in_order<T: Clone>(ids: &[String], found: Vec<T>, id_of: impl Fn(&T) -> &str)
 }
 
 impl JellyfinLibrary {
-    /// One page of tracks; `limit` [`ALL`] means every match. The match
+    /// One page of tracks, at most `limit` long. The match
     /// total is counted only when `counted`.
     pub async fn track_page(
         &self,
@@ -477,7 +477,7 @@ impl JellyfinLibrary {
             .pop())
     }
 
-    /// One page of albums; `limit` [`ALL`] means every match. The match
+    /// One page of albums, at most `limit` long. The match
     /// total is counted only when `counted`.
     pub async fn album_page(
         &self,

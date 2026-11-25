@@ -2111,3 +2111,78 @@ async fn a_private_playlist_answers_only_its_owner() {
     assert_eq!(json(&rig, &uri, &auth).await["Name"], "Mine");
     rig.stop().await;
 }
+
+/// No Jellyfin list answers more than 20,000 items, whatever its `Limit`
+/// says, and its total still counts every match, so an app that pages gets
+/// the rest. A scoped list asked for everything with `Limit=0` (an album
+/// artist's tracks) stops at the same cap.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_list_stops_at_the_cap_and_counts_every_match() {
+    const TRACKS: usize = 20_001;
+    let rig = CompatApp::unscanned("jf-list-cap").await;
+    // One album artist with a hundred tracks to an album: an album's
+    // credit counts are worked out again for each track added to it.
+    rig.app
+        .seed(format!(
+            "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+             updated_at) VALUES ('art-big', 'Big Band', 'big band', 'group', 1, 1); \
+             INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_name, album_artist_name_folded, album_artist_id, year, \
+             grouping_source, created_at, updated_at) \
+             WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n \
+             WHERE i < {TRACKS} / 100) \
+             SELECT printf('alb-%03d', i), 'root', printf('big-%03d', i), \
+             printf('Volume %03d', i), printf('volume %03d', i), 'Big Band', 'big band', \
+             'art-big', 2000, 'automatic', 1, 1 FROM n; \
+             INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             artist_name, artist_name_folded, album_title, album_title_folded, \
+             album_artist_name, album_artist_name_folded, track_number, duration_seconds, \
+             file_format, ingest_source, imported_at, membership_source) \
+             WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {TRACKS}) \
+             SELECT printf('trk-%05d', i), printf('alb-%03d', i / 100), 'root', \
+             printf('/music/big/%05d.flac', i), printf('big/%05d.flac', i), \
+             printf('h%05d', i), 1000, 1, 'r1', printf('Track %05d', i), \
+             printf('track %05d', i), 'Big Band', 'big band', printf('Volume %03d', i / 100), \
+             printf('volume %03d', i / 100), 'Big Band', 'big band', i % 100 + 1, 60.0, \
+             'flac', 'scan', i, 'automatic' FROM n; \
+             INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role) \
+             SELECT id, 0, 'art-big', 'main' FROM local_tracks WHERE id LIKE 'trk-%';"
+        ))
+        .await;
+    rig.jellyfin_ids_caught_up().await;
+    let auth = finamp(&rig.secret);
+    let items = |page: &Value| page["Items"].as_array().expect("item list").len();
+
+    let asked_for_all = json(
+        &rig,
+        "/jellyfin/Items?IncludeItemTypes=Audio&Recursive=true&Limit=1000000",
+        &auth,
+    )
+    .await;
+    assert_eq!(items(&asked_for_all), 20_000);
+    assert_eq!(asked_for_all["TotalRecordCount"], TRACKS);
+
+    let rest = json(
+        &rig,
+        "/jellyfin/Items?IncludeItemTypes=Audio&Recursive=true&StartIndex=20000&Limit=100",
+        &auth,
+    )
+    .await;
+    assert_eq!(items(&rest), 1);
+    assert_eq!(rest["Items"][0]["Name"], "Track 20001");
+    assert_eq!(rest["TotalRecordCount"], TRACKS);
+
+    let band = artist_id(&rig, &auth, "Big Band").await;
+    let everything = json(
+        &rig,
+        &format!(
+            "/jellyfin/Items?IncludeItemTypes=Audio&Recursive=true&Limit=0&AlbumArtistIds={band}"
+        ),
+        &auth,
+    )
+    .await;
+    assert_eq!(items(&everything), 20_000);
+    assert_eq!(everything["TotalRecordCount"], TRACKS);
+    rig.stop().await;
+}
