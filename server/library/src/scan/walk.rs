@@ -1310,91 +1310,281 @@ pub fn folder_digests(
     root: &Path,
     stop: &dyn Fn() -> bool,
 ) -> std::io::Result<HashMap<String, FolderDigest>> {
-    use sha2::{Digest as _, Sha256};
+    FolderRecord::default()
+        .pass(root, &[".".to_owned()], 0.0, stop)
+        .map(|record| record.digests())
+}
 
-    let mut digests: HashMap<String, FolderDigest> = HashMap::new();
-    // Each folder carries the key of the folder above it.
-    let mut stack: Vec<(PathBuf, Option<String>)> = vec![(root.to_owned(), None)];
-    while let Some((folder, above)) = stack.pop() {
-        if stop() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Interrupted,
-                "folder walk stopped",
-            ));
-        }
-        let entries = match std::fs::read_dir(&folder) {
-            Ok(entries) => entries,
-            Err(error) if above.is_none() => return Err(error),
-            Err(error) => {
-                tracing::debug!(path = %folder.display(), %error, "folder watcher skipping an unreadable folder");
-                continue;
+/// How close to a read a folder's times may be before that read cannot
+/// tell a later change in the same timestamp tick from the one it saw.
+const RACY_NS: i128 = 2_000_000_000;
+
+/// A folder's own times and inode, as `lstat` reads them. Adding, removing
+/// or renaming an entry moves them; rewriting a file in place does not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FolderStat {
+    pub mtime_ns: i64,
+    pub ctime_ns: i64,
+    pub inode: u64,
+}
+
+impl FolderStat {
+    fn of(meta: &std::fs::Metadata) -> Self {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt as _;
+            Self {
+                mtime_ns: mtime_ns_from_metadata(meta),
+                ctime_ns: meta
+                    .ctime()
+                    .saturating_mul(1_000_000_000)
+                    .saturating_add(meta.ctime_nsec()),
+                inode: meta.ino(),
             }
-        };
-        let relative = folder.strip_prefix(root).unwrap_or(Path::new(""));
-        let own_key = if relative.as_os_str().is_empty() {
-            Some(".".to_owned())
-        } else {
-            relative.to_str().map(|text| text.replace('\\', "/"))
-        };
-        let Some(key) = own_key.clone().or(above) else {
-            continue;
-        };
-        let mut files: Vec<(Vec<u8>, u64, i64)> = Vec::new();
-        let mut audio_files = 0i64;
-        for entry in entries {
-            let Ok(entry) = entry else { continue };
-            let Ok(file_type) = entry.file_type() else {
-                continue;
-            };
-            let path = entry.path();
-            if is_management_artifact(&path) {
-                continue;
-            }
-            if descends_into(&path, &file_type) {
-                stack.push((path, Some(key.clone())));
-                continue;
-            }
-            // Never follows a link: a link is recorded as itself.
-            let Ok(meta) = entry.metadata() else { continue };
-            if is_audio_file(&path) {
-                audio_files += 1;
-            }
-            files.push((
-                text_safe_posix(Path::new(&entry.file_name())).into_bytes(),
-                meta.len(),
-                mtime_ns_from_metadata(&meta),
-            ));
         }
-        files.sort_unstable();
-        let mut hasher = Sha256::new();
-        if own_key.is_none() {
-            // Folded into the folder above: the path keeps a move between
-            // two such folders visible.
-            hasher.update(text_safe_posix(relative).as_bytes());
-            hasher.update([0]);
-        }
-        for (name, size, mtime_ns) in &files {
-            hasher.update(name);
-            hasher.update([0]);
-            hasher.update(size.to_le_bytes());
-            hasher.update(mtime_ns.to_le_bytes());
-        }
-        let hash = hasher.finalize();
-        let mut first = [0u8; 8];
-        first.copy_from_slice(&hash[..8]);
-        let digest = i64::from_le_bytes(first);
-        let slot = digests.entry(key).or_default();
-        if own_key.is_some() {
-            *slot = FolderDigest {
-                digest,
-                audio_files,
-            };
-        } else {
-            slot.digest = slot.digest.wrapping_add(digest);
-            slot.audio_files += audio_files;
+        #[cfg(not(unix))]
+        {
+            Self {
+                mtime_ns: mtime_ns_from_metadata(meta),
+                ctime_ns: 0,
+                inode: 0,
+            }
         }
     }
-    Ok(digests)
+
+    /// True when either time is within 2 seconds of `read_at` (seconds on
+    /// the kernel clock) or later than it: a change made just after that
+    /// read may have left the times as they were, so the folder is read
+    /// again until a read finds them at least 2 seconds older.
+    pub fn racy(&self, read_at: f64) -> bool {
+        let read_ns = (read_at * 1e9) as i128;
+        [self.mtime_ns, self.ctime_ns]
+            .into_iter()
+            .any(|time| i128::from(time) > read_ns - RACY_NS)
+    }
+}
+
+/// One folder as the last read of it found it.
+#[derive(Debug, Clone)]
+struct FolderRead {
+    stat: FolderStat,
+    /// When it was read, in seconds on the kernel clock.
+    read_at: f64,
+    /// The digest key its files count toward: its own, or that of the
+    /// nearest folder above it whose path is UTF-8.
+    key: String,
+    /// Its own share of that key's digest.
+    own: FolderDigest,
+    /// The folders in it a walk goes down into, by name.
+    subfolders: Vec<std::ffi::OsString>,
+}
+
+/// What a walk found under one root, folder by folder, so a later pass
+/// can list again only the folders whose own times moved.
+#[derive(Debug, Clone, Default)]
+pub struct FolderRecord {
+    /// Folders by their path in the root, the root itself as "".
+    folders: HashMap<PathBuf, FolderRead>,
+    /// Where the walk started, as scope paths (`.` for the whole root).
+    starts: Vec<String>,
+}
+
+impl FolderRecord {
+    /// The scope paths the walk started from.
+    pub fn starts(&self) -> &[String] {
+        &self.starts
+    }
+
+    /// The digests the folders add up to: for the same tree, what
+    /// [`folder_digests`] finds.
+    pub fn digests(&self) -> HashMap<String, FolderDigest> {
+        let mut digests: HashMap<String, FolderDigest> = HashMap::new();
+        for read in self.folders.values() {
+            let slot = digests.entry(read.key.clone()).or_default();
+            slot.digest = slot.digest.wrapping_add(read.own.digest);
+            slot.audio_files += read.own.audio_files;
+        }
+        digests
+    }
+
+    /// Walk `root` from each of `starts` (scope paths, `.` for the whole
+    /// root) at `read_at`, seconds on the kernel clock. A folder this
+    /// record holds whose stat is unchanged, and was not racy when it was
+    /// read, keeps what that read found, and the walk goes on into the
+    /// subfolders it found; every other folder is listed and its files
+    /// stated. A folder that is gone, unreadable, no longer a folder or now
+    /// a link drops out with everything below it, which is never read. A
+    /// start reached through a link is not walked. The root's own path may
+    /// go through links; an unreadable root is an error. `stop` is asked
+    /// before each folder; once it answers true the pass ends with
+    /// `Interrupted`.
+    pub fn pass(
+        &self,
+        root: &Path,
+        starts: &[String],
+        read_at: f64,
+        stop: &dyn Fn() -> bool,
+    ) -> std::io::Result<Self> {
+        let root_meta = std::fs::metadata(root)?;
+        if !root_meta.is_dir() {
+            return Err(std::io::Error::other("library folder is not a folder"));
+        }
+        let mut next = Self {
+            folders: HashMap::new(),
+            starts: starts.to_vec(),
+        };
+        let start_paths: Vec<PathBuf> = starts
+            .iter()
+            .map(|start| match start.as_str() {
+                "." => PathBuf::new(),
+                path => PathBuf::from(path),
+            })
+            .collect();
+        for (n, start) in start_paths.iter().enumerate() {
+            // A start inside another, or repeating an earlier one, is
+            // walked with it.
+            let covered = start_paths.iter().enumerate().any(|(other, path)| {
+                other != n && start.starts_with(path) && (start != path || other < n)
+            });
+            if covered || !reached_without_links(root, start) {
+                continue;
+            }
+            // Each folder carries the key of the folder above it.
+            let mut stack: Vec<(PathBuf, Option<String>)> = vec![(start.clone(), None)];
+            while let Some((relative, above)) = stack.pop() {
+                if stop() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "folder walk stopped",
+                    ));
+                }
+                let is_root = relative.as_os_str().is_empty();
+                let path = root.join(&relative);
+                let stat = if is_root {
+                    FolderStat::of(&root_meta)
+                } else {
+                    match std::fs::symlink_metadata(&path) {
+                        Ok(meta) if meta.is_dir() => FolderStat::of(&meta),
+                        _ => continue,
+                    }
+                };
+                let read = match self.folders.get(&relative) {
+                    Some(old) if old.stat == stat && !old.stat.racy(old.read_at) => old.clone(),
+                    _ => match read_folder(&path, &relative, above, stat, read_at) {
+                        Ok(Some(read)) => read,
+                        Ok(None) => continue,
+                        Err(error) if is_root => return Err(error),
+                        Err(error) => {
+                            tracing::debug!(path = %path.display(), %error, "folder watcher skipping an unreadable folder");
+                            continue;
+                        }
+                    },
+                };
+                for name in &read.subfolders {
+                    stack.push((relative.join(name), Some(read.key.clone())));
+                }
+                next.folders.insert(relative, read);
+            }
+        }
+        Ok(next)
+    }
+}
+
+/// True when every folder from below `root` down to `relative` is a real
+/// folder named by a plain path part, none of them a link.
+fn reached_without_links(root: &Path, relative: &Path) -> bool {
+    let mut path = root.to_owned();
+    relative.components().all(|part| {
+        path.push(part);
+        matches!(part, std::path::Component::Normal(_))
+            && matches!(std::fs::symlink_metadata(&path), Ok(meta) if meta.is_dir())
+    })
+}
+
+/// List the folder at `path` (`relative` in its root), whose `lstat` read
+/// `stat` just before: its files' names, sizes and modification times
+/// hashed into its share of a digest, and the subfolders a walk goes into.
+/// `above` is the key of the folder above, none at a start. None when the
+/// folder has no key to count toward, or was swapped for something else
+/// while it was listed (the next pass sees it as it is then).
+fn read_folder(
+    path: &Path,
+    relative: &Path,
+    above: Option<String>,
+    stat: FolderStat,
+    read_at: f64,
+) -> std::io::Result<Option<FolderRead>> {
+    use sha2::{Digest as _, Sha256};
+
+    let entries = std::fs::read_dir(path)?;
+    let own_key = if relative.as_os_str().is_empty() {
+        Some(".".to_owned())
+    } else {
+        relative.to_str().map(|text| text.replace('\\', "/"))
+    };
+    let Some(key) = own_key.clone().or(above) else {
+        return Ok(None);
+    };
+    let mut files: Vec<(Vec<u8>, u64, i64)> = Vec::new();
+    let mut subfolders = Vec::new();
+    let mut audio_files = 0i64;
+    for entry in entries {
+        let Ok(entry) = entry else { continue };
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        let entry_path = entry.path();
+        if is_management_artifact(&entry_path) {
+            continue;
+        }
+        if descends_into(&entry_path, &file_type) {
+            subfolders.push(entry.file_name());
+            continue;
+        }
+        // Never follows a link: a link is recorded as itself.
+        let Ok(meta) = entry.metadata() else { continue };
+        if is_audio_file(&entry_path) {
+            audio_files += 1;
+        }
+        files.push((
+            text_safe_posix(Path::new(&entry.file_name())).into_bytes(),
+            meta.len(),
+            mtime_ns_from_metadata(&meta),
+        ));
+    }
+    if !relative.as_os_str().is_empty() {
+        match std::fs::symlink_metadata(path) {
+            Ok(meta) if meta.is_dir() && FolderStat::of(&meta).inode == stat.inode => {}
+            _ => return Ok(None),
+        }
+    }
+    files.sort_unstable();
+    let mut hasher = Sha256::new();
+    if own_key.is_none() {
+        // Folded into the folder above: the path keeps a move between
+        // two such folders visible.
+        hasher.update(text_safe_posix(relative).as_bytes());
+        hasher.update([0]);
+    }
+    for (name, size, mtime_ns) in &files {
+        hasher.update(name);
+        hasher.update([0]);
+        hasher.update(size.to_le_bytes());
+        hasher.update(mtime_ns.to_le_bytes());
+    }
+    let hash = hasher.finalize();
+    let mut first = [0u8; 8];
+    first.copy_from_slice(&hash[..8]);
+    Ok(Some(FolderRead {
+        stat,
+        read_at,
+        key,
+        own: FolderDigest {
+            digest: i64::from_le_bytes(first),
+            audio_files,
+        },
+        subfolders,
+    }))
 }
 
 /// Blocking walk producing inventory messages. Runs on the

@@ -12531,7 +12531,8 @@ fn waiting_scopes(library: &LibrarySetup) -> Vec<(String, String)> {
 /// window has passed, for one scan of that folder alone, however many
 /// changes the burst held. What the watcher saw outlives a restart: with
 /// nothing changed the first poll asks for no scan, and a change made while
-/// the server was down is still found.
+/// the server was down is still found. Each change adds a file: a file
+/// rewritten in place moves no folder's times, so only a full read sees it.
 #[tokio::test]
 async fn the_folder_watcher_scans_the_changed_folder_across_a_restart() {
     {
@@ -12552,7 +12553,7 @@ async fn the_folder_watcher_scans_the_changed_folder_across_a_restart() {
             "one folder: {first:?}"
         );
 
-        std::fs::write(music.join("Artist/0537/cover.jpg"), b"changed").expect("change");
+        std::fs::write(music.join("Artist/0537/back.jpg"), b"new").expect("change");
         let batching = library.scans.watcher_tick().await;
         assert!(
             matches!(batching, WatcherAction::Batching { .. }),
@@ -12581,7 +12582,7 @@ async fn the_folder_watcher_scans_the_changed_folder_across_a_restart() {
     ));
     let (platform, library) = watched(&scratch, clock.clone()).await;
     library.scans.watcher_tick().await;
-    std::fs::write(music.join("A/notes.txt"), b"changed").expect("change");
+    std::fs::write(music.join("A/added.txt"), b"new").expect("change");
     library.scans.watcher_tick().await;
     clock.advance(61_000);
     assert_eq!(library.scans.watcher_tick().await, WatcherAction::Due);
@@ -12616,6 +12617,282 @@ async fn the_folder_watcher_scans_the_changed_folder_across_a_restart() {
         waiting_scopes(&library),
         [("music".to_owned(), "A".to_owned())]
     );
+}
+
+/// A clock `by_ms` after `path` was last modified. Ten seconds after the
+/// last file of a tree is made, its folders are old enough for a quick
+/// pass to trust their times.
+fn clock_past(path: &Path, by_ms: i64) -> Arc<droppedneedle_kernel::test_support::ManualClock> {
+    let modified = std::fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .expect("mtime");
+    let ms = modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("after the epoch")
+        .as_millis();
+    Arc::new(droppedneedle_kernel::test_support::ManualClock::at(
+        i64::try_from(ms).expect("fits") + by_ms,
+    ))
+}
+
+/// Date `folder` a second later, as a change made after the last read
+/// does once the filesystem's clock has moved on: a test can run faster
+/// than its timestamps tick.
+fn later(folder: &Path) {
+    let modified = std::fs::metadata(folder)
+        .and_then(|meta| meta.modified())
+        .expect("mtime");
+    std::fs::File::open(folder)
+        .and_then(|dir| dir.set_modified(modified + Duration::from_secs(1)))
+        .expect("date");
+}
+
+/// Write into `path` without moving its folder's times, as a tagger saving
+/// in place does, and date it later.
+fn rewrite_in_place(path: &Path) {
+    use std::io::Write as _;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .expect("open");
+    file.write_all(b"Y").expect("write");
+    let modified = file
+        .metadata()
+        .and_then(|meta| meta.modified())
+        .expect("mtime");
+    file.set_modified(modified + Duration::from_secs(5))
+        .expect("date");
+}
+
+/// Ask the watcher once the batching window has passed and expect a scan.
+async fn watcher_asks(
+    library: &LibrarySetup,
+    clock: &droppedneedle_kernel::test_support::ManualClock,
+) -> Vec<(String, String)> {
+    clock.advance(1_000);
+    let batching = library.scans.watcher_tick().await;
+    assert!(
+        matches!(batching, WatcherAction::Batching { .. }),
+        "{batching:?}"
+    );
+    clock.advance(61_000);
+    assert_eq!(library.scans.watcher_tick().await, WatcherAction::Due);
+    waiting_scopes(library)
+}
+
+/// Drive the scan waiting or running to its end, then let the watcher put
+/// what it asked for on record.
+async fn settle_watched(library: &LibrarySetup) {
+    for _ in 0..50 {
+        library.scans.supervisor_tick().await;
+        if library.coordinator.current().is_empty() {
+            break;
+        }
+    }
+    assert!(library.coordinator.current().is_empty(), "the scan settles");
+    library.scans.watcher_tick().await;
+}
+
+fn music_scope(folder: &str) -> [(String, String); 1] {
+    [("music".to_owned(), folder.to_owned())]
+}
+
+/// Between full reads a pass lists only the folders whose own times moved:
+/// a file in a new nested folder is asked for at once, while a file
+/// rewritten in place, which moves no folder's times, waits for the full
+/// read 6 hours on, which asks for its folder.
+#[tokio::test]
+async fn a_quick_pass_finds_a_new_folder_and_a_full_read_an_edit_in_place() {
+    let scratch = ScratchDir::new("watch-quick-pass");
+    let music = scratch.join("music");
+    for folder in ["X", "P"] {
+        std::fs::create_dir_all(music.join(folder)).expect("mkdir");
+        std::fs::write(music.join(folder).join("notes.txt"), b"x").expect("write");
+    }
+    let clock = clock_past(&music.join("P/notes.txt"), 10_000);
+    let (_platform, library) = watched(&scratch, clock.clone()).await;
+    let first = library.scans.watcher_tick().await;
+    assert!(matches!(first, WatcherAction::Idle { .. }), "{first:?}");
+
+    rewrite_in_place(&music.join("X/notes.txt"));
+    std::fs::create_dir_all(music.join("P/New/CD1")).expect("mkdir");
+    std::fs::write(music.join("P/New/CD1/notes.txt"), b"new").expect("write");
+    later(&music.join("P"));
+    assert_eq!(watcher_asks(&library, &clock).await, music_scope("P/New"));
+    settle_watched(&library).await;
+
+    clock.advance(6 * 3_600_000);
+    assert_eq!(watcher_asks(&library, &clock).await, music_scope("X"));
+}
+
+/// A folder read within 2 seconds of its last change is read again at the
+/// next pass, so a file rewritten in place just after that read is found.
+#[tokio::test]
+async fn a_folder_read_just_after_it_changed_is_read_again() {
+    let scratch = ScratchDir::new("watch-racy");
+    let music = scratch.join("music");
+    std::fs::create_dir_all(music.join("A")).expect("mkdir");
+    std::fs::write(music.join("A/notes.txt"), b"x").expect("write");
+    let clock = clock_past(&music.join("A"), 1_000);
+    let (_platform, library) = watched(&scratch, clock.clone()).await;
+    let first = library.scans.watcher_tick().await;
+    assert!(matches!(first, WatcherAction::Idle { .. }), "{first:?}");
+
+    rewrite_in_place(&music.join("A/notes.txt"));
+    assert_eq!(watcher_asks(&library, &clock).await, music_scope("A"));
+}
+
+/// A change inside a folder whose name is not UTF-8 moves only that
+/// folder's times. A quick pass still reads it and asks for the folder
+/// above, which its files count toward.
+#[tokio::test]
+async fn a_quick_pass_sees_a_change_below_a_name_that_is_not_utf8() {
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let scratch = ScratchDir::new("watch-not-utf8");
+    let music = scratch.join("music");
+    let odd = music
+        .join("P")
+        .join(std::ffi::OsStr::from_bytes(b"Disc \xff"));
+    std::fs::create_dir_all(&odd).expect("mkdir");
+    std::fs::write(odd.join("notes.txt"), b"x").expect("write");
+    let clock = clock_past(&odd.join("notes.txt"), 10_000);
+    let (_platform, library) = watched(&scratch, clock.clone()).await;
+    let first = library.scans.watcher_tick().await;
+    assert!(matches!(first, WatcherAction::Idle { .. }), "{first:?}");
+
+    std::fs::write(odd.join("more.txt"), b"y").expect("write");
+    later(&odd);
+    assert_eq!(watcher_asks(&library, &clock).await, music_scope("P"));
+}
+
+/// A folder removed, or replaced by a link, between full reads asks for a
+/// scan of the whole library folder. That scan keeps every track it still
+/// finds and the tracks under the link, and reads nothing behind it.
+#[tokio::test]
+async fn a_folder_gone_or_turned_into_a_link_asks_for_the_whole_library_folder() {
+    let scratch = ScratchDir::new("watch-losses");
+    let music = scratch.join("music");
+    plant(&music, "Gone/a.flac", "flac_full_01.flac");
+    for n in 0..12 {
+        plant(&music, &format!("Stay/{n:02}.flac"), "flac_full_02.flac");
+    }
+    plant(&music, "C/Door/kept.flac", "flac_no_tags.flac");
+    let clock = clock_past(&music.join("C/Door/kept.flac"), 10_000);
+    let (_platform, library) = watched(&scratch, clock.clone()).await;
+    scan(&library).await;
+    let indexed = |path: &str| {
+        query(
+            &library,
+            &format!(
+                "SELECT COUNT(*) FROM local_tracks WHERE relative_path = '{path}' \
+                 AND availability = 'indexed'"
+            ),
+        ) == 1
+    };
+    assert!(indexed("C/Door/kept.flac"));
+    let first = library.scans.watcher_tick().await;
+    assert!(matches!(first, WatcherAction::Idle { .. }), "{first:?}");
+
+    std::fs::remove_dir_all(music.join("Gone")).expect("remove");
+    later(&music);
+    assert_eq!(watcher_asks(&library, &clock).await, music_scope("."));
+    settle_watched(&library).await;
+
+    plant(&scratch, "elsewhere/behind.flac", "flac_full_01.flac");
+    std::fs::remove_dir_all(music.join("C/Door")).expect("remove");
+    std::os::unix::fs::symlink(scratch.join("elsewhere"), music.join("C/Door")).expect("link");
+    later(&music.join("C"));
+    assert_eq!(watcher_asks(&library, &clock).await, music_scope("."));
+    settle_watched(&library).await;
+    for n in 0..12 {
+        assert!(indexed(&format!("Stay/{n:02}.flac")), "Stay/{n:02}.flac");
+    }
+    assert!(indexed("C/Door/kept.flac"), "the link's tracks stay");
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_tracks WHERE relative_path LIKE '%behind.flac'"
+        ),
+        0,
+        "nothing behind the link is read"
+    );
+}
+
+/// A library folder that cannot be read between full reads, such as a
+/// share that dropped out, keeps what is on record and asks for nothing.
+/// Back as it was, neither a quick pass nor the next full read asks.
+#[tokio::test]
+async fn an_unreadable_library_folder_asks_for_nothing() {
+    let scratch = ScratchDir::new("watch-unreadable");
+    let music = scratch.join("music");
+    std::fs::create_dir_all(music.join("A")).expect("mkdir");
+    std::fs::write(music.join("A/notes.txt"), b"x").expect("write");
+    let clock = clock_past(&music.join("A/notes.txt"), 10_000);
+    let (_platform, library) = watched(&scratch, clock.clone()).await;
+    let first = library.scans.watcher_tick().await;
+    assert!(matches!(first, WatcherAction::Idle { .. }), "{first:?}");
+
+    std::fs::rename(&music, scratch.join("away")).expect("away");
+    for _ in 0..2 {
+        clock.advance(61_000);
+        let away = library.scans.watcher_tick().await;
+        assert!(matches!(away, WatcherAction::Idle { .. }), "{away:?}");
+    }
+    std::fs::rename(scratch.join("away"), &music).expect("back");
+    clock.advance(61_000);
+    let back = library.scans.watcher_tick().await;
+    assert!(matches!(back, WatcherAction::Idle { .. }), "{back:?}");
+    clock.advance(6 * 3_600_000);
+    let full = library.scans.watcher_tick().await;
+    assert!(matches!(full, WatcherAction::Idle { .. }), "{full:?}");
+    assert!(
+        library.coordinator.current().is_empty(),
+        "no scan asked for"
+    );
+}
+
+/// No pass walks a library folder while a scan of it waits or runs; the
+/// first pass after it ends sees what changed meanwhile.
+#[tokio::test]
+async fn the_watcher_walks_no_library_folder_while_it_is_scanned() {
+    let scratch = ScratchDir::new("watch-while-scanning");
+    let music = scratch.join("music");
+    std::fs::create_dir_all(music.join("A")).expect("mkdir");
+    std::fs::write(music.join("A/notes.txt"), b"x").expect("write");
+    let clock = clock_past(&music.join("A/notes.txt"), 10_000);
+    let (_platform, library) = watched(&scratch, clock.clone()).await;
+    let first = library.scans.watcher_tick().await;
+    assert!(matches!(first, WatcherAction::Idle { .. }), "{first:?}");
+
+    let registry = library.core.live_registry();
+    library
+        .coordinator
+        .request_run(&ScanRequest {
+            kind: ScanKind::Incremental,
+            trigger: ScanTrigger::Manual,
+            scopes: registry.scheduled_root_scopes(),
+            requested_by_user_id: None,
+            policy_revision: registry.fingerprint().to_owned(),
+        })
+        .expect("scan requested");
+    std::fs::write(music.join("A/added.txt"), b"y").expect("write");
+    later(&music.join("A"));
+    clock.advance(1_000);
+    let waiting = library.scans.watcher_tick().await;
+    assert!(
+        matches!(waiting, WatcherAction::Idle { .. }),
+        "not walked while its scan waits: {waiting:?}"
+    );
+    for _ in 0..50 {
+        library.scans.supervisor_tick().await;
+        if library.coordinator.current().is_empty() {
+            break;
+        }
+    }
+    assert!(library.coordinator.current().is_empty(), "the scan ends");
+    let after = library.scans.watcher_tick().await;
+    assert!(matches!(after, WatcherAction::Batching { .. }), "{after:?}");
 }
 
 /// Each track's id and album, and each album's id, key and name.

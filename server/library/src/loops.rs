@@ -273,10 +273,12 @@ impl Scans {
         };
         let settings = self.watcher_settings();
         let registry = self.core.live_registry();
+        let rules = super::settings::inclusion_rules(&registry);
         let action = super::scan::watcher::poll_once(
             &mut state,
             &settings,
             &registry,
+            &rules,
             &(self.core.root_dirs)(),
             &self.pool,
             &self.scan_store,
@@ -285,7 +287,6 @@ impl Scans {
         )
         .await;
         if matches!(action, WatcherAction::Due) {
-            let rules = super::settings::inclusion_rules(&registry);
             ask_for_changes(
                 &mut state,
                 &registry,
@@ -1094,8 +1095,8 @@ fn identify_tick(
     }
 }
 
-/// The folder watcher's turn: walk, batch, request on due, then
-/// wait as long as the saved settings say.
+/// The folder watcher's turn: walk, batch, request on due, then wait the
+/// saved poll interval, or 20 times the last quick pass when longer.
 struct WatcherTick {
     scans: Scans,
     handle: Handle,
@@ -1119,7 +1120,12 @@ impl Tick for WatcherTick {
             WatcherAction::Idle { sleep_secs } | WatcherAction::Batching { sleep_secs } => {
                 sleep_secs.max(0.0)
             }
-            WatcherAction::Due => self.scans.watcher_settings().poll_interval_seconds.max(1.0),
+            WatcherAction::Due => self
+                .scans
+                .watcher_state
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .gap(&self.scans.watcher_settings()),
         };
         ctx.sleep(Duration::from_secs_f64(sleep_secs)).await;
         Ok(Next::Continue)
