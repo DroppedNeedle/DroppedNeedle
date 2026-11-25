@@ -14,6 +14,7 @@
 	interface Props {
 		albumTitle: string;
 		artistName: string;
+		/** The album's MusicBrainz id; a local-only album's id works too. */
 		musicbrainzId: string;
 		ondeleted: () => void | Promise<void>;
 		onclose: () => void;

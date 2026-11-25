@@ -8,10 +8,16 @@ vi.mock('$app/state', () => ({
 }));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$lib/features/player/state/player.svelte', () => ({
-	playerStore: { playQueue: vi.fn(), addToQueue: vi.fn(), playNext: vi.fn() }
+	playerStore: {
+		playQueue: vi.fn(),
+		addToQueue: vi.fn(),
+		playNext: vi.fn(),
+		dropTracks: vi.fn()
+	}
 }));
 
 import LocalAlbumPage from './LocalAlbumPage.svelte';
+import { goto } from '$app/navigation';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { toAuthUser } from '$lib/features/auth/queries/types';
 
@@ -120,6 +126,80 @@ describe('local album page track menu', () => {
 		await (await page.getByLabelText('More actions').all())[0].click();
 		await expect.element(page.getByRole('menuitem', { name: 'Add to Queue' })).toBeVisible();
 		expect(page.getByRole('menuitem', { name: 'Download' }).elements()).toHaveLength(0);
+	});
+});
+
+describe('removing a local-only album', () => {
+	const statusRoute = 'GET /api/v3/library/albums/{id}/status' as const;
+	const removeRoute = 'DELETE /api/v3/library/albums/{id}' as const;
+
+	const signIn = (role: 'admin' | 'trusted') =>
+		authStore.setUser(
+			toAuthUser({
+				id: 'user-1',
+				display_name: 'Someone',
+				role,
+				email: null,
+				avatar_url: null,
+				username: 'someone',
+				username_display: 'Someone'
+			})
+		);
+
+	it('an admin removes a local-only album from its menu', async () => {
+		signIn('admin');
+		vi.mocked(goto).mockClear();
+		const api = fakeLibrary({ downloadAllowed: true });
+		api.use({
+			[statusRoute]: {
+				in_library: true,
+				album_id: album.id,
+				track_count: 1,
+				tracks: []
+			},
+			'GET /api/v3/library/albums': { items: [], total: 0, next: null },
+			'GET /api/v3/library/albums/{album_id}/removals': { items: [] },
+			'GET /api/v3/library/retag-pairs': { items: [], next_cursor: null, total: 0 },
+			'GET /api/v3/settings/library-management': apiError(500, 'INTERNAL', 'No settings'),
+			[removeRoute]: { id: album.id, removed_track_ids: [] }
+		});
+		await renderWithQuery(LocalAlbumPage, { albumId: album.id });
+		await expect.element(page.getByText('Unmatched Song', { exact: true })).toBeVisible();
+
+		await page.getByLabelText('More album actions').click();
+		await page.getByRole('menuitem', { name: 'Remove album...' }).click();
+
+		await expect.element(page.getByRole('heading', { name: 'Remove Album' })).toBeVisible();
+		await expect.element(page.getByText(/go to the recycle bin/)).toBeVisible();
+		await vi.waitFor(() => expect(api.calls(statusRoute)).toHaveLength(1));
+
+		await page.getByRole('button', { name: 'Remove', exact: true }).click();
+
+		await vi.waitFor(() => expect(api.calls(removeRoute)).toHaveLength(1));
+		const [call] = api.calls(removeRoute);
+		expect(call.params.id).toBe(album.id);
+		expect(call.query.get('expected_revision')).toBe('3');
+		expect(call.query.get('expected_listing_revision')).toBe('1');
+		expect(call.query.get('delete_files')).toBe('true');
+		await vi.waitFor(() => expect(vi.mocked(goto)).toHaveBeenCalled());
+		expect(vi.mocked(goto).mock.calls.at(-1)?.[0]).toMatch(/\/library$/);
+	});
+
+	it('a trusted user sees no remove entry', async () => {
+		signIn('trusted');
+		const api = fakeLibrary({ downloadAllowed: true });
+		api.use({
+			'GET /api/v3/library/albums/{album_id}/removals': { items: [] }
+		});
+		await renderWithQuery(LocalAlbumPage, { albumId: album.id });
+		await expect.element(page.getByText('Unmatched Song', { exact: true })).toBeVisible();
+
+		await page.getByLabelText('More album actions').click();
+
+		await expect
+			.element(page.getByRole('menuitem', { name: 'Contribute to MusicBrainz' }))
+			.toBeVisible();
+		expect(page.getByRole('menuitem', { name: 'Remove album...' }).elements()).toHaveLength(0);
 	});
 });
 

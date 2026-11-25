@@ -16,7 +16,7 @@
 	import AlbumHero from './AlbumHero.svelte';
 	import AlbumHeroSkeleton from './AlbumHeroSkeleton.svelte';
 	import AlbumSourceBar from './AlbumSourceBar.svelte';
-	import RemoveLocalAlbumDialog from './RemoveLocalAlbumDialog.svelte';
+	import DeleteAlbumModal from './DeleteAlbumModal.svelte';
 	import BackButton from '$lib/ui/BackButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
@@ -49,7 +49,6 @@
 	import type { QueueItem } from '$lib/features/player/playback/types';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import { invalidateAlbumRemovals } from '$lib/features/library-management/queries/RemovalQueries.svelte';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import {
 		buildDiscoveryQueueFromLocal,
@@ -166,8 +165,9 @@
 	} | null>(null);
 	let removeDialogOpen = $state(false);
 
-	// The hero's menu: Album organization's four actions for admins, and the
-	// MusicBrainz contribution for a curator on a local-only album.
+	// The hero's menu: Album organization's four actions and Remove for an
+	// album with files, for admins, and the MusicBrainz contribution for a
+	// curator on a local-only album.
 	const menuItems = $derived.by(() => {
 		const items: MenuItem[] = [];
 		if (authStore.isAdmin) {
@@ -183,14 +183,16 @@
 					label: 'Reset manual grouping...',
 					icon: FolderTree,
 					onclick: () => organization?.start('reset')
-				},
-				{
-					label: 'Remove album…',
+				}
+			);
+			if (hasFiles) {
+				items.push({
+					label: 'Remove album...',
 					icon: Trash2,
 					className: 'text-error',
 					onclick: () => (removeDialogOpen = true)
-				}
-			);
+				});
+			}
 		}
 		if (authStore.isTrusted && album?.identity_state === 'local_only') {
 			items.push({
@@ -212,12 +214,10 @@
 		contributionMutation.mutate(album.id);
 	}
 
-	// The local page keeps no shared album state: after a removal,
-	// refresh the removal lists and go back to the library.
+	// The mutation's effects refresh the caches; go back to the library.
 	async function handleRemoved(): Promise<void> {
 		removeDialogOpen = false;
 		toastStore.show({ message: 'Removed from Library', type: 'success' });
-		await invalidateAlbumRemovals();
 		await goto(withBasePath('/library'));
 	}
 </script>
@@ -406,9 +406,10 @@
 			<AlbumOrganizationDialog bind:this={organization} {album} {tracks} />
 		{/if}
 		{#if removeDialogOpen && album}
-			<RemoveLocalAlbumDialog
-				{album}
-				refetch={() => albumQuery.refetch()}
+			<DeleteAlbumModal
+				albumTitle={album.title}
+				artistName={album.artist_name}
+				musicbrainzId={album.id}
 				ondeleted={handleRemoved}
 				onclose={() => (removeDialogOpen = false)}
 			/>

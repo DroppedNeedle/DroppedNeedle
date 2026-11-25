@@ -34,16 +34,13 @@ export function createRemoveLibraryAlbumMutation() {
 			albumId,
 			expectedRevision,
 			expectedListingRevision,
-			stopWanted,
-			deleteFiles = true
+			stopWanted
 		}: {
 			mbid: string;
 			albumId: string;
 			expectedRevision: number;
 			expectedListingRevision: number;
 			stopWanted: boolean;
-			/** True deletes the files; false moves them to the recycle bin. */
-			deleteFiles?: boolean;
 		}) =>
 			api.v3.DELETE(
 				v3('/api/v3/library/albums/{id}', {
@@ -51,7 +48,7 @@ export function createRemoveLibraryAlbumMutation() {
 					query: {
 						expected_revision: expectedRevision,
 						expected_listing_revision: expectedListingRevision,
-						delete_files: deleteFiles,
+						delete_files: true,
 						stop_wanted: stopWanted
 					}
 				})
