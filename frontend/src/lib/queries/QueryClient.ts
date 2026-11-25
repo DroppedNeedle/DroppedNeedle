@@ -43,7 +43,7 @@ export const setQueryDataWithPersister = async <
 >(
 	queryKey: TTaggedQueryKey,
 	updater: Updater<
-		NoInfer<TInferredQueryFnData> | undefined,
+		InferDataFromTag<NoInfer<TQueryFnData>, TTaggedQueryKey> | undefined,
 		NoInfer<TInferredQueryFnData> | undefined
 	>,
 	options?: SetDataOptions,
