@@ -1,16 +1,21 @@
-//! The loop supervisor's promises, on a real database: a stop mid-sleep
-//! returns within the grace, a failing tick backs off and recovers, a panic
-//! fails the row and the name starts clean again, and a second one-shot
-//! under a live name is refused. A loop that follows the commit counter
-//! does not wake itself with its own rows.
+//! The loop supervisor's promises: a stop mid-sleep returns within the
+//! grace, a failing tick backs off and recovers, a panic fails the entry
+//! and the name starts clean again, and a second one-shot under a live name
+//! is refused. Loops with nothing to do make no commit: their liveness
+//! lives in the supervisor's memory.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use droppedneedle_kernel::db::JobState;
-use droppedneedle_kernel::jobs::{AlreadyRunning, FnTick, Next, Schedule, TickError};
+use droppedneedle_kernel::clock::Clock;
+use droppedneedle_kernel::jobs::{
+    AlreadyRunning, CancellationToken, FnTick, JobState, LoopRecord, Next, Schedule, Supervisor,
+    TickError,
+};
+use droppedneedle_kernel::test_support::ManualClock;
 
-use crate::common::{loop_row, scratch_supervisor};
+use crate::common::{ScratchDir, loop_row, scratch_runtime, scratch_supervisor};
 
 const GRACE: Duration = Duration::from_secs(5);
 
@@ -35,7 +40,7 @@ async fn a_stop_mid_sleep_returns_within_the_grace() {
         )
         .unwrap();
     // The first tick has run; the loop now sleeps for an hour.
-    loop_row(runtime.db(), "sleeper", |row| {
+    loop_row(&supervisor, "sleeper", |row| {
         row.last_heartbeat_at.is_some()
     })
     .await;
@@ -44,10 +49,7 @@ async fn a_stop_mid_sleep_returns_within_the_grace() {
     supervisor.shutdown(GRACE).await;
     assert!(started.elapsed() < GRACE, "{:?}", started.elapsed());
     assert!(!supervisor.is_running("sleeper"));
-    let row = loop_row(runtime.db(), "sleeper", |row| {
-        row.state != JobState::Running
-    })
-    .await;
+    let row = loop_row(&supervisor, "sleeper", |row| row.state != JobState::Running).await;
     assert_eq!((row.state, row.last_error), (JobState::Stopped, None));
     runtime.shutdown().await;
 }
@@ -84,7 +86,7 @@ async fn a_failing_tick_backs_off_then_recovers() {
         .collect();
     // Interval plus 2, 4 and 8 s of backoff, then the plain interval.
     assert_eq!(gaps, [12, 14, 18, 10]);
-    let row = loop_row(runtime.db(), "flaky", |row| row.last_error.is_none()).await;
+    let row = loop_row(&supervisor, "flaky", |row| row.last_error.is_none()).await;
     assert_eq!(row.state, JobState::Running);
 
     // A loop that only wakes on a signal backs off the same way, without
@@ -132,10 +134,7 @@ async fn a_panicking_tick_fails_the_row_and_the_name_starts_clean() {
         )
         .unwrap();
     until_gone(&supervisor, "panicker").await;
-    let row = loop_row(runtime.db(), "panicker", |row| {
-        row.state == JobState::Failed
-    })
-    .await;
+    let row = loop_row(&supervisor, "panicker", |row| row.state == JobState::Failed).await;
     assert_eq!(row.last_error.as_deref(), Some("PANICKED"));
 
     supervisor
@@ -145,7 +144,7 @@ async fn a_panicking_tick_fails_the_row_and_the_name_starts_clean() {
             FnTick(|_| async { Ok(Next::Continue) }),
         )
         .unwrap();
-    let row = loop_row(runtime.db(), "panicker", |row| {
+    let row = loop_row(&supervisor, "panicker", |row| {
         row.state == JobState::Running && row.last_heartbeat_at.is_some()
     })
     .await;
@@ -169,47 +168,155 @@ async fn a_second_one_shot_under_a_live_name_is_refused() {
     runtime.shutdown().await;
 }
 
-/// A loop woken by the database's commits never wakes itself: a heartbeat
-/// alone is written at most once a minute, so on an idle database the
-/// commit counter stays put across its turns.
+/// An idle server writes nothing on a timer. For an hour of virtual time a
+/// 1 s periodic loop, a loop woken by the database's commits, a loop whose
+/// tick fails, one that fails then recovers, a one-shot and a one-shot
+/// replaced under its name run, then stop, and the commit counter never
+/// moves. The supervisor's entries say how each loop stands: the periodic
+/// one beat within the last second, the failing one has failed since its
+/// first tick, the recovered one is clean again, and the replaced run never
+/// wrote over its successor.
 #[tokio::test]
-async fn a_commit_follower_does_not_wake_itself() {
-    let (supervisor, runtime, _dir) = scratch_supervisor("loop-quiet").await;
-    let (turns, mut ticked) = tokio::sync::mpsc::unbounded_channel();
+async fn an_hour_of_loops_makes_no_commit() {
+    let dir = ScratchDir::new("loop-quiet");
+    let runtime = scratch_runtime(&dir.join("app.db")).await;
+    const START: i64 = 1_700_000_000_000;
+    let clock = ManualClock::at(START);
+    let supervisor = Supervisor::new(Arc::new(clock.clone()), CancellationToken::new());
+    tokio::time::pause();
+    let counter = runtime.db().commits();
+    let before = *counter.borrow();
+
+    supervisor
+        .periodic(
+            "periodic",
+            Schedule::new(Duration::from_secs(1)),
+            FnTick(|_| async { Ok(Next::Continue) }),
+        )
+        .unwrap();
+    let follower_turns = Arc::new(AtomicU32::new(0));
+    let turns = Arc::clone(&follower_turns);
     let mut commits = runtime.db().commits();
     commits.mark_changed();
     supervisor
         .on_wakeup(
             "follower",
             commits,
-            Schedule::new(Duration::from_millis(100)),
+            Schedule::new(Duration::from_secs(60)),
             FnTick(move |_| {
-                let turns = turns.clone();
+                turns.fetch_add(1, Ordering::SeqCst);
+                async { Ok(Next::Continue) }
+            }),
+        )
+        .unwrap();
+    supervisor
+        .periodic(
+            "failing",
+            Schedule::new(Duration::from_secs(10)),
+            FnTick(|_| async { Err(TickError::new("QUIET_FAILED", "down")) }),
+        )
+        .unwrap();
+    let recovering_turns = AtomicU32::new(0);
+    supervisor
+        .periodic(
+            "recovering",
+            Schedule::new(Duration::from_secs(10)),
+            FnTick(move |_| {
+                let turn = recovering_turns.fetch_add(1, Ordering::SeqCst);
                 async move {
-                    let _ = turns.send(());
-                    Ok(Next::Continue)
+                    if turn < 2 {
+                        Err(TickError::new("QUIET_FAILED", "not yet"))
+                    } else {
+                        Ok(Next::Continue)
+                    }
                 }
             }),
         )
         .unwrap();
-    // The start and the first heartbeat are written, then the loop settles.
-    loop_row(runtime.db(), "follower", |row| {
-        row.last_heartbeat_at.is_some()
-    })
-    .await;
-    for _ in 0..3 {
-        ticked.recv().await.unwrap();
+    supervisor.one_shot("once", |_| async { Ok(()) }).unwrap();
+    supervisor
+        .one_shot("relaunched", |ctx| async move {
+            ctx.token().cancelled().await;
+            Err(TickError::new("RETIRED_RUN", "replaced"))
+        })
+        .unwrap();
+    supervisor
+        .replace_one_shot("relaunched", |ctx| async move {
+            ctx.token().cancelled().await;
+            Ok(())
+        })
+        .unwrap();
+
+    for _ in 0..3_600 {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        clock.advance(1_000);
     }
-    let counter = runtime.db().commits();
-    let before = *counter.borrow();
-    for _ in 0..10 {
-        ticked.recv().await.unwrap();
-    }
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    let now = clock.now_ms();
+    let entries = supervisor.loops();
+    let names: Vec<&str> = entries.iter().map(|row| row.name.as_str()).collect();
     assert_eq!(
-        *counter.borrow(),
-        before,
-        "the loop's own rows moved the commit counter"
+        names,
+        [
+            "failing",
+            "follower",
+            "once",
+            "periodic",
+            "recovering",
+            "relaunched"
+        ]
     );
+    let entry =
+        |name: &str| -> &LoopRecord { entries.iter().find(|row| row.name == name).unwrap() };
+    let periodic = entry("periodic");
+    assert_eq!(
+        (periodic.state, periodic.last_error.as_deref()),
+        (JobState::Running, None)
+    );
+    let beat = periodic.last_heartbeat_at.expect("the periodic loop beat");
+    assert!(
+        (0..=1_000).contains(&(now - beat)),
+        "beat {} ms ago",
+        now - beat
+    );
+    let follower = entry("follower");
+    assert_eq!(follower.state, JobState::Running);
+    assert!(follower.last_heartbeat_at.is_some());
+    assert!(
+        follower_turns.load(Ordering::SeqCst) <= 61,
+        "only its idle ceiling woke the follower"
+    );
+    let failing = entry("failing");
+    assert_eq!(
+        (failing.state, failing.last_error.as_deref()),
+        (JobState::Running, Some("QUIET_FAILED"))
+    );
+    assert_eq!(
+        failing.failing_since,
+        Some(START),
+        "failing since its first failure"
+    );
+    let recovering = entry("recovering");
+    assert_eq!(
+        (recovering.last_error.as_deref(), recovering.failing_since),
+        (None, None),
+        "a clean tick clears the failure"
+    );
+    let once = entry("once");
+    assert_eq!(
+        (once.state, once.last_error.as_deref()),
+        (JobState::Stopped, None)
+    );
+    let relaunched = entry("relaunched");
+    assert_eq!(
+        (relaunched.state, relaunched.last_error.as_deref()),
+        (JobState::Running, None),
+        "the replaced run left its successor's entry alone"
+    );
+
+    tokio::time::resume();
     supervisor.shutdown(GRACE).await;
+    assert_eq!(*counter.borrow(), before, "the loops made a commit");
     runtime.shutdown().await;
 }

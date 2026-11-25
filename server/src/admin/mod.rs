@@ -23,6 +23,7 @@ use std::sync::Arc;
 use crate::appearance::store::AppearanceStore;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::db::{BackupService, CheckpointService, Db};
+use droppedneedle_kernel::jobs::Supervisor;
 use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_providers::{ProviderCacheStore, Providers};
 
@@ -68,6 +69,8 @@ pub struct AdminSetup {
     pub backups: Arc<BackupService>,
     /// Checkpoint service for health observability.
     pub checkpoint: CheckpointService,
+    /// The loop supervisor, whose memory holds every loop's liveness.
+    pub supervisor: Supervisor,
     /// Precache trigger on the loop supervisor.
     pub precache: crate::bootstrap::jobs::PrecacheTrigger,
     /// Cover and artist image cache, for its stats and clears.
@@ -88,6 +91,7 @@ impl AdminSetup {
         db: Db,
         backups: Arc<BackupService>,
         checkpoint: CheckpointService,
+        supervisor: Supervisor,
         precache: crate::bootstrap::jobs::PrecacheTrigger,
         covers: droppedneedle_catalog::artwork::cache::ArtworkCache,
         appearance: AppearanceStore,
@@ -101,6 +105,7 @@ impl AdminSetup {
             db: AdminDb::new(db),
             backups,
             checkpoint,
+            supervisor,
             precache,
             covers,
         }

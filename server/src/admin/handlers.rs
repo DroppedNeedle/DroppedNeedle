@@ -132,7 +132,7 @@ pub async fn queue_stats(
     _caller: Admin,
 ) -> Result<Json<QueueStatsResponse>, ApiError> {
     Ok(Json(
-        super::queues::queue_stats(&admin.db, &admin.checkpoint).await?,
+        super::queues::queue_stats(&admin.db, &admin.supervisor, &admin.checkpoint).await?,
     ))
 }
 

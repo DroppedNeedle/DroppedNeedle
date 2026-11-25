@@ -1,23 +1,9 @@
-//! The statements of the database runtime: the loop liveness rows, the planner
-//! statistics, and the checks run on a database file before it is opened or
-//! after it is copied.
+//! The statements of the database runtime: the planner statistics, and the
+//! checks run on a database file before it is opened or after it is copied.
 
 use super::time::Millis;
 
 crate::sql! {
-    /// Forget every loop row: the supervisor rebuilds them at each start.
-    pub(super) CLEAR_LOOPS = "DELETE FROM durable_loops";
-    /// Write one loop's row as it stands now.
-    pub(super) PUT_LOOP = "INSERT INTO durable_loops (name, state, last_heartbeat_at, last_error, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT (name) DO UPDATE SET
-                     state = excluded.state,
-                     last_heartbeat_at = excluded.last_heartbeat_at,
-                     last_error = excluded.last_error,
-                     updated_at = excluded.updated_at";
-    /// Every loop row in name order.
-    pub(super) ALL_LOOPS = "SELECT name, state, last_heartbeat_at, last_error, updated_at
-                 FROM durable_loops ORDER BY name";
     /// What the last planner statistics run recorded.
     pub(super) LAST_ANALYZE = "SELECT analyzed_at, indexed_tracks FROM db_planner_stats WHERE singleton = 1";
     /// Whether SQLite holds planner statistics at all.

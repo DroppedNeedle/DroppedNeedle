@@ -55,7 +55,8 @@ pub mod supervisor;
 pub use futures_util::future::BoxFuture;
 pub use schedule::{Schedule, SplitMix64};
 pub use supervisor::{
-    AlreadyRunning, FnTick, Next, Supervisor, Tick, TickCtx, TickError, TickResult,
+    AlreadyRunning, FnTick, JobState, LoopRecord, Next, Supervisor, Tick, TickCtx, TickError,
+    TickResult,
 };
 pub use tokio_util::sync::CancellationToken;
 

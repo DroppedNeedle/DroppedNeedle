@@ -2,7 +2,6 @@
 //! library from SQLite, and playlists and favorites are one set of rows
 //! shared with the native routes and the Navidrome m3u export.
 
-use crate::common::Probe;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -1227,14 +1226,16 @@ async fn stored_jellyfin_ids_survive_a_new_data_key() {
     }
 }
 
-/// The fill loop's row as the supervisor last wrote it: heartbeat and
-/// failure code. Read on a connection of its own, so a test can hold every
-/// pooled reader the fill uses.
+/// The fill loop's entry as the supervisor holds it: heartbeat and failure
+/// code. Read from memory, so a test can hold every pooled reader the fill
+/// uses.
 async fn fill_row(rig: &Rig) -> Option<(Option<i64>, Option<String>)> {
-    rig.runtime.db().maybe_row(
-        "SELECT last_heartbeat_at, last_error FROM durable_loops WHERE name = ?",
-        [droppedneedle_compat::jellyfin::ids::JOB_NAME],
-    )
+    rig.platform
+        .supervisor
+        .loops()
+        .into_iter()
+        .find(|row| row.name == droppedneedle_compat::jellyfin::ids::JOB_NAME)
+        .map(|row| (row.last_heartbeat_at, row.last_error))
 }
 
 /// Poll `check` until it holds, for at most the shared patience.

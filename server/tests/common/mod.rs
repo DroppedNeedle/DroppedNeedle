@@ -222,34 +222,29 @@ pub async fn scratch_supervisor(
 ) {
     let dir = ScratchDir::new(tag);
     let runtime = scratch_runtime(&dir.join("app.db")).await;
-    let supervisor = droppedneedle_kernel::jobs::Supervisor::start(
-        runtime.db().clone(),
+    let supervisor = droppedneedle_kernel::jobs::Supervisor::new(
         Arc::new(droppedneedle_kernel::clock::SystemClock),
         droppedneedle_kernel::jobs::CancellationToken::new(),
-    )
-    .await
-    .expect("loop supervisor starts");
+    );
     (supervisor, runtime, dir)
 }
 
-/// Wait for the row of loop `name` to satisfy `check`, and return it. The
-/// rows are written on the lane's own thread, so the bound is wall-clock
-/// time; the wait yields instead of sleeping, so a paused clock does not
-/// move while it waits.
+/// Wait for the entry of loop `name` to satisfy `check`, and return it.
+/// Ticks may run on blocking threads, so the bound is wall-clock time; the
+/// wait yields instead of sleeping, so a paused clock does not move while
+/// it waits.
 pub async fn loop_row(
-    db: &droppedneedle_kernel::db::Db,
+    supervisor: &droppedneedle_kernel::jobs::Supervisor,
     name: &str,
-    check: impl Fn(&droppedneedle_kernel::db::LoopRecord) -> bool,
-) -> droppedneedle_kernel::db::LoopRecord {
+    check: impl Fn(&droppedneedle_kernel::jobs::LoopRecord) -> bool,
+) -> droppedneedle_kernel::jobs::LoopRecord {
     let deadline = Instant::now() + PATIENCE;
     loop {
-        let rows = droppedneedle_kernel::db::list_loops(db)
-            .await
-            .expect("loop rows read");
+        let rows = supervisor.loops();
         if let Some(row) = rows.into_iter().find(|row| row.name == name && check(row)) {
             return row;
         }
-        assert!(Instant::now() < deadline, "loop row {name} never matched");
+        assert!(Instant::now() < deadline, "loop {name} never matched");
         tokio::task::yield_now().await;
         std::thread::sleep(Duration::from_millis(2));
     }

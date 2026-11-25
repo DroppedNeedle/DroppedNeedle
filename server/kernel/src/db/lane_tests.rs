@@ -18,7 +18,6 @@ use super::{
 };
 use crate::{
     clock::SystemClock,
-    db::durable::list_loops,
     jobs::{CancellationToken, Supervisor, checkpoint},
     test_support::{ScratchDir, template::copy_to},
 };
@@ -1230,13 +1229,7 @@ async fn fill_wal_behind_a_reader(runtime: &DbRuntime) -> rusqlite::Connection {
 async fn full_wal_holds_bulk_writes_only_until_it_can_shrink() {
     let (runtime, _dir) = small_wal_runtime("wal-hold").await;
     let lane = runtime.db().lane().clone();
-    let supervisor = Supervisor::start(
-        runtime.db().clone(),
-        Arc::new(SystemClock),
-        CancellationToken::new(),
-    )
-    .await
-    .unwrap();
+    let supervisor = Supervisor::new(Arc::new(SystemClock), CancellationToken::new());
     checkpoint::spawn_on(
         &supervisor,
         runtime.checkpoint().clone(),
@@ -1246,9 +1239,8 @@ async fn full_wal_holds_bulk_writes_only_until_it_can_shrink() {
     // The loop passes once at start and beats its heart. Its next pass is
     // most of a minute away, so nothing below can be its doing.
     until("the checkpoint loop finishes its first pass", || async {
-        list_loops(runtime.db())
-            .await
-            .unwrap()
+        supervisor
+            .loops()
             .iter()
             .any(|job| job.name == checkpoint::JOB_NAME && job.last_heartbeat_at.is_some())
     })

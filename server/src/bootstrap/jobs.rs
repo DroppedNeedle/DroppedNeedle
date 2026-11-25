@@ -587,12 +587,16 @@ fn already_running(name: &'static str) -> impl FnOnce(AlreadyRunning) -> String 
 
 /// The provider cache sweep's loop name.
 pub const PROVIDER_CACHE_SWEEP: &str = "provider-cache-sweep";
-/// How often rows past their keep time are deleted.
-pub const PROVIDER_CACHE_SWEEP_EVERY: Duration = Duration::from_secs(3_600);
+/// How often rows past their keep time are deleted: once a day, so an idle
+/// install's disk is left alone between passes.
+pub const PROVIDER_CACHE_SWEEP_EVERY: Duration = Duration::from_secs(24 * 3_600);
+/// The wait before the first sweep after a start.
+pub const PROVIDER_CACHE_SWEEP_FIRST: Duration = Duration::from_secs(3_600);
 
-/// Start the hourly sweep of the provider cache file: rows past their keep
-/// time go, then the file's journal is cut back. The first pass waits a
-/// whole interval, so boot never pays for it.
+/// Start the daily sweep of the provider cache file: rows past their keep
+/// time go, then the file's journal is cut back. The first pass runs an
+/// hour after start, so boot never pays for it and an install that
+/// restarts every night still sweeps.
 pub fn spawn_provider_cache_sweep(
     supervisor: &Supervisor,
     cache: ProviderCacheStore,
@@ -600,7 +604,7 @@ pub fn spawn_provider_cache_sweep(
     supervisor.periodic(
         PROVIDER_CACHE_SWEEP,
         Schedule::new(PROVIDER_CACHE_SWEEP_EVERY)
-            .with_initial_delay(PROVIDER_CACHE_SWEEP_EVERY)
+            .with_initial_delay(PROVIDER_CACHE_SWEEP_FIRST)
             .with_jitter(Duration::from_secs(60))
             .with_jittered_start(),
         FnTick(move |_| {

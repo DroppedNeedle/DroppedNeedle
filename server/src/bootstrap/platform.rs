@@ -9,7 +9,7 @@ use droppedneedle_auth::federated::settings::InstallIds;
 use droppedneedle_kernel::{
     clock::{Clock, SystemClock},
     config::AppConfig,
-    db::{DbConfig, DbRuntime, cache::CacheDb, datalock::DataLock, error::DbError, open_runtime},
+    db::{DbConfig, DbRuntime, cache::CacheDb, datalock::DataLock, open_runtime},
     http_client::HttpClientFactory,
     ids::UuidGenerator,
     jobs::{CancellationToken, Supervisor},
@@ -70,7 +70,7 @@ pub async fn open_platform(config: AppConfig, data_lock: DataLock) -> Result<Ope
     let (crypto, key_origin) = Crypto::load_or_generate(&config_dir)?;
     let crypto = Arc::new(crypto);
     // The one clock: the database's backups, checkpoints and statistics,
-    // the supervisor's rows and every area take time from it.
+    // the supervisor's heartbeats and every area take time from it.
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let runtime = open_runtime(
         &DbConfig::new(&config.library_db_path, Arc::clone(&clock))
@@ -83,14 +83,8 @@ pub async fn open_platform(config: AppConfig, data_lock: DataLock) -> Result<Ope
     // database may live elsewhere.
     let cache_db = CacheDb::open(&config.cache_dir, &config.library_db_path).await;
     // The one supervisor every background loop runs on, and its token the
-    // one stop. Starting it clears the last start's loop rows, so it comes
-    // before anything writes one.
-    let supervisor = wait_out_busy(
-        "loop supervisor",
-        |error: &DbError| matches!(error, DbError::Busy { .. }),
-        || Supervisor::start(db.clone(), Arc::clone(&clock), CancellationToken::new()),
-    )
-    .await?;
+    // one stop.
+    let supervisor = Supervisor::new(Arc::clone(&clock), CancellationToken::new());
     // Before the settings open, so a base path the web UI cannot take
     // stops the start before anything is copied in.
     let web = prepare_web(&config).await?;

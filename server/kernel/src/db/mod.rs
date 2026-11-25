@@ -63,8 +63,7 @@
 //! holds the two read pools, [`checkpoint`] runs the GH-293
 //! checkpoint policy with TRUNCATE reclaim, [`writer`] serializes writes with
 //! foreground-burst-8 fairness, [`backup`] copies the live database out with
-//! the online backup API, [`durable`] reads and writes the job registry's
-//! rows, [`analyze`] keeps the planner statistics fresh, [`migrate`] runs
+//! the online backup API, [`analyze`] keeps the planner statistics fresh, [`migrate`] runs
 //! the schema migrations, [`fs`]
 //! enforces the local-filesystem rule, [`fold`] folds text for
 //! accent-insensitive search, `savepoint` runs a part of a write that may
@@ -82,7 +81,6 @@ pub mod backup;
 pub mod cache;
 pub mod checkpoint;
 pub mod datalock;
-pub mod durable;
 pub mod error;
 pub mod factory;
 pub mod fold;
@@ -115,7 +113,6 @@ pub use checkpoint::{
     CHECKPOINT_READER_BLOCKED_BOUND, CheckpointMode, CheckpointOutcome, CheckpointService,
     Observation, TRUNCATE_MIN_INTERVAL,
 };
-pub use durable::{JobState, LoopRecord, list_loops};
 pub use error::{ChunkedError, DbError, rusqlite_is_busy};
 pub use factory::{
     ACQUIRE_TIMEOUT, BOOT_WAIT, BUSY_TIMEOUT, CACHE_SIZE_KIB, DbConfig, DbRuntime, MAX_READERS,

@@ -43,10 +43,10 @@
 //! A bulk write ([`Lane::Bulk`]) is a background write for fairness and
 //! budget, and the one class the WAL can hold: while the checkpoint service
 //! says the WAL is too large or stalled ([`WalHold`]), no bulk turn is
-//! granted. Requests, job writes and durable writes carry on, including the
-//! job loop's own heartbeats. The hold ends by itself: while a bulk write is
-//! held, a relief thread runs a checkpoint pass every second, and the pass
-//! that clears the state starts the held writes. Shutdown lifts the hold.
+//! granted. Requests, job writes and durable writes carry on. The hold ends
+//! by itself: while a bulk write is held, a relief thread runs a checkpoint
+//! pass every second, and the pass that clears the state starts the held
+//! writes. Shutdown lifts the hold.
 //!
 //! A durable write ([`WriteLane::write_durable`]) is a blocking write whose
 //! commit is synced to disk before it returns. It keeps its place in the
@@ -138,7 +138,7 @@ pub const WAIT_BUCKET_BOUNDS_MS: [u64; 7] = [1, 5, 25, 100, 250, 1_000, 5_000];
 pub enum Lane {
     /// Request path. Never held by the WAL, never starved by jobs.
     Foreground,
-    /// Job state: heartbeats, transitions, outbox rows, the download
+    /// Job state: lease heartbeats, transitions, outbox rows, the download
     /// journal. Yields to foreground bursts and is never held by the WAL.
     Background,
     /// Many rows at once: the chunked writes. Shares the background side of

@@ -90,6 +90,7 @@ impl Rig {
                 false,
             )),
             runtime.checkpoint().clone(),
+            platform.supervisor.clone(),
             jobs.precache_trigger(),
             crate::common::bundles::covers_at(&platform),
             droppedneedle::appearance::store::AppearanceStore::new(

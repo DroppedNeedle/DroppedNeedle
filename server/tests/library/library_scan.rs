@@ -1289,13 +1289,10 @@ async fn a_shutdown_mid_index_keeps_what_landed_and_resumes_once() {
 
     let hub = EventHub::new();
     let mut listener = hub.subscribe("listener");
-    let supervisor = droppedneedle_kernel::jobs::Supervisor::start(
-        db.clone(),
+    let supervisor = droppedneedle_kernel::jobs::Supervisor::new(
         Arc::new(SystemClock),
         CancellationToken::new(),
-    )
-    .await
-    .expect("supervisor starts");
+    );
     revisions::start(&supervisor, hub.clone(), db.clone()).expect("event loop starts");
 
     let signal = CancellationToken::new();

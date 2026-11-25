@@ -1,8 +1,9 @@
 //! Queue and provider stats.
 //!
-//! Queue stats port v2's lane-occupancy gauge: the loop liveness rows,
-//! read through [`droppedneedle_kernel::db::list_loops`], the depth of each
-//! job kind on the jobs table, and the latest checkpoint pass.
+//! Queue stats port v2's lane-occupancy gauge: each loop's liveness, read
+//! from the supervisor's memory through
+//! [`Supervisor::loops`](droppedneedle_kernel::jobs::Supervisor::loops), the
+//! depth of each job kind on the jobs table, and the latest checkpoint pass.
 //!
 //! Provider stats show each rate row's limiter (its table row plus the
 //! live bucket) and the outbound calls it has sent since start.
@@ -18,17 +19,17 @@ use super::{
         QueueDepthView, QueueStatsResponse,
     },
 };
-use droppedneedle_kernel::db::{CheckpointOutcome, CheckpointService, list_loops};
+use droppedneedle_kernel::db::{CheckpointOutcome, CheckpointService};
+use droppedneedle_kernel::jobs::Supervisor;
 use droppedneedle_providers::Providers;
 
-/// Loop rows, job queue depths and the latest checkpoint pass.
+/// Every loop's liveness, job queue depths and the latest checkpoint pass.
 pub async fn queue_stats(
     db: &AdminDb,
+    supervisor: &Supervisor,
     checkpoint: &CheckpointService,
 ) -> Result<QueueStatsResponse, AdminError> {
-    let jobs = list_loops(&db.db)
-        .await
-        .map_err(|error| AdminError::internal(&format_args!("loop rows read failed: {error}")))?;
+    let jobs = supervisor.loops();
     let queues = droppedneedle_kernel::jobs::queue::counts(&db.db)
         .await
         .map_err(|error| AdminError::internal(&format_args!("job counts read failed: {error}")))?;

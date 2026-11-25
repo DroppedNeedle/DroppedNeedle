@@ -8,8 +8,8 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use droppedneedle_kernel::db::JobState;
 use droppedneedle_kernel::jobs::BoxFuture;
+use droppedneedle_kernel::jobs::JobState;
 use droppedneedle_kernel::jobs::precache::{
     self, PrecacheLimits, PrecacheOutcome, PrecacheWork, Progress,
 };
@@ -146,7 +146,7 @@ async fn presence_isolates_a_failing_source() {
         // The failed source keeps no fresh slice.
         assert!(slices.get("jellyfin").is_none());
     }
-    let row = loop_row(runtime.db(), presence::JOB_NAME, |row| {
+    let row = loop_row(&supervisor, presence::JOB_NAME, |row| {
         row.last_error.is_some()
     })
     .await;
@@ -181,7 +181,7 @@ async fn precache_stall_trips_the_watchdog() {
         matches!(outcome, PrecacheOutcome::Watchdog(_)),
         "{outcome:?}"
     );
-    let row = loop_row(runtime.db(), precache::JOB_NAME, |row| {
+    let row = loop_row(&supervisor, precache::JOB_NAME, |row| {
         row.state == JobState::Failed
     })
     .await;

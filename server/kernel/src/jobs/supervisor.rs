@@ -2,8 +2,8 @@
 //!
 //! A loop is a name, a pacing [`Schedule`] and a tick. The supervisor owns
 //! everything around the tick: the boot hold-off, jitter, backoff while
-//! ticks fail, the heartbeat, the liveness row in `durable_loops`, panic
-//! capture, and the stop. One [`CancellationToken`] stops everything; each
+//! ticks fail, the heartbeat, the loop's liveness entry, panic capture,
+//! and the stop. One [`CancellationToken`] stops everything; each
 //! loop runs under a child of it, so one loop can be cancelled alone.
 //!
 //! - [`Supervisor::periodic`] ticks after the hold-off, then after every
@@ -18,16 +18,17 @@
 //! that work synchronously against SQLite.
 //!
 //! A tick error is logged with the loop's name and counts toward backoff;
-//! its fixed code is written to the row, never the error's text. A panic
-//! marks the row failed and frees the name, so the next start runs clean.
-//! Settings are read inside the tick, never captured when the loop starts.
+//! its fixed code is kept on the loop's entry, never the error's text. A
+//! panic marks the entry failed and frees the name, so the next start runs
+//! clean. Settings are read inside the tick, never captured when the loop
+//! starts.
 //!
-//! Rows are written by one writer task that keeps the latest row per loop
-//! and flushes them together as a background write. Loops never wait on
-//! the database: a busy write is retried later, and a slow lane never
-//! delays a tick. The rows are cleared at every start.
+//! The entries live only in the supervisor's memory, one per loop started
+//! since boot, and [`Supervisor::loops`] reads them for the admin jobs view.
+//! Nothing about a loop's liveness is written to the database, so a loop
+//! with nothing to do makes no commit.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::future::Future;
 use std::sync::{
@@ -37,30 +38,52 @@ use std::sync::{
 use std::time::Duration;
 
 use tokio::runtime::Handle;
-use tokio::sync::{Notify, watch};
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use super::schedule::{Schedule, SplitMix64};
 use crate::clock::Clock;
-use crate::db::durable::{self, JobState, LoopRecord};
-use crate::db::{Db, DbError};
 
-/// The least time the last rows get at shutdown, whatever the loops used
-/// of the grace.
-const LAST_ROWS_BOUND: Duration = Duration::from_secs(1);
-
-/// Row code of a loop that panicked.
+/// Code of a loop that panicked.
 pub const PANICKED: &str = "PANICKED";
-/// Row code of a loop still running when its grace ran out.
+/// Code of a loop still running when its grace ran out.
 pub const ABORTED: &str = "ABORTED";
 
-/// How often a heartbeat alone is written to a row.
-const HEARTBEAT_WRITE_EVERY: Duration = Duration::from_secs(60);
-
-/// Longest code a row holds; the table's CHECK refuses longer ones.
+/// Longest code an entry keeps; a longer one is cut to this many
+/// characters.
 const MAX_CODE_CHARS: usize = 64;
+
+/// Liveness of a background loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[schema(as = LoopState)]
+pub enum JobState {
+    /// Running now.
+    Running,
+    /// Stopped cleanly.
+    Stopped,
+    /// Ended on a panic or a failed one-shot; `last_error` says which.
+    Failed,
+}
+
+/// One loop's liveness entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoopRecord {
+    /// Loop name.
+    pub name: String,
+    /// Current liveness.
+    pub state: JobState,
+    /// Last heartbeat as unix milliseconds, if the loop ever beat.
+    pub last_heartbeat_at: Option<i64>,
+    /// Fixed code of the last failure, cleared by the next clean tick.
+    pub last_error: Option<String>,
+    /// When the current run of failed ticks began, as unix milliseconds:
+    /// set by the first failure after a clean tick or the start, cleared by
+    /// the next clean tick, and kept by a loop that ends failed.
+    pub failing_since: Option<i64>,
+}
 
 /// What a tick asks of its loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,7 +94,7 @@ pub enum Next {
     Finish,
 }
 
-/// A failed tick: a fixed code for the row, a detail for the log only.
+/// A failed tick: a fixed code for the entry, a detail for the log only.
 #[derive(Debug, Clone)]
 pub struct TickError {
     code: &'static str,
@@ -79,7 +102,7 @@ pub struct TickError {
 }
 
 impl TickError {
-    /// A failure with its row code and the cause to log.
+    /// A failure with its code and the cause to log.
     pub fn new(code: &'static str, detail: impl fmt::Display) -> Self {
         Self {
             code,
@@ -87,7 +110,7 @@ impl TickError {
         }
     }
 
-    /// The code written to the row.
+    /// The code kept on the loop's entry.
     pub fn code(&self) -> &'static str {
         self.code
     }
@@ -122,7 +145,7 @@ where
 }
 
 /// A synchronous tick run on a blocking thread. A panic there carries on
-/// into the loop's task, where it marks the row failed.
+/// into the loop's task, where it marks the entry failed.
 struct BlockingTick<F>(Option<F>);
 
 impl<F> Tick for BlockingTick<F>
@@ -155,7 +178,7 @@ where
 pub struct TickCtx {
     name: Arc<str>,
     token: CancellationToken,
-    book: Arc<RowBook>,
+    book: Arc<LoopBook>,
 }
 
 impl TickCtx {
@@ -209,7 +232,7 @@ struct Live {
 }
 
 /// A run replaced under its name: cancelled, still ending, joined at
-/// shutdown, and never written to the row its successor owns. Shutdown
+/// shutdown, and never written to the entry its successor owns. Shutdown
 /// takes the handle and leaves the id, so the run still knows it was
 /// replaced when it ends.
 struct Retired {
@@ -225,9 +248,7 @@ struct Inner {
     live: Mutex<HashMap<String, Live>>,
     retired: Mutex<Vec<Retired>>,
     next_id: AtomicU64,
-    book: Arc<RowBook>,
-    writer_stop: CancellationToken,
-    writer: Mutex<Option<JoinHandle<()>>>,
+    book: Arc<LoopBook>,
 }
 
 /// The one loop supervisor. Cloneable; clones share everything.
@@ -243,34 +264,30 @@ impl fmt::Debug for Supervisor {
 }
 
 impl Supervisor {
-    /// Clear the rows of the last start and begin writing this start's.
-    /// Cancelling `token` stops every loop.
-    pub async fn start(
-        db: Db,
-        clock: Arc<dyn Clock>,
-        token: CancellationToken,
-    ) -> Result<Self, DbError> {
-        durable::clear_loops(&db).await?;
-        let book = Arc::new(RowBook::new(Arc::clone(&clock)));
-        let writer_stop = CancellationToken::new();
-        let runtime = Handle::current();
-        let writer = runtime.spawn(write_rows(db, Arc::clone(&book), writer_stop.clone()));
-        Ok(Self {
+    /// A supervisor on the current tokio runtime, stamping heartbeats with
+    /// `clock`. Cancelling `token` stops every loop.
+    pub fn new(clock: Arc<dyn Clock>, token: CancellationToken) -> Self {
+        let book = Arc::new(LoopBook::new(Arc::clone(&clock)));
+        Self {
             inner: Arc::new(Inner {
                 clock,
                 token,
-                runtime,
+                runtime: Handle::current(),
                 live: Mutex::new(HashMap::new()),
                 retired: Mutex::new(Vec::new()),
                 next_id: AtomicU64::new(1),
                 book,
-                writer_stop,
-                writer: Mutex::new(Some(writer)),
             }),
-        })
+        }
     }
 
-    /// The wall clock the supervisor stamps rows with.
+    /// Every loop started since boot, running, stopped or failed, in name
+    /// order.
+    pub fn loops(&self) -> Vec<LoopRecord> {
+        self.inner.book.snapshot()
+    }
+
+    /// The wall clock the supervisor stamps heartbeats with.
     pub fn clock(&self) -> &Arc<dyn Clock> {
         &self.inner.clock
     }
@@ -335,7 +352,7 @@ impl Supervisor {
         self.on_wakeup(name, wake, schedule, BlockingTick(Some(tick)))
     }
 
-    /// Run `run` once under `name`. An error is logged and fails the row.
+    /// Run `run` once under `name`. An error is logged and fails the entry.
     pub fn one_shot<F, Fut>(&self, name: impl Into<String>, run: F) -> Result<(), AlreadyRunning>
     where
         F: FnOnce(TickCtx) -> Fut + Send + 'static,
@@ -346,7 +363,7 @@ impl Supervisor {
 
     /// [`Supervisor::one_shot`], taking the name over from a run still live
     /// under it: that run is cancelled and left to end by itself, joined at
-    /// shutdown, and never writes over the new run's row. For work restarted
+    /// shutdown, and never writes over the new run's entry. For work restarted
     /// under the same name before the old run has finished stopping (a
     /// plugin process the host relaunches). Refused once the supervisor is
     /// stopping.
@@ -385,7 +402,7 @@ impl Supervisor {
     }
 
     /// Stop everything: cancel the token, give every loop one shared
-    /// `grace`, abort what is left, then write the last rows.
+    /// `grace`, then abort what is left.
     pub async fn shutdown(&self, grace: Duration) {
         self.inner.token.cancel();
         let deadline = Instant::now() + grace;
@@ -411,21 +428,6 @@ impl Supervisor {
             futures_util::future::join_all(retired),
         )
         .await;
-        self.inner.writer_stop.cancel();
-        let writer = self
-            .inner
-            .writer
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take();
-        if let Some(mut writer) = writer
-            && tokio::time::timeout_at(deadline.max(Instant::now() + LAST_ROWS_BOUND), &mut writer)
-                .await
-                .is_err()
-        {
-            tracing::warn!("loop rows were still being written at the shutdown bound");
-            writer.abort();
-        }
     }
 
     async fn join(&self, name: &str, mut handle: JoinHandle<()>, deadline: Instant) {
@@ -448,7 +450,7 @@ impl Supervisor {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Start `body` under `name`: the row says running, the body runs on
+    /// Start `body` under `name`: the entry says running, the body runs on
     /// its own task so a panic lands here, and the end is recorded. Nothing
     /// starts once the token is cancelled: checked under the live lock, so
     /// a start `shutdown` has not drained is refused. With `replace`, a run
@@ -505,8 +507,8 @@ impl Supervisor {
                 .live
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            // A replaced run never writes the row again, and a loop started
-            // again under this name after a cancel owns the row now.
+            // A replaced run never writes the entry again, and a loop started
+            // again under this name after a cancel owns the entry now.
             if lock_retired(&inner).iter().any(|run| run.id == id) {
                 return;
             }
@@ -530,7 +532,7 @@ fn lock_retired(inner: &Inner) -> std::sync::MutexGuard<'_, Vec<Retired>> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// A one-shot's run, its error logged and turned into the row code.
+/// A one-shot's run, its error logged and turned into the entry's code.
 async fn one_shot_run<F, Fut>(ctx: TickCtx, run: F) -> Result<(), &'static str>
 where
     F: FnOnce(TickCtx) -> Fut,
@@ -543,8 +545,8 @@ where
     })
 }
 
-/// A code as a row may hold it: at most [`MAX_CODE_CHARS`] characters.
-fn row_code(code: &'static str) -> &'static str {
+/// A code as an entry keeps it: at most [`MAX_CODE_CHARS`] characters.
+fn entry_code(code: &'static str) -> &'static str {
     match code.char_indices().nth(MAX_CODE_CHARS) {
         Some((end, _)) => &code[..end],
         None => code,
@@ -568,7 +570,7 @@ async fn sleep_unless(token: &CancellationToken, delay: Duration) -> bool {
     }
 }
 
-/// Record a tick's result on the row and the failure count. False when the
+/// Record a tick's result on the entry and the failure count. False when the
 /// loop should end.
 fn settle(ctx: &TickCtx, result: TickResult, failures: &mut u32) -> bool {
     match result {
@@ -670,78 +672,45 @@ async fn idle(ceiling: Duration) {
     }
 }
 
-/// The latest row of every loop, and which ones the database has not seen.
-struct RowBook {
+/// The latest entry of every loop, in name order.
+struct LoopBook {
     clock: Arc<dyn Clock>,
-    state: Mutex<BookState>,
-    wake: Notify,
+    rows: Mutex<BTreeMap<String, LoopRecord>>,
 }
 
-#[derive(Default)]
-struct BookState {
-    rows: HashMap<String, LoopRecord>,
-    dirty: BTreeSet<String>,
-    /// The heartbeat of each row as last handed to the writer.
-    written_beat: HashMap<String, Option<i64>>,
-}
-
-impl RowBook {
+impl LoopBook {
     fn new(clock: Arc<dyn Clock>) -> Self {
         Self {
             clock,
-            state: Mutex::new(BookState::default()),
-            wake: Notify::new(),
+            rows: Mutex::new(BTreeMap::new()),
         }
     }
 
-    /// Apply `edit` to the row. A change of state or error is written at
-    /// once; a heartbeat alone at most every [`HEARTBEAT_WRITE_EVERY`],
-    /// because each write is a commit that wakes the loops following the
-    /// commit counter, and an idle loop must not wake them for ever.
+    fn rows(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, LoopRecord>> {
+        self.rows
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Apply `edit` to the entry, made running when it is new.
     fn change(&self, name: &str, edit: impl FnOnce(&mut LoopRecord, i64)) {
         let now = self.clock.now_ms();
-        let urgent = {
-            let mut state = self
-                .state
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let mut fresh = false;
-            let row = state.rows.entry(name.to_owned()).or_insert_with(|| {
-                fresh = true;
-                LoopRecord {
-                    name: name.to_owned(),
-                    state: JobState::Running,
-                    last_heartbeat_at: None,
-                    last_error: None,
-                    updated_at: now,
-                }
-            });
-            let before = (row.state, row.last_error.clone());
-            edit(row, now);
-            row.updated_at = now;
-            let moved = fresh || before != (row.state, row.last_error.clone());
-            // A clock stepped back past the written beat counts as due, or
-            // heartbeats would stall until wall time caught up again.
-            let beat_due = match state.written_beat.get(name).copied().flatten() {
-                None => true,
-                Some(written) => !(0..HEARTBEAT_WRITE_EVERY.as_millis() as i64)
-                    .contains(&now.saturating_sub(written)),
-            };
-            let urgent = moved || beat_due;
-            if urgent {
-                state.dirty.insert(name.to_owned());
-            }
-            urgent
-        };
-        if urgent {
-            self.wake.notify_one();
-        }
+        let mut rows = self.rows();
+        let row = rows.entry(name.to_owned()).or_insert_with(|| LoopRecord {
+            name: name.to_owned(),
+            state: JobState::Running,
+            last_heartbeat_at: None,
+            last_error: None,
+            failing_since: None,
+        });
+        edit(row, now);
     }
 
     fn start(&self, name: &str) {
         self.change(name, |row, _| {
             row.state = JobState::Running;
             row.last_error = None;
+            row.failing_since = None;
         });
     }
 
@@ -752,7 +721,11 @@ impl RowBook {
     fn tick_done(&self, name: &str, error: Option<&'static str>) {
         self.change(name, |row, now| {
             row.last_heartbeat_at = Some(now);
-            row.last_error = error.map(|code| row_code(code).to_owned());
+            row.last_error = error.map(|code| entry_code(code).to_owned());
+            row.failing_since = match error {
+                Some(_) => row.failing_since.or(Some(now)),
+                None => None,
+            };
         });
     }
 
@@ -761,72 +734,15 @@ impl RowBook {
             row.state = state;
             row.last_heartbeat_at = Some(now);
             if let Some(code) = code {
-                row.last_error = Some(row_code(code).to_owned());
+                row.last_error = Some(entry_code(code).to_owned());
+            }
+            if state == JobState::Failed {
+                row.failing_since = row.failing_since.or(Some(now));
             }
         });
     }
 
-    fn take_dirty(&self) -> Vec<LoopRecord> {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let names = std::mem::take(&mut state.dirty);
-        let rows: Vec<LoopRecord> = names
-            .iter()
-            .filter_map(|name| state.rows.get(name).cloned())
-            .collect();
-        for row in &rows {
-            state
-                .written_beat
-                .insert(row.name.clone(), row.last_heartbeat_at);
-        }
-        rows
-    }
-
-    fn mark_dirty(&self, rows: &[LoopRecord]) {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        state.dirty.extend(rows.iter().map(|row| row.name.clone()));
-    }
-}
-
-/// Write changed rows as they come, in one background write per flush. A
-/// failed write keeps its rows and tries again after a jittered backoff.
-/// `stop` ends it after one last flush.
-async fn write_rows(db: Db, book: Arc<RowBook>, stop: CancellationToken) {
-    let retry = Schedule::new(Duration::ZERO)
-        .with_jitter(Duration::from_millis(250))
-        .with_backoff(Duration::from_millis(250), Duration::from_secs(30));
-    let mut rng = SplitMix64::new(SplitMix64::seed_from_time());
-    let mut failures = 0_u32;
-    loop {
-        let stopping = tokio::select! {
-            biased;
-            () = book.wake.notified() => false,
-            () = stop.cancelled() => true,
-        };
-        let rows = book.take_dirty();
-        if !rows.is_empty() {
-            match durable::put_loops(&db, rows.clone()).await {
-                Ok(()) => failures = 0,
-                Err(DbError::LaneClosed) => return,
-                Err(error) => {
-                    failures = failures.saturating_add(1);
-                    tracing::warn!(%error, failures, "loop rows not written; retrying");
-                    book.mark_dirty(&rows);
-                    if !stopping {
-                        // Woken early by a stop, the loop still flushes once.
-                        sleep_unless(&stop, retry.next_delay(&mut rng, failures)).await;
-                        book.wake.notify_one();
-                    }
-                }
-            }
-        }
-        if stopping {
-            return;
-        }
+    fn snapshot(&self) -> Vec<LoopRecord> {
+        self.rows().values().cloned().collect()
     }
 }

@@ -1,6 +1,7 @@
 //! Admin-UX wire shapes. Clean-slate v3; no v2 byte compatibility is kept.
 
-use droppedneedle_kernel::db::{CheckpointMode, JobState};
+use droppedneedle_kernel::db::CheckpointMode;
+use droppedneedle_kernel::jobs::JobState;
 use droppedneedle_providers::{CallOutcome, RequestPriority};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;

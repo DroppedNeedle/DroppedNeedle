@@ -72,7 +72,7 @@ fn schema_rows(connection: &Connection) -> Vec<(String, String, String, Option<S
 fn fresh_migrate_marks_version_and_seeds() {
     let connection = migrated();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), latest_version());
-    assert_eq!(table_names(&connection).len(), 205);
+    assert_eq!(table_names(&connection).len(), 204);
     assert_eq!(
         scalar(
             &connection,
@@ -152,6 +152,7 @@ fn legacy_and_swap_tables_are_absent() {
         "library_files",
         "manual_review_queue",
         "library_album_meta",
+        "durable_loops",
     ] {
         assert!(!tables.contains(&name.to_owned()), "{name} must be absent");
     }
@@ -460,6 +461,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0172_weekly_sets.sql",
         "2e0175f71ab051a9d139be0c8d4250d091179552c786a738496b524071f68f86",
+    ),
+    (
+        "0173_drop_durable_loops.sql",
+        "1a4ae17eb87b07c6c66a9c7ac256e7623a13a52d41ccf979c65403f514396aeb",
     ),
 ];
 
@@ -3915,6 +3920,46 @@ fn weekly_sets_upgrade_adds_three_empty_tables() {
     );
 }
 
+/// 0173 drops the loop liveness table, rows and all, and changes nothing
+/// else: the supervisor keeps that state in memory.
+#[test]
+fn durable_loops_upgrade_drops_the_table() {
+    let dir = ScratchDir::new("drop-durable-loops-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 173)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 172);
+    connection
+        .execute_batch(
+            "INSERT INTO durable_loops (name, state, last_heartbeat_at, last_error, updated_at)
+                 VALUES ('wal-checkpoint', 'running', 5, NULL, 5),
+                        ('precache', 'failed', 6, 'PANICKED', 6);
+             INSERT INTO auth_users (id, display_name, created_at) VALUES ('u1', 'One', 1);",
+        )
+        .unwrap();
+    let mut before_schema = schema_rows(&connection);
+    let users = table_rows(&connection, "auth_users", "rowid, *");
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 173);
+    assert_eq!(table_rows(&connection, "auth_users", "rowid, *"), users);
+    before_schema.retain(|(_, _, table, _)| table != "durable_loops");
+    assert_eq!(
+        schema_rows(&connection),
+        before_schema,
+        "the table is gone and nothing else changes"
+    );
+}
+
 /// 0146 adds the table of recycle bin paths v2 used, empty, and changes
 /// nothing else: only an upgrade from v2 records a path in it.
 #[test]
@@ -4825,7 +4870,6 @@ fn state_columns() -> Vec<StateColumn> {
     use droppedneedle_catalog::discover::engine::weekly::{SetDay, ShortReason};
     use droppedneedle_catalog::discover::scheduler::Feature;
     use droppedneedle_compat::jellyfin::ids::IdKind;
-    use droppedneedle_kernel::db::durable::JobState as LoopState;
     use droppedneedle_kernel::jobs::queue::State as QueueState;
     use droppedneedle_kernel::runtime_config::ingest::IngestOutcome;
     use droppedneedle_kernel::runtime_config::sections::ListenSource;
@@ -4938,7 +4982,6 @@ fn state_columns() -> Vec<StateColumn> {
         // kernel
         state("config_ingests", "outcome", &IngestOutcome::ALL, IngestOutcome::as_str),
         state("durable_jobs", "state", &QueueState::ALL, QueueState::as_str),
-        state("durable_loops", "state", &LoopState::ALL, LoopState::as_str),
         // media
         state("media_history_imports", "source", &HistoryImportSource::ALL, HistoryImportSource::as_str),
         state("media_history_imports", "state", &HistoryImportState::ALL, HistoryImportState::as_str),

@@ -689,6 +689,7 @@ pub(crate) async fn build_on(
         db.clone(),
         runtime.backups().clone(),
         runtime.checkpoint().clone(),
+        supervisor.clone(),
         jobs.precache_trigger(),
         covers,
         appearance.clone(),

@@ -83,7 +83,6 @@ config_ingests
 config_sections
 db_planner_stats
 durable_jobs
-durable_loops
 
 [auth]
 auth_app_passwords

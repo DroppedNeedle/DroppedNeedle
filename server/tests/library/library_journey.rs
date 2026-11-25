@@ -6650,13 +6650,10 @@ async fn expiry_and_an_empty_at_once_mark_every_copy() {
     std::fs::remove_file(&copies[1].0).expect("one copy is deleted by hand");
     let publishing = &library.publishing;
     recycle_bin::request_empty(publishing, library.clock.now_ms(), "admin").expect("queued");
-    let supervisor = droppedneedle_kernel::jobs::Supervisor::start(
-        library.db.clone(),
+    let supervisor = droppedneedle_kernel::jobs::Supervisor::new(
         Arc::new(droppedneedle_kernel::clock::SystemClock),
         droppedneedle_kernel::jobs::CancellationToken::new(),
-    )
-    .await
-    .expect("supervisor starts");
+    );
     start_runners(
         &JobQueue::new(library.db.clone(), library.clock.clone()),
         &supervisor,

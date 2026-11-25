@@ -72,13 +72,7 @@ async fn start_watcher(
 ) -> (Supervisor, DbRuntime, ScratchDir) {
     let dir = ScratchDir::new(tag);
     let runtime = scratch_runtime(&dir.join("app.db")).await;
-    let supervisor = Supervisor::start(
-        runtime.db().clone(),
-        Arc::new(clock.clone()),
-        CancellationToken::new(),
-    )
-    .await
-    .unwrap();
+    let supervisor = Supervisor::new(Arc::new(clock.clone()), CancellationToken::new());
     tokio::time::pause();
     events_watcher::spawn_on(
         &supervisor,

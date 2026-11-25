@@ -135,13 +135,10 @@ async fn full_scan_throughput() {
     ))
     .await
     .expect("database runtime opens");
-    let supervisor = Supervisor::start(
-        runtime.db().clone(),
+    let supervisor = Supervisor::new(
         Arc::new(droppedneedle_kernel::clock::SystemClock),
         CancellationToken::new(),
-    )
-    .await
-    .expect("loop supervisor starts");
+    );
     checkpoint::spawn_on(
         &supervisor,
         runtime.checkpoint().clone(),

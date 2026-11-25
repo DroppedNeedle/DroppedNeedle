@@ -96,9 +96,7 @@ impl TestPlatform {
         };
         let supervisor = match self.supervisor {
             Some(supervisor) => supervisor,
-            None => Supervisor::start(self.db.clone(), self.clock, CancellationToken::new())
-                .await
-                .expect("loop supervisor starts"),
+            None => Supervisor::new(self.clock, CancellationToken::new()),
         };
         Platform::new(PlatformParts {
             config: self

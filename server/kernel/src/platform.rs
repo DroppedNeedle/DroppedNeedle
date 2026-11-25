@@ -37,7 +37,7 @@ pub struct Platform {
     pub http: HttpClientFactory,
     /// Fresh ids.
     pub ids: Arc<dyn IdGenerator>,
-    /// Wall time: the clock the supervisor stamps its rows with.
+    /// Wall time: the clock the supervisor stamps its heartbeats with.
     pub clock: Arc<dyn Clock>,
     /// The live event hub behind the event stream.
     pub events: EventHub,
