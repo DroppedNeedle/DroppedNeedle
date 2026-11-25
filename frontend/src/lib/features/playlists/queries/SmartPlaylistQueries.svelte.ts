@@ -39,7 +39,7 @@ export const getSmartTracksQuery = (getId: Getter<string>, getAfter: Getter<stri
 		const id = getId();
 		const after = getAfter();
 		return {
-			queryKey: [...keys.smartTracks(userId(), id), after],
+			queryKey: keys.smartTracksPage(userId(), id, after),
 			enabled: Boolean(userId()),
 			staleTime: STALE_LIVE,
 			queryFn: ({ signal }) =>
