@@ -338,6 +338,36 @@ async fn head_mirrors_get_without_body() {
     );
 }
 
+/// An audiobook `.m4b` streams as `audio/mp4`, with ranges and HEAD like
+/// any other file.
+#[tokio::test]
+async fn m4b_streams_as_mp4_with_ranges_and_head() {
+    let (_engine, router) = local_app(".m4b", 256);
+    let (status, headers, body) =
+        get(router, "/stream/local/song", &[("range", "bytes=10-19")]).await;
+    assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(body, fixture_bytes(256)[10..20]);
+    assert_eq!(
+        header(&headers, "content-type"),
+        Some("audio/mp4".to_owned())
+    );
+    assert_eq!(
+        header(&headers, "content-range"),
+        Some("bytes 10-19/256".to_owned())
+    );
+
+    let (_engine, router) = local_app(".m4b", 256);
+    let (status, headers, body) = call(router, Method::HEAD, "/stream/local/song", &[]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.is_empty());
+    assert_eq!(
+        header(&headers, "content-type"),
+        Some("audio/mp4".to_owned())
+    );
+    assert_eq!(header(&headers, "content-length"), Some("256".to_owned()));
+    assert_eq!(header(&headers, "accept-ranges"), Some("bytes".to_owned()));
+}
+
 // ---------------------------------------------------------------------------
 // Remote content types
 // ---------------------------------------------------------------------------

@@ -163,7 +163,7 @@ pub fn format_for_path(path: &Path) -> Result<AudioFormat, TagsError> {
 
 /// The container a lowercase extension, without its dot, is read as, or
 /// `None` when no reader takes it. Soulseek folders count a file as audio
-/// exactly when this returns a container.
+/// exactly when this returns a container; the scan does too, except `.mp4`.
 #[must_use]
 pub fn format_for_extension(extension: &str) -> Option<AudioFormat> {
     match extension {

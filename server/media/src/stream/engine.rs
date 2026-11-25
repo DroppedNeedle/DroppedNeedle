@@ -218,7 +218,9 @@ pub trait StreamEngine: Send + Sync {
 }
 
 /// Every audio format that streams, by extension, with its content type.
-const AUDIO_TYPES: [(&str, &str); 7] = [
+/// The other names a container goes by come after the canonical rows, so
+/// a reverse lookup answers the canonical extension.
+const AUDIO_TYPES: [(&str, &str); 11] = [
     ("flac", "audio/flac"),
     ("mp3", "audio/mpeg"),
     ("ogg", "audio/ogg"),
@@ -226,6 +228,10 @@ const AUDIO_TYPES: [(&str, &str); 7] = [
     ("aac", "audio/aac"),
     ("wav", "audio/wav"),
     ("opus", "audio/opus"),
+    ("m4b", "audio/mp4"),
+    ("mp4", "audio/mp4"),
+    ("oga", "audio/ogg"),
+    ("wave", "audio/wav"),
 ];
 
 /// Content type for an audio file extension, e.g. `.flac` or `flac`.
@@ -295,6 +301,20 @@ mod tests {
             assert_eq!(content_type_for_extension(extension), Some(media_type));
             let bare = extension.trim_start_matches('.').to_lowercase();
             assert_eq!(extension_for_content_type(media_type), Some(bare.as_str()));
+        }
+        for (alias, media_type, canonical) in [
+            (".m4b", "audio/mp4", "m4a"),
+            ("MP4", "audio/mp4", "m4a"),
+            (".oga", "audio/ogg", "ogg"),
+            (".wave", "audio/wav", "wav"),
+        ] {
+            assert_eq!(
+                content_type_for_extension(alias),
+                Some(media_type),
+                "{alias}"
+            );
+            assert_eq!(extension_for_content_type(media_type), Some(canonical));
+            assert_eq!(format_for_content_type(media_type), canonical);
         }
         assert_eq!(content_type_for_extension(".WMA"), None);
         assert_eq!(content_type_for_extension(".zip"), None);

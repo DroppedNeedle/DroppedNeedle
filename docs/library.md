@@ -59,7 +59,7 @@ MusicBrainz lookups pace at 1 request per second on the official MusicBrainz ser
 
 ## Supported formats
 
-The library takes FLAC, MP3, Ogg Vorbis, Opus, AAC, ALAC or AAC in M4A, and WAV. Scans and imports skip other formats, WMA, APE and WavPack included.
+The library takes FLAC, MP3, Ogg Vorbis, Opus, AAC, ALAC or AAC in M4A, and WAV. A `.m4b` file is read as M4A, `.oga` as Ogg and `.wave` as WAV. An import also takes a `.mp4` file and files it as `.m4a`, but a scan leaves `.mp4` files alone, as they are usually music videos. Scans and imports skip other formats, WMA, APE and WavPack included.
 
 When your browser can't play a track, the web player asks the server for a transcode by itself, for library files and for Jellyfin, Navidrome and Plex tracks alike: FLAC for a lossless source such as ALAC, so nothing is lost (the max bitrate under Settings > Connect Apps doesn't apply to it), and Opus or MP3 for a lossy one. Seeking works as usual, unless the track's length isn't known: then the seek bar is greyed out. The player bar shows the track's own format, with "Converted" beside it while a transcode plays. A media server track is copied to a temporary file on the server while it is transcoded, and the file is removed when playback ends. Navidrome names an M4A file without saying whether it holds AAC or ALAC, and the player doesn't know a Plex track's format, so such a track is tried as it is first and transcoded when it doesn't play. When the server itself won't send a track (your media server isn't answering, the file isn't there, or the server is busy), the player says so and doesn't try a transcode.
 

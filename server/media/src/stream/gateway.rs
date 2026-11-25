@@ -282,8 +282,8 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             content_type_for_extension(&extension).ok_or_else(|| StreamFault::InvalidInput {
                 message: "Unsupported audio format".to_owned(),
             })?;
-        let track = track.unwrap_or(TrackInfo {
-            file_format: extension,
+        let track = track.unwrap_or_else(|| TrackInfo {
+            file_format: format_for_content_type(content_type),
             bitrate_kbps: None,
             duration_seconds: 0.0,
         });

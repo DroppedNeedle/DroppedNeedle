@@ -45,20 +45,14 @@ pub const DEFAULT_WALK_DEADLINE_SECS: f64 = 30.0;
 /// Default cap on in-flight detached walkers.
 pub const DEFAULT_MAX_DETACHED_WALKERS: usize = 4;
 
-/// Audio suffixes, lowercase with dot. Matching is case-insensitive ASCII,
-/// which equals `casefold` for these suffixes.
-pub const AUDIO_EXTENSIONS: &[&str] = &[".flac", ".mp3", ".ogg", ".m4a", ".aac", ".wav", ".opus"];
-
+/// A file the scan reads: its extension, in any case, is one a tag reader
+/// takes (`crate::tags::format_for_extension`, the one list).
 pub fn is_audio_file(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
-        .map(|ext| {
-            let mut dotted = String::with_capacity(ext.len() + 1);
-            dotted.push('.');
-            dotted.push_str(&ext.to_lowercase());
-            AUDIO_EXTENSIONS.contains(&dotted.as_str())
-        })
-        .unwrap_or(false)
+        .map(str::to_lowercase)
+        // A `.mp4` beside songs is usually a music video; only the import takes one.
+        .is_some_and(|ext| ext != "mp4" && crate::tags::format_for_extension(&ext).is_some())
 }
 
 /// POSIX text for a path that is always bindable as stored TEXT: names that
@@ -1847,6 +1841,11 @@ mod tests {
     fn walk_keys_files_by_folded_name() {
         assert!(is_audio_file(Path::new("a.FLAC")));
         assert!(is_audio_file(Path::new("a.Opus")));
+        for alias in ["a.M4B", "a.oga", "a.wave"] {
+            assert!(is_audio_file(Path::new(alias)), "{alias}");
+        }
+        assert!(!is_audio_file(Path::new("a.MP4")));
+        assert!(!is_audio_file(Path::new("a.wma")));
         assert!(!is_audio_file(Path::new("a.txt")));
         assert!(!is_audio_file(Path::new("aflac")));
 
