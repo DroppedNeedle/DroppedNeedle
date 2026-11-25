@@ -9,9 +9,9 @@ DroppedNeedle answers the OpenSubsonic and Jellyfin APIs, so music apps can play
 - [Before you start](#before-you-start)
 - [What to enter](#what-to-enter)
 - [Each app](#each-app)
+- [Moving a queue between players](#moving-a-queue-between-players)
 - [Signing in from the browser](#signing-in-from-the-browser)
 - [What apps get](#what-apps-get)
-- [Moving a queue between players](#moving-a-queue-between-players)
 
 ## Before you start
 
@@ -41,14 +41,6 @@ Apps that use OpenSubsonic API keys can send the app password as the key instead
 | Arpeggi | Subsonic | |
 | Jellify | Jellyfin | |
 | Manet | Jellyfin | |
-
-## Signing in from the browser
-
-An admin registers the app once under Settings > Connect Apps > Sign-in from apps. In the app, choose browser sign-in, sign in to your DroppedNeedle server as usual, review the access shown and tap Allow. A Subsonic or Jellyfin app gets an app password that you can revoke under Profile > Connect Apps. An app registered for the DroppedNeedle API gets a device session that you can revoke under Profile > Sessions. See [Signing in apps from the browser](app-connect.md).
-
-## What apps get
-
-Apps list your own playlists and those shared with you, plus other people's public playlists if you turn on the switch under Profile > Connect Apps. Plays in an app count like plays in the web player, and ratings are shared with Subsonic apps. A track is transcoded only when the app asks for another format or a lower bitrate. The details, including sign-in limits, pictures and ids, are in [Music apps](discovery.md#music-apps).
 
 ## Moving a queue between players
 
@@ -88,3 +80,11 @@ Receipts travel in the next sync call. Until acknowledged, a command may
 appear again. Apply each command once per transfer and resend its receipt if
 needed. A step expires after 30 seconds. A restart forgets all players and
 pending transfers.
+
+## Signing in from the browser
+
+An admin registers the app once under Settings > Connect Apps > Sign-in from apps. In the app, choose browser sign-in, sign in to your DroppedNeedle server as usual, review the access shown and tap Allow. A Subsonic or Jellyfin app gets an app password that you can revoke under Profile > Connect Apps. An app registered for the DroppedNeedle API gets a device session that you can revoke under Profile > Sessions. See [Signing in apps from the browser](app-connect.md).
+
+## What apps get
+
+Apps list your own playlists and those shared with you, plus other people's public playlists if you turn on the switch under Profile > Connect Apps. Plays in an app count like plays in the web player, and ratings are shared with Subsonic apps. A track is transcoded only when the app asks for another format or a lower bitrate. The details, including sign-in limits, pictures and ids, are in [Music apps](discovery.md#music-apps).
