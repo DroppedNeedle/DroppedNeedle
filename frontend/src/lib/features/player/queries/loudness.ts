@@ -12,7 +12,10 @@ export const PlayerLoudnessQueryKeyFactory = {
 	track: (trackId: string) => key(SHARED, 'player', 'loudness', trackId)
 };
 
-/** A library track's gains and peaks for evening out volume: measured first, tags second. */
+/**
+ * A library track's gains and peaks for evening out volume, measured first and tags second,
+ * and where its sound starts, fades out and ends, for a smart fade.
+ */
 export const getTrackLoudnessQueryOptions = (trackId: string) =>
 	queryOptions({
 		queryKey: PlayerLoudnessQueryKeyFactory.track(trackId),

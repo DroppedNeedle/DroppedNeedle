@@ -24,6 +24,7 @@ import {
 	UNPLAYABLE_ERROR
 } from '$lib/features/player/playback/NativeAudioSource';
 import { createTransition, type Preload } from '$lib/features/player/playback/transition';
+import { edgesOf } from '$lib/features/player/playback/fadeWindow';
 import { playEndFrom } from '$lib/features/player/playback/playEnd';
 import { crossfade } from './crossfade.svelte';
 import {
@@ -111,7 +112,7 @@ const MAX_PROGRESS_STEP_S = 5;
 // How long a pick waits for the queue's ratings before it plays on without them.
 const RATINGS_WAIT_MS = 5000;
 // The next track loads this long before the current one ends, or this long
-// before a longer crossfade starts.
+// before a crossfade that starts earlier.
 const PRELOAD_LEAD_S = 30;
 // A song loaded now waits this long for its loudness, a song loaded ahead
 // this long, else it plays unlevelled.
@@ -352,9 +353,12 @@ function createPlayerStore() {
 		return next === null ? null : (queue[next] ?? null);
 	}
 
-	/** A library song's loudness; null for any other, or when it cannot be read. */
+	/**
+	 * A library song's loudness; null for any other, or when it cannot be read.
+	 * With no engine nothing is levelled or faded, so nothing is read.
+	 */
 	async function readLoudness(item: QueueItem): Promise<TrackLoudness | null> {
-		if (item.sourceType !== 'local' || !item.trackSourceId) return null;
+		if (!tryGetAudioEngine() || item.sourceType !== 'local' || !item.trackSourceId) return null;
 		try {
 			return await queryClient.fetchQuery(getTrackLoudnessQueryOptions(item.trackSourceId));
 		} catch (e) {
@@ -363,18 +367,21 @@ function createPlayerStore() {
 		}
 	}
 
-	/** The level `item` plays at, between `previous` (played before it) and what follows it. */
+	/**
+	 * The level `item` plays at, between `previous` (played before it) and what
+	 * follows it, from its loudness `read` when that answers before `wait`, with
+	 * that answer (null when none came).
+	 */
 	async function levelOf(
 		item: QueueItem,
 		previous: QueueItem | null,
 		index: number,
+		read: Promise<TrackLoudness | null>,
 		wait?: Promise<void>
-	): Promise<number> {
-		// With no engine nothing is levelled, so nothing is read.
-		if (!tryGetAudioEngine()) return 1;
-		const read = readLoudness(item);
+	): Promise<{ factor: number; loudness: TrackLoudness | null }> {
 		const loudness = await (wait ? Promise.race([read, wait.then(() => null)]) : read);
-		return levelFor(item, loudness, inAlbumOrder(previous, item, nextAfter(index)));
+		const factor = levelFor(item, loudness, inAlbumOrder(previous, item, nextAfter(index)));
+		return { factor, loudness };
 	}
 
 	/** Sets a deck's level before its song plays, or ramps it while it plays. */
@@ -590,11 +597,13 @@ function createPlayerStore() {
 			playId++;
 		}
 		// A reload of the song playing (a retry, another source) keeps the level it
-		// started at; a new play reads its loudness beside the stream, for a moment.
+		// started at; a new play waits for its loudness beside the stream, for a
+		// moment. Its sound edges are taken whenever the loudness answers.
+		const read = readLoudness(item);
 		const level =
 			kind !== 'fresh' && currentLevel?.playId === playId
 				? Promise.resolve(currentLevel.factor)
-				: levelOf(item, prevItem, index, delay(LOUDNESS_WAIT_MS));
+				: levelOf(item, prevItem, index, read, delay(LOUDNESS_WAIT_MS)).then((l) => l.factor);
 		currentIndex = index;
 		playbackState = 'loading';
 		progress = 0;
@@ -638,6 +647,7 @@ function createPlayerStore() {
 		nowPlaying = buildNowPlayingMetadata(queue[index] ?? item);
 		persist();
 		transition.follow({ source, item: queue[index] ?? item, transcoded: built.format !== null });
+		void read.then((loudness) => transition.timed(source, edgesOf(loudness)));
 		subscribeToSource(source, gen);
 		source.setVolume(volume);
 		try {
@@ -812,10 +822,11 @@ function createPlayerStore() {
 			if (state === 'off' || state === 'unavailable') return;
 			if (!isCurrent(gen) || preloadFor !== gen || upcoming !== item) return;
 		}
-		const factor = await levelOf(
+		const { factor, loudness } = await levelOf(
 			item,
 			queue[currentIndex] ?? null,
 			queue.indexOf(item),
+			readLoudness(item),
 			delay(PRELOAD_LOUDNESS_WAIT_MS)
 		);
 		if (!isCurrent(gen) || preloadFor !== gen || upcoming !== item) return;
@@ -832,7 +843,13 @@ function createPlayerStore() {
 			return;
 		}
 		source.setVolume(volume);
-		transition.prepare({ item, source, format: built.format, seekable: built.seekable });
+		transition.prepare({
+			item,
+			source,
+			format: built.format,
+			seekable: built.seekable,
+			edges: edgesOf(loudness)
+		});
 		// After prepare, which takes the deck: the level is in place before it plays.
 		levelDeck(source, factor);
 		// A failure reaches the transition, which drops the preload.
@@ -906,7 +923,10 @@ function createPlayerStore() {
 			progress = t;
 			duration = d;
 			noteHeard(t);
-			const lead = Math.max(PRELOAD_LEAD_S, crossfade.seconds + PRELOAD_BEFORE_FADE_S);
+			const lead = Math.max(
+				PRELOAD_LEAD_S,
+				d - transition.earliestStart(d) + PRELOAD_BEFORE_FADE_S
+			);
 			if (d > 0 && d - t <= lead) {
 				preloadNext(gen);
 			} else if (d - t > lead + PRELOAD_RELEASE_S && transition.preload) {
@@ -1393,10 +1413,12 @@ function createPlayerStore() {
 						await deck;
 						if (!isCurrent(gen)) return;
 					}
+					const read = readLoudness(resume.currentItem);
 					const level = levelOf(
 						resume.currentItem,
 						null,
 						resume.currentIndex,
+						read,
 						delay(LOUDNESS_WAIT_MS)
 					);
 					const built = buildSource(resume.currentItem, false);
@@ -1408,6 +1430,7 @@ function createPlayerStore() {
 						item: resume.currentItem,
 						transcoded: built.format !== null
 					});
+					void read.then((loudness) => transition.timed(source, edgesOf(loudness)));
 					nowPlaying = resume.nowPlaying;
 					subscribeToSource(source, gen);
 					source.setVolume(volume);
@@ -1418,7 +1441,7 @@ function createPlayerStore() {
 						format: resume.currentItem.format
 					});
 					if (!isCurrent(gen)) return;
-					const factor = await level;
+					const { factor } = await level;
 					if (!isCurrent(gen)) return;
 					currentLevel = { playId, factor };
 					levelDeck(source, factor);

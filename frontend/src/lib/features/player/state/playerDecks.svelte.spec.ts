@@ -407,4 +407,83 @@ describe('the next track on the second deck', () => {
 		await expect.poll(() => [a.element.src, b.element.src]).toEqual(['', '']);
 		expect(playingDecks([a, b])).toEqual([]);
 	});
+
+	describe('with smart fades', () => {
+		/** The loudness route, with where each named track fades out and its sound ends, in seconds. */
+		function measured(edges: Record<string, [number, number]>): void {
+			server.use({
+				'GET /api/v3/library/tracks/{id}/loudness': ({ params }) => {
+					const known = edges[params.id];
+					return {
+						track_gain_db: null,
+						track_peak: null,
+						album_gain_db: null,
+						album_peak: null,
+						sound_start_ms: known ? 0 : null,
+						fade_start_ms: known ? known[0] * 1000 : null,
+						sound_end_ms: known ? known[1] * 1000 : null
+					};
+				}
+			});
+		}
+
+		/** Nothing starts at `early`; the next song starts at `starts`. */
+		async function startsAt(early: number, starts: number): Promise<void> {
+			a.at(early);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			expect(b.plays).toEqual([]);
+			a.at(starts);
+			await expect.poll(() => b.plays).toEqual(['/api/v3/stream/local/two']);
+		}
+
+		async function playLocal(items: QueueItem[], preloadAt = 180): Promise<void> {
+			playerStore.playQueue(items);
+			await expect.poll(() => playerStore.playbackState).toBe('playing');
+			a.at(preloadAt);
+			await expect.poll(() => b.element.readyState).toBe(4);
+			expect(b.plays).toEqual([]);
+		}
+
+		beforeEach(() => crossfade.setSeconds(6));
+
+		it('starts the next song where this one fades out, not the crossfade before its end', async () => {
+			measured({ one: [185, 190] });
+			await playLocal([local('one', 'first'), local('two', 'second')]);
+
+			await startsAt(183, 185);
+		});
+
+		it('starts the next song as a hard ending stops', async () => {
+			measured({ one: [190, 190] });
+			await playLocal([local('one', 'first'), local('two', 'second')]);
+
+			await startsAt(188, 190);
+		});
+
+		it('keeps the fixed crossfade inside an album, whatever the edges', async () => {
+			crossfade.setInsideAlbums(true);
+			measured({ one: [185, 190] });
+			try {
+				await playLocal([local('one', 'album'), { ...local('two', 'album'), trackNumber: 2 }]);
+
+				await startsAt(190, 194);
+			} finally {
+				crossfade.setInsideAlbums(false);
+			}
+		});
+
+		it('keeps the fixed crossfade for a song with no edges', async () => {
+			measured({});
+			await playLocal([local('one', 'first'), local('two', 'second')]);
+
+			await startsAt(192, 194);
+		});
+
+		it('loads the next song in time ahead of an early fade', async () => {
+			measured({ one: [110, 120] });
+			await playLocal([local('one', 'first'), local('two', 'second')], 100);
+
+			await startsAt(112, 114);
+		});
+	});
 });

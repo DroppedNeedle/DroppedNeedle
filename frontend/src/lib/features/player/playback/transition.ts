@@ -2,13 +2,17 @@
  * Every move from one track to the next in the web player. The next track
  * (B) is loaded ahead on the idle deck; near the end of the current one (A)
  * B starts a moment early and the two join, or blend over the listener's
- * crossfade, on the audio engine's gains. A then fades out as a tail this
- * module owns until it ends. A's own end is the fallback: B starts there
- * when it was not ready, a length could not be trusted, or there is no
- * engine. YouTube tracks never get here: the player loads them as before.
+ * crossfade, on the audio engine's gains. With smart fades the blend runs
+ * where A's sound fades out, by the sound edges the server measured, which
+ * ride on the records here; songs that follow each other on an album never
+ * use them. A then fades out as a tail this module owns until it ends.
+ * A's own end is the fallback: B starts there when it was not ready, a
+ * length could not be trusted, or there is no engine. YouTube tracks never
+ * get here: the player loads them as before.
  */
 import { tryGetAudioEngine } from './audioElement';
 import { followsOnAlbum } from './albumOrder';
+import { earliestStart, fadeWindow, type Move, type SoundEdges } from './fadeWindow';
 import { NativeAudioSource } from './NativeAudioSource';
 import type { TranscodeFormat } from './transcodeTarget';
 import type { PlaybackSource, QueueItem } from './types';
@@ -21,8 +25,8 @@ const JOIN_LEAD_S = 0.08;
 // left of A (so none of A is cut), held to these bounds.
 const JOIN_MIN_S = 0.005;
 const JOIN_MAX_S = 0.1;
-// A crossfade shorter than this is none: the songs join instead.
-const MIN_FADE_S = 3;
+// A sound that ends this close to the song's end ends with the song.
+const END_SLACK_S = 0.5;
 // The start's timer is set only this close to it, from the latest position.
 const ARM_WINDOW_S = 1.5;
 // How fast a listener's skip, pause or seek takes the outgoing song away.
@@ -44,6 +48,8 @@ export interface Playing {
 	item: QueueItem | null;
 	/** Plays as a live transcode, whose element has no length of its own. */
 	transcoded: boolean;
+	/** Where its sound fades out and ends, once known. */
+	edges?: SoundEdges | null;
 }
 
 /** The next track, loaded ahead on the idle deck and not playing. */
@@ -52,6 +58,8 @@ export interface Preload {
 	source: NativeAudioSource;
 	format: TranscodeFormat | null;
 	seekable: boolean;
+	/** Where its sound fades out and ends, when its loudness read gave them. */
+	edges?: SoundEdges | null;
 }
 
 export interface TransitionHooks {
@@ -167,24 +175,35 @@ export function createTransition(hooks: TransitionHooks) {
 		next = null;
 	}
 
+	/** A's sound edges, while smart fades are on. */
+	function edgesFor(a: Playing): SoundEdges | null {
+		return crossfade.smart ? (a.edges ?? null) : null;
+	}
+
 	/**
-	 * How the move to B goes, from where A is: a crossfade's length, 0 for a
-	 * join started early, or null for B to start on A's end. A crossfade
-	 * runs on A's own length (a transcode's is the catalog's); a join only
-	 * when that length agrees with the catalog's, since it is timed to it.
+	 * How the move to B goes, from where A is: when B starts and the
+	 * crossfade's length (0 for a join started early), or null for B to
+	 * start on A's end. A crossfade runs on A's own length (a transcode's is
+	 * the catalog's), from A's sound edges unless B follows A on its album;
+	 * a join only when that length agrees with the catalog's, since it is
+	 * timed to it.
 	 */
-	function plan(a: Playing, b: Preload, position: number, length: number): number | null {
+	function plan(a: Playing, b: Preload, position: number, length: number): Move | null {
 		if (!a.item || !(a.source instanceof NativeAudioSource)) return null;
-		const remaining = length - position;
 		const { seconds, insideAlbums } = crossfade.settings;
-		if (seconds > 0 && (insideAlbums || !followsOnAlbum(a.item, b.item))) {
+		const onAlbum = followsOnAlbum(a.item, b.item);
+		if (seconds > 0 && (insideAlbums || !onAlbum)) {
 			const shorter = Math.min(length, b.item.duration || b.source.getDuration() || length);
-			const fade = Math.min(seconds, shorter / 3, remaining);
-			if (fade >= MIN_FADE_S) return fade;
+			const edges = onAlbum ? null : edgesFor(a);
+			const move = fadeWindow({ position, length, setting: seconds, shorter, edges });
+			// A hard stop at the song's own end is a join, with the join's guards.
+			if (move && (move.fade > 0 || move.at < length - END_SLACK_S)) return move;
 		}
 		// A pipe's end, or an MP3 pipe's start (no gapless header), is not known to the millisecond.
 		if (a.transcoded || b.format === 'mp3') return null;
-		return lengthsAgree(a.item, a.source.elementDuration()) ? 0 : null;
+		return lengthsAgree(a.item, a.source.elementDuration())
+			? { at: length - JOIN_LEAD_S, fade: 0 }
+			: null;
 	}
 
 	/** Moves to B: early (a join or a crossfade), or on A's end. False when B could not take over. */
@@ -200,7 +219,12 @@ export function createTransition(hooks: TransitionHooks) {
 			b.source.destroy();
 			return false;
 		}
-		current = { source: b.source, item: b.item, transcoded: b.format !== null };
+		current = {
+			source: b.source,
+			item: b.item,
+			transcoded: b.format !== null,
+			edges: b.edges ?? null
+		};
 		clearJoin();
 		const entry: Join = { source: b.source, fade, from: null, limit: null };
 		if (fade !== null && a.source instanceof NativeAudioSource) {
@@ -273,6 +297,20 @@ export function createTransition(hooks: TransitionHooks) {
 			return new Promise((resolve) => deckWaiters.push({ enough, resolve }));
 		},
 
+		/** The sound edges of `source`, the track playing, came in. */
+		timed(source: PlaybackSource, edges: SoundEdges | null): void {
+			if (current?.source === source) current = { ...current, edges };
+		},
+
+		/**
+		 * The earliest position of the track playing, `length` long, that the
+		 * move to the next track can start at: it is loaded ahead of that.
+		 */
+		earliestStart(length: number): number {
+			const edges = current ? edgesFor(current) : null;
+			return earliestStart(length, crossfade.seconds, edges);
+		},
+
 		/** The player loaded `playing` itself (not through a move): it plays at full. */
 		follow(playing: Playing): void {
 			current = playing;
@@ -312,14 +350,14 @@ export function createTransition(hooks: TransitionHooks) {
 			const a = current;
 			const b = next;
 			if (!a || !b || !isPlayingNative(a.source) || !tryGetAudioEngine() || length <= 0) return;
-			const fade = plan(a, b, position, length);
-			if (fade === null) return;
-			const wait = length - position - (fade > 0 ? fade : JOIN_LEAD_S);
+			const move = plan(a, b, position, length);
+			if (move === null) return;
+			const wait = move.at - position;
 			if (wait > ARM_WINDOW_S) return;
 			armTimer = setTimeout(
 				() => {
 					armTimer = null;
-					start(fade);
+					start(move.fade);
 				},
 				Math.max(0, wait * 1000)
 			);

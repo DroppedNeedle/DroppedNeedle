@@ -1,8 +1,10 @@
 <!--
 	The sound settings, for the drawer's Sound tab and the Listening Room's
 	panel. On top, what happens between songs: the crossfade dial (Off, or 2
-	to 12 seconds), whether songs that follow each other on an album blend
-	too, and whether every song plays at a similar loudness. The crossfade
+	to 12 seconds, the longest a fade can be with smart fades on), whether
+	the next song starts where this one fades out, whether songs that follow
+	each other on an album blend too, and whether every song plays at a
+	similar loudness. The crossfade
 	settings apply to the songs to come; "Even out volume" also moves the
 	song playing now. All stay usable while a YouTube track plays, with a
 	line saying they don't apply to it. Below,
@@ -120,10 +122,17 @@
 				max={CROSSFADE_MAX_S}
 				step={CROSSFADE_STEP_S}
 				dots={CROSSFADE_MAX_S / CROSSFADE_STEP_S + 1}
-				format={(seconds) => (seconds === 0 ? 'Off' : `${seconds} s`)}
+				format={(seconds) =>
+					seconds === 0 ? 'Off' : crossfade.smart ? `Up to ${seconds} s` : `${seconds} s`}
 				class="shrink-0"
 			/>
 			<div class="flex min-w-0 flex-1 flex-col gap-2">
+				<ToggleRow
+					label="Smart fades"
+					description="Blend where the song fades out."
+					disabled={crossfade.seconds === 0}
+					bind:checked={() => crossfade.smart, (on) => crossfade.setSmart(on)}
+				/>
 				<ToggleRow
 					label="Crossfade inside albums"
 					description="When off, albums play straight through."

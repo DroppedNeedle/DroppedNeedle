@@ -1,12 +1,16 @@
 // What the web player does between songs. Crossfade is off (0) or 2 to 12
-// seconds; "inside albums" decides whether songs that follow each other on
-// one album blend too, else they play straight through; "even out volume"
-// plays every song at a similar loudness. Kept per user in this browser.
+// seconds; "smart fades" starts the next song where this one fades out, the
+// crossfade being the longest a fade can be; "inside albums" decides whether
+// songs that follow each other on one album blend too, else they play
+// straight through; "even out volume" plays every song at a similar
+// loudness. Kept per user in this browser.
 import { authStore } from '$lib/stores/authStore.svelte';
 
 export interface BetweenSongs {
 	/** 0 is off, else how long one song blends into the next. */
 	seconds: number;
+	/** Blend where the song fades out, when the server measured where that is. */
+	smart: boolean;
 	insideAlbums: boolean;
 	evenOutVolume: boolean;
 }
@@ -14,7 +18,12 @@ export interface BetweenSongs {
 export const CROSSFADE_MAX_S = 12;
 export const CROSSFADE_STEP_S = 2;
 
-const DEFAULTS: BetweenSongs = { seconds: 0, insideAlbums: false, evenOutVolume: true };
+const DEFAULTS: BetweenSongs = {
+	seconds: 0,
+	smart: true,
+	insideAlbums: false,
+	evenOutVolume: true
+};
 
 const storageKey = (userId: string) => `droppedneedle_player_crossfade:${userId}`;
 
@@ -41,6 +50,7 @@ function parseStored(userId: string): BetweenSongs {
 		const seconds = Number(parsed?.seconds);
 		return {
 			seconds: isChoice(seconds) ? seconds : DEFAULTS.seconds,
+			smart: parsed?.smart !== false,
 			insideAlbums: parsed?.insideAlbums === true,
 			evenOutVolume: parsed?.evenOutVolume !== false
 		};
@@ -71,6 +81,10 @@ class Crossfade {
 		return this.settings.seconds;
 	}
 
+	get smart(): boolean {
+		return this.settings.smart;
+	}
+
 	get insideAlbums(): boolean {
 		return this.settings.insideAlbums;
 	}
@@ -89,6 +103,10 @@ class Crossfade {
 
 	setSeconds(seconds: number): void {
 		if (isChoice(seconds)) this.#save({ seconds });
+	}
+
+	setSmart(smart: boolean): void {
+		this.#save({ smart });
 	}
 
 	setInsideAlbums(insideAlbums: boolean): void {
