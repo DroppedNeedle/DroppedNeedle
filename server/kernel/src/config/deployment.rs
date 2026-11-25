@@ -112,6 +112,16 @@ pub const DEPLOYMENT_VARS: &[DeploymentVar] = &[
         note: "Full tracing filter; overrides LOG_LEVEL when set.",
     },
     DeploymentVar {
+        env_name: "LOG_FORMAT",
+        default: "text",
+        note: "text, or json for one JSON object per line.",
+    },
+    DeploymentVar {
+        env_name: "NO_COLOR",
+        default: "",
+        note: "Set to anything to keep colour codes out of the log. Without it, colour is used only on a terminal.",
+    },
+    DeploymentVar {
         env_name: "TZ",
         default: "",
         note: "Timezone name shown next to scan schedules.",

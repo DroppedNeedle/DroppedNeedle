@@ -286,6 +286,11 @@ EXIT_CODE=$(docker inspect "$NAME" --format '{{.State.ExitCode}}')
 [ "$EXIT_CODE" = "0" ] || fail "exit code $EXIT_CODE, expected 0"
 docker logs "$NAME" 2>&1 | grep -q "shutdown complete" || fail "missing 'shutdown complete' log line"
 echo "exit code 0, graceful-shutdown log line present"
+# A container log is not a terminal, so it holds no colour codes.
+if docker logs "$NAME" 2>&1 | LC_ALL=C grep -q "$(printf '\033')"; then
+  fail "the container log holds escape codes"
+fi
+echo "no escape codes in the container log"
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 
 echo "--- health check and runtime user ---"

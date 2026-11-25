@@ -40,6 +40,8 @@ Everything user-editable lives in the web UI and is stored in the database, so a
 | `HTTP_CONNECT_TIMEOUT` | `10` | Outbound connect timeout, seconds |
 | `HTTP_MAX_KEEPALIVE` | `50` | Idle outbound connections kept per host |
 | `RUST_LOG` | unset | Full log filter (e.g. `info,droppedneedle_library=debug`, or `droppedneedle_auth=debug` for sign-in); wins over `LOG_LEVEL` |
+| `LOG_FORMAT` | `text` | `text` writes readable lines; `json` writes one JSON object per line, for a log collector. Anything else stops the start |
+| `NO_COLOR` | unset | Set to any value to keep colour codes out of the log. Unset, the log is coloured only when it goes to a terminal, never in `docker logs` |
 | `ROOT_APP_DIR` | `/app` | Base for the cache, database, config and web UI paths below, and for `/app/plugins` and `/app/imports` |
 | `CACHE_DIR` | `/app/cache` | Database, backups, served web UI, caches |
 | `COVER_CACHE_MAX_SIZE_MB` | automatic | Size cap for downloaded and extracted cover art under `CACHE_DIR/covers`; the least recently shown covers go first. Unset, the cap follows the library: 512 MB plus 0.5 MB per album, at least 1 GB, and never more than a quarter of the free space on the cache's disk (counting what the cache holds), with 64 MB as the least. Set it to fix the cap at that many MB |

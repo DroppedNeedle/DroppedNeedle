@@ -58,7 +58,7 @@ tokio-util = "0.7"
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors", "compression-br", "compression-gzip", "fs"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 url = "2"
 utoipa = "5"
 # Registers each route and its document entry from one `#[utoipa::path]`.

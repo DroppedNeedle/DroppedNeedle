@@ -48,6 +48,15 @@ pub enum BindHost {
     Fixed(IpAddr),
 }
 
+/// How log lines are written (`LOG_FORMAT`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogFormat {
+    /// One readable line per event.
+    Text,
+    /// One JSON object per line, for a log collector.
+    Json,
+}
+
 /// Deployment configuration for one process.
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -79,6 +88,10 @@ pub struct AppConfig {
     pub slskd_downloads_path: PathBuf,
     /// Tracing filter directive (`RUST_LOG` when set, else from `LOG_LEVEL`).
     pub log_filter: String,
+    /// How log lines are written (`LOG_FORMAT`, text by default).
+    pub log_format: LogFormat,
+    /// Never colour the log, even on a terminal (`NO_COLOR` set).
+    pub no_color: bool,
     /// IANA timezone name from `TZ`, shown next to scan schedules.
     pub timezone: Option<String>,
     /// Folder for plugin stream spools (`TMPDIR`, else `/tmp`).
@@ -139,6 +152,8 @@ impl AppConfig {
             trusted_proxies: TrustedProxies::loopback(),
             slskd_downloads_path: PathBuf::from(DEFAULT_SLSKD_DOWNLOADS_PATH),
             log_filter: "info".to_owned(),
+            log_format: LogFormat::Text,
+            no_color: false,
             timezone: None,
             temp_dir: PathBuf::from("/tmp"),
             http: HttpSettings::default(),
@@ -229,6 +244,8 @@ impl AppConfig {
         }
         let level = log_filter_for(env("LOG_LEVEL").as_deref())?;
         config.log_filter = env("RUST_LOG").unwrap_or(level);
+        config.log_format = parse_log_format(env("LOG_FORMAT").as_deref())?;
+        config.no_color = env("NO_COLOR").is_some();
         config.timezone = env("TZ");
         if let Some(dir) = path("TMPDIR") {
             config.temp_dir = dir;
@@ -347,6 +364,18 @@ fn log_filter_for(raw: Option<&str>) -> Result<String, ConfigError> {
     Ok(format!("{level},{QUIET_DECODERS}"))
 }
 
+/// `text` (or unset) or `json`, any case.
+fn parse_log_format(raw: Option<&str>) -> Result<LogFormat, ConfigError> {
+    let Some(text) = raw else {
+        return Ok(LogFormat::Text);
+    };
+    match text.to_ascii_lowercase().as_str() {
+        "text" => Ok(LogFormat::Text),
+        "json" => Ok(LogFormat::Json),
+        _ => Err(ConfigError::InvalidLogFormat(text.to_owned())),
+    }
+}
+
 /// An on/off switch: `1`, `true`, `yes`, `on` or their opposites, any case.
 fn parse_switch(name: &'static str, value: String) -> Result<bool, ConfigError> {
     match value.to_ascii_lowercase().as_str() {
@@ -393,6 +422,9 @@ pub enum ConfigError {
         "invalid LOG_LEVEL value {0:?}: expected TRACE, DEBUG, INFO, WARNING, WARN, ERROR or CRITICAL"
     )]
     InvalidLogLevel(String),
+    /// `LOG_FORMAT` is neither `text` nor `json`.
+    #[error("invalid LOG_FORMAT value {0:?}: expected text or json")]
+    InvalidLogFormat(String),
     /// A seconds value is not a positive number of at most one day.
     #[error("invalid {name} value {value:?}: expected seconds above zero")]
     InvalidSeconds {
@@ -565,6 +597,12 @@ mod tests {
         assert_eq!(config.static_dir, Path::new("/srv/dn/static"));
         assert_eq!(config.base_path, "/music");
         assert_eq!(config.log_filter, "warn,symphonia=error,lofty=error");
+        assert_eq!(config.log_format, LogFormat::Text);
+        assert!(!config.no_color);
+        let json = load(&[("LOG_FORMAT", "JSON"), ("NO_COLOR", "1")]).unwrap();
+        assert_eq!(json.log_format, LogFormat::Json);
+        assert!(json.no_color);
+        assert!(!load(&[("NO_COLOR", " ")]).unwrap().no_color);
         assert_eq!(config.http.timeout, Duration::from_millis(2500));
         assert_eq!(config.shutdown_grace, Duration::from_secs(3));
         assert!(
@@ -591,6 +629,7 @@ mod tests {
             ("BASE_PATH", "music/"),
             ("TRUSTED_PROXY_IPS", "proxy"),
             ("LOG_LEVEL", "LOUD"),
+            ("LOG_FORMAT", "xml"),
             ("HTTP_TIMEOUT", "0"),
             ("HTTP_MAX_KEEPALIVE", "-1"),
             ("CONTACT_EMAIL", "a b@c"),

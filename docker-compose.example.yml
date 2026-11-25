@@ -39,6 +39,11 @@ services:
       # OPTIONAL (Usenet): point the SABnzbd Downloads mount setting at
       # /data/sabnzbd/complete so it also uses this common media mount.
     restart: unless-stopped
+    logging:
+      driver: json-file      # three 10 MB files; without this the log grows without limit
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 # Optional: run slskd alongside DroppedNeedle (you manage slskd and its shares).
 #  slskd:

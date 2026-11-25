@@ -99,6 +99,11 @@ services:
       # boundary so imports move fast. Do not nest extra binds under /data.
       - /path/to/media:/data:rw
     restart: unless-stopped
+    logging:
+      driver: json-file      # three 10 MB files; without this the log grows without limit
+      options:
+        max-size: "10m"
+        max-file: "3"
 ```
 
 The full annotated compose, with an optional slskd sidecar, is [docker-compose.example.yml](docker-compose.example.yml). Every environment variable is in [Configuration](docs/configuration.md).

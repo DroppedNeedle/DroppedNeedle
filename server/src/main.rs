@@ -10,7 +10,10 @@
 mod health_check;
 
 use droppedneedle::{bootstrap, docs::ApiDoc, upgrade_mode::ToolCommand};
-use droppedneedle_kernel::{config::AppConfig, observability::init_tracing};
+use droppedneedle_kernel::{
+    config::AppConfig,
+    observability::{LogSetup, init_tracing},
+};
 use utoipa::OpenApi as _;
 
 /// `--print-openapi` dumps the contract document to stdout for the
@@ -93,7 +96,7 @@ fn main() {
         tooling_routes: args.iter().any(|arg| arg == TOOLING_ROUTES_ARG),
         ..config
     };
-    init_tracing(&config.log_filter);
+    init_tracing(&LogSetup::from_config(&config), Vec::new());
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

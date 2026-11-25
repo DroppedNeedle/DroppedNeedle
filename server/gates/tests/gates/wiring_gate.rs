@@ -274,11 +274,6 @@ const LATE_ALLOWED: &[(&str, &str, &str)] = &[
     ),
     (
         "kernel/src/db/writer.rs",
-        "runner",
-        "the async-write thread's channel, dropped at shutdown so the thread ends",
-    ),
-    (
-        "kernel/src/db/writer.rs",
         "connection",
         "the connection a turn holds, put back when the turn drops",
     ),
