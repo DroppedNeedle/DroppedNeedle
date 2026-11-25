@@ -1,7 +1,11 @@
 name: Perf budgets
 
-# The timing tests the default suite skips, on a release build. Weekly and by
-# hand only: they need an optimized build and say nothing about one commit.
+# The timing tests the default suite skips, built with the local profile
+# (the release settings without LTO, which the budgets were set on). Weekly
+# and by hand only: they need an optimized build and say nothing about one
+# commit.
+# Beside them, the small-machine job measures the published image on a
+# constrained container.
 on:
   schedule:
     - cron: '0 3 * * 1'
@@ -35,29 +39,32 @@ jobs:
       - name: Install Rust toolchain
         run: rustup toolchain install
 
+      # Saved on a red run too, so a missed budget does not rebuild from
+      # cold the next week.
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: server
+          cache-on-failure: true
 
       - name: Build the tests
         id: build
         run: |
-          cargo test --release -p droppedneedle-catalog --lib --no-run
-          cargo test --release --test server --test library --no-run
+          cargo test --profile local -p droppedneedle-catalog --lib --no-run
+          cargo test --profile local --test server --test library --no-run
 
       # Each measurement runs even when an earlier one misses its budget, so
       # a run reports every figure. A miss still fails the job.
       - name: Catalog read budgets
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
-          cargo test --release -p droppedneedle-catalog --lib perf_100k -- --ignored --nocapture 2>&1 \
+          cargo test --profile local -p droppedneedle-catalog --lib perf_100k -- --ignored --nocapture 2>&1 \
             | tee "$RUNNER_TEMP/catalog.log"
 
       - name: Login budget
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
-          cargo test --release --test server login_p95 -- --ignored --nocapture 2>&1 \
+          cargo test --profile local --test server login_p95 -- --ignored --nocapture 2>&1 \
             | tee "$RUNNER_TEMP/login.log"
 
       - name: Scan throughput at 100,000 files
@@ -65,7 +72,7 @@ jobs:
         env:
           DN_SCAN_FILES: 100000
         run: |
-          cargo test --release --test library full_scan_throughput -- --ignored --nocapture 2>&1 \
+          cargo test --profile local --test library full_scan_throughput -- --ignored --nocapture 2>&1 \
             | tee "$RUNNER_TEMP/scan.log"
 
       - name: Add the figures to the job summary
@@ -81,3 +88,71 @@ jobs:
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
           done
+
+  # The published arm64 :dev image at 2 CPUs and 1 GB on a generated
+  # 100,000-track library, sealed from the internet. It fails only on an
+  # out-of-memory kill, a server that never gets healthy or a scan that does
+  # not finish; its other figures are reported.
+  small-machine:
+    name: Small machine
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 80
+    permissions:
+      contents: read
+      packages: read
+    env:
+      DN_PERF_IMAGE: ghcr.io/droppedneedle/droppedneedle:dev
+      DN_PERF_MOCKS_IMAGE: droppedneedle-v3:e2e-mocks
+      DN_PERF_OUT: ${{ github.workspace }}/small-machine
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Native arm64, never emulated.
+      - name: Pull the image
+        run: docker pull --platform linux/arm64 "$DN_PERF_IMAGE"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build the mocks image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: server/scripts/e2e-mocks.Dockerfile
+          load: true
+          tags: droppedneedle-v3:e2e-mocks
+          cache-from: type=gha,scope=e2e-mocks-arm64
+          cache-to: type=gha,mode=max,scope=e2e-mocks-arm64
+          provenance: false
+
+      # Its own limit, under the job's, so a run that runs out of time still
+      # writes its figures and the uploads below still run.
+      - name: Run the small machine
+        timeout-minutes: 65
+        run: ./server/scripts/perf-small-machine.sh
+
+      - name: Upload the figures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: small-machine
+          path: small-machine/small-machine.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload the container log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: small-machine-log
+          path: small-machine/container.log
+          if-no-files-found: ignore
+          retention-days: 14

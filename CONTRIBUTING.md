@@ -71,7 +71,7 @@ make check                  # all of the above (not cargo audit, cargo deny or t
 
 `python3 -I server/scripts/dead-code-scan.py server` fails on a public item nothing references; one that must stay goes in `server/scripts/dead-code-allowlist.txt` with its reason.
 
-The timing budgets are ignored tests, which `.github/workflows/perf.yml` runs in release every Monday and by hand. To run one locally: `cd server && cargo test --release --test server login_p95 -- --ignored --nocapture`.
+The timing budgets are ignored tests, which `.github/workflows/perf.yml` runs every Monday and by hand, built with the `local` profile (the release settings without LTO). To run one locally: `cd server && cargo test --profile local --test server login_p95 -- --ignored --nocapture`. Its small-machine job runs the published arm64 `:dev` image with 2 CPUs and 1 GB on a generated 100,000-track library, sealed from the internet (`server/scripts/perf-small-machine.sh`), and records boot time, first-scan speed, peak memory, idle writes and CPU, and one large Jellyfin list in the job summary and the `small-machine` artifact.
 
 Browser tests use Playwright. Install the browser once with `make frontend-browser-install`.
 
