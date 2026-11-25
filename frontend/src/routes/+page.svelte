@@ -23,6 +23,7 @@
 	import { isDismissed } from '$lib/features/discover/state/dismissedPrompts';
 	import HomeSectionNowPlaying from '$lib/features/home/components/HomeSectionNowPlaying.svelte';
 	import HomeEntryCards from '$lib/features/home/components/HomeEntryCards.svelte';
+	import HomeEmptyLibrary from '$lib/features/home/components/HomeEmptyLibrary.svelte';
 	import DiscoverTeaserBand from '$lib/features/discover/components/DiscoverTeaserBand.svelte';
 	import { getHomeQuery } from '$lib/features/home/queries/home.svelte';
 	import { useDiscoverActivity } from '$lib/features/discover/queries/DiscoverDemand.svelte';
@@ -269,28 +270,7 @@
 				{/if}
 
 				{#if !loading && !hasContent && servicePrompts.length === 0}
-					<div class="flex flex-col items-center justify-center py-12 sm:py-16">
-						<Music class="h-12 w-12 sm:h-16 sm:w-16 mb-4 sm:mb-6" />
-						<h2 class="mb-2 text-center text-3xl font-bold sm:text-4xl lg:text-5xl">
-							Welcome to <span class="text-primary">DroppedNeedle</span>
-						</h2>
-						{#if authStore.isAdmin}
-							<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
-								Your library is empty. Add a library path and start a scan to fill it.
-							</p>
-							<div class="flex flex-wrap justify-center gap-2">
-								<Button variant="primary" href={withBasePath('/settings?tab=library')}>
-									Start scan
-								</Button>
-								<Button variant="ghost" href={withBasePath('/library')}>Go to Library</Button>
-							</div>
-						{:else}
-							<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
-								Your library is being prepared. An admin is setting things up - check back soon.
-							</p>
-							<Button variant="ghost" href={withBasePath('/library')}>Go to Library</Button>
-						{/if}
-					</div>
+					<HomeEmptyLibrary />
 				{/if}
 			</div>
 
