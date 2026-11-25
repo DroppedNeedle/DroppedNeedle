@@ -10,6 +10,7 @@
 mod health_check;
 
 use droppedneedle::{bootstrap, docs::ApiDoc, upgrade_mode::ToolCommand};
+use droppedneedle_kernel::problems_ring::RecentProblems;
 use droppedneedle_kernel::{
     config::AppConfig,
     observability::{LogSetup, init_tracing},
@@ -96,7 +97,10 @@ fn main() {
         tooling_routes: args.iter().any(|arg| arg == TOOLING_ROUTES_ARG),
         ..config
     };
-    init_tracing(&LogSetup::from_config(&config), Vec::new());
+    // The one ring of recent warnings and errors: fed by the subscriber,
+    // read by the admin's recent problems.
+    let recent = RecentProblems::new();
+    init_tracing(&LogSetup::from_config(&config), vec![recent.layer()]);
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -108,7 +112,7 @@ fn main() {
         }
     };
     let grace = config.shutdown_grace;
-    let stopped = match runtime.block_on(run(config)) {
+    let stopped = match runtime.block_on(run(config, recent)) {
         Ok(stopped) => stopped,
         Err(message) => {
             // Nothing was serving, so no shutdown spent the grace.
@@ -148,7 +152,7 @@ fn print_openapi() {
 /// a taken port fails before recovery runs or any loop starts; clients
 /// that connect during boot wait in the listen backlog. On v2 data the
 /// upgrade page is served first, then the app.
-async fn run(config: AppConfig) -> Result<bootstrap::Stopped, String> {
+async fn run(config: AppConfig, recent: RecentProblems) -> Result<bootstrap::Stopped, String> {
     let listener = bootstrap::bind(config.bind_host, config.port)
         .await
         .map_err(|error| error.to_string())?;
@@ -160,6 +164,7 @@ async fn run(config: AppConfig) -> Result<bootstrap::Stopped, String> {
         config,
         bootstrap::Outbound::live(),
         ToolCommand::installed(),
+        recent,
         shutdown_signal(),
     )
     .await

@@ -43,6 +43,7 @@ async fn with_server<F: Future<Output = ()>>(config: AppConfig, journey: impl Fn
         config,
         closed_outbound(),
         ToolCommand::new(tool(), Vec::new()),
+        droppedneedle_kernel::problems_ring::RecentProblems::new(),
         async {
             let _ = signal.await;
         },
@@ -322,7 +323,7 @@ fn logged_code(text: &[u8], what: &str) -> String {
         .lines()
         .rev()
         .filter(|line| line.contains(what))
-        .find_map(|line| line.split("code=").nth(1))
+        .find_map(|line| line.split("_code=").nth(1))
         .and_then(|code| code.split_whitespace().next())
         .unwrap_or_else(|| panic!("no {what} is logged"))
         .to_owned()

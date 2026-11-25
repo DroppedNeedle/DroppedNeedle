@@ -122,7 +122,7 @@ impl SignIn {
     pub fn log_code(&self) {
         let code = lock(&self.code).spaced();
         tracing::warn!(
-            code = %code,
+            sign_in_code = %code,
             "upgrade sign-in code: it signs in to the upgrade page once, for when no admin can \
              sign in with a v2 password"
         );

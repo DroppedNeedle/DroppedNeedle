@@ -20,6 +20,7 @@ mod setup_code;
 pub(crate) mod sql;
 pub mod upgrade_progress;
 
+use droppedneedle_kernel::problems_ring::RecentProblems;
 use std::{fmt::Display, future::Future, sync::Arc, time::Duration};
 
 use axum::Router;
@@ -258,6 +259,7 @@ pub async fn run(
     config: AppConfig,
     outbound: Outbound,
     tool: ToolCommand,
+    recent: RecentProblems,
     signal: impl Future<Output = ()> + Send + 'static,
 ) -> Result<Stopped, BootError> {
     // One signal for both servers, so a stop between them is not lost.
@@ -284,7 +286,7 @@ pub async fn run(
             }
         }
     };
-    let built = build_on(config, outbound, lock, code).await?;
+    let built = build_on(config, outbound, lock, code, recent).await?;
     Ok(serve(listener, built.router, built.background, signal).await)
 }
 
@@ -299,7 +301,8 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
 /// Build the production graph and start its background work, reaching
 /// every outside service with an address fixed in code at the one
 /// `outbound` gives. A v2 folder, or one an upgrade left halfway, is
-/// refused.
+/// refused. Its recent problems ring is a new one that no subscriber
+/// feeds: a test that wants it filled installs its layer.
 pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, BootError> {
     let lock = match claim(&config).await? {
         Claimed::App(lock) => lock,
@@ -310,17 +313,19 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
             interrupted: true, ..
         } => return Err(BootRefusal::Interrupted.into()),
     };
-    build_on(config, outbound, lock, None).await
+    build_on(config, outbound, lock, None, RecentProblems::new()).await
 }
 
 /// [`build_with`] under `data_lock`, both of a server's locks. `setup_seed`
 /// is upgrade mode's unused sign-in code, which first-admin setup asks for
-/// when it needs a code at all.
+/// when it needs a code at all. `recent` is the ring the log's subscriber
+/// feeds, which the admin's recent problems read.
 pub(crate) async fn build_on(
     config: AppConfig,
     outbound: Outbound,
     data_lock: DataLock,
     setup_seed: Option<OneTimeCode>,
+    recent: RecentProblems,
 ) -> Result<Built, BootError> {
     // The key, the database, the supervisor, the settings and the one
     // event hub: every bundle below publishes into it from the moment it
@@ -695,6 +700,7 @@ pub(crate) async fn build_on(
         covers,
         appearance.clone(),
         disk.clone(),
+        recent,
     );
     let download_worker = acquire.worker.clone();
     let roots_library = library.scans.clone();

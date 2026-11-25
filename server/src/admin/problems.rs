@@ -10,14 +10,18 @@
 //! one at a time under a bound and are kept for a minute, so a dead mount
 //! never holds the route: while one is still running and nothing is kept,
 //! those rows are left out ("could not check").
+//!
+//! `GET /api/v3/admin/problems/recent` reads the ring of the server's recent
+//! warnings and errors, where a ref a person was given finds its entry.
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use axum::{Json, extract::State};
-use serde::Serialize;
-use utoipa::ToSchema;
+use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
 
 use crate::admin::backups::{BACKUP_INTEGRITY_FAILED, BACKUP_JOB, BACKUP_NO_ROOM};
 use crate::settings::wiring::SettingsSetup;
@@ -27,8 +31,11 @@ use droppedneedle_acquire::probes::ProbeCache;
 use droppedneedle_auth::Admin;
 use droppedneedle_kernel::db::{BackupService, Db};
 use droppedneedle_kernel::disk::{DiskLevel, DiskWatch, FolderRole};
+use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::ValidQuery;
 use droppedneedle_kernel::jobs::{JobState, Supervisor, queue};
 use droppedneedle_kernel::mount::{Routes, routes};
+use droppedneedle_kernel::problems_ring::{FieldValue, ProblemLevel, RecentProblems};
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::Backups;
 use droppedneedle_library::management::service::Management;
@@ -200,6 +207,7 @@ pub struct Problems {
     backups: Arc<BackupService>,
     nightly: Live<Backups>,
     health: Arc<ServiceHealth>,
+    recent: RecentProblems,
     kept: Arc<Mutex<Option<Kept>>>,
     reading: Arc<AtomicBool>,
 }
@@ -218,6 +226,7 @@ impl Problems {
             backups: state.admin.backups.clone(),
             nightly: state.settings.service().store.live(),
             health: state.admin.providers.health.clone(),
+            recent: state.admin.recent.clone(),
             kept: Arc::new(Mutex::new(None)),
             reading: Arc::new(AtomicBool::new(false)),
         }
@@ -546,7 +555,146 @@ pub async fn list_problems(
     Json(problems.list().await)
 }
 
-/// The problems route.
+/// Longest ref the recent problems search takes.
+const MAX_REF_CHARS: usize = 128;
+
+/// The recent problems search.
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct RecentQuery {
+    /// Only entries seen in a request whose ref starts with this.
+    #[serde(rename = "ref")]
+    pub reference: Option<String>,
+}
+
+/// A recent problem's level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RecentLevel {
+    /// A warning.
+    Warn,
+    /// An error.
+    Error,
+}
+
+/// One recent problem, as the admin reads it: the raw form, which may name
+/// paths, names and plugin output, the same as the server log.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct RecentProblemView {
+    /// First seen, unix milliseconds.
+    pub first_at: i64,
+    /// Last seen, unix milliseconds.
+    pub last_at: i64,
+    /// Its level.
+    pub level: RecentLevel,
+    /// The module that logged it.
+    pub target: String,
+    /// The file and line that logged it, when known.
+    pub location: Option<String>,
+    /// What it said.
+    pub message: String,
+    /// Its other fields, as text.
+    pub fields: BTreeMap<String, String>,
+    /// Fields left out to keep the entry small.
+    pub dropped_fields: u32,
+    /// How many times it was seen.
+    pub count: u64,
+    /// The requests it was seen in.
+    pub refs: Vec<String>,
+}
+
+/// The recent problems, newest first.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct RecentProblemsResponse {
+    /// At most 500.
+    pub problems: Vec<RecentProblemView>,
+}
+
+fn field_text(value: &FieldValue) -> String {
+    match value {
+        FieldValue::Text(text) => text.clone(),
+        FieldValue::Int(number) => number.to_string(),
+        FieldValue::Float(number) => number.to_string(),
+        FieldValue::Bool(on) => on.to_string(),
+    }
+}
+
+impl Problems {
+    /// The recent problems, newest first, only those seen in a request
+    /// whose ref starts with `reference` when one is given.
+    pub fn recent(&self, reference: Option<&str>) -> RecentProblemsResponse {
+        let now_ms = self.supervisor.clock().now_ms();
+        let now = Instant::now();
+        let at = |seen: Instant| {
+            now_ms.saturating_sub(
+                i64::try_from(now.saturating_duration_since(seen).as_millis()).unwrap_or(i64::MAX),
+            )
+        };
+        let problems = self
+            .recent
+            .entries(reference)
+            .into_iter()
+            .map(|entry| RecentProblemView {
+                first_at: at(entry.first),
+                last_at: at(entry.last),
+                level: match entry.level {
+                    ProblemLevel::Warn => RecentLevel::Warn,
+                    ProblemLevel::Error => RecentLevel::Error,
+                },
+                target: entry.target.to_owned(),
+                location: entry.file.map(|file| match entry.line {
+                    Some(line) => format!("{file}:{line}"),
+                    None => file.to_owned(),
+                }),
+                message: entry.message,
+                fields: entry
+                    .fields
+                    .iter()
+                    .map(|(name, value)| ((*name).to_owned(), field_text(value)))
+                    .collect(),
+                dropped_fields: entry.dropped_fields,
+                count: entry.count,
+                refs: entry.refs,
+            })
+            .collect();
+        RecentProblemsResponse { problems }
+    }
+}
+
+/// The server's recent warnings and errors, newest first; with `ref`, only
+/// those seen in a request whose ref starts with it. The admin's own view:
+/// it shows what the server log shows.
+#[utoipa::path(
+    get,
+    tag = "admin",
+    path = "/api/v3/admin/problems/recent",
+    params(RecentQuery),
+    responses(
+        (status = 200, description = "Recent problems", body = RecentProblemsResponse),
+        (status = 400, description = "The ref is longer than 128 characters"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Admin role required"),
+    )
+)]
+pub async fn list_recent_problems(
+    State(problems): State<Problems>,
+    _caller: Admin,
+    ValidQuery(query): ValidQuery<RecentQuery>,
+) -> Result<Json<RecentProblemsResponse>, ApiError> {
+    let reference = query
+        .reference
+        .as_deref()
+        .map(str::trim)
+        .filter(|found| !found.is_empty());
+    if reference.is_some_and(|found| found.chars().count() > MAX_REF_CHARS) {
+        return Err(ApiError::invalid_input("A ref is at most 128 characters."));
+    }
+    Ok(Json(problems.recent(reference)))
+}
+
+/// The problems routes.
 pub fn routes() -> Routes<Problems> {
-    Routes::new().admin(routes!(list_problems))
+    Routes::new()
+        .admin(routes!(list_problems))
+        .admin(routes!(list_recent_problems))
 }

@@ -40,6 +40,7 @@ mod providers_events;
 mod providers_models;
 mod providers_musicbrainz;
 mod providers_rates;
+mod recent_problems;
 mod route_walk;
 mod settings_deemix;
 mod settings_readers;

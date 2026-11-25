@@ -46,7 +46,7 @@ pub(super) async fn setup_code(
         })?,
     };
     tracing::warn!(
-        code = %code.spaced(),
+        setup_code = %code.spaced(),
         "first-admin setup code: this server was started fresh from v2, so setup asks for this \
          code; a new one is logged at each start until the first account exists"
     );

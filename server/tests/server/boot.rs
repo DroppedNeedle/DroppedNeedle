@@ -177,7 +177,7 @@ async fn after_a_fresh_start_setup_asks_for_the_code_logged_at_boot() {
     let code = String::from_utf8_lossy(&logged.lock().unwrap())
         .lines()
         .filter(|line| line.contains("first-admin setup code"))
-        .find_map(|line| line.split("code=").nth(1))
+        .find_map(|line| line.split("_code=").nth(1))
         .and_then(|code| code.split_whitespace().next())
         .expect("the setup code is logged")
         .to_owned();

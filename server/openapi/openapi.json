@@ -1156,6 +1156,75 @@
         ]
       }
     },
+    "/api/v3/admin/problems/recent": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "The server's recent warnings and errors, newest first; with `ref`, only\nthose seen in a request whose ref starts with it. The admin's own view:\nit shows what the server log shows.",
+        "operationId": "list_recent_problems",
+        "parameters": [
+          {
+            "name": "ref",
+            "in": "query",
+            "description": "Only entries seen in a request whose ref starts with this.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recent problems",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecentProblemsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The ref is longer than 128 characters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/admin/provider-stats": {
       "get": {
         "tags": [
@@ -66197,6 +66266,105 @@
           },
           "message": {
             "type": "string"
+          }
+        }
+      },
+      "RecentLevel": {
+        "type": "string",
+        "description": "A recent problem's level.",
+        "enum": [
+          "warn",
+          "error"
+        ]
+      },
+      "RecentProblemView": {
+        "type": "object",
+        "description": "One recent problem, as the admin reads it: the raw form, which may name\npaths, names and plugin output, the same as the server log.",
+        "required": [
+          "first_at",
+          "last_at",
+          "level",
+          "target",
+          "message",
+          "fields",
+          "dropped_fields",
+          "count",
+          "refs"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many times it was seen.",
+            "minimum": 0
+          },
+          "dropped_fields": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Fields left out to keep the entry small.",
+            "minimum": 0
+          },
+          "fields": {
+            "type": "object",
+            "description": "Its other fields, as text.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "first_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "First seen, unix milliseconds."
+          },
+          "last_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Last seen, unix milliseconds."
+          },
+          "level": {
+            "$ref": "#/components/schemas/RecentLevel",
+            "description": "Its level."
+          },
+          "location": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The file and line that logged it, when known."
+          },
+          "message": {
+            "type": "string",
+            "description": "What it said."
+          },
+          "refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The requests it was seen in."
+          },
+          "target": {
+            "type": "string",
+            "description": "The module that logged it."
+          }
+        }
+      },
+      "RecentProblemsResponse": {
+        "type": "object",
+        "description": "The recent problems, newest first.",
+        "required": [
+          "problems"
+        ],
+        "properties": {
+          "problems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RecentProblemView"
+            },
+            "description": "At most 500."
           }
         }
       },

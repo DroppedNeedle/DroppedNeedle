@@ -21,6 +21,7 @@ pub(crate) mod sql;
 pub mod system;
 
 use droppedneedle_kernel::disk::DiskWatch;
+use droppedneedle_kernel::problems_ring::RecentProblems;
 use std::sync::Arc;
 
 use crate::appearance::store::AppearanceStore;
@@ -82,6 +83,8 @@ pub struct AdminSetup {
     pub appearance: AppearanceStore,
     /// The free-space watch's latest reading, for the problems list.
     pub disk: DiskWatch,
+    /// The server's recent warnings and errors.
+    pub recent: RecentProblems,
 }
 
 impl AdminSetup {
@@ -101,10 +104,12 @@ impl AdminSetup {
         covers: droppedneedle_catalog::artwork::cache::ArtworkCache,
         appearance: AppearanceStore,
         disk: DiskWatch,
+        recent: RecentProblems,
     ) -> Self {
         Self {
             appearance,
             disk,
+            recent,
             users,
             quota,
             cache: providers.cache.clone(),

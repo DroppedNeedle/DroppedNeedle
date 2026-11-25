@@ -12,7 +12,8 @@ import { STALE_LIVE } from '$lib/queries/staleTime';
 export const DiagnosticsQueryKeyFactory = {
 	all: () => key(ADMIN, 'diagnostics'),
 	queueStats: () => key(ADMIN, 'diagnostics', 'queue-stats'),
-	providerStats: () => key(ADMIN, 'diagnostics', 'provider-stats')
+	providerStats: () => key(ADMIN, 'diagnostics', 'provider-stats'),
+	recentProblems: (reference: string) => key(ADMIN, 'diagnostics', 'recent-problems', reference)
 };
 
 /** Gauges must stay fresh; polling is cheap, the server reads in-memory state. */
@@ -44,3 +45,19 @@ export const getProviderStatsQuery = (getEnabled: Getter<boolean> = () => true) 
 		refetchOnWindowFocus: false,
 		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/admin/provider-stats'), { signal })
 	}));
+
+/** The server's recent warnings and errors, only those of one ref when `getRef` gives one. */
+export const getRecentProblemsQuery = (getRef: Getter<string>) =>
+	createQuery(() => {
+		const reference = getRef().trim();
+		return {
+			queryKey: DiagnosticsQueryKeyFactory.recentProblems(reference),
+			staleTime: STALE_LIVE,
+			refetchOnWindowFocus: false,
+			queryFn: ({ signal }) =>
+				api.v3.GET(
+					v3('/api/v3/admin/problems/recent', { query: reference ? { ref: reference } : {} }),
+					{ signal }
+				)
+		};
+	});

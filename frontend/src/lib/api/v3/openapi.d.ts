@@ -532,6 +532,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/admin/problems/recent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The server's recent warnings and errors, newest first; with `ref`, only
+         *     those seen in a request whose ref starts with it. The admin's own view:
+         *     it shows what the server log shows.
+         */
+        get: operations["list_recent_problems"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/admin/provider-stats": {
         parameters: {
             query?: never;
@@ -23036,6 +23057,56 @@ export interface components {
             message: string;
         };
         /**
+         * @description A recent problem's level.
+         * @enum {string}
+         */
+        RecentLevel: "warn" | "error";
+        /**
+         * @description One recent problem, as the admin reads it: the raw form, which may name
+         *     paths, names and plugin output, the same as the server log.
+         */
+        RecentProblemView: {
+            /**
+             * Format: int64
+             * @description How many times it was seen.
+             */
+            count: number;
+            /**
+             * Format: int32
+             * @description Fields left out to keep the entry small.
+             */
+            dropped_fields: number;
+            /** @description Its other fields, as text. */
+            fields: {
+                [key: string]: string;
+            };
+            /**
+             * Format: int64
+             * @description First seen, unix milliseconds.
+             */
+            first_at: number;
+            /**
+             * Format: int64
+             * @description Last seen, unix milliseconds.
+             */
+            last_at: number;
+            /** @description Its level. */
+            level: components["schemas"]["RecentLevel"];
+            /** @description The file and line that logged it, when known. */
+            location?: string | null;
+            /** @description What it said. */
+            message: string;
+            /** @description The requests it was seen in. */
+            refs: string[];
+            /** @description The module that logged it. */
+            target: string;
+        };
+        /** @description The recent problems, newest first. */
+        RecentProblemsResponse: {
+            /** @description At most 500. */
+            problems: components["schemas"]["RecentProblemView"][];
+        };
+        /**
          * @description A recipe entry's container.
          * @enum {string}
          */
@@ -28946,6 +29017,56 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProblemsResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_recent_problems: {
+        parameters: {
+            query?: {
+                /** @description Only entries seen in a request whose ref starts with this. */
+                ref?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recent problems */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecentProblemsResponse"];
+                };
+            };
+            /** @description The ref is longer than 128 characters */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not authenticated */

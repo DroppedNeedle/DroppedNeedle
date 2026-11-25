@@ -136,7 +136,7 @@ fn logged_code(text: &[u8]) -> String {
     let code = text
         .lines()
         .rev()
-        .find_map(|line| line.split("code=").nth(1))
+        .find_map(|line| line.split("_code=").nth(1))
         .expect("a code is logged");
     code.split_whitespace().next().expect("the code").to_owned()
 }
@@ -179,7 +179,7 @@ async fn upgrade_mode_signs_in_only_admins_and_reaches_only_its_routes() {
     let (dir, config) = v2_dir("sign-in");
     let (dispatch, logged) = logs::warnings();
     // Only the sign-in runs under the log capture: the code is read back
-    // from the latest `code=` line, and other answers log lines of their own.
+    // from the latest `sign_in_code=` line, and other answers log lines of their own.
     let (mode, router, cookie) = async {
         let (mode, router) = open(&config, false, scripted(&dir, "exit 1\n")).await;
         mode.sign_in().log_code();

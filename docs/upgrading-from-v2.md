@@ -137,8 +137,8 @@ page, and find the code in the server's log:
 docker compose logs droppedneedle
 ```
 
-It is on the line that contains `upgrade sign-in code`, after `code=` at the
-end. `droppedneedle` is the service name in your compose file. Use yours if it
+It is on the line that contains `upgrade sign-in code`, after `sign_in_code=`
+at the end. `droppedneedle` is the service name in your compose file. Use yours if it
 differs. Without Compose, `docker logs droppedneedle` shows the same log, as
 does the container's log page on Unraid, Portainer or Synology. A code works
 once: after it is used, the server prints a new one.
@@ -174,7 +174,7 @@ and v3 scans it from scratch.
 
 Creating that account needs a code from the server log, so nobody who
 reaches the page before you can take the server. It is on the line that
-contains `first-admin setup code`, after `code=` at the end:
+contains `first-admin setup code`, after `setup_code=` at the end:
 
 ```sh
 docker compose logs droppedneedle
@@ -336,7 +336,7 @@ admin nobody could get back in.
 
 `droppedneedle-tool upgrade --fresh --yes` moves your v2 files into the
 `v2-backup` folders as the upgrade does, and imports nothing. v3 then starts
-empty and asks for its first admin account, with the code after `code=` on
+empty and asks for its first admin account, with the code after `setup_code=` on
 the line that contains `first-admin setup code` in the server log (printed
 again at each start until the first account exists). `upgrade --undo --yes`
 goes back to v2 from there too.

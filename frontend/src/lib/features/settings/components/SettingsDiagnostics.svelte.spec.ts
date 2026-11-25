@@ -9,6 +9,7 @@ describe('SettingsDiagnostics', () => {
 	it('groups the outbound calls by provider', async () => {
 		fakeApi({
 			'GET /api/v3/admin/queue-stats': { jobs: [], queues: [] },
+			'GET /api/v3/admin/problems/recent': { problems: [] },
 			'GET /api/v3/admin/provider-stats': {
 				limiters: [{ source: 'musicbrainz', per_second: 1, burst: 1, remaining: 1 }],
 				calls: [

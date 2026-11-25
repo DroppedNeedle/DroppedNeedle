@@ -97,6 +97,7 @@ impl Rig {
                 platform.clock.clone(),
             ),
             droppedneedle::admin::disk::disk_watch(&platform),
+            droppedneedle_kernel::problems_ring::RecentProblems::new(),
         );
         Self {
             runtime,
