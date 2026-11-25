@@ -18,10 +18,20 @@ async fn oneshot(
     app.raw_bytes(method, uri, headers, body.to_vec()).await
 }
 
-/// The app with both protocols turned on in Settings.
+/// The app with both protocols turned on in Settings, once the Jellyfin
+/// routes are past the busy answer they give until the id fill catches up.
 async fn enabled(tag: &str) -> TestApp {
     let app = TestApp::start(tag).await;
     app.set_compat(true, true).await;
+    let ids = app.state().compat.jellyfin_ids().clone();
+    let deadline = std::time::Instant::now() + crate::common::PATIENCE;
+    while !ids.ready() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the jellyfin ids load"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
     app
 }
 

@@ -18,6 +18,13 @@
 //! until it has committed, [`JellyfinIds::ready`] is false and the Jellyfin
 //! routes answer busy.
 //!
+//! While the Jellyfin API is off the fill reads nothing. Turned off, it
+//! runs one last pass, so every id handed out just before is stored ahead
+//! of any later data-key reset, then rests. Turned on again, the routes
+//! answer busy until a full pass has committed. The map of differing ids
+//! is kept while off: the data key changes only with the server stopped,
+//! and the fill writes only computed ids, so it cannot go stale.
+//!
 //! Aliases (`current = 0`) keep resolving for signed-in callers: the old
 //! unkeyed id of every album and artist, both ids of every album and artist
 //! a merge retired, and the other ids v2 stored. The caller follows an alias
@@ -35,6 +42,7 @@ use tokio::sync::watch;
 use tokio::time::Instant;
 
 use crate::jellyfin::builders::LIBRARY_INTERNAL_ID;
+use crate::settings::LiveSettings;
 use crate::subsonic::views::genre_slug;
 use droppedneedle_kernel::db::statement::{ListLen, Statement};
 use droppedneedle_kernel::db::{CancelFlag, ChunkedError, Db, DbError};
@@ -208,9 +216,11 @@ impl JellyfinIds {
             .collect()
     }
 
-    /// Whether this process's first fill pass has committed.
+    /// Whether a full fill pass has committed since this process started
+    /// or since the Jellyfin API was last turned on.
     pub fn ready(&self) -> bool {
-        self.progress.borrow().exceptions.is_some()
+        let progress = self.progress.borrow();
+        progress.covered.is_some() && progress.exceptions.is_some()
     }
 
     /// The id handed out for an item: the stored one where it differs from
@@ -315,8 +325,13 @@ impl JellyfinIds {
     }
 
     /// Start the fill loop on `supervisor`. It runs at once, then after
-    /// every commit (paced) and at least every ten minutes.
-    pub fn start(&self, supervisor: &Supervisor) -> Result<(), AlreadyRunning> {
+    /// every commit (paced) and at least every ten minutes, while the
+    /// Jellyfin API is on in `settings`, read as the router reads it.
+    pub fn start(
+        &self,
+        supervisor: &Supervisor,
+        settings: LiveSettings,
+    ) -> Result<(), AlreadyRunning> {
         let mut wake = self.db.commits();
         wake.mark_changed();
         supervisor.on_wakeup(
@@ -326,7 +341,11 @@ impl JellyfinIds {
                 .with_min_delay(MIN_GAP)
                 .with_jitter(Duration::from_secs(1))
                 .with_backoff(Duration::from_secs(1), Duration::from_secs(60)),
-            FillTick { fill: self.fill() },
+            FillTick {
+                fill: self.fill(),
+                settings,
+                was_on: false,
+            },
         )
     }
 
@@ -385,6 +404,17 @@ impl Fill {
             return Ok(None);
         }
         Ok(Some(CATALOG_PACE.saturating_sub(at.elapsed())).filter(|wait| !wait.is_zero()))
+    }
+
+    /// Forget what this fill covered, so its next pass is a full one and
+    /// the routes answer busy until it commits. The map of differing ids
+    /// stays.
+    fn rest(&mut self) {
+        self.done = None;
+        self.catalog_at = None;
+        self.ids
+            .progress
+            .send_modify(|progress| progress.covered = None);
     }
 
     async fn revision(&self) -> Result<i64, IdsError> {
@@ -635,6 +665,11 @@ fn store(chunk: &[Item], tx: &Transaction) -> Result<(), IdsError> {
 /// One turn of the fill loop.
 struct FillTick {
     fill: Fill,
+    /// Where the Jellyfin API's switch is read.
+    settings: LiveSettings,
+    /// The switch was on and the last pass after it went off has not
+    /// committed yet.
+    was_on: bool,
 }
 
 impl FillTick {
@@ -654,11 +689,25 @@ impl Tick for FillTick {
     /// after [`BUSY_RETRY`] within the same turn, so busy never grows the
     /// loop's backoff and a fresh id waits seconds, not a backoff. Only a
     /// real failure ends the turn as one.
+    ///
+    /// The switch is read first: while the Jellyfin API is off, and its
+    /// last pass has committed, a turn reads nothing.
     async fn tick(&mut self, ctx: &TickCtx) -> TickResult {
+        let on = self.settings.jellyfin().enabled;
+        if !on && !self.was_on {
+            return Ok(Next::Continue);
+        }
+        self.was_on = true;
         let mut busy = false;
         loop {
             match self.paced_pass(ctx).await {
-                Ok(Some(_)) => return Ok(Next::Continue),
+                Ok(Some(_)) => {
+                    if !on {
+                        self.was_on = false;
+                        self.fill.rest();
+                    }
+                    return Ok(Next::Continue);
+                }
                 Ok(None) => return Ok(Next::Finish),
                 Err(IdsError::Busy) => {
                     if !busy {

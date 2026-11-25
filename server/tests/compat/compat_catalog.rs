@@ -1250,23 +1250,16 @@ async fn eventually<F: std::future::Future<Output = bool>>(
     }
 }
 
-/// A fill pass the database is too busy for is no failure: the loop tries
-/// again with no failure on its row, so its backoff never grows, and an album
-/// added while every reader was taken gets its id on the next pass.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_busy_fill_pass_runs_again_without_backing_off() {
-    let rig = Rig::open_with_read_wait(Duration::from_millis(200)).await;
-    let ids = jellyfin_ids(&rig, 7, Duration::ZERO);
-    ids.start(&rig.platform.supervisor).unwrap();
-    eventually("the first pass is on the row", || async {
-        ids.ready() && matches!(fill_row(&rig).await, Some((Some(_), None)))
-    })
-    .await;
-
-    // Every reader checked out, as on a host too busy to hand one over.
-    // Each holder keeps its reader until its release sender is dropped, on
-    // purpose or by a failing assert, or the patience runs out: a panic
-    // never leaves a reader parked for the runtime to wait on.
+/// Every reader checked out, as on a host too busy to hand one over. Each
+/// holder keeps its reader until its release sender is dropped, on purpose
+/// or by a failing assert, or the patience runs out: a panic never leaves a
+/// reader parked for the runtime to wait on.
+async fn hold_every_reader(
+    rig: &Rig,
+) -> (
+    Vec<std::sync::mpsc::Sender<()>>,
+    Vec<tokio::task::JoinHandle<Result<(), droppedneedle_kernel::db::DbError>>>,
+) {
     let readers = droppedneedle_kernel::db::MAX_READERS as usize;
     let (started_tx, started) = std::sync::mpsc::channel();
     let mut releases = Vec::new();
@@ -1309,6 +1302,45 @@ async fn a_busy_fill_pass_runs_again_without_backing_off() {
     })
     .await
     .unwrap();
+    (releases, holders)
+}
+
+/// Save the Jellyfin API's switch, as the settings route does.
+fn switch_jellyfin(rig: &Rig, on: bool) {
+    rig.platform
+        .settings
+        .save_blocking(ConnectApps {
+            jellyfin_enabled: on,
+            ..ConnectApps::default()
+        })
+        .expect("connect apps save");
+}
+
+/// The fill loop of `ids` on the rig's supervisor, reading the switch as
+/// the router does.
+fn start_fill(rig: &Rig, ids: &JellyfinIds) {
+    ids.start(
+        &rig.platform.supervisor,
+        LiveSettings::from_config(&rig.platform.settings, false),
+    )
+    .unwrap();
+}
+
+/// A fill pass the database is too busy for is no failure: the loop tries
+/// again with no failure on its row, so its backoff never grows, and an album
+/// added while every reader was taken gets its id on the next pass.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_busy_fill_pass_runs_again_without_backing_off() {
+    let rig = Rig::open_with_read_wait(Duration::from_millis(200)).await;
+    let ids = jellyfin_ids(&rig, 7, Duration::ZERO);
+    switch_jellyfin(&rig, true);
+    start_fill(&rig, &ids);
+    eventually("the first pass is on the row", || async {
+        ids.ready() && matches!(fill_row(&rig).await, Some((Some(_), None)))
+    })
+    .await;
+
+    let (releases, holders) = hold_every_reader(&rig).await;
     write_catalog(&rig, SECOND_ALBUM).await;
     // The fill queues for a reader, hears busy, and queues again. A failed
     // turn is on the row at once, long before that second try.
@@ -1467,4 +1499,98 @@ async fn jellyfin_answers_busy_until_its_ids_load_and_waits_once_per_request() {
     // One wait for all the misses; a wait per miss would take at least ten
     // times as long, which leaves a loaded host most of that to answer in.
     assert!(took < wait * MISSES, "the misses waited once: {took:?}");
+}
+
+/// Rows in the stored id table.
+async fn stored_ids(rig: &Rig) -> i64 {
+    rig.runtime
+        .db()
+        .read("test.count", |conn| {
+            conn.query_row("SELECT COUNT(*) FROM compat_jellyfin_ids", [], |row| {
+                row.get(0)
+            })
+            .map_err(droppedneedle_kernel::db::DbError::from)
+        })
+        .await
+        .unwrap()
+}
+
+/// While the Jellyfin API is off, the fill loop keeps ticking and stores
+/// nothing for albums added meanwhile. Saved on, every Jellyfin route
+/// answers busy until a full pass commits, and then an album added while
+/// the API was off resolves.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_fill_rests_while_jellyfin_is_off_and_catches_up_when_turned_on() {
+    const SECRET: &str = "alice-app-secret";
+    let rig = Rig::open_with_read_wait(Duration::from_millis(200)).await;
+    let user = rig.auth.seed_user("alice", Role::User).await;
+    rig.auth.seed_app_password(&user.id, SECRET).await;
+    let ids = jellyfin_ids(&rig, 7, Duration::ZERO);
+    let router = jellyfin_router(&rig, &ids);
+    switch_jellyfin(&rig, false);
+    start_fill(&rig, &ids);
+
+    let beat = || async { fill_row(&rig).await.and_then(|row| row.0) };
+    eventually("the loop's first turn", || async { beat().await.is_some() }).await;
+    let first = beat().await;
+    let before = stored_ids(&rig).await;
+    // The write wakes the loop; its turns are at least 250 ms apart, so a
+    // newer heartbeat is a turn that began after the write.
+    write_catalog(&rig, SECOND_ALBUM).await;
+    eventually("a turn after the write", || async { beat().await > first }).await;
+    assert_eq!(stored_ids(&rig).await, before, "nothing stored while off");
+    assert!(!ids.ready());
+
+    let (releases, holders) = hold_every_reader(&rig).await;
+    switch_jellyfin(&rig, true);
+    let (status, _, retry) =
+        jellyfin_get(router.clone(), "/jellyfin/System/Info/Public", None).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(retry, "busy says when to try again");
+    drop(releases);
+    for holder in holders {
+        holder.await.unwrap().unwrap();
+    }
+    eventually("the routes answer once the pass commits", || async {
+        jellyfin_get(router.clone(), "/jellyfin/System/Info/Public", None)
+            .await
+            .0
+            == StatusCode::OK
+    })
+    .await;
+    let added = ids.computed("album", "alb-2");
+    let (status, body, _) = jellyfin_get(
+        router,
+        &format!("/jellyfin/Items?Ids={added}"),
+        Some(SECRET),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["TotalRecordCount"], 1, "{body}");
+}
+
+/// An album's id handed out while the Jellyfin API was on is stored by the
+/// last pass after it is turned off, so after a new data key and the API
+/// on again it is still the same id.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_id_handed_out_before_turning_off_survives_a_new_data_key() {
+    let rig = Rig::open().await;
+    let ids = jellyfin_ids(&rig, 7, Duration::from_secs(1));
+    switch_jellyfin(&rig, true);
+    start_fill(&rig, &ids);
+    eventually("the first pass commits", || async { ids.ready() }).await;
+
+    write_catalog(&rig, SECOND_ALBUM).await;
+    let seven = CatalogIds::new(ids.clone(), rig.catalog_setup.local.catalog.clone());
+    let handed = seven.to_jf("album", "alb-2").await;
+    switch_jellyfin(&rig, false);
+    eventually("the last pass commits and the fill rests", || async {
+        !ids.ready()
+    })
+    .await;
+
+    let (eight, _) = booted(&rig, 8).await;
+    assert_ne!(eight.id_for("album", "alb-2"), handed);
+    assert_eq!(eight.to_jf("album", "alb-2").await, handed);
+    assert_eq!(eight.from_jf(&handed).await, Ok(named("album", "alb-2")));
 }

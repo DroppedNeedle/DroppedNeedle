@@ -163,7 +163,7 @@ impl CompatSetup {
     /// Start compat's loops ([`crate::LOOPS`]) on `supervisor`: the fill of
     /// the stored Jellyfin ids.
     pub fn start_loops(&self, supervisor: &Supervisor) -> Result<(), AlreadyRunning> {
-        self.ids.start(supervisor)
+        self.ids.start(supervisor, self.settings.clone())
     }
 
     /// Each person's choices for their apps, for the route that saves them.
