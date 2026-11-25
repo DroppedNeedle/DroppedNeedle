@@ -1,0 +1,1315 @@
+{
+  "steps": [
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/ping.view?f=json&v=1.16.1&c=Music+Assistant&u=alice&s=***&t=***",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "openSubsonicExtensions": [
+            {
+              "name": "apiKeyAuthentication",
+              "versions": [
+                1
+              ]
+            },
+            {
+              "name": "formPost",
+              "versions": [
+                1
+              ]
+            },
+            {
+              "name": "transcodeOffset",
+              "versions": [
+                1
+              ]
+            },
+            {
+              "name": "songLyrics",
+              "versions": [
+                1,
+                2
+              ]
+            },
+            {
+              "name": "playbackReport",
+              "versions": [
+                1
+              ]
+            },
+            {
+              "name": "indexBasedQueue",
+              "versions": [
+                1
+              ]
+            },
+            {
+              "name": "transcoding",
+              "versions": [
+                1
+              ]
+            }
+          ],
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getOpenSubsonicExtensions.view?f=json&v=1.16.1&c=Music+Assistant&u=alice&s=***&t=***",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "artists": {
+            "ignoredArticles": "The El La Los Las Le Les",
+            "index": [
+              {
+                "artist": [
+                  {
+                    "albumCount": 1,
+                    "artistImageUrl": "http://test.local/subsonic/img?id=ar-<id-1>&sig=***&size=500",
+                    "coverArt": "ar-<id-1>",
+                    "id": "ar-<id-1>",
+                    "musicBrainzId": "",
+                    "name": "Massive Attack",
+                    "roles": [
+                      "albumartist",
+                      "artist",
+                      "maincredit"
+                    ],
+                    "sortName": "Massive Attack"
+                  }
+                ],
+                "name": "M"
+              },
+              {
+                "artist": [
+                  {
+                    "albumCount": 1,
+                    "artistImageUrl": "http://test.local/subsonic/img?id=ar-<id-2>&sig=***&size=500",
+                    "coverArt": "ar-<id-2>",
+                    "id": "ar-<id-2>",
+                    "musicBrainzId": "",
+                    "name": "Radiohead",
+                    "roles": [
+                      "albumartist",
+                      "artist",
+                      "maincredit"
+                    ],
+                    "sortName": "Radiohead"
+                  }
+                ],
+                "name": "R"
+              },
+              {
+                "artist": [
+                  {
+                    "albumCount": 1,
+                    "artistImageUrl": "http://test.local/subsonic/img?id=ar-<id-3>&sig=***&size=500",
+                    "coverArt": "ar-<id-3>",
+                    "id": "ar-<id-3>",
+                    "musicBrainzId": "",
+                    "name": "U2",
+                    "roles": [
+                      "albumartist",
+                      "artist",
+                      "maincredit"
+                    ],
+                    "sortName": "U2"
+                  }
+                ],
+                "name": "U"
+              },
+              {
+                "artist": [
+                  {
+                    "albumCount": 1,
+                    "artistImageUrl": "http://test.local/subsonic/img?id=ar-<id-4>&sig=***&size=500",
+                    "coverArt": "ar-<id-4>",
+                    "id": "ar-<id-4>",
+                    "musicBrainzId": "",
+                    "name": "Various Artists",
+                    "roles": [
+                      "albumartist",
+                      "maincredit"
+                    ],
+                    "sortName": "Various Artists"
+                  }
+                ],
+                "name": "V"
+              },
+              {
+                "artist": [
+                  {
+                    "albumCount": 1,
+                    "artistImageUrl": "http://test.local/subsonic/img?id=ar-<id-5>&sig=***&size=500",
+                    "coverArt": "ar-<id-5>",
+                    "id": "ar-<id-5>",
+                    "musicBrainzId": "",
+                    "name": "ユキ",
+                    "roles": [
+                      "albumartist",
+                      "artist",
+                      "maincredit"
+                    ],
+                    "sortName": "ユキ"
+                  }
+                ],
+                "name": "ユ"
+              }
+            ],
+            "lastModified": 2
+          },
+          "openSubsonic": true,
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getArtists.view?f=json&v=1.16.1&c=Music+Assistant&u=alice&s=***&t=***",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "albumList2": {
+            "album": [
+              {
+                "artist": "Massive Attack",
+                "artistId": "ar-<id-1>",
+                "artists": [
+                  {
+                    "id": "ar-<id-1>",
+                    "name": "Massive Attack"
+                  }
+                ],
+                "coverArt": "al-<id-6>_bbbb77b2",
+                "created": "0000-00-00T00:00:00Z",
+                "discTitles": [],
+                "displayArtist": "Massive Attack",
+                "duration": 0,
+                "explicitStatus": "",
+                "genres": [],
+                "id": "al-<id-6>",
+                "isCompilation": false,
+                "moods": [],
+                "musicBrainzId": "",
+                "name": "Mezzanine",
+                "originalReleaseDate": {},
+                "recordLabels": [],
+                "releaseDate": {
+                  "year": 1998
+                },
+                "releaseTypes": [
+                  "album"
+                ],
+                "songCount": 1,
+                "sortName": "Mezzanine",
+                "userRating": 0,
+                "version": "",
+                "year": 1998
+              },
+              {
+                "artist": "Radiohead",
+                "artistId": "ar-<id-2>",
+                "artists": [
+                  {
+                    "id": "ar-<id-2>",
+                    "name": "Radiohead"
+                  }
+                ],
+                "coverArt": "al-<id-7>_bbbb77b2",
+                "created": "0000-00-00T00:00:00Z",
+                "discTitles": [],
+                "displayArtist": "Radiohead",
+                "duration": 1,
+                "explicitStatus": "",
+                "genre": "Alternative Rock",
+                "genres": [
+                  {
+                    "name": "Alternative Rock"
+                  }
+                ],
+                "id": "al-<id-7>",
+                "isCompilation": false,
+                "moods": [],
+                "musicBrainzId": "<id-8>",
+                "name": "OK Computer",
+                "originalReleaseDate": {},
+                "recordLabels": [],
+                "releaseDate": {},
+                "releaseTypes": [
+                  "album"
+                ],
+                "songCount": 2,
+                "sortName": "OK Computer",
+                "userRating": 0,
+                "version": "",
+                "year": 1997
+              },
+              {
+                "artist": "U2",
+                "artistId": "ar-<id-3>",
+                "artists": [
+                  {
+                    "id": "ar-<id-3>",
+                    "name": "U2"
+                  }
+                ],
+                "coverArt": "al-<id-9>_bbbb77b2",
+                "created": "0000-00-00T00:00:00Z",
+                "discTitles": [],
+                "displayArtist": "U2",
+                "duration": 0,
+                "explicitStatus": "",
+                "genre": "Rock",
+                "genres": [
+                  {
+                    "name": "Rock"
+                  }
+                ],
+                "id": "al-<id-9>",
+                "isCompilation": false,
+                "moods": [],
+                "musicBrainzId": "",
+                "name": "Achtung Baby",
+                "originalReleaseDate": {},
+                "recordLabels": [],
+                "releaseDate": {},
+                "releaseTypes": [
+                  "album"
+                ],
+                "songCount": 1,
+                "sortName": "Achtung Baby",
+                "userRating": 0,
+                "version": "",
+                "year": 1991
+              },
+              {
+                "artist": "Various Artists",
+                "artistId": "ar-<id-4>",
+                "artists": [
+                  {
+                    "id": "ar-<id-4>",
+                    "name": "Various Artists"
+                  }
+                ],
+                "coverArt": "al-<id-10>_bbbb77b2",
+                "created": "0000-00-00T00:00:00Z",
+                "discTitles": [],
+                "displayArtist": "Various Artists",
+                "duration": 0,
+                "explicitStatus": "",
+                "genres": [],
+                "id": "al-<id-10>",
+                "isCompilation": true,
+                "moods": [],
+                "musicBrainzId": "",
+                "name": "Now Thats Music",
+                "originalReleaseDate": {},
+                "recordLabels": [],
+                "releaseDate": {},
+                "releaseTypes": [
+                  "compilation"
+                ],
+                "songCount": 1,
+                "sortName": "Now Thats Music",
+                "userRating": 0,
+                "version": "",
+                "year": 2001
+              },
+              {
+                "artist": "ユキ",
+                "artistId": "ar-<id-5>",
+                "artists": [
+                  {
+                    "id": "ar-<id-5>",
+                    "name": "ユキ"
+                  }
+                ],
+                "coverArt": "al-<id-11>_bbbb77b2",
+                "created": "0000-00-00T00:00:00Z",
+                "discTitles": [],
+                "displayArtist": "ユキ",
+                "duration": 0,
+                "explicitStatus": "",
+                "genres": [],
+                "id": "al-<id-11>",
+                "isCompilation": false,
+                "moods": [],
+                "musicBrainzId": "",
+                "name": "望厚",
+                "originalReleaseDate": {},
+                "recordLabels": [],
+                "releaseDate": {},
+                "releaseTypes": [
+                  "album"
+                ],
+                "songCount": 1,
+                "sortName": "望厚",
+                "userRating": 0,
+                "version": "",
+                "year": 2015
+              }
+            ]
+          },
+          "openSubsonic": true,
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getAlbumList2.view?f=json&v=1.16.1&c=Music+Assistant&u=alice&s=***&t=***&type=alphabeticalByArtist&size=200&offset=0",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "albumList2": {
+            "album": []
+          },
+          "openSubsonic": true,
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getAlbumList2.view?f=json&v=1.16.1&c=Music+Assistant&u=alice&s=***&t=***&type=alphabeticalByArtist&size=200&offset=200",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "album": {
+            "artist": "Radiohead",
+            "artistId": "ar-<id-2>",
+            "artists": [
+              {
+                "id": "ar-<id-2>",
+                "name": "Radiohead"
+              }
+            ],
+            "coverArt": "al-<id-7>_bbbb77b2",
+            "created": "0000-00-00T00:00:00Z",
+            "discTitles": [],
+            "displayArtist": "Radiohead",
+            "duration": 1,
+            "explicitStatus": "",
+            "genre": "Alternative Rock",
+            "genres": [
+              {
+                "name": "Alternative Rock"
+              }
+            ],
+            "id": "al-<id-7>",
+            "isCompilation": false,
+            "moods": [],
+            "musicBrainzId": "<id-8>",
+            "name": "OK Computer",
+            "originalReleaseDate": {},
+            "recordLabels": [],
+            "releaseDate": {},
+            "releaseTypes": [
+              "album"
+            ],
+            "song": [
+              {
+                "album": "OK Computer",
+                "albumArtists": [
+                  {
+                    "id": "ar-<id-2>",
+                    "name": "Radiohead"
+                  }
+                ],
+                "albumId": "al-<id-7>",
+                "artist": "Radiohead",
+                "artistId": "ar-<id-2>",
+                "artists": [
+                  {
+                    "id": "ar-<id-2>",
+                    "name": "Radiohead"
+                  }
+                ],
+                "bitDepth": 16,
+                "bitRate": 1,
+                "bpm": 0,
+                "channelCount": 2,
+                "comment": "",
+                "contentType": "audio/flac",
+                "contributors": [],
+                "coverArt": "al-<id-7>_bbbb77b2",
+                "created": "0000-00-00T00:00:00Z",
+                "discNumber": 1,
+                "displayAlbumArtist": "Radiohead",
+                "displayArtist": "Radiohead",
+                "displayComposer": "",
+                "duration": 0,
+                "explicitStatus": "",
+                "genre": "Alternative Rock",
+                "genres": [
+                  {
+                    "name": "Alternative Rock"
+                  }
+                ],
+                "groupings": [],
+                "id": "tr-<id-12>",
+                "isDir": false,
+                "isrc": [],
+                "mediaType": "song",
+                "moods": [],
+                "musicBrainzId": "",
+                "parent": "al-<id-7>",
+                "path": "Radiohead/OK Computer/01 Airbag.flac",
+                "replayGain": {},
+                "samplingRate": 44100,
+                "size": 1567,
+                "sortName": "Airbag",
+                "suffix": "flac",
+                "title": "Airbag",
+                "track": 1,
+                "type": "music",
+                "year": 1997
+              },
+              {
+                "album": "OK Computer",
+                "albumArtists": [
+                  {
+                    "id": "ar-<id-2>",
+                    "name": "Radiohead"
+                  }
+                ],
+                "albumId": "al-<id-7>",
+                "artist": "Radiohead",
+                "artistId": "ar-<id-2>",
+                "artists": [
+                  {
+                    "id": "ar-<id-2>",
+                    "name": "Radiohead"
+                  }
+                ],
+                "bitDepth": 16,
+                "bitRate": 1,
+                "bpm": 0,
+                "channelCount": 2,
+                "comment": "",
+                "contentType": "audio/flac",
+                "contributors": [],
+                "coverArt": "al-<id-7>_bbbb77b2",
+                "created": "0000-00-00T00:00:00Z",
+                "discNumber": 1,
+                "displayAlbumArtist": "Radiohead",
+                "displayArtist": "Radiohead",
+                "displayComposer": "",
+                "duration": 0,
+                "explicitStatus": "",
+                "genres": [],
+                "groupings": [],
+                "id": "tr-<id-13>",
+                "isDir": false,
+                "isrc": [],
+                "mediaType": "song",
+                "moods": [],
+                "musicBrainzId": "",
+                "parent": "al-<id-7>",
+                "path": "Radiohead/OK Computer/02 Paranoid Android.flac",
+                "replayGain": {},
+                "samplingRate": 44100,
+                "size": 1463,
+                "sortName": "Paranoid Android",
+                "suffix": "flac",
+                "title": "Paranoid Android",
+                "track": 2,
+                "type": "music",
+                "year": 1997
+              }
+            ],
+            "songCount": 2,
+            "sortName": "OK Computer",
+            "userRating": 0,
+            "version": "",
+            "year": 1997
+          },
+          "openSubsonic": true,
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getAlbum.view?f=json&v=1.16.1&c=Music+Assistant&u=alice&s=***&t=***&id=al-<id-7>",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "albumInfo": {
+            "largeImageUrl": "http://test.local/subsonic/img?id=al-<id-7>&sig=***&size=1200&cv=bbbb77b2",
+            "mediumImageUrl": "http://test.local/subsonic/img?id=al-<id-7>&sig=***&size=500&cv=bbbb77b2",
+            "musicBrainzId": "<id-8>",
+            "smallImageUrl": "http://test.local/subsonic/img?id=al-<id-7>&sig=***&size=250&cv=bbbb77b2"
+          },
+          "openSubsonic": true,
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getAlbumInfo2.view?f=json&v=1.16.1&c=Music+Assistant&u=alice&s=***&t=***&id=al-<id-7>",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "searchResult3": {
+            "album": [],
+            "artist": [],
+            "song": [
+              {
+                "album": "Mezzanine",
+                "albumArtists": [
+                  {
+                    "id": "ar-<id-1>",
+                    "name": "Massive Attack"
+                  }
+                ],
+                "albumId": "al-<id-6>",
+                "artist": "Massive Attack",
+                "artistId": "ar-<id-1>",
+                "artists": [
+                  {
+                    "id": "ar-<id-1>",
+                    "name": "Massive Attack"
+                  }
+                ],
+                "bitDepth": 0,
+                "bitRate": 2,
+                "bpm": 0,
+                "channelCount": 2,
+                "comment": "",
+                "contentType": "audio/mp4",
+                "contributors": [],
+                "coverArt": "al-<id-6>_bbbb77b2",
+                "created": "0000-00-00T00:00:00Z",
+                "discNumber": 1,
+                "displayAlbumArtist": "Massive Attack",
+                "displayArtist": "Massive Attack",
+                "displayComposer": "",
+                "duration": 0,
+                "explicitStatus": "",
+                "genres": [],
+                "groupings": [],
+                "id": "tr-<id-14>",
+                "isDir": false,
+                "isrc": [],
+                "mediaType": "song",
+                "moods": [],
+                "musicBrainzId": "",
+                "parent": "al-<id-6>",
+                "path": "Massive Attack/Mezzanine/04 Teardrop.m4a",
+                "replayGain": {},
+                "samplingRate": 44100,
+                "size": 2563,
+                "sortName": "Teardrop",
+                "suffix": "m4a",
+                "title": "Teardrop",
+                "track": 4,
+                "type": "music",
+                "year": 1998
+              },
+              {
+                "album": "OK Computer",
+                "albumArtists": [
+                  {
+                    "id": "ar-<id-2>",
+                    "name": "Radiohead"
+                  }
+                ],
+                "albumId": "al-<id-7>",
+                "artist": "Radiohead",
+                "artistId": "ar-<id-2>",
+                "artists": [
+                  {
+                    "id": "ar-<id-2>",
+                    "name": "Radiohead"
+                  }
+                ],
+                "bitDepth": 16,
+                "bitRate": 1,
+                "bpm": 0,
+                "channelCount": 2,
+                "comment": "",
+                "contentType": "audio/flac",
+                "contributors": [],
+                "coverArt": "al-<id-7>_bbbb77b2",
+                "created": "0000-00-00T00:00:00Z",
+                "discNumber": 1,
+                "displayAlbumArtist": "Radiohead",
+                "displayArtist": "Radiohead",
+                "displayComposer": "",
+                "duration": 0,
+                "explicitStatus": "",
+                "genre": "Alternative Rock",
+                "genres": [
+                  {
+                    "name": "Alternative Rock"
+                  }
+                ],
+                "groupings": [],
+                "id": "tr-<id-12>",
+                "isDir": false,
+                "isrc": [],
+                "mediaType": "song",
+                "moods": [],
+                "musicBrainzId": "",
+                "parent": "al-<id-7>",
+                "path": "Radiohead/OK Computer/01 Airbag.flac",
+                "replayGain": {},
+                "samplingRate": 44100,
+                "size": 1567,
+                "sortName": "Airbag",
+                "suffix": "flac",
+                "title": "Airbag",
+                "track": 1,
+                "type": "music",
+                "year": 1997
+              },
+              {
+                "album": "OK Computer",
+                "albumArtists": [
+                  {
+                    "id": "ar-<id-2>",
+                    "name": "Radiohead"
+                  }
+                ],
+                "albumId": "al-<id-7>",
+                "artist": "Radiohead",
+                "artistId": "ar-<id-2>",
+                "artists": [
+                  {
+                    "id": "ar-<id-2>",
+                    "name": "Radiohead"
+                  }
+                ],
+                "bitDepth": 16,
+                "bitRate": 1,
+                "bpm": 0,
+                "channelCount": 2,
+                "comment": "",
+                "contentType": "audio/flac",
+                "contributors": [],
+                "coverArt": "al-<id-7>_bbbb77b2",
+                "created": "0000-00-00T00:00:00Z",
+                "discNumber": 1,
+                "displayAlbumArtist": "Radiohead",
+                "displayArtist": "Radiohead",
+                "displayComposer": "",
+                "duration": 0,
+                "explicitStatus": "",
+                "genres": [],
+                "groupings": [],
+                "id": "tr-<id-13>",
+                "isDir": false,
+                "isrc": [],
+                "mediaType": "song",
+                "moods": [],
+                "musicBrainzId": "",
+                "parent": "al-<id-7>",
+                "path": "Radiohead/OK Computer/02 Paranoid Android.flac",
+                "replayGain": {},
+                "samplingRate": 44100,
+                "size": 1463,
+                "sortName": "Paranoid Android",
+                "suffix": "flac",
+                "title": "Paranoid Android",
+                "track": 2,
+                "type": "music",
+                "year": 1997
+              },
+              {
+                "album": "Achtung Baby",
+                "albumArtists": [
+                  {
+                    "id": "ar-<id-3>",
+                    "name": "U2"
+                  }
+                ],
+                "albumId": "al-<id-9>",
+                "artist": "U2",
+                "artistId": "ar-<id-3>",
+                "artists": [
+                  {
+                    "id": "ar-<id-3>",
+                    "name": "U2"
+                  }
+                ],
+                "bitDepth": 0,
+                "bitRate": 344,
+                "bpm": 0,
+                "channelCount": 2,
+                "comment": "",
+                "contentType": "audio/mpeg",
+                "contributors": [],
+                "coverArt": "al-<id-9>_bbbb77b2",
+                "created": "0000-00-00T00:00:00Z",
+                "discNumber": 1,
+                "displayAlbumArtist": "U2",
+                "displayArtist": "U2",
+                "displayComposer": "",
+                "duration": 0,
+                "explicitStatus": "",
+                "genre": "Rock",
+                "genres": [
+                  {
+                    "name": "Rock"
+                  }
+                ],
+                "groupings": [],
+                "id": "tr-<id-15>",
+                "isDir": false,
+                "isrc": [],
+                "mediaType": "song",
+                "moods": [],
+                "musicBrainzId": "",
+                "parent": "al-<id-9>",
+                "path": "U2/Achtung Baby/03 One.mp3",
+                "replayGain": {},
+                "samplingRate": 44100,
+                "size": 16008,
+                "sortName": "One",
+                "suffix": "mp3",
+                "title": "One",
+                "track": 3,
+                "type": "music",
+                "year": 1991
+              },
+              {
+                "album": "Now Thats Music",
+                "albumArtists": [
+                  {
+                    "id": "ar-<id-4>",
+                    "name": "Various Artists"
+                  }
+                ],
+                "albumId": "al-<id-10>",
+                "artist": "Artist One",
+                "artistId": "ar-<id-16>",
+                "artists": [
+                  {
+                    "id": "ar-<id-16>",
+                    "name": "Artist One"
+                  }
+                ],
+                "bitDepth": 16,
+                "bitRate": 1,
+                "bpm": 0,
+                "channelCount": 2,
+                "comment": "",
+                "contentType": "audio/flac",
+                "contributors": [],
+                "coverArt": "al-<id-10>_bbbb77b2",
+                "created": "0000-00-00T00:00:00Z",
+                "discNumber": 1,
+                "displayAlbumArtist": "Various Artists",
+                "displayArtist": "Artist One",
+                "displayComposer": "",
+                "duration": 0,
+                "explicitStatus": "",
+                "genres": [],
+                "groupings": [],
+                "id": "tr-<id-17>",
+                "isDir": false,
+                "isrc": [],
+                "mediaType": "song",
+                "moods": [],
+                "musicBrainzId": "",
+                "parent": "al-<id-10>",
+                "path": "Various Artists/Now Thats Music/01 Song A.flac",
+                "replayGain": {},
+                "samplingRate": 44100,
+                "size": 1413,
+                "sortName": "Song A",
+                "suffix": "flac",
+                "title": "Song A",
+                "track": 1,
+                "type": "music",
+                "year": 2001
+              },
+              {
+                "album": "望厚",
+                "albumArtists": [
+                  {
+                    "id": "ar-<id-5>",
+                    "name": "ユキ"
+                  }
+                ],
+                "albumId": "al-<id-11>",
+                "artist": "ユキ",
+                "artistId": "ar-<id-5>",
+                "artists": [
+                  {
+                    "id": "ar-<id-5>",
+                    "name": "ユキ"
+                  }
+                ],
+                "bitDepth": 16,
+                "bitRate": 1,
+                "bpm": 0,
+                "channelCount": 2,
+                "comment": "",
+                "contentType": "audio/flac",
+                "contributors": [],
+                "coverArt": "al-<id-11>_bbbb77b2",
+                "created": "0000-00-00T00:00:00Z",
+                "discNumber": 1,
+                "displayAlbumArtist": "ユキ",
+                "displayArtist": "ユキ",
+                "displayComposer": "",
+                "duration": 0,
+                "explicitStatus": "",
+                "genres": [],
+                "groupings": [],
+                "id": "tr-<id-18>",
+                "isDir": false,
+                "isrc": [],
+                "mediaType": "song",
+                "moods": [],
+                "musicBrainzId": "",
+                "parent": "al-<id-11>",
+                "path": "ユキ/望厚/01 桃源へ.flac",
+                "replayGain": {},
+                "samplingRate": 44100,
+                "size": 1354,
+                "sortName": "桃源へ",
+                "suffix": "flac",
+                "title": "桃源へ",
+                "track": 1,
+                "type": "music",
+                "year": 2015
+              }
+            ]
+          },
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/search3.view?f=json&v=1.16.1&c=Music+Assistant&u=alice&s=***&t=***&query=&artistCount=0&artistOffset=0&albumCount=0&albumOffset=0&songCount=200&songOffset=0",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "searchResult3": {
+            "album": [],
+            "artist": [],
+            "song": []
+          },
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/search3.view?f=json&v=1.16.1&c=Music+Assistant&u=alice&s=***&t=***&query=&artistCount=0&artistOffset=0&albumCount=0&albumOffset=0&songCount=200&songOffset=200",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "lyricsList": {
+            "structuredLyrics": [
+              {
+                "displayArtist": "Radiohead",
+                "displayTitle": "Paranoid Android",
+                "lang": "und",
+                "line": [
+                  {
+                    "value": "A line with its time"
+                  },
+                  {
+                    "value": "A line without one"
+                  }
+                ],
+                "synced": false
+              }
+            ]
+          },
+          "openSubsonic": true,
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getLyricsBySongId.view?f=json&v=1.16.1&c=Music+Assistant&u=alice&s=***&t=***&id=tr-<id-13>",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "podcasts": {
+            "channel": []
+          },
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getPodcasts.view?f=json&v=1.16.1&c=Music+Assistant&u=alice&s=***&t=***&includeEpisodes=true",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "internetRadioStations": {
+            "internetRadioStation": []
+          },
+          "openSubsonic": true,
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getInternetRadioStations.view?f=json&v=1.16.1&c=Music+Assistant&u=alice&s=***&t=***",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "playlists": {
+            "playlist": [
+              {
+                "changed": "0000-00-00T00:00:00Z",
+                "coverArt": "pl-<id-19>",
+                "created": "0000-00-00T00:00:00Z",
+                "duration": 0,
+                "id": "pl-<id-19>",
+                "name": "Kitchen",
+                "owner": "alice",
+                "public": false,
+                "readonly": false,
+                "songCount": 1
+              }
+            ]
+          },
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getPlaylists.view?f=json&v=1.16.1&c=Music+Assistant&u=alice&s=***&t=***",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "playlist": {
+            "changed": "0000-00-00T00:00:00Z",
+            "coverArt": "pl-<id-19>",
+            "created": "0000-00-00T00:00:00Z",
+            "duration": 0,
+            "entry": [
+              {
+                "album": "Achtung Baby",
+                "albumArtists": [
+                  {
+                    "id": "ar-<id-3>",
+                    "name": "U2"
+                  }
+                ],
+                "albumId": "al-<id-9>",
+                "artist": "U2",
+                "artistId": "ar-<id-3>",
+                "artists": [
+                  {
+                    "id": "ar-<id-3>",
+                    "name": "U2"
+                  }
+                ],
+                "bitDepth": 0,
+                "bitRate": 344,
+                "bpm": 0,
+                "channelCount": 2,
+                "comment": "",
+                "contentType": "audio/mpeg",
+                "contributors": [],
+                "coverArt": "al-<id-9>_bbbb77b2",
+                "created": "0000-00-00T00:00:00Z",
+                "discNumber": 1,
+                "displayAlbumArtist": "U2",
+                "displayArtist": "U2",
+                "displayComposer": "",
+                "duration": 0,
+                "explicitStatus": "",
+                "genre": "Rock",
+                "genres": [
+                  {
+                    "name": "Rock"
+                  }
+                ],
+                "groupings": [],
+                "id": "tr-<id-15>",
+                "isDir": false,
+                "isrc": [],
+                "mediaType": "song",
+                "moods": [],
+                "musicBrainzId": "",
+                "parent": "al-<id-9>",
+                "path": "U2/Achtung Baby/03 One.mp3",
+                "replayGain": {},
+                "samplingRate": 44100,
+                "size": 16008,
+                "sortName": "One",
+                "suffix": "mp3",
+                "title": "One",
+                "track": 3,
+                "type": "music",
+                "year": 1991
+              }
+            ],
+            "id": "pl-<id-19>",
+            "name": "Kitchen",
+            "owner": "alice",
+            "public": false,
+            "readonly": false,
+            "songCount": 1
+          },
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getPlaylist.view?f=json&v=1.16.1&c=Music+Assistant&u=alice&s=***&t=***&id=pl-<id-19>",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
+          "similarSongs": {
+            "song": [
+              {
+                "album": "Achtung Baby",
+                "albumArtists": [
+                  {
+                    "id": "ar-<id-3>",
+                    "name": "U2"
+                  }
+                ],
+                "albumId": "al-<id-9>",
+                "artist": "U2",
+                "artistId": "ar-<id-3>",
+                "artists": [
+                  {
+                    "id": "ar-<id-3>",
+                    "name": "U2"
+                  }
+                ],
+                "bitDepth": 0,
+                "bitRate": 344,
+                "bpm": 0,
+                "channelCount": 2,
+                "comment": "",
+                "contentType": "audio/mpeg",
+                "contributors": [],
+                "coverArt": "al-<id-9>_bbbb77b2",
+                "created": "0000-00-00T00:00:00Z",
+                "discNumber": 1,
+                "displayAlbumArtist": "U2",
+                "displayArtist": "U2",
+                "displayComposer": "",
+                "duration": 0,
+                "explicitStatus": "",
+                "genre": "Rock",
+                "genres": [
+                  {
+                    "name": "Rock"
+                  }
+                ],
+                "groupings": [],
+                "id": "tr-<id-15>",
+                "isDir": false,
+                "isrc": [],
+                "mediaType": "song",
+                "moods": [],
+                "musicBrainzId": "",
+                "parent": "al-<id-9>",
+                "path": "U2/Achtung Baby/03 One.mp3",
+                "replayGain": {},
+                "samplingRate": 44100,
+                "size": 16008,
+                "sortName": "One",
+                "suffix": "mp3",
+                "title": "One",
+                "track": 3,
+                "type": "music",
+                "year": 1991
+              }
+            ]
+          },
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getSimilarSongs.view?f=json&v=1.16.1&c=Music+Assistant&u=alice&s=***&t=***&id=tr-<id-15>&count=25",
+      "status": 200
+    },
+    {
+      "body": {
+        "byte_len": 8668,
+        "head": [
+          82,
+          73,
+          70,
+          70,
+          212,
+          33,
+          0,
+          0
+        ]
+      },
+      "headers": {
+        "content-type": "image/webp"
+      },
+      "request": "GET /subsonic/rest/getCoverArt.view?f=json&v=1.16.1&c=Music+Assistant&u=alice&s=***&t=***&id=al-<id-7>_bbbb77b2",
+      "status": 200
+    },
+    {
+      "body": {
+        "byte_len": 16008,
+        "head": [
+          73,
+          68,
+          51,
+          4,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "headers": {
+        "accept-ranges": "bytes",
+        "content-length": "16008",
+        "content-range": "bytes 0-16007/16008",
+        "content-type": "audio/mpeg"
+      },
+      "request": "GET /subsonic/rest/stream.view?f=json&v=1.16.1&c=Music+Assistant&u=alice&s=***&t=***&id=tr-<id-15>&maxBitRate=0&format=raw&estimateContentLength=true&converted=false",
+      "status": 206
+    },
+    {
+      "body": {
+        "byte_len": 8004,
+        "head": [
+          85,
+          85,
+          85,
+          85,
+          85,
+          85,
+          85,
+          85
+        ]
+      },
+      "headers": {
+        "accept-ranges": "bytes",
+        "content-length": "8004",
+        "content-range": "bytes 8004-16007/16008",
+        "content-type": "audio/mpeg"
+      },
+      "request": "GET /subsonic/rest/stream.view?f=json&v=1.16.1&c=Music+Assistant&u=alice&s=***&t=***&id=tr-<id-15>&maxBitRate=0&format=raw&estimateContentLength=true&converted=false",
+      "status": 206
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/scrobble.view?f=json&v=1.16.1&c=Music+Assistant&u=alice&s=***&t=***&id=tr-<id-15>&submission=true",
+      "status": 200
+    }
+  ]
+}

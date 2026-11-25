@@ -463,6 +463,16 @@ impl CompatLibrary {
         Ok(self.lyrics.get(track_id).await?)
     }
 
+    /// Lyrics for a track as a player app signed in as `user_id` asks,
+    /// its online lookups capped per person.
+    pub async fn app_lyrics(
+        &self,
+        track_id: &str,
+        user_id: &str,
+    ) -> Result<Option<Lyrics>, CompatError> {
+        Ok(self.lyrics.get_for_app(track_id, user_id).await?)
+    }
+
     /// Catalog revision.
     pub async fn revision(&self) -> Result<i64, CompatError> {
         Ok(self.catalog.revision().await?)

@@ -1029,19 +1029,28 @@ pub async fn lyrics_by_song_id(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> 
 
 /// One lyrics track as a `structuredLyrics` entry. Under `enhanced`: its
 /// kind, each line's end when it has a start, and its cue lines when it
-/// is synced, with the agents they name.
+/// is synced, with the agents they name. OpenSubsonic requires a start on
+/// every line of a synced set (Music Assistant 2.10.13 drops its whole
+/// track sync on one without), so a synced set with a line that has none
+/// goes out unsynced, with no times and no cue lines.
 fn structured_lyrics(lyrics: &LyricsTrack, enhanced: bool) -> SStructuredLyrics {
+    let all_timed = lyrics.lines().iter().all(|line| line.start_ms().is_some());
+    let timed = !lyrics.synced() || all_timed;
+    let synced = lyrics.synced() && all_timed;
     let line = lyrics
         .lines()
         .iter()
         .map(|line| SLyricsLine {
             value: line.text().to_owned(),
-            start: line.start_ms(),
-            end: line.start_ms().and(line.end_ms()).filter(|_| enhanced),
+            start: line.start_ms().filter(|_| timed),
+            end: line
+                .start_ms()
+                .and(line.end_ms())
+                .filter(|_| enhanced && timed),
         })
         .collect();
     let mut cue_lines = Vec::new();
-    if enhanced && lyrics.synced() {
+    if enhanced && synced {
         for (index, line) in lyrics.lines().iter().enumerate() {
             for cue_line in line.cue_lines() {
                 let (start, end) = cue_line.span(line.end_ms());
@@ -1089,7 +1098,7 @@ fn structured_lyrics(lyrics: &LyricsTrack, enhanced: bool) -> SStructuredLyrics 
     SStructuredLyrics {
         kind: enhanced.then(|| lyrics_kind(lyrics.kind())),
         lang: lyrics.lang().unwrap_or("und").to_owned(),
-        synced: lyrics.synced(),
+        synced,
         line,
         agents,
         cueLine: cue_lines,
@@ -1173,6 +1182,13 @@ pub async fn lyrics(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
             value,
         },
     )
+}
+
+/// An empty list under `key`, its items named `item`: podcasts and
+/// internet radio, which the server does not keep. Music Assistant syncs
+/// both and logs a failed step on the unknown-method 404.
+pub async fn nothing_kept(key: &'static str, item: &'static str) -> Result<Outcome, SubsonicError> {
+    Outcome::keyed(key, Wrap(item, Vec::<super::models::SChild>::new()))
 }
 
 /// Genre list.
@@ -1318,12 +1334,14 @@ pub async fn top_songs(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     )
 }
 
-/// Similar songs for an artist id (shared by both spellings).
+/// Similar songs for an artist, album or song id (shared by both
+/// spellings). An album or song stands for its album artist (a song
+/// without one, for its own artist); Music Assistant sends a song id for
+/// track radio.
 pub async fn similar_songs_query(
     ctx: &Ctx<'_>,
 ) -> Result<Vec<super::views::ViewTrack>, SubsonicError> {
-    let mbid = decode_expect(&ctx.p("id")?.unwrap_or_default(), IdKind::Artist)?;
-    let mbid = current_id(ctx, IdKind::Artist, mbid).await?;
+    let mbid = similar_seed_artist(ctx).await?;
     let count = ctx
         .pint("count", Some(50), Some(1), Some(500))?
         .unwrap_or(50)
@@ -1342,6 +1360,35 @@ pub async fn similar_songs_query(
         .get_similar_songs(&mbid, &user_id, count)
         .await
         .map_err(Ctx::store_err)
+}
+
+/// The artist a getSimilarSongs id stands for; 70 for any other kind of
+/// id, or one that names nothing.
+async fn similar_seed_artist(ctx: &Ctx<'_>) -> Result<String, SubsonicError> {
+    let not_found = || SubsonicError::new(NOT_FOUND, "Artist not found");
+    let (kind, internal) = super::ids::decode(&ctx.p("id")?.unwrap_or_default())?;
+    let internal = current_id(ctx, kind, internal).await?;
+    match kind {
+        IdKind::Artist => Ok(internal),
+        IdKind::Album => ctx
+            .store
+            .get_album(&internal)
+            .await
+            .map_err(Ctx::store_err)?
+            .and_then(|album| album.artist_mbid)
+            .ok_or_else(not_found),
+        IdKind::Track => ctx
+            .store
+            .get_track(&internal)
+            .await
+            .map_err(Ctx::store_err)?
+            .and_then(|track| track.album_artist_mbid.or(track.artist_mbid))
+            .ok_or_else(not_found),
+        IdKind::Playlist | IdKind::Genre => Err(SubsonicError::new(
+            NOT_FOUND,
+            "Expected an artist, album or song id",
+        )),
+    }
 }
 
 /// Similar songs (ID3 key).

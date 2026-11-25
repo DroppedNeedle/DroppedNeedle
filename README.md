@@ -4,7 +4,7 @@
 
 **Request music. Own everything.**
 
-DroppedNeedle is a self-hosted music request and discovery app for you and the people you share a server with. Search MusicBrainz, request an album or a single track, and it fetches it through your own slskd, SABnzbd, NZBGet or Deemix, checks every file and files it in your library. Then play it in the browser, or in Symfonium, Finamp, Feishin and other Subsonic or Jellyfin apps.
+DroppedNeedle is a self-hosted music request and discovery app for you and the people you share a server with. Search MusicBrainz, request an album or a single track, and it fetches it through your own slskd, SABnzbd, NZBGet or Deemix, checks every file and files it in your library. Then play it in the browser, or in Symfonium, Finamp, Feishin, Music Assistant and other Subsonic or Jellyfin apps.
 
 One container. No Lidarr.
 
@@ -136,7 +136,7 @@ Follow [Upgrading from v2](docs/upgrading-from-v2.md), and read [What changed in
 
 ## Works with your apps
 
-- **Music apps.** DroppedNeedle answers the OpenSubsonic and Jellyfin APIs, so Subsonic apps (Symfonium, Feishin, Arpeggi) and Jellyfin apps (Finamp, Jellify, Manet) can play your library. [Connect your music app](docs/connect-your-app.md) says what to enter.
+- **Music apps.** DroppedNeedle answers the OpenSubsonic and Jellyfin APIs, so Subsonic apps (Symfonium, Feishin, Arpeggi, Music Assistant) and Jellyfin apps (Finamp, Jellify, Manet) can play your library. [Connect your music app](docs/connect-your-app.md) says what to enter.
 - **Media servers.** It plays from Jellyfin, Navidrome, Plex or local files, and reports plays back to your own account there.
 - **Scrobbling.** ListenBrainz and Last.fm, per user.
 - **Sign-in.** Single sign-on through any OpenID Connect provider, and sign-in with Plex or Jellyfin: see [Accounts and sign-in](docs/accounts-and-sign-in.md).

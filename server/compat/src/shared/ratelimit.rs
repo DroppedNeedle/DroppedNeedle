@@ -10,8 +10,9 @@
 //! device sending the same wrong password does not lock its address out,
 //! while every new guess still counts. Those repeats take a bucket of
 //! their own per address (5/s, burst 20) before they are checked again,
-//! so they stay cheap without the lockout. Media and artwork skip the buckets
-//! (a cover grid is dozens of requests at once); every 429 carries
+//! so they stay cheap without the lockout. Media, artwork and Subsonic
+//! lyrics skip the buckets (a cover grid is dozens of requests at once, a
+//! library sync one lyrics call per track); every 429 carries
 //! `Retry-After`. Buckets and the bounded TTL maps are the native
 //! limiter's ([`droppedneedle_auth::session::rate_limit`]).
 //!
@@ -263,6 +264,21 @@ pub fn is_artwork_request(path: &str) -> bool {
         return matches!(endpoint, "getcoverart" | "getavatar");
     }
     super::auth::is_image_route(&low)
+}
+
+/// Subsonic `getLyricsBySongId` skips the token buckets as well. Music
+/// Assistant asks it once per track whenever it syncs, close to the browse
+/// rate, and one refusal ends its sync; metering it would also throttle
+/// the person's other apps. Its online lookups have their own cap in the
+/// lyrics service. It still needs a signed-in caller.
+pub fn is_lyrics_sync_request(path: &str) -> bool {
+    subsonic_endpoint(&path.to_lowercase()) == Some("getlyricsbysongid")
+}
+
+/// Whether `path` skips the token buckets: media, artwork and the
+/// lyrics an app syncs.
+pub fn skips_buckets(path: &str) -> bool {
+    is_media_request(path) || is_artwork_request(path) || is_lyrics_sync_request(path)
 }
 
 /// The Subsonic endpoints that change something, as the endpoint table

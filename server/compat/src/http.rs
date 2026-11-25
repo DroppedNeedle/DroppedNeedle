@@ -289,7 +289,7 @@ pub async fn limits_layer(
 ) -> Response {
     let path = request.uri().path().to_owned();
     let method = request.method().to_string();
-    let exempt = ratelimit::is_media_request(&path) || ratelimit::is_artwork_request(&path);
+    let exempt = ratelimit::skips_buckets(&path);
     let client = limit_ip(&request, &state.trusted_proxies);
     // The Subsonic adapter keys its post-verify buckets on the same value.
     if let Some(client) = client {
@@ -736,8 +736,7 @@ async fn subsonic_dispatch(
             Ok(principal) => {
                 let label = auth::principal_label(Some(principal.user_id()), &ip);
                 let path = format!("/subsonic/rest/{endpoint_name}");
-                let exempt =
-                    ratelimit::is_media_request(&path) || ratelimit::is_artwork_request(&path);
+                let exempt = ratelimit::skips_buckets(&path);
                 let mutation = ratelimit::is_mutation_request(&method, &path);
                 let retry_after = if exempt {
                     None

@@ -49,7 +49,9 @@
 //! | getUser | user | yes | username param ignored, returns caller |
 //! | getScanStatus/startScan | scanStatus | yes | startScan admin-only -> 50 |
 //! | getTopSongs | topSongs | yes | exact artist-name match else 70 |
-//! | getSimilarSongs[2] | similarSongs[2] | yes | takes an artist id |
+//! | getSimilarSongs[2] | similarSongs[2] | yes | an artist id, or a song or album id for its album artist |
+//! | getPodcasts/getNewestPodcasts | podcasts/newestPodcasts | yes | always empty |
+//! | getInternetRadioStations | internetRadioStations | yes | always empty |
 //!
 //! # Quirks, with their sources
 //!
@@ -277,6 +279,18 @@ pub static ENDPOINTS: &[Endpoint] = &[
     Endpoint::envelope("gettopsongs", |c| Box::pin(library::top_songs(c))),
     Endpoint::envelope("getsimilarsongs2", |c| Box::pin(library::similar_songs2(c))),
     Endpoint::envelope("getsimilarsongs", |c| Box::pin(library::similar_songs(c))),
+    Endpoint::envelope("getpodcasts", |_| {
+        Box::pin(library::nothing_kept("podcasts", "channel"))
+    }),
+    Endpoint::envelope("getnewestpodcasts", |_| {
+        Box::pin(library::nothing_kept("newestPodcasts", "episode"))
+    }),
+    Endpoint::envelope("getinternetradiostations", |_| {
+        Box::pin(library::nothing_kept(
+            "internetRadioStations",
+            "internetRadioStation",
+        ))
+    }),
 ];
 
 /// The method with this normalized name, or `None` for an unknown method.

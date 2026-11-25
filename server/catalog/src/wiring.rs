@@ -176,6 +176,7 @@ impl CatalogSetup {
             enrichment.lyrics,
             library_files,
             artwork.clone(),
+            Arc::clone(&platform.clock),
         );
         // Saved links search through discover's YouTube client, so both
         // spend from one daily budget.
@@ -222,7 +223,8 @@ impl CatalogSetup {
 
 /// The library reads: the one local catalog, and tags and lyrics read
 /// from the files first, then the `online` lyrics while their switch is
-/// on. `covers` says which covers are known missing.
+/// on. `covers` says which covers are known missing; the player apps'
+/// lyrics lookups are counted on `clock`.
 fn library_deps(
     catalog: local::store::LocalCatalog,
     releases: metadata::Catalog,
@@ -230,9 +232,15 @@ fn library_deps(
     online: Arc<dyn lyrics::OnlineLyricsSource>,
     files: droppedneedle_media::stream::local_files::LibraryFiles,
     covers: art::ArtworkService,
+    clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
 ) -> local::LibraryDeps {
     local::LibraryDeps {
-        lyrics: Arc::new(lyrics::LyricsService::new(catalog.clone(), files, online)),
+        lyrics: Arc::new(lyrics::LyricsService::new(
+            catalog.clone(),
+            files,
+            online,
+            clock,
+        )),
         catalog,
         upgrade_policy: settings.live(),
         covers,

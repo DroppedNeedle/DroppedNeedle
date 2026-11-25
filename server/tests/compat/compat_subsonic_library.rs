@@ -460,7 +460,8 @@ async fn error_codes() {
         ("startScan", vec![], 50),
         ("getTopSongs", vec![("artist", "Nobody")], 70),
         ("getSimilarSongs", vec![("id", "ar-nope")], 70),
-        ("getSimilarSongs", vec![("id", one)], 70),
+        ("getSimilarSongs", vec![("id", "tr-nope")], 70),
+        ("getSimilarSongs", vec![("id", "ge-rock")], 70),
         (
             "getTranscodeStream",
             vec![("mediaId", one), ("mediaType", "song")],
@@ -514,6 +515,81 @@ async fn error_codes() {
         let answer = client.get(endpoint, &[]).await;
         assert_code(&answer, 0, endpoint);
         assert!(answer.text().contains("disabled"));
+    }
+    rig.stop().await;
+}
+
+/// Track radio (Music Assistant sends a song id): a song or album id stands
+/// for its album artist, so both answer the songs the artist's own id does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn similar_songs_take_a_song_or_album_id() {
+    let rig = CompatApp::start("compat-sub-similar").await;
+    let client = Client::player(&rig);
+    let ids = Ids::read(&client).await;
+    let titles = |answer: Value| {
+        let mut titles: Vec<String> = answer["similarSongs"]["song"]
+            .as_array()
+            .expect("songs")
+            .iter()
+            .map(|song| song["title"].as_str().expect("title").to_owned())
+            .collect();
+        titles.sort();
+        titles
+    };
+    let by_artist = titles(
+        client
+            .ok("getSimilarSongs", &[("id", &ids.artist("Radiohead"))])
+            .await,
+    );
+    assert_eq!(by_artist, ["Airbag", "Paranoid Android"]);
+    for id in [ids.song("Airbag"), ids.album("OK Computer")] {
+        let answer = client.ok("getSimilarSongs", &[("id", &id)]).await;
+        assert_eq!(titles(answer), by_artist, "{id}");
+    }
+    rig.stop().await;
+}
+
+/// OpenSubsonic requires a start on every line of a synced set, and Music
+/// Assistant drops its whole track sync on a line without one: synced
+/// lyrics with an untimed line go out unsynced, with no times at all.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn synced_lyrics_with_an_untimed_line_go_out_unsynced() {
+    let rig = CompatApp::start("compat-sub-untimed-lyrics").await;
+    std::fs::write(
+        rig.app
+            .config
+            .root_app_dir
+            .join("music/Radiohead/OK Computer/01 Airbag.lrc"),
+        "[00:00.50]A line with its time\nA line without one\n",
+    )
+    .expect("lyrics file writes");
+    rig.app.scan_library().await;
+    rig.wait_for_lyrics_mark("Airbag").await;
+    let client = Client::player(&rig);
+    let airbag = Ids::read(&client).await.song("Airbag");
+    for enhanced in ["false", "true"] {
+        let answer = client
+            .ok(
+                "getLyricsBySongId",
+                &[("id", &airbag), ("enhanced", enhanced)],
+            )
+            .await;
+        let structured = &answer["lyricsList"]["structuredLyrics"][0];
+        assert_eq!(structured["synced"], json!(false), "{answer}");
+        assert_eq!(
+            structured["line"],
+            json!([
+                {"value": "A line with its time"},
+                {"value": "A line without one"},
+            ]),
+            "{answer}"
+        );
+        assert!(
+            structured
+                .get("cueLine")
+                .is_none_or(|cues| cues.as_array().is_some_and(Vec::is_empty)),
+            "{answer}"
+        );
     }
     rig.stop().await;
 }

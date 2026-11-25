@@ -497,4 +497,14 @@ pub type ArtistKeyedListing = (KeyedPage<ArtistRecord>, u64, u64);
 pub trait LyricsPort: Send + Sync {
     /// Stored lyrics for one streamable track id.
     fn get<'a>(&'a self, track_id: &'a str) -> BoxFuture<'a, Result<Option<Lyrics>, StoreError>>;
+
+    /// [`Self::get`] for a player app signed in as `user_id`, whose online
+    /// lookups the service may cap. Uncapped unless the port caps them.
+    fn get_for_app<'a>(
+        &'a self,
+        track_id: &'a str,
+        _user_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<Lyrics>, StoreError>> {
+        self.get(track_id)
+    }
 }

@@ -1196,9 +1196,13 @@ impl SubsonicStore {
         Ok(self.queues.delete_bookmark(user_id, file_id).await?)
     }
 
-    /// Lyrics for a track, or None.
+    /// Lyrics for a track, or None. The caller's online lookups are
+    /// capped, as every player app's are.
     pub async fn get_lyrics(&self, file_id: &str) -> Result<Option<Lyrics>, CompatError> {
-        self.library.lyrics(file_id).await
+        match &self.caller {
+            Some(user_id) => self.library.app_lyrics(file_id, user_id).await,
+            None => self.library.lyrics(file_id).await,
+        }
     }
 
     /// Avatar bytes + content type, or None.

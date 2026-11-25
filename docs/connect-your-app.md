@@ -40,6 +40,17 @@ Apps that use OpenSubsonic API keys can send the app password as the key instead
 | Arpeggi | Subsonic | |
 | Jellify | Jellyfin | |
 | Manet | Jellyfin | |
+| Music Assistant | OpenSubsonic | Enter the address in three fields, see below. Its Jellyfin provider is not tested with DroppedNeedle |
+
+### Music Assistant
+
+Music Assistant (Home Assistant's music server) asks for the address in three fields:
+
+- **Base URL:** `https://music.example.com`, with no path and no port.
+- **Port:** only when it is not 80 or 443.
+- **Path:** `subsonic`, or `music/subsonic` with `BASE_PATH` set to `/music`.
+
+Put the app password in the API key field. To have plays count here, add Music Assistant's "Subsonic Scrobbler" plugin. Leave Music Assistant's own ListenBrainz and Last.fm scrobbling off while DroppedNeedle forwards your plays, or each play counts twice.
 
 ## Signing in from the browser
 

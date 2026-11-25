@@ -9,10 +9,19 @@
 //! is held until the wait it named has passed. A lookup that failed
 //! stores nothing. An answer with word timings is served with them
 //! ([`candidate_lyrics`]); Library Management reads only its text.
+//!
+//! A player app asks for lyrics once per track whenever it syncs (Music
+//! Assistant every 12 hours), so the lookups an app starts are capped per
+//! person ([`APP_LOOKUPS_PER_HOUR`]): an answer the cache keeps is used
+//! as it is, and past the cap a track with neither has none until the
+//! hour turns. At most 1,440 LRCLIB calls a day per person from the apps.
+//! The web player's lookups are not capped.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::LyricsSettings;
 use droppedneedle_library::tags::lyrics::{LineInput, Lyrics, LyricsRefused, Piece, parse_lyrics};
@@ -36,6 +45,12 @@ const LYRICS_POLICY: Policy = Policy {
     fresh: Duration::from_secs(7 * 24 * 3_600),
     miss: Duration::from_secs(6 * 3_600),
 };
+
+/// Online lookups a player app may start for one person in an hour.
+pub const APP_LOOKUPS_PER_HOUR: u32 = 60;
+
+/// The window [`APP_LOOKUPS_PER_HOUR`] counts in, milliseconds.
+const APP_LOOKUP_WINDOW_MS: i64 = 3_600_000;
 
 /// Why an online lookup gave no answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,25 +107,9 @@ impl OnlineLyrics {
         query: LyricsQuery<'_>,
         priority: RequestPriority,
     ) -> Result<Option<LyricsCandidate>, LyricsError> {
-        let duration = query.duration_secs.round();
-        if !duration.is_finite()
-            || duration < 1.0
-            || query.title.trim().is_empty()
-            || query.artist.trim().is_empty()
-        {
+        let Some((key, duration)) = cache_key(query) else {
             return Ok(None);
-        }
-        let duration = duration as u32;
-        let key = CacheKey::hashed(
-            Source::Lrclib,
-            "get",
-            &[
-                &signature_text(query.title),
-                &signature_text(query.artist),
-                &signature_text(query.album),
-                &duration.to_string(),
-            ],
-        );
+        };
         let client = self.lrclib.clone();
         let (title, artist, album) = (
             query.title.to_owned(),
@@ -137,6 +136,41 @@ impl OnlineLyrics {
             })
             .await
     }
+
+    /// The answer the cache keeps for `query`, found or "nothing there",
+    /// fresh or stale; `None` when it keeps none. Never dials out.
+    pub async fn kept(&self, query: LyricsQuery<'_>) -> Option<Option<LyricsCandidate>> {
+        let Some((key, _)) = cache_key(query) else {
+            return Some(None);
+        };
+        self.cache.peek(&key).await
+    }
+}
+
+/// The cache key and whole-second length LRCLIB matches `query` by;
+/// `None` when the length rounds to nothing or the title or artist is
+/// blank, so there is nothing to ask.
+fn cache_key(query: LyricsQuery<'_>) -> Option<(CacheKey, u32)> {
+    let duration = query.duration_secs.round();
+    if !duration.is_finite()
+        || duration < 1.0
+        || query.title.trim().is_empty()
+        || query.artist.trim().is_empty()
+    {
+        return None;
+    }
+    let duration = duration as u32;
+    let key = CacheKey::hashed(
+        Source::Lrclib,
+        "get",
+        &[
+            &signature_text(query.title),
+            &signature_text(query.artist),
+            &signature_text(query.album),
+            &duration.to_string(),
+        ],
+    );
+    Some((key, duration))
 }
 
 /// The online answer [`LyricsService`] falls back to: [`OnlineLyrics`] in
@@ -152,6 +186,15 @@ pub trait OnlineLyricsSource: Send + Sync {
         query: LyricsQuery<'a>,
         priority: RequestPriority,
     ) -> BoxFuture<'a, Result<Option<LyricsCandidate>, LyricsError>>;
+
+    /// The answer kept for `query` without asking (see
+    /// [`OnlineLyrics::kept`]). A source that keeps nothing has none.
+    fn kept<'a>(
+        &'a self,
+        _query: LyricsQuery<'a>,
+    ) -> BoxFuture<'a, Option<Option<LyricsCandidate>>> {
+        Box::pin(async { None })
+    }
 }
 
 impl OnlineLyricsSource for OnlineLyrics {
@@ -173,6 +216,42 @@ impl OnlineLyricsSource for OnlineLyrics {
     ) -> BoxFuture<'a, Result<Option<LyricsCandidate>, LyricsError>> {
         Box::pin(OnlineLyrics::lookup(self, query, priority))
     }
+
+    fn kept<'a>(
+        &'a self,
+        query: LyricsQuery<'a>,
+    ) -> BoxFuture<'a, Option<Option<LyricsCandidate>>> {
+        Box::pin(OnlineLyrics::kept(self, query))
+    }
+}
+
+/// How many online lookups each person's apps started in the current
+/// hour, from its first one. Held in memory, so a restart starts afresh.
+struct AppLookups {
+    clock: Arc<dyn Clock>,
+    taken: Mutex<HashMap<String, (i64, u32)>>,
+}
+
+impl AppLookups {
+    fn new(clock: Arc<dyn Clock>) -> Self {
+        Self {
+            clock,
+            taken: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Spend one of `user_id`'s lookups; false once the hour's are spent.
+    fn take(&self, user_id: &str) -> bool {
+        let now = self.clock.now_ms();
+        let mut taken = self.taken.lock().unwrap_or_else(PoisonError::into_inner);
+        taken.retain(|_, (since, _)| now - *since < APP_LOOKUP_WINDOW_MS);
+        let (_, count) = taken.entry(user_id.to_owned()).or_insert((now, 0));
+        if *count >= APP_LOOKUPS_PER_HOUR {
+            return false;
+        }
+        *count += 1;
+        true
+    }
 }
 
 /// The lyrics behind the player route and the compat APIs.
@@ -180,29 +259,55 @@ impl OnlineLyricsSource for OnlineLyrics {
 /// A track the lyrics sweep marked is read from its file. Otherwise, while
 /// the switch is on, the catalog's title, artist, album and length are
 /// looked up online at user priority. A failed or resting lookup reads as
-/// absent with the cause logged; a database error is an error.
+/// absent with the cause logged; a database error is an error. A player
+/// app's lookups are capped per person (see the module notes).
 pub struct LyricsService {
     catalog: LocalCatalog,
     files: LibraryFiles,
     online: Arc<dyn OnlineLyricsSource>,
+    app_lookups: AppLookups,
 }
 
 impl LyricsService {
-    /// File lyrics over `catalog` and `files`, then `online`.
+    /// File lyrics over `catalog` and `files`, then `online`, the apps'
+    /// lookups counted on `clock`.
     #[must_use]
     pub fn new(
         catalog: LocalCatalog,
         files: LibraryFiles,
         online: Arc<dyn OnlineLyricsSource>,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             catalog,
             files,
             online,
+            app_lookups: AppLookups::new(clock),
         }
     }
 
-    async fn online(&self, track_id: &str) -> Result<Option<Lyrics>, StoreError> {
+    /// The file's lyrics, else, while the switch is on, the online answer;
+    /// for a player app (`app_user`), only a kept answer or one of the
+    /// person's capped lookups.
+    async fn read(
+        &self,
+        track_id: &str,
+        app_user: Option<&str>,
+    ) -> Result<Option<Lyrics>, StoreError> {
+        if let Some(doc) = file_lyrics::read(&self.catalog, &self.files, track_id).await? {
+            return Ok(Some(doc));
+        }
+        if !self.online.switched_on() {
+            return Ok(None);
+        }
+        self.online(track_id, app_user).await
+    }
+
+    async fn online(
+        &self,
+        track_id: &str,
+        app_user: Option<&str>,
+    ) -> Result<Option<Lyrics>, StoreError> {
         let track = self
             .catalog
             .get_track(track_id)
@@ -220,11 +325,23 @@ impl LyricsService {
             album: &track.album_title,
             duration_secs,
         };
-        let candidate = match self
-            .online
-            .lookup(query, RequestPriority::UserInitiated)
-            .await
-        {
+        let answer = match app_user {
+            None => {
+                self.online
+                    .lookup(query, RequestPriority::UserInitiated)
+                    .await
+            }
+            Some(user_id) => match self.online.kept(query).await {
+                Some(kept) => Ok(kept),
+                None if self.app_lookups.take(user_id) => {
+                    self.online
+                        .lookup(query, RequestPriority::UserInitiated)
+                        .await
+                }
+                None => Ok(None),
+            },
+        };
+        let candidate = match answer {
             Ok(Some(candidate)) => candidate,
             Ok(None) => return Ok(None),
             Err(error) => {
@@ -286,14 +403,14 @@ fn word_synced_lyrics(word_synced: &WordSynced) -> Option<Lyrics> {
 
 impl LyricsPort for LyricsService {
     fn get<'a>(&'a self, track_id: &'a str) -> BoxFuture<'a, Result<Option<Lyrics>, StoreError>> {
-        Box::pin(async move {
-            if let Some(doc) = file_lyrics::read(&self.catalog, &self.files, track_id).await? {
-                return Ok(Some(doc));
-            }
-            if !self.online.switched_on() {
-                return Ok(None);
-            }
-            self.online(track_id).await
-        })
+        Box::pin(self.read(track_id, None))
+    }
+
+    fn get_for_app<'a>(
+        &'a self,
+        track_id: &'a str,
+        user_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<Lyrics>, StoreError>> {
+        Box::pin(self.read(track_id, Some(user_id)))
     }
 }

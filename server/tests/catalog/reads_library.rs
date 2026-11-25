@@ -6,10 +6,14 @@
 use crate::common::auth::{AuthRig, test_principal, with_test_principal};
 use crate::common::{ScratchDir, TestApp};
 use droppedneedle_catalog::local;
-use droppedneedle_catalog::lyrics::LyricsService;
+use droppedneedle_catalog::lyrics::{
+    APP_LOOKUPS_PER_HOUR, LyricsError, LyricsQuery, LyricsService, OnlineLyricsSource,
+};
+use droppedneedle_providers::lrclib::LyricsCandidate;
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use axum::Router;
 use axum::body::Body;
@@ -75,6 +79,7 @@ fn deps(beside: &AuthRig, db: &Db, lyrics: Option<Arc<dyn LyricsPort>>) -> Libra
                 catalog.clone(),
                 files.clone(),
                 Arc::new(crate::common::bundles::NoOnlineLyrics),
+                Arc::clone(&beside.platform.clock),
             ))
         }),
         catalog,
@@ -2011,4 +2016,111 @@ async fn a_page_at_a_position_is_where_the_walk_puts_it() {
         assert_eq!(status, StatusCode::BAD_REQUEST, "{path}: {body}");
         assert_eq!(body["error"]["code"], "INVALID_INPUT", "{path}");
     }
+}
+
+/// LRCLIB as the lyrics service sees it: it counts its lookups and finds
+/// one synced line for every track; `kept` is the answer its cache keeps.
+struct CountedOnline {
+    asked: std::sync::atomic::AtomicUsize,
+    kept: Option<LyricsCandidate>,
+}
+
+fn candidate() -> LyricsCandidate {
+    LyricsCandidate {
+        provider_id: 1,
+        track_name: "Opener".to_owned(),
+        artist_name: "Aurora".to_owned(),
+        album_name: "First Light".to_owned(),
+        duration_seconds: 200.0,
+        instrumental: false,
+        plain_lyrics: None,
+        synced_lyrics: Some("[00:01.00]Found online".to_owned()),
+        word_synced: None,
+        provider_revision: "r1".to_owned(),
+    }
+}
+
+impl OnlineLyricsSource for CountedOnline {
+    fn switched_on(&self) -> bool {
+        true
+    }
+
+    fn lookup<'a>(
+        &'a self,
+        _query: LyricsQuery<'a>,
+        _priority: droppedneedle_providers::RequestPriority,
+    ) -> BoxFuture<'a, Result<Option<LyricsCandidate>, LyricsError>> {
+        self.asked.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { Ok(Some(candidate())) })
+    }
+
+    fn kept<'a>(
+        &'a self,
+        _query: LyricsQuery<'a>,
+    ) -> BoxFuture<'a, Option<Option<LyricsCandidate>>> {
+        let kept = self.kept.clone().map(Some);
+        Box::pin(async move { kept })
+    }
+}
+
+/// A player app's online lyrics lookups are capped at 60 an hour per
+/// person: the 61st in the hour answers no lyrics and asks nothing, while
+/// another person and the web player still ask, the next hour asks again,
+/// and an answer the cache keeps is served past the cap without asking.
+#[tokio::test]
+async fn app_lyrics_lookups_are_capped_per_person_per_hour() {
+    use droppedneedle_kernel::test_support::ManualClock;
+
+    let fixture = sqlite_fixture().await;
+    let db = fixture.runtime.db();
+    let clock = ManualClock::at(1_000_000);
+    let service = |kept| {
+        let online = Arc::new(CountedOnline {
+            asked: std::sync::atomic::AtomicUsize::new(0),
+            kept,
+        });
+        let service = LyricsService::new(
+            LocalCatalog::new(db.clone()),
+            LibraryFiles::new(db.clone(), SharedResolver::default()),
+            online.clone(),
+            Arc::new(clock.clone()),
+        );
+        (service, online)
+    };
+    let asked = |online: &CountedOnline| online.asked.load(Ordering::SeqCst);
+
+    let (lyrics, online) = service(None);
+    for _ in 0..APP_LOOKUPS_PER_HOUR {
+        let found = lyrics.get_for_app("t1", "u1").await.expect("lyrics read");
+        assert!(found.is_some(), "under the cap the lookup answers");
+    }
+    assert_eq!(asked(&online), 60);
+    let past = lyrics.get_for_app("t1", "u1").await.expect("lyrics read");
+    assert!(past.is_none(), "past the cap nothing is looked up");
+    assert_eq!(asked(&online), 60);
+    assert!(
+        lyrics
+            .get_for_app("t1", "u2")
+            .await
+            .expect("read")
+            .is_some()
+    );
+    assert!(lyrics.get("t1").await.expect("read").is_some());
+    assert_eq!(asked(&online), 62);
+    clock.advance(3_600_000);
+    assert!(
+        lyrics
+            .get_for_app("t1", "u1")
+            .await
+            .expect("read")
+            .is_some()
+    );
+    assert_eq!(asked(&online), 63);
+
+    let (lyrics, online) = service(Some(candidate()));
+    for _ in 0..=APP_LOOKUPS_PER_HOUR {
+        let found = lyrics.get_for_app("t1", "u1").await.expect("lyrics read");
+        assert!(found.is_some(), "a kept answer is served");
+    }
+    assert_eq!(asked(&online), 0, "a kept answer asks nothing");
 }

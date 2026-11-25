@@ -6,7 +6,8 @@
 //! stream URL with no auth headers, the token in its `api_key` query.
 //! Arpeggi syncs its artist list and opens one artist. Feishin connects
 //! over OpenSubsonic, then browses, plays, stars, scrobbles and makes a
-//! playlist, mostly in form posts.
+//! playlist, mostly in form posts. Music Assistant syncs the library,
+//! then plays, finds similar songs and scrobbles.
 //! Every step lands in a `library_*` golden under `tests/fixtures/compat/`.
 //! `COMPAT_BLESS=1` rewrites them, never in CI: review the diff before
 //! committing.
@@ -594,6 +595,172 @@ async fn feishin_connects_browses_plays_stars_scrobbles_and_makes_a_playlist() {
     feishin_reads_song(&entries[0]);
 
     assert_golden("library_feishin.trace.json", &trace.body());
+    rig.stop().await;
+}
+
+/// Music Assistant 2.10.13's OpenSubsonic provider, as recorded against
+/// a live server: sign-in, its library sync (artists, albums and songs
+/// page by page, lyrics per song, podcasts and radio, playlists), then
+/// track radio, a cover, a raw stream from the first byte and from the
+/// middle, and the Subsonic Scrobbler plugin's scrobble. Paranoid Android
+/// carries synced lyrics with an untimed line, which go out unsynced:
+/// Music Assistant stops its whole track sync on a synced line without a
+/// start.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn music_assistant_sync_browse_play() {
+    use droppedneedle_auth::compat_auth::subsonic::md5_hex;
+
+    let rig = CompatApp::start("compat-music-assistant").await;
+    std::fs::write(
+        rig.app
+            .config
+            .root_app_dir
+            .join("music/Radiohead/OK Computer/02 Paranoid Android.lrc"),
+        "[00:00.50]A line with its time\nA line without one\n",
+    )
+    .expect("lyrics file writes");
+    rig.app.scan_library().await;
+    rig.wait_for_lyrics_mark("Paranoid Android").await;
+    let one = rig.file("one");
+    let salt = "Qm9vdHNTYWx0";
+    let token = md5_hex(&format!("{}{salt}", rig.secret));
+    let signed = format!("f=json&v=1.16.1&c=Music+Assistant&u={PLAYER}&s={salt}&t={token}");
+    let get = |call: &str, params: &str| format!("/subsonic/rest/{call}.view?{signed}{params}");
+    let made = rig
+        .app
+        .call("GET", &get("createPlaylist", "&name=Kitchen"), &[], None)
+        .await
+        .1;
+    let playlist_id = made["subsonic-response"]["playlist"]["id"]
+        .as_str()
+        .expect("playlist id")
+        .to_owned();
+
+    let mut trace = Trace::new(&rig);
+    trace.get(&get("ping", ""), &[]).await;
+    trace.get(&get("getOpenSubsonicExtensions", ""), &[]).await;
+    trace.get(&get("getArtists", ""), &[]).await;
+    let albums = trace
+        .get(
+            &get(
+                "getAlbumList2",
+                "&type=alphabeticalByArtist&size=200&offset=0",
+            ),
+            &[],
+        )
+        .await;
+    let empty = trace
+        .get(
+            &get(
+                "getAlbumList2",
+                "&type=alphabeticalByArtist&size=200&offset=200",
+            ),
+            &[],
+        )
+        .await;
+    assert!(
+        empty["subsonic-response"]["albumList2"]["album"]
+            .as_array()
+            .is_none_or(Vec::is_empty),
+        "{empty}"
+    );
+    let album = named(
+        &albums["subsonic-response"]["albumList2"]["album"],
+        "name",
+        "OK Computer",
+    );
+    let album_id = album["id"].as_str().expect("album id").to_owned();
+    let cover_id = album["coverArt"].as_str().expect("cover id").to_owned();
+    trace
+        .get(&get("getAlbum", &format!("&id={album_id}")), &[])
+        .await;
+    trace
+        .get(&get("getAlbumInfo2", &format!("&id={album_id}")), &[])
+        .await;
+    let page = "&query=&artistCount=0&artistOffset=0&albumCount=0&albumOffset=0&songCount=200";
+    let songs = trace
+        .get(&get("search3", &format!("{page}&songOffset=0")), &[])
+        .await;
+    trace
+        .get(&get("search3", &format!("{page}&songOffset=200")), &[])
+        .await;
+    let songs = &songs["subsonic-response"]["searchResult3"]["song"];
+    let song_id = |title: &str| {
+        named(songs, "title", title)["id"]
+            .as_str()
+            .expect("song id")
+            .to_owned()
+    };
+    let paranoid = song_id("Paranoid Android");
+    let song = song_id("One");
+    let (status, added) = rig
+        .app
+        .call(
+            "GET",
+            &get(
+                "updatePlaylist",
+                &format!("&playlistId={playlist_id}&songIdToAdd={song}"),
+            ),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{added}");
+    let lyrics = trace
+        .get(&get("getLyricsBySongId", &format!("&id={paranoid}")), &[])
+        .await;
+    let structured = &lyrics["subsonic-response"]["lyricsList"]["structuredLyrics"][0];
+    assert_eq!(structured["synced"], json!(false), "{lyrics}");
+    assert!(
+        structured["line"]
+            .as_array()
+            .expect("lines")
+            .iter()
+            .all(|line| line.get("start").is_none()),
+        "{lyrics}"
+    );
+    trace
+        .get(&get("getPodcasts", "&includeEpisodes=true"), &[])
+        .await;
+    trace.get(&get("getInternetRadioStations", ""), &[]).await;
+    trace.get(&get("getPlaylists", ""), &[]).await;
+    trace
+        .get(&get("getPlaylist", &format!("&id={playlist_id}")), &[])
+        .await;
+
+    let similar = trace
+        .get(
+            &get("getSimilarSongs", &format!("&id={song}&count=25")),
+            &[],
+        )
+        .await;
+    assert_eq!(
+        similar["subsonic-response"]["status"],
+        json!("ok"),
+        "{similar}"
+    );
+    trace
+        .get(&get("getCoverArt", &format!("&id={cover_id}")), &[])
+        .await;
+    let stream = get(
+        "stream",
+        &format!("&id={song}&maxBitRate=0&format=raw&estimateContentLength=true&converted=false"),
+    );
+    let full = trace.get(&stream, &[("Range", "bytes=0-")]).await;
+    assert_eq!(full["byte_len"], json!(one.len()));
+    let middle = one.len() / 2;
+    let rest = trace
+        .get(&stream, &[("Range", &format!("bytes={middle}-"))])
+        .await;
+    assert_eq!(rest["byte_len"], json!(one.len() - middle));
+    trace
+        .get(
+            &get("scrobble", &format!("&id={song}&submission=true")),
+            &[],
+        )
+        .await;
+
+    assert_golden("library_music_assistant.trace.json", &trace.body());
     rig.stop().await;
 }
 
