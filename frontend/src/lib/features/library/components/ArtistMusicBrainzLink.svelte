@@ -112,8 +112,10 @@
 				class="link link-hover font-medium text-base-content/80"
 				href={page}
 				target="_blank"
-				rel="noreferrer">MusicBrainz</a
+				rel="noreferrer"
 			>
+				MusicBrainz
+			</a>
 			<span>· {byLine[link.set_by]}, {when(link.selected_at)}</span>
 		{:else}
 			<span>Not linked to MusicBrainz</span>

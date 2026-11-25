@@ -76,9 +76,9 @@
 					<p class="text-sm">No music folder found. Add the folder your music is in.</p>
 				{/if}
 				{#if open !== 'library:'}
-					<Button variant="primary" size="sm" onclick={() => (open = 'library:')}
-						>{librarySet ? 'Edit' : 'Add a library folder'}</Button
-					>
+					<Button variant="primary" size="sm" onclick={() => (open = 'library:')}>
+						{librarySet ? 'Edit' : 'Add a library folder'}
+					</Button>
 				{/if}
 			</div>
 			{#if open === 'library:'}
@@ -105,9 +105,9 @@
 
 	{#if downloads.length > 0}
 		<p class="text-sm text-muted">
-			Download folders found: <span class="font-mono break-all"
-				>{downloads.map((folder) => folder.path).join(', ')}</span
-			>. They come up in the next step.
+			Download folders found: <span class="font-mono break-all">
+				{downloads.map((folder) => folder.path).join(', ')}
+			</span>. They come up in the next step.
 		</p>
 	{/if}
 

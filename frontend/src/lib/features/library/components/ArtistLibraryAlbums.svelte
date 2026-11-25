@@ -139,8 +139,10 @@
 									icon={Play}
 									class="[&_svg]:fill-current"
 									loading={playing}
-									onclick={() => onplay?.(album, kind)}>Play album</Button
+									onclick={() => onplay?.(album, kind)}
 								>
+									Play album
+								</Button>
 							{/if}
 							<Button variant="outline" href={libraryAlbumHref(album)}>View tracks</Button>
 							{#if canPlay && menu}

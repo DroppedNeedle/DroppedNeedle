@@ -113,9 +113,9 @@
 	{/each}
 	{#if downloadFolders.length > 0}
 		<p class="text-sm text-muted">
-			Download folders in this container: <span class="font-mono break-all"
-				>{downloadFolders.map((folder) => folder.path).join(', ')}</span
-			>.
+			Download folders in this container: <span class="font-mono break-all">
+				{downloadFolders.map((folder) => folder.path).join(', ')}
+			</span>.
 		</p>
 	{/if}
 </div>

@@ -248,9 +248,9 @@
 			<Card as="section" variant="bordered" padding="md">
 				<div class="flex flex-wrap items-center justify-between gap-3">
 					<div>
-						<strong class="flex items-center gap-2 text-sm"
-							><PackageCheck class="h-4 w-4 text-library-manage" />Profile file</strong
-						>
+						<strong class="flex items-center gap-2 text-sm">
+							<PackageCheck class="h-4 w-4 text-library-manage" />Profile file
+						</strong>
 						<p class="mt-1 text-xs text-muted">
 							Attach {shareResult.filename} wherever you share the profile.
 						</p>
@@ -291,9 +291,9 @@
 		{/if}
 	</div>
 	{#snippet actions()}
-		<Button variant="ghost" disabled={exportProfile.isPending} onclick={closeShareDialog}
-			>Close</Button
-		>
+		<Button variant="ghost" disabled={exportProfile.isPending} onclick={closeShareDialog}>
+			Close
+		</Button>
 	{/snippet}
 </Modal>
 
@@ -323,14 +323,14 @@
 					ondragleave={() => (dragging = false)}
 					ondrop={(event) => void dropFile(event)}
 				>
-					<span class="rounded-2xl bg-library-manage/10 p-3 text-library-manage"
-						><FileBraces class="h-7 w-7" /></span
-					>
+					<span class="rounded-2xl bg-library-manage/10 p-3 text-library-manage">
+						<FileBraces class="h-7 w-7" />
+					</span>
 					<strong class="mt-3 text-sm">Choose or drop a .dnprofile file</strong>
 					<small class="mt-1 text-muted">.dnprofile files up to 1 MiB</small>
-					{#if importFilename}<span class="badge badge-outline mt-3 max-w-full truncate"
-							>{importFilename}</span
-						>{/if}
+					{#if importFilename}<span class="badge badge-outline mt-3 max-w-full truncate">
+							{importFilename}
+						</span>{/if}
 				</button>
 				<input
 					bind:this={fileInput}
@@ -367,14 +367,14 @@
 							{importPreview.profile.description || 'No description supplied.'}
 						</p>
 					</div>
-					<span class="badge badge-outline gap-1"
-						><Check class="h-3.5 w-3.5" /> Custom and inactive</span
-					>
+					<span class="badge badge-outline gap-1">
+						<Check class="h-3.5 w-3.5" /> Custom and inactive
+					</span>
 				</div>
 				<div class="mt-4 flex flex-wrap gap-2">
-					{#each importPreview.aspects as aspect (aspect)}<span class="management-aspect"
-							>{aspect}</span
-						>{/each}
+					{#each importPreview.aspects as aspect (aspect)}<span class="management-aspect">
+							{aspect}
+						</span>{/each}
 				</div>
 			</Card>
 
@@ -390,11 +390,11 @@
 									? 'border-error/25 bg-error/5'
 									: 'border-warning/25 bg-warning/5'}"
 							>
-								<strong class="flex items-center gap-2"
-									><TriangleAlert
+								<strong class="flex items-center gap-2">
+									<TriangleAlert
 										class="h-4 w-4 {warning.severity === 'danger' ? 'text-error' : 'text-warning'}"
-									/>{warning.title}</strong
-								>
+									/>{warning.title}
+								</strong>
 								<p class="mt-1 text-xs text-muted">{warning.message}</p>
 							</div>
 						{/each}
@@ -464,14 +464,18 @@
 					importPreview = null;
 					importName = '';
 					importError = '';
-				}}>Back</Button
+				}}
 			>
+				Back
+			</Button>
 		{/if}
 		<Button
 			variant="ghost"
 			disabled={previewImport.isPending || importProfile.isPending}
-			onclick={closeImportDialog}>Cancel</Button
+			onclick={closeImportDialog}
 		>
+			Cancel
+		</Button>
 		{#if importPreview}
 			<Button
 				variant="warning"

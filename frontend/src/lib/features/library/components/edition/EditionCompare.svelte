@@ -343,9 +343,9 @@
 {/if}
 {#if canMatch && onmatch && suggestedRows.length > 0}
 	<div class="flex flex-wrap items-center gap-2">
-		<AsyncButton variant="outline" size="sm" onclick={matchSuggested}
-			>{MATCH_AS_SUGGESTED}</AsyncButton
-		>
+		<AsyncButton variant="outline" size="sm" onclick={matchSuggested}>
+			{MATCH_AS_SUGGESTED}
+		</AsyncButton>
 		{#if batch}<p class="text-sm text-error" role="alert">{batch}</p>{/if}
 	</div>
 {/if}
@@ -389,8 +389,9 @@
 					{#if canMatch}
 						{@const suggestion = freeTrack(row.suggested)}
 						{#if suggestion}
-							<span class="block text-xs text-muted">{SUGGESTED}: {freeTrackLabel(suggestion)}</span
-							>
+							<span class="block text-xs text-muted">
+								{SUGGESTED}: {freeTrackLabel(suggestion)}
+							</span>
 						{/if}
 					{/if}
 				{:else}
@@ -401,14 +402,14 @@
 				{#if row.state === 'fits'}
 					<Check class="h-4 w-4 text-success" aria-hidden="true" /><span class="sr-only">Fits</span>
 					{#if canMatch && row.byHand}
-						<span class="badge badge-sm badge-ghost" tabindex="-1" bind:this={chips[row.key]}
-							>{MATCHED_BY_HAND}</span
-						>
+						<span class="badge badge-sm badge-ghost" tabindex="-1" bind:this={chips[row.key]}>
+							{MATCHED_BY_HAND}
+						</span>
 					{/if}
 				{:else if row.state !== 'missing'}
-					<span class="badge badge-sm {row.state === 'version' ? 'badge-warning' : 'badge-ghost'}"
-						>{CHIPS[row.state]}</span
-					>
+					<span class="badge badge-sm {row.state === 'version' ? 'badge-warning' : 'badge-ghost'}">
+						{CHIPS[row.state]}
+					</span>
 				{/if}
 			</span>
 			{#if hasActions(row) || errors[row.key]}
@@ -418,8 +419,10 @@
 							<p class="text-xs text-muted">
 								{#if authStore.isAdmin}{MATCH_WRITTEN_PARTS[0]}<a
 										class="link"
-										href={withBasePath('/library/management/history')}>{MATCH_WRITTEN_PARTS[1]}</a
-									>{MATCH_WRITTEN_PARTS[2]}{:else}{MATCH_WRITTEN}{/if}
+										href={withBasePath('/library/management/history')}
+									>
+										{MATCH_WRITTEN_PARTS[1]}
+									</a>{MATCH_WRITTEN_PARTS[2]}{:else}{MATCH_WRITTEN}{/if}
 							</p>
 						{:else if row.state === 'fits'}
 							<AsyncButton
@@ -429,8 +432,10 @@
 								class="self-start"
 								aria-label={forFile(UNDO_MATCH, title)}
 								bind:ref={() => undos[row.key] ?? null, (el) => (undos[row.key] = el)}
-								onclick={() => unmatch(row)}>{UNDO_MATCH}</AsyncButton
+								onclick={() => unmatch(row)}
 							>
+								{UNDO_MATCH}
+							</AsyncButton>
 						{:else if row.state === 'version'}
 							<AsyncButton
 								variant="outline"
@@ -439,8 +444,10 @@
 								aria-label={forFile(ITS_THIS_TRACK, title)}
 								aria-describedby={describedBy}
 								bind:ref={() => entries[row.key] ?? null, (el) => (entries[row.key] = el)}
-								onclick={() => match(row, row.releaseTrack ?? '')}>{ITS_THIS_TRACK}</AsyncButton
+								onclick={() => match(row, row.releaseTrack ?? '')}
 							>
+								{ITS_THIS_TRACK}
+							</AsyncButton>
 						{:else if picking === row.key}
 							<div class="flex flex-col gap-2 md:flex-row md:items-end">
 								<div class="w-full md:max-w-sm">
@@ -460,8 +467,10 @@
 										size="sm"
 										aria-label={forFile(MATCH, title)}
 										aria-describedby={describedBy}
-										onclick={() => match(row, pick)}>{MATCH}</AsyncButton
+										onclick={() => match(row, pick)}
 									>
+										{MATCH}
+									</AsyncButton>
 									<Button variant="ghost" size="sm" onclick={() => cancel(row)}>Cancel</Button>
 								</div>
 							</div>
@@ -473,8 +482,10 @@
 								aria-label={forFile(MATCH_TO_TRACK, title)}
 								aria-describedby={describedBy}
 								bind:ref={() => entries[row.key] ?? null, (el) => (entries[row.key] = el)}
-								onclick={() => openPicker(row)}>{MATCH_TO_TRACK}</Button
+								onclick={() => openPicker(row)}
 							>
+								{MATCH_TO_TRACK}
+							</Button>
 						{/if}
 					{/if}
 					{#if errors[row.key]}

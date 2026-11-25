@@ -8,10 +8,10 @@
 </script>
 
 <div class="alert alert-info alert-soft mb-4">
-	<span class="text-sm"
-		>AudioDB provides rich artist and album images (fanart, banners, logos, CD art). The free tier
-		allows 30 requests/minute. A premium API key removes this limit.</span
-	>
+	<span class="text-sm">
+		AudioDB provides rich artist and album images (fanart, banners, logos, CD art). The free tier
+		allows 30 requests/minute. A premium API key removes this limit.
+	</span>
 </div>
 
 <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 pt-2">

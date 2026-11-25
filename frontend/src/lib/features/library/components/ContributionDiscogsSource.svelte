@@ -64,16 +64,16 @@
 		<div class="p-5 sm:p-6">
 			{#if contribution.discogs_source?.expired}
 				<div class="alert alert-warning mb-4" role="status">
-					<span
-						>Discogs data is more than six hours old. Refresh it before comparing or submitting.</span
-					>
+					<span>
+						Discogs data is more than six hours old. Refresh it before comparing or submitting.
+					</span>
 				</div>
 			{/if}
 			<div class="flex flex-wrap items-start justify-between gap-4 rounded-box bg-base-100/55 p-4">
 				<div class="min-w-0">
-					<span class="badge badge-outline badge-sm"
-						>Discogs release #{selectedReference.external_id}</span
-					>
+					<span class="badge badge-outline badge-sm">
+						Discogs release #{selectedReference.external_id}
+					</span>
 					<h3 class="mt-2 font-bold">{selected?.title ?? 'Selected release'}</h3>
 					<p class="text-sm text-muted">
 						{selected?.artist_name ?? 'Refresh to display current Discogs metadata'}
@@ -98,8 +98,10 @@
 							size="sm"
 							icon={RefreshCw}
 							loading={selectMutation.isPending}
-							onclick={() => select(selectedReference.external_id)}>Refresh</Button
+							onclick={() => select(selectedReference.external_id)}
 						>
+							Refresh
+						</Button>
 						<Button
 							variant="danger-ghost"
 							size="sm"
@@ -109,8 +111,10 @@
 								removeMutation.mutate({
 									contributionId: contribution.id,
 									expectedRowRevision: contribution.row_revision
-								})}>Remove</Button
+								})}
 						>
+							Remove
+						</Button>
 					{/if}
 				</div>
 			</div>
@@ -140,8 +144,9 @@
 						icon={Search}
 						loading={searchMutation.isPending}
 						disabled={!canMutate || selectMutation.isPending}
-						>{exactInput ? 'Use release' : 'Search'}</Button
 					>
+						{exactInput ? 'Use release' : 'Search'}
+					</Button>
 				</div>
 			</label>
 
@@ -185,8 +190,10 @@
 											variant="outline"
 											size="sm"
 											disabled={!canMutate || selectMutation.isPending}
-											onclick={() => select(result.release_id)}>Select release</Button
+											onclick={() => select(result.release_id)}
 										>
+											Select release
+										</Button>
 									</div>
 								</li>
 							{/each}

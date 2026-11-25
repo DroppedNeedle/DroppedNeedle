@@ -127,12 +127,13 @@
 						viewBox="0 0 120 16"
 						preserveAspectRatio="none"
 						aria-hidden="true"
-						><path
+					>
+						<path
 							d="M1 8.6C9 5.4 24 5.8 41 5.1 62 4.3 86 4.6 104 5.5l12 .6.9 1.4-9 .6c-14 .9-30 1.2-47 2.1C40 11.1 21 11.9 6 12.4 2.6 12.4.4 10.8 1 8.6Z"
 						/><path d="M64 13.1c16-.6 34-1 50-.3l-.4 1c-17 .1-33 .3-49.6.1Z" /><path
 							d="M92 2.6c8 .1 17 .3 25 1l-.6.9c-8-.4-16-.6-24.6-.8Z"
-						/></svg
-					>
+						/>
+					</svg>
 				</div>
 			{:else}
 				<h1 class="dn-lph__title" data-part={part('page-title')}>{title}</h1>

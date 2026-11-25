@@ -124,8 +124,10 @@
 		icon={Trash2}
 		disabled={emptying}
 		loading={emptying}
-		onclick={openConfirm}>{emptying ? 'Emptying...' : 'Empty recycle bin'}</Button
+		onclick={openConfirm}
 	>
+		{emptying ? 'Emptying...' : 'Empty recycle bin'}
+	</Button>
 {/snippet}
 
 <PageShell
@@ -175,9 +177,9 @@
 									<div class="min-w-0 flex-1">
 										<p class="truncate font-semibold">
 											{#if removal.album?.has_page}
-												<a class="link-hover" href={albumHref(removal.album.id)}
-													>{removal.album.title}</a
-												>
+												<a class="link-hover" href={albumHref(removal.album.id)}>
+													{removal.album.title}
+												</a>
 											{:else}
 												{removal.album?.title ?? 'Unknown album'}
 											{/if}
@@ -193,9 +195,9 @@
 										{#if removal.held > 0}
 											<p class="text-xs text-muted">
 												{#if authStore.isAdmin}
-													Held: settle it in <a class="link" href={resolve('/library/management')}
-														>Library Management</a
-													>
+													Held: settle it in <a class="link" href={resolve('/library/management')}>
+														Library Management
+													</a>
 												{:else}
 													Held for an admin
 												{/if}
@@ -209,8 +211,10 @@
 											icon={Undo2}
 											disabled={emptying}
 											pendingLabel="Putting back..."
-											onclick={() => runPutBack(removal)}>Put back</AsyncButton
+											onclick={() => runPutBack(removal)}
 										>
+											Put back
+										</AsyncButton>
 									{/if}
 									{#if notes[removal.id]}
 										<p class="basis-full text-sm text-error" role="alert">{notes[removal.id]}</p>
@@ -225,8 +229,10 @@
 						<Button
 							variant="ghost"
 							loading={bin.isFetchingNextPage}
-							onclick={() => bin.fetchNextPage()}>Show more</Button
+							onclick={() => bin.fetchNextPage()}
 						>
+							Show more
+						</Button>
 					</div>
 				{/if}
 			{/snippet}

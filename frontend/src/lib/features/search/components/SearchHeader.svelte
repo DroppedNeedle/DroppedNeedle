@@ -40,8 +40,10 @@
 				variant={tab.id === current ? 'primary' : 'outline'}
 				size="sm"
 				pill
-				aria-current={tab.id === current ? 'page' : undefined}>{tab.label}</Button
+				aria-current={tab.id === current ? 'page' : undefined}
 			>
+				{tab.label}
+			</Button>
 		{/each}
 	</nav>
 {/snippet}

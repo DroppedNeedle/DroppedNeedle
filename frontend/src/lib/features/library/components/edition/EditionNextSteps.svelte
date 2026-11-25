@@ -107,9 +107,9 @@
 			<CircleCheck class="h-6 w-6 shrink-0 text-success" aria-hidden="true" />
 			<span>This is your edition now: {name}</span>
 		</h3>
-		<AsyncButton variant="ghost" size="sm" icon={Undo2} onclick={onundo}
-			>Undo this change</AsyncButton
-		>
+		<AsyncButton variant="ghost" size="sm" icon={Undo2} onclick={onundo}>
+			Undo this change
+		</AsyncButton>
 	</div>
 	{#if error}
 		<p class="text-sm text-error" role="alert">{error}</p>
@@ -140,12 +140,14 @@
 						/>
 					{/key}
 				{:else if tags === 'written'}
-					<span
-						>Tags and file names are written. {#if authStore.isAdmin}Undo that from <a
+					<span>
+						Tags and file names are written. {#if authStore.isAdmin}Undo that from <a
 								class="link"
-								href={withBasePath('/library/management/history')}>History</a
-							>.{:else}An admin can undo that from History.{/if}</span
-					>
+								href={withBasePath('/library/management/history')}
+							>
+								History
+							</a>.{:else}An admin can undo that from History.{/if}
+					</span>
 				{:else}
 					<span>{tagsSentence(tags)}</span>
 				{/if}

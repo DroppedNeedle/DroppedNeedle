@@ -365,11 +365,11 @@
 	<div class="flex flex-col md:h-full md:min-h-0">
 		<div class="management-runner-progress" aria-label="Runner progress">
 			{#each progressSteps as value (value.step)}
-				<span data-state={step === value.step ? 'current' : step > value.step ? 'done' : 'waiting'}
-					>{#if step > value.step}<Check class="h-3.5 w-3.5" />{:else}{value.number}{/if}<small
-						>{value.label}</small
-					></span
-				>
+				<span data-state={step === value.step ? 'current' : step > value.step ? 'done' : 'waiting'}>
+					{#if step > value.step}<Check class="h-3.5 w-3.5" />{:else}{value.number}{/if}<small>
+						{value.label}
+					</small>
+				</span>
 			{/each}
 		</div>
 		<div class="min-h-80 p-4 md:min-h-0 md:flex-1 md:overflow-y-auto md:p-6">
@@ -387,21 +387,22 @@
 							<button
 								aria-pressed={selectionKind === option.value}
 								onclick={() => selectKind(option.value as ManagementSelectionKind)}
-								>{option.label}</button
 							>
+								{option.label}
+							</button>
 						{/each}
 					</div>
 					{#if selectionKind === 'filter'}
 						<div class="management-selected-scope" data-wide-scope={!filterHasCriteria}>
 							<div>
-								<strong
-									>{filterHasCriteria ? 'Filtered catalog scope' : 'Entire library catalog'}</strong
-								>
-								<small
-									>{filterHasCriteria
+								<strong>
+									{filterHasCriteria ? 'Filtered catalog scope' : 'Entire library catalog'}
+								</strong>
+								<small>
+									{filterHasCriteria
 										? 'The filters below are combined for this preview.'
-										: 'No filters are set, so every cataloged file is in scope.'}</small
-								>
+										: 'No filters are set, so every cataloged file is in scope.'}
+								</small>
 							</div>
 						</div>
 					{:else}
@@ -413,16 +414,18 @@
 							<div class="management-selected-scope__header">
 								<div>
 									<strong>Current selection</strong>
-									<small
-										>{currentScopeItems().length.toLocaleString()}
-										{currentScopeItems().length === 1 ? 'item' : 'items'} in scope</small
-									>
+									<small>
+										{currentScopeItems().length.toLocaleString()}
+										{currentScopeItems().length === 1 ? 'item' : 'items'} in scope
+									</small>
 								</div>
 								{#if currentScopeItems().length > 0}<Button
 										variant="ghost"
 										size="xs"
-										onclick={clearSelection}>Clear all</Button
-									>{/if}
+										onclick={clearSelection}
+									>
+										Clear all
+									</Button>{/if}
 							</div>
 							{#if currentScopeItems().length === 0}
 								<p class="text-sm text-muted">Nothing is selected yet.</p>
@@ -450,9 +453,9 @@
 													className="h-9 w-9 border border-base-content/10"
 												/>
 											{/if}
-											<span class="min-w-0 flex-1"
-												><strong>{item.title}</strong><small>{item.subtitle}</small></span
-											>
+											<span class="min-w-0 flex-1">
+												<strong>{item.title}</strong><small>{item.subtitle}</small>
+											</span>
 											<IconButton
 												size="xs"
 												shape="square"
@@ -468,52 +471,48 @@
 					{/if}
 					{#if selectionKind === 'roots'}
 						<div class="grid gap-2 sm:grid-cols-2">
-							{#each roots as root (root.id)}<label class="management-selection-card"
-									><input
+							{#each roots as root (root.id)}<label class="management-selection-card">
+									<input
 										type="checkbox"
 										class="checkbox checkbox-sm"
 										checked={selectedIds.includes(root.id)}
 										onchange={() => toggleId(root.id)}
-									/><span
-										><strong>{root.label}</strong><small
-											>{root.policy.replaceAll('_', ' ')} scanning policy</small
-										></span
-									></label
-								>{/each}
+									/><span>
+										<strong>{root.label}</strong><small>
+											{root.policy.replaceAll('_', ' ')} scanning policy
+										</small>
+									</span>
+								</label>{/each}
 						</div>
 					{:else if selectionKind === 'filter'}
 						<div class="grid gap-3 sm:grid-cols-2">
-							<label class="grid gap-1 text-sm sm:col-span-2"
-								><span>Catalog search</span><Input
+							<label class="grid gap-1 text-sm sm:col-span-2">
+								<span>Catalog search</span><Input
 									label="Catalog search"
 									class="w-full"
 									bind:value={filterSearch}
 									placeholder="Artist, release, or title"
-								/></label
-							>
-							<label class="grid gap-1 text-sm"
-								><span>Genre</span><Input
-									label="Genre"
-									class="w-full"
-									bind:value={filterGenre}
-								/></label
-							>
+								/>
+							</label>
+							<label class="grid gap-1 text-sm">
+								<span>Genre</span><Input label="Genre" class="w-full" bind:value={filterGenre} />
+							</label>
 							<div class="grid grid-cols-2 gap-2">
-								<label class="grid gap-1 text-sm"
-									><span>From year</span><Input
+								<label class="grid gap-1 text-sm">
+									<span>From year</span><Input
 										type="number"
 										label="From year"
 										class="w-full"
 										bind:value={filterFromYear}
-									/></label
-								><label class="grid gap-1 text-sm"
-									><span>To year</span><Input
+									/>
+								</label><label class="grid gap-1 text-sm">
+									<span>To year</span><Input
 										type="number"
 										label="To year"
 										class="w-full"
 										bind:value={filterToYear}
-									/></label
-								>
+									/>
+								</label>
 							</div>
 						</div>
 					{:else}
@@ -543,8 +542,8 @@
 							>
 								No matching {selectionNoun(selectionKind)} found.
 							</p>{:else}<div class="grid gap-2">
-								{#each resultItems() as item (item.id)}<label class="management-selection-card"
-										><input
+								{#each resultItems() as item (item.id)}<label class="management-selection-card">
+										<input
 											type="checkbox"
 											class="checkbox checkbox-sm"
 											checked={selectedIds.includes(item.id)}
@@ -564,10 +563,10 @@
 												alt=""
 												size="xs"
 												className="h-11 w-11 border border-base-content/10"
-											/>{/if}<span class="min-w-0 flex-1"
-											><strong>{item.title}</strong><small>{item.subtitle}</small></span
-										></label
-									>{/each}
+											/>{/if}<span class="min-w-0 flex-1">
+											<strong>{item.title}</strong><small>{item.subtitle}</small>
+										</span>
+									</label>{/each}
 							</div>{/if}
 					{/if}
 					{#if !selectionValid}<p class="text-sm text-error" role="alert">
@@ -588,16 +587,15 @@
 						aria-label="Available management profiles"
 						tabindex="0"
 					>
-						{#each settings.profiles as option (option.id)}<label class="management-selection-card"
-								><input
+						{#each settings.profiles as option (option.id)}<label class="management-selection-card">
+								<input
 									type="radio"
 									name="management-profile"
 									class="radio radio-sm"
 									value={option.id}
 									bind:group={profileId}
-								/><span><strong>{option.name}</strong><small>{option.description}</small></span
-								></label
-							>{/each}
+								/><span><strong>{option.name}</strong><small>{option.description}</small></span>
+							</label>{/each}
 					</div>
 				</section>
 			{:else if step === 3 && profile}
@@ -616,13 +614,14 @@
 					/>{#if customized}<div class="grid gap-2 sm:grid-cols-2">
 							{#each [{ label: 'Metadata tags', get: () => metadataEnabled, set: (value: boolean) => (metadataEnabled = value) }, { label: 'Genres', get: () => genresEnabled, set: (value: boolean) => (genresEnabled = value) }, { label: 'Embedded artwork', get: () => embeddedArtworkEnabled, set: (value: boolean) => (embeddedArtworkEnabled = value) }, { label: 'External artwork', get: () => externalArtworkEnabled, set: (value: boolean) => (externalArtworkEnabled = value) }, { label: 'Rename files', get: () => renameEnabled, set: (value: boolean) => (renameEnabled = value) }, { label: 'Move within root', get: () => moveEnabled, set: (value: boolean) => (moveEnabled = value) }, { label: 'Move sidecars', get: () => sidecarsEnabled, set: (value: boolean) => (sidecarsEnabled = value) }] as option (option.label)}<label
 									class="management-trigger"
-									><input
+								>
+									<input
 										type="checkbox"
 										class="checkbox checkbox-sm"
 										checked={option.get()}
 										onchange={(event) => option.set(event.currentTarget.checked)}
-									/><span><strong>{option.label}</strong><small>One run only</small></span></label
-								>{/each}
+									/><span><strong>{option.label}</strong><small>One run only</small></span>
+								</label>{/each}
 						</div>{/if}{#if wideSelection}<ToggleRow
 							label="Include already organized"
 							description="Also looks again for new genres, lyrics and covers."
@@ -646,39 +645,39 @@
 					<div class="management-review-grid">
 						<div><span>Scope</span><strong>{scopeLabel()}</strong></div>
 						<div>
-							<span>Profile</span><strong
-								>{mode === 'baseline_restore' ? 'Original state' : profile?.name}</strong
-							>
+							<span>Profile</span><strong>
+								{mode === 'baseline_restore' ? 'Original state' : profile?.name}
+							</strong>
 						</div>
 						<div>
-							<span>Work</span><strong
-								>{mode === 'baseline_restore'
+							<span>Work</span><strong>
+								{mode === 'baseline_restore'
 									? 'Restore tags, art, sidecars, and original paths'
 									: profile
 										? profileWork(profile).join(', ') || 'No changes enabled'
-										: '-'}</strong
-							>
+										: '-'}
+							</strong>
 						</div>
 						<div>
-							<span>Destination</span><strong
-								>{targetRootId
+							<span>Destination</span><strong>
+								{targetRootId
 									? roots.find((root) => root.id === targetRootId)?.label
-									: 'Within source root'}</strong
-							>
+									: 'Within source root'}
+							</strong>
 						</div>
 					</div>
 					{#if expansionRequired}<div class="alert alert-warning items-start">
-							<ShieldAlert class="mt-0.5 h-5 w-5" /><span
-								>Track selection expands to complete releases because organization or sidecar work
-								must remain atomic.</span
-							>
+							<ShieldAlert class="mt-0.5 h-5 w-5" /><span>
+								Track selection expands to complete releases because organization or sidecar work
+								must remain atomic.
+							</span>
 						</div>{/if}{#if mode === 'baseline_restore'}<div
 							class="alert alert-warning items-start"
 						>
-							<ShieldAlert class="mt-0.5 h-5 w-5" /><span
-								>Restore returns files to how they were before DroppedNeedle first managed them. It
-								is separate from Undo; restored files stay unmanaged until you enable them again.</span
-							>
+							<ShieldAlert class="mt-0.5 h-5 w-5" /><span>
+								Restore returns files to how they were before DroppedNeedle first managed them. It
+								is separate from Undo; restored files stay unmanaged until you enable them again.
+							</span>
 						</div>{/if}
 					<p class="text-sm text-muted">
 						Applying is the first write action: the next page lists every file marked eligible,
@@ -693,24 +692,29 @@
 	</div>
 	{#snippet actions()}
 		<div class="flex items-center justify-between gap-2">
-			<Button variant="ghost" icon={ArrowLeft} disabled={step === 1 || pending} onclick={back}
-				>Back</Button
-			>
+			<Button variant="ghost" icon={ArrowLeft} disabled={step === 1 || pending} onclick={back}>
+				Back
+			</Button>
 			<div class="flex gap-2">
-				<Button variant="ghost" disabled={pending} onclick={close}>Cancel</Button
-				>{#if step < 4}<Button
+				<Button variant="ghost" disabled={pending} onclick={close}>
+					Cancel
+				</Button>{#if step < 4}<Button
 						variant="warning"
 						icon={ArrowRight}
 						iconPosition="end"
 						disabled={!selectionValid}
-						onclick={next}>Continue</Button
-					>{:else}<Button
+						onclick={next}
+					>
+						Continue
+					</Button>{:else}<Button
 						variant="warning"
 						icon={Sparkles}
 						loading={pending}
 						disabled={!selectionValid || (mode === 'manage' && !profile)}
-						onclick={() => void generate()}>Generate preview</Button
-					>{/if}
+						onclick={() => void generate()}
+					>
+						Generate preview
+					</Button>{/if}
 			</div>
 		</div>
 	{/snippet}

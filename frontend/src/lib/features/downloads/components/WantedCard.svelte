@@ -107,8 +107,10 @@
 				{/if}
 				{#if task.year}<span class="text-muted mr-1.5 ml-0.5">·</span>{task.year}{/if}
 				{#if task.download_type === 'track' && task.track_title}<span
-						class="text-muted mr-1.5 ml-0.5">·</span
-					>{task.track_title}{/if}
+						class="text-muted mr-1.5 ml-0.5"
+					>
+						·
+					</span>{task.track_title}{/if}
 			</p>
 		</div>
 

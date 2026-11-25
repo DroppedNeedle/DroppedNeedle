@@ -194,7 +194,9 @@
 			size="sm"
 			loading={saving}
 			disabled={!seeded || (audience === 'people' && chosen.length === 0)}
-			onclick={() => void save()}>Save</Button
+			onclick={() => void save()}
 		>
+			Save
+		</Button>
 	{/snippet}
 </Modal>

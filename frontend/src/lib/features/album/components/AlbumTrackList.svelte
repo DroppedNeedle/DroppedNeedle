@@ -534,8 +534,9 @@
 							: 'sm:pl-9'}"
 					>
 						{#if editionRow?.yourVersionMs}
-							<span class="text-muted">Your version {formatDuration(editionRow.yourVersionMs)}</span
-							>
+							<span class="text-muted">
+								Your version {formatDuration(editionRow.yourVersionMs)}
+							</span>
 						{/if}
 						{#if editionRow?.note}
 							<span class="text-info">{editionRow.note}</span>
@@ -549,9 +550,10 @@
 						<!-- What the row leaves out on a narrow screen. -->
 						<div class="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 pt-2 text-xs md:hidden">
 							{#if localTrack && localTrack.size_bytes > 0}
-								<span class="sm:hidden"
-									><span class="text-muted">Size:</span> {formatBytes(localTrack.size_bytes)}</span
-								>
+								<span class="sm:hidden">
+									<span class="text-muted">Size:</span>
+									{formatBytes(localTrack.size_bytes)}
+								</span>
 							{/if}
 							{#if rateTrack}
 								<div class="flex items-center">

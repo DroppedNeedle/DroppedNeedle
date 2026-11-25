@@ -121,8 +121,9 @@
 								</h4>
 								<span
 									class="badge badge-xs {profile.preset_origin ? 'badge-outline' : 'badge-ghost'}"
-									>{profile.preset_origin ? 'Preset' : 'Custom'}</span
 								>
+									{profile.preset_origin ? 'Preset' : 'Custom'}
+								</span>
 							</div>
 							<p class="mt-1 line-clamp-2 text-xs text-muted">
 								{profile.description || 'No description.'}
@@ -131,9 +132,9 @@
 						<Tags class="h-5 w-5 shrink-0 text-library-manage" />
 					</div>
 					<div class="mt-3 flex flex-wrap gap-1.5">
-						{#each profileAspects(profile) as aspect (aspect)}<span class="management-aspect"
-								>{aspect}</span
-							>{/each}
+						{#each profileAspects(profile) as aspect (aspect)}<span class="management-aspect">
+								{aspect}
+							</span>{/each}
 					</div>
 					<div class="management-profile-card__footer">
 						<div class="management-profile-card__state">
@@ -150,21 +151,22 @@
 									aria-label={`Make ${profile.name} the library default`}
 									onchange={() => settings.setDefaultProfile(profile.id)}
 								/>
-								<span
-									>{profile.id !== draft.default_profile_id
+								<span>
+									{profile.id !== draft.default_profile_id
 										? 'Make default'
 										: draft.default_profile_id !== settings.persisted?.default_profile_id
 											? 'Default after save'
-											: 'Library default'}</span
-								>
+											: 'Library default'}
+								</span>
 							</label>
 							<span
 								class="text-xs font-medium text-muted"
 								title={rootLabels.length ? `Assigned to: ${rootLabels.join(', ')}` : undefined}
-								>{#if rootLabels.length}<Link2
-										class="mr-1 inline h-3.5 w-3.5 align-text-bottom text-library-manage"
-									/>Assigned to {rootLabels.join(', ')}{:else}Not assigned to a root{/if}</span
 							>
+								{#if rootLabels.length}<Link2
+										class="mr-1 inline h-3.5 w-3.5 align-text-bottom text-library-manage"
+									/>Assigned to {rootLabels.join(', ')}{:else}Not assigned to a root{/if}
+							</span>
 						</div>
 						<div class="management-profile-card__actions">
 							<Button
@@ -172,11 +174,13 @@
 								size="xs"
 								icon={Share2}
 								aria-label={`Share ${profile.name}`}
-								onclick={() => onshare(profile)}>Share</Button
+								onclick={() => onshare(profile)}
 							>
-							<Button variant="ghost" size="xs" icon={Pencil} onclick={() => onedit(profile.id)}
-								>Edit</Button
-							>
+								Share
+							</Button>
+							<Button variant="ghost" size="xs" icon={Pencil} onclick={() => onedit(profile.id)}>
+								Edit
+							</Button>
 							{#if !profile.preset_origin}
 								{@const deleteReason = settings.deleteBlocker(profile, roots)}
 								{#if deleteReason}
@@ -185,8 +189,10 @@
 										size="xs"
 										icon={Trash2}
 										aria-label={`Cannot delete ${profile.name}: ${deleteReason}`}
-										disabled>{deleteReason}</Button
+										disabled
 									>
+										{deleteReason}
+									</Button>
 								{:else}
 									<IconButton
 										variant="danger-ghost"
@@ -229,8 +235,10 @@
 				size="sm"
 				icon={Copy}
 				disabled={copyProfile.isPending || !settings.copySourceProfileId || !newProfileName.trim()}
-				onclick={() => void createProfileCopy()}>Create copy</Button
+				onclick={() => void createProfileCopy()}
 			>
+				Create copy
+			</Button>
 			<Button
 				variant="outline"
 				size="sm"
@@ -239,8 +247,10 @@
 				title={settings.dirty
 					? 'Save or discard current organization changes before importing.'
 					: undefined}
-				onclick={onimport}>Import profile</Button
+				onclick={onimport}
 			>
+				Import profile
+			</Button>
 		</div>
 		{#if settings.dirty}<p class="text-xs text-warning">
 				Save or discard current organization changes before importing a profile.

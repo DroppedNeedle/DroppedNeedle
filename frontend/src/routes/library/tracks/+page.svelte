@@ -331,20 +331,21 @@
 
 			<span class="min-w-0 flex-1">
 				<span class="flex min-w-0 items-center gap-2">
-					<span class="truncate text-sm font-semibold {playing ? 'text-title' : ''}"
-						>{track.title}</span
-					>
+					<span class="truncate text-sm font-semibold {playing ? 'text-title' : ''}">
+						{track.title}
+					</span>
 					{#if playing}
 						<span
 							class="shrink-0 font-mono text-[0.6875rem] font-semibold tracking-widest text-title uppercase"
-							>Playing</span
 						>
+							Playing
+						</span>
 					{/if}
 				</span>
 				<span class="block truncate font-mono text-xs text-muted">
-					{track.artist_name}{#if track.album_title}<span class="ml-1 text-muted"
-							>· {track.album_title}</span
-						>{/if}
+					{track.artist_name}{#if track.album_title}<span class="ml-1 text-muted">
+							· {track.album_title}
+						</span>{/if}
 				</span>
 			</span>
 
@@ -403,8 +404,10 @@
 			variant={browse.favorites ? 'primary' : 'outline'}
 			icon={Heart}
 			aria-pressed={browse.favorites}
-			onclick={toggleFavorites}>Favourites</Button
+			onclick={toggleFavorites}
 		>
+			Favourites
+		</Button>
 		<select
 			class="select dn-toolbar__select"
 			value={browse.sort}

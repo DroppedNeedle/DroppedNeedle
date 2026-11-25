@@ -68,10 +68,10 @@
 								/>
 								<span class="dn-why__who">
 									{seed.name}
-									<span
-										>you played {figure(seed.your_plays)}
-										{seed.your_plays === 1 ? 'time' : 'times'}</span
-									>
+									<span>
+										you played {figure(seed.your_plays)}
+										{seed.your_plays === 1 ? 'time' : 'times'}
+									</span>
 								</span>
 								<RankRule
 									ticks={seed.of}

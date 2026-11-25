@@ -42,8 +42,8 @@
 				{:else}
 					<span class="skeleton skeleton-shimmer h-9 w-36 rounded-full"></span>
 				{/if}
-				<span class="hub-refresh"
-					><IconButton
+				<span class="hub-refresh">
+					<IconButton
 						variant="outline"
 						shape="square"
 						size="md"
@@ -51,8 +51,8 @@
 						label="Refresh page data"
 						loading={refreshing}
 						onclick={onrefresh}
-					/></span
-				>
+					/>
+				</span>
 			</div>
 		{/if}
 	{/snippet}

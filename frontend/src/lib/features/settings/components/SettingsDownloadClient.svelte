@@ -166,10 +166,10 @@
 					{#if mount?.path}
 						<p class="text-xs text-muted">
 							DroppedNeedle looks in
-							<code class="text-muted" data-testid="effective-downloads-path"
-								>{joinSubpath(mount.path, draft.downloads_subpath ?? '')}</code
-							>. The mount itself comes from <code>SLSKD_DOWNLOADS_PATH</code> in docker-compose. Recreate
-							the container after changing it.
+							<code class="text-muted" data-testid="effective-downloads-path">
+								{joinSubpath(mount.path, draft.downloads_subpath ?? '')}
+							</code>. The mount itself comes from <code>SLSKD_DOWNLOADS_PATH</code> in docker-compose.
+							Recreate the container after changing it.
 						</p>
 					{/if}
 					<!-- The subpath editor also renders before the first mount probe has
@@ -188,9 +188,9 @@
 							<div class="space-y-1.5">
 								<label class="text-sm font-bold" for="downloads-subpath">
 									Downloads subfolder
-									<span class="badge badge-ghost badge-xs ml-1 align-middle"
-										>relative to the mount</span
-									>
+									<span class="badge badge-ghost badge-xs ml-1 align-middle">
+										relative to the mount
+									</span>
 								</label>
 								<p class="text-xs text-muted">
 									The folder inside your mount where slskd saves completed downloads.
@@ -212,9 +212,9 @@
 												This looks like a full path. Type only the part after the mount, or leave it
 												empty.
 											</p>
-											<Button size="xs" onclick={() => trimSubpathToRelative(draft)}
-												>Trim to relative</Button
-											>
+											<Button size="xs" onclick={() => trimSubpathToRelative(draft)}>
+												Trim to relative
+											</Button>
 										</div>
 									</div>
 								{/if}
@@ -295,8 +295,10 @@
 											class="link"
 											href={outsideLink(docsUrl('connect-slskd'))}
 											target="_blank"
-											rel="noopener noreferrer">Connect slskd</a
-										>.
+											rel="noopener noreferrer"
+										>
+											Connect slskd
+										</a>.
 									</p>
 								</details>
 							</div>

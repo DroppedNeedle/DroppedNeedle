@@ -64,8 +64,10 @@
 			size="sm"
 			icon={ArchiveRestore}
 			disabled={purgeImpact.isPending}
-			onclick={() => void openPurge()}>Purge baselines...</Button
+			onclick={() => void openPurge()}
 		>
+			Purge baselines...
+		</Button>
 	</div>
 </Card>
 
@@ -82,9 +84,9 @@
 >
 	{#if purgeImpact.data}
 		<p class="text-sm">
-			This permanently removes <strong
-				>{purgeImpact.data.baseline_count.toLocaleString()} baselines</strong
-			>
+			This permanently removes <strong>
+				{purgeImpact.data.baseline_count.toLocaleString()} baselines
+			</strong>
 			and may clean {purgeImpact.data.referenced_blob_count.toLocaleString()} unreferenced snapshot files.
 		</p>
 		{#if blocked}

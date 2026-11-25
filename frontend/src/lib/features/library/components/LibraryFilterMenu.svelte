@@ -98,8 +98,10 @@
 				class="join-item"
 				role="radio"
 				aria-checked={current === mode}
-				onclick={() => pick(mode)}>{text}</Button
+				onclick={() => pick(mode)}
 			>
+				{text}
+			</Button>
 		{/each}
 	</div>
 {/snippet}
@@ -146,8 +148,10 @@
 							size="xs"
 							active={minTracks === preset}
 							aria-pressed={minTracks === preset}
-							onclick={() => onMinTracks(preset, tracksMode)}>{label(preset)}</Button
+							onclick={() => onMinTracks(preset, tracksMode)}
 						>
+							{label(preset)}
+						</Button>
 					{/each}
 					{#if !PRESETS.includes(minTracks)}
 						<span class="badge badge-primary badge-sm self-center">{label(minTracks)}</span>
@@ -181,11 +185,12 @@
 							active={marked}
 							aria-pressed={marked}
 							onclick={() => toggleFormat(format)}
-							>{format.toUpperCase()}
-							<span class="font-normal opacity-60" title="{album_count} {countLabel}"
-								>{album_count}</span
-							></Button
 						>
+							{format.toUpperCase()}
+							<span class="font-normal opacity-60" title="{album_count} {countLabel}">
+								{album_count}
+							</span>
+						</Button>
 					{/each}
 				</div>
 				<p class="text-xs text-muted">
@@ -217,8 +222,10 @@
 						size="xs"
 						active={rating === 0}
 						aria-pressed={rating === 0}
-						onclick={() => onRating(0, ratingMode)}>Any</Button
+						onclick={() => onRating(0, ratingMode)}
 					>
+						Any
+					</Button>
 					<RatingStars
 						value={rating}
 						label="Rating filter"

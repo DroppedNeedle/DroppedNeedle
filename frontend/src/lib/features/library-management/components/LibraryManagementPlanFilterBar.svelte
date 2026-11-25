@@ -40,72 +40,87 @@
 		<span class="text-xs text-muted">Root labels and relative paths only</span>
 	</div>
 	<div class="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-		<label class="grid gap-1 text-xs"
-			><span>Outcome</span><select class="select select-sm" bind:value={filters.eligibility}
-				><option value="">All outcomes</option><option value="eligible"
-					>Eligible ({(summary.eligible_count ?? 0).toLocaleString()})</option
-				><option value="warning">Warning ({(summary.warning_count ?? 0).toLocaleString()})</option
-				><option value="blocked">Blocked ({(summary.blocked_count ?? 0).toLocaleString()})</option
-				><option value="stale">Stale ({(summary.stale_count ?? 0).toLocaleString()})</option
-				></select
-			></label
-		>
-		<label class="grid gap-1 text-xs"
-			><span>Reason</span><select class="select select-sm" bind:value={filters.reasonCode}
-				><option value="">All reasons</option
-				>{#each sortedReasons as [reason, count] (reason)}<option value={reason}
-						>{qualifiedManagementReasonLabel(reason)} ({count.toLocaleString()})</option
-					>{/each}</select
-			></label
-		>
-		<label class="grid gap-1 text-xs"
-			><span>Root</span><select class="select select-sm" bind:value={filters.rootId}
-				><option value="">All roots</option>{#each sortedRoots as [root, count] (root)}<option
-						value={root}>{managementRootLabel(roots, root)} ({count.toLocaleString()})</option
-					>{/each}</select
-			></label
-		>
-		<label class="grid gap-1 text-xs"
-			><span>Format</span><select class="select select-sm" bind:value={filters.audioFormat}
-				><option value="">All formats</option
-				>{#each sortedFormats as [format, count] (format)}<option value={format}
-						>{format.toUpperCase()} ({count.toLocaleString()})</option
-					>{/each}</select
-			></label
-		>
-		<label class="grid gap-1 text-xs"
-			><span>Change</span><select class="select select-sm" bind:value={filters.changeKind}
-				><option value="">All changes</option><option value="tags"
-					>Tags ({summary.tag_change_count.toLocaleString()})</option
-				><option value="artwork">Artwork ({summary.artwork_change_count.toLocaleString()})</option
-				><option value="path">Path ({summary.path_change_count.toLocaleString()})</option><option
-					value="sidecars">Sidecars ({summary.sidecar_change_count.toLocaleString()})</option
-				><option value="no_change">No change ({summary.no_change_count.toLocaleString()})</option
-				></select
-			></label
-		>
+		<label class="grid gap-1 text-xs">
+			<span>Outcome</span><select class="select select-sm" bind:value={filters.eligibility}>
+				<option value="">All outcomes</option><option value="eligible">
+					Eligible ({(summary.eligible_count ?? 0).toLocaleString()})
+				</option><option value="warning">
+					Warning ({(summary.warning_count ?? 0).toLocaleString()})
+				</option><option value="blocked">
+					Blocked ({(summary.blocked_count ?? 0).toLocaleString()})
+				</option><option value="stale">
+					Stale ({(summary.stale_count ?? 0).toLocaleString()})
+				</option>
+			</select>
+		</label>
+		<label class="grid gap-1 text-xs">
+			<span>Reason</span><select class="select select-sm" bind:value={filters.reasonCode}>
+				<option value="">
+					All reasons
+				</option>{#each sortedReasons as [reason, count] (reason)}<option value={reason}>
+						{qualifiedManagementReasonLabel(reason)} ({count.toLocaleString()})
+					</option>{/each}
+			</select>
+		</label>
+		<label class="grid gap-1 text-xs">
+			<span>Root</span><select class="select select-sm" bind:value={filters.rootId}>
+				<option value="">All roots</option>{#each sortedRoots as [root, count] (root)}<option
+						value={root}
+					>
+						{managementRootLabel(roots, root)} ({count.toLocaleString()})
+					</option>{/each}
+			</select>
+		</label>
+		<label class="grid gap-1 text-xs">
+			<span>Format</span><select class="select select-sm" bind:value={filters.audioFormat}>
+				<option value="">
+					All formats
+				</option>{#each sortedFormats as [format, count] (format)}<option value={format}>
+						{format.toUpperCase()} ({count.toLocaleString()})
+					</option>{/each}
+			</select>
+		</label>
+		<label class="grid gap-1 text-xs">
+			<span>Change</span><select class="select select-sm" bind:value={filters.changeKind}>
+				<option value="">All changes</option><option value="tags">
+					Tags ({summary.tag_change_count.toLocaleString()})
+				</option><option value="artwork">
+					Artwork ({summary.artwork_change_count.toLocaleString()})
+				</option><option value="path">
+					Path ({summary.path_change_count.toLocaleString()})
+				</option><option value="sidecars">
+					Sidecars ({summary.sidecar_change_count.toLocaleString()})
+				</option><option value="no_change">
+					No change ({summary.no_change_count.toLocaleString()})
+				</option>
+			</select>
+		</label>
 	</div>
 	<details class="mt-2 rounded-xl border border-base-content/10 bg-base-200/35 p-3">
 		<summary class="cursor-pointer text-sm font-semibold">Artist and release filters</summary>
 		<div class="mt-3 space-y-2">
-			<label class="grid gap-1 text-xs"
-				><span>Find an artist or release</span><Input
+			<label class="grid gap-1 text-xs">
+				<span>Find an artist or release</span><Input
 					size="sm"
 					label="Find an artist or release"
 					bind:value={filters.catalogSearch}
 					placeholder="Type at least two characters"
-				/></label
-			>
+				/>
+			</label>
 			{#if filters.artistId || filters.albumId}<div class="flex flex-wrap gap-1">
 					{#if filters.artistId}<button
 							type="button"
 							class="badge badge-outline gap-1"
-							onclick={() => filters.clearArtist()}>Artist: {filters.artistLabel} ×</button
-						>{/if}{#if filters.albumId}<button
+							onclick={() => filters.clearArtist()}
+						>
+							Artist: {filters.artistLabel} ×
+						</button>{/if}{#if filters.albumId}<button
 							type="button"
 							class="badge badge-outline gap-1"
-							onclick={() => filters.clearAlbum()}>Release: {filters.albumLabel} ×</button
-						>{/if}
+							onclick={() => filters.clearAlbum()}
+						>
+							Release: {filters.albumLabel} ×
+						</button>{/if}
 				</div>{/if}
 			{#if filters.catalogSearch.trim().length >= 2}
 				{#if catalogSearchQuery.isLoading}<div
@@ -129,15 +144,17 @@
 								size="sm"
 								class="justify-start"
 								onclick={() => filters.chooseArtist(artist.id, artist.name)}
-								>Artist · {artist.name}</Button
-							>{/each}{#each catalogSearchQuery.data.albums as album (album.id)}<Button
+							>
+								Artist · {artist.name}
+							</Button>{/each}{#each catalogSearchQuery.data.albums as album (album.id)}<Button
 								variant="ghost"
 								size="sm"
 								class="justify-start"
 								onclick={() =>
 									filters.chooseAlbum(album.id, `${album.artist_name} · ${album.title}`)}
-								>Release · {album.artist_name} · {album.title}</Button
-							>{/each}
+							>
+								Release · {album.artist_name} · {album.title}
+							</Button>{/each}
 					</div>{/if}
 			{/if}
 		</div>

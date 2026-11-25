@@ -93,8 +93,10 @@
 									size="xs"
 									icon={Trash2}
 									aria-label={`Remove ${client.name || 'this app'}`}
-									onclick={() => draft.clients.splice(index, 1)}>Remove</Button
+									onclick={() => draft.clients.splice(index, 1)}
 								>
+									Remove
+								</Button>
 							</div>
 						</div>
 					</Card>
@@ -110,8 +112,10 @@
 								name: '',
 								redirect_uris: [],
 								credential_kind: 'app_password'
-							})}>Add app</Button
+							})}
 					>
+						Add app
+					</Button>
 				</div>
 				<SaveBar {...section.bar} />
 			</fieldset>

@@ -203,8 +203,9 @@
 								href={musicBrainzLink}
 								target="_blank"
 								rel="noreferrer"
-								>Open in MusicBrainz <ExternalLink class="h-3 w-3" aria-hidden="true" /></a
 							>
+								Open in MusicBrainz <ExternalLink class="h-3 w-3" aria-hidden="true" />
+							</a>
 						{/if}
 					</p>
 				</div>
@@ -265,9 +266,9 @@
 							<p class="text-sm text-muted">
 								{NO_SOURCE_SENTENCE}
 								{#if authStore.isAdmin}
-									<a class="link" href={withBasePath('/settings?tab=download-client')}
-										>Download settings</a
-									>
+									<a class="link" href={withBasePath('/settings?tab=download-client')}>
+										Download settings
+									</a>
 								{:else}
 									Ask an admin to set up a download source.
 								{/if}
@@ -293,8 +294,10 @@
 							size="sm"
 							icon={Trash2}
 							class="self-start"
-							onclick={() => (confirmExtras = true)}>{extrasButton(extras.length)}</Button
+							onclick={() => (confirmExtras = true)}
 						>
+							{extrasButton(extras.length)}
+						</Button>
 					{/if}
 					{#if confirmExtras}
 						<div class="rounded-box border border-warning/40 bg-warning/5 p-3">
@@ -302,13 +305,13 @@
 								{#each extras as file (file.local_track_id)}
 									<li>
 										{file.title || 'Untitled'}
-										<span class="text-muted"
-											>({file.fate === 'duplicate'
+										<span class="text-muted">
+											({file.fate === 'duplicate'
 												? 'second copy'
 												: file.fate === 'other_version'
 													? 'another version'
-													: 'not on this edition'})</span
-										>
+													: 'not on this edition'})
+										</span>
 									</li>
 								{/each}
 							</ul>
@@ -316,12 +319,12 @@
 								Nothing is deleted: the files go to the recycle bin, and you can put them back.
 							</p>
 							<div class="mt-2 flex flex-wrap gap-2">
-								<AsyncButton variant="warning" size="sm" onclick={removeExtras}
-									>Move to recycle bin</AsyncButton
-								>
-								<Button variant="ghost" size="sm" onclick={() => (confirmExtras = false)}
-									>Keep them</Button
-								>
+								<AsyncButton variant="warning" size="sm" onclick={removeExtras}>
+									Move to recycle bin
+								</AsyncButton>
+								<Button variant="ghost" size="sm" onclick={() => (confirmExtras = false)}>
+									Keep them
+								</Button>
 							</div>
 						</div>
 					{/if}
@@ -332,8 +335,10 @@
 							icon={Undo2}
 							class="self-start"
 							pendingLabel="Putting back..."
-							onclick={onputback}>{putBackButton(putBackCount)}</AsyncButton
+							onclick={onputback}
 						>
+							{putBackButton(putBackCount)}
+						</AsyncButton>
 					{/if}
 				</section>
 			{/if}

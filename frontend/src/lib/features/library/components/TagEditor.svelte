@@ -220,11 +220,11 @@
 						onclick={() => chooseMode('save_override')}
 					>
 						<Check class="h-4 w-4" />
-						<span
-							><strong>Save as local override</strong><small
-								>Recommended. Future management preserves your value.</small
-							></span
-						>
+						<span>
+							<strong>Save as local override</strong><small>
+								Recommended. Future management preserves your value.
+							</small>
+						</span>
 					</button>
 					<button
 						type="button"
@@ -233,11 +233,11 @@
 						onclick={() => chooseMode('write_once')}
 					>
 						<ListPlus class="h-4 w-4" />
-						<span
-							><strong>Write once</strong><small
-								>A later authoritative run may replace this value.</small
-							></span
-						>
+						<span>
+							<strong>Write once</strong><small>
+								A later authoritative run may replace this value.
+							</small>
+						</span>
 					</button>
 					<button
 						type="button"
@@ -246,11 +246,11 @@
 						onclick={() => chooseMode('reset_canonical')}
 					>
 						<RotateCcw class="h-4 w-4" />
-						<span
-							><strong>Reset to canonical</strong><small
-								>Remove selected overrides and preview MusicBrainz values.</small
-							></span
-						>
+						<span>
+							<strong>Reset to canonical</strong><small>
+								Remove selected overrides and preview MusicBrainz values.
+							</small>
+						</span>
 					</button>
 				</div>
 			</section>
@@ -270,11 +270,11 @@
 										checked={resetFields.includes(field.field_name)}
 										onchange={() => toggleReset(field.field_name)}
 									/>
-									<span
-										><strong>{fieldLabel(field.field_name)}</strong><small
-											>{field.scope}-level override</small
-										></span
-									>
+									<span>
+										<strong>{fieldLabel(field.field_name)}</strong><small>
+											{field.scope}-level override
+										</small>
+									</span>
 								</label>
 							{/each}
 						</div>
@@ -360,9 +360,9 @@
 			<strong>{fieldLabel(field.field_name)}</strong>
 			<small>{field.scope} · {field.cardinality.replace('_', ' ')}</small>
 		</span>
-		{#if field.override_id}<span class="badge badge-warning badge-outline badge-xs"
-				>Local override</span
-			>{/if}
+		{#if field.override_id}<span class="badge badge-warning badge-outline badge-xs">
+				Local override
+			</span>{/if}
 		{#if field.cardinality === 'ordered_strings'}
 			<textarea class="textarea min-h-20 sm:col-span-2" bind:value={drafts[field.field_name]}
 			></textarea>

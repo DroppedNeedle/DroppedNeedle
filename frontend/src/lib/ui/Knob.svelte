@@ -219,9 +219,9 @@
 				<circle cx={dot.x} cy={dot.y} r={dotRadius[size]} class:is-lit={dot.lit} />
 			{/each}
 			{#each printed as mark (mark.key)}
-				<text x={mark.x} y={mark.y} text-anchor="middle" dominant-baseline="central"
-					>{mark.text}</text
-				>
+				<text x={mark.x} y={mark.y} text-anchor="middle" dominant-baseline="central">
+					{mark.text}
+				</text>
 			{/each}
 		</svg>
 		<div

@@ -47,8 +47,10 @@
 							variant="outline"
 							size="sm"
 							pill
-							href={withBasePath(`/genre?name=${encodeURIComponent(tag)}`)}>{tag}</Button
+							href={withBasePath(`/genre?name=${encodeURIComponent(tag)}`)}
 						>
+							{tag}
+						</Button>
 					</li>
 				{/each}
 				{#if hidden > 0}
@@ -59,8 +61,10 @@
 							pill
 							aria-expanded={false}
 							aria-label="Show {hidden} more genres"
-							onclick={() => (open = true)}>+{hidden}</Button
+							onclick={() => (open = true)}
 						>
+							+{hidden}
+						</Button>
 					</li>
 				{/if}
 			</ul>

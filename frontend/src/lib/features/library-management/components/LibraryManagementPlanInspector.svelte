@@ -129,16 +129,18 @@
 			</p>
 		</div>
 		<div class="flex flex-wrap items-center justify-end gap-1">
-			<span class="badge badge-ghost badge-sm font-mono"
-				>{managementAudioFormat(item).toUpperCase()}</span
-			>
+			<span class="badge badge-ghost badge-sm font-mono">
+				{managementAudioFormat(item).toUpperCase()}
+			</span>
 			<span
 				class="badge badge-sm {item.eligibility === 'eligible'
 					? 'badge-success'
 					: item.eligibility === 'warning'
 						? 'badge-warning'
-						: 'badge-error'}">{titleManagementValue(item.eligibility)}</span
+						: 'badge-error'}"
 			>
+				{titleManagementValue(item.eligibility)}
+			</span>
 		</div>
 	</header>
 
@@ -235,9 +237,9 @@
 				{#each diffs as diff (`${diff.name}:${diff.operation}`)}
 					<div class="management-diff-row">
 						<strong class="text-sm">{titleManagementValue(diff.name)}</strong>
-						<span class="management-diff-value" data-side="before"
-							>{formatManagementValue(diff.before)}</span
-						>
+						<span class="management-diff-value" data-side="before">
+							{formatManagementValue(diff.before)}
+						</span>
 						<span
 							class="management-diff-badge text-xs font-bold uppercase"
 							data-operation={diff.operation}
@@ -245,13 +247,13 @@
 							{titleManagementValue(diff.operation)}
 							<ArrowRight class="inline h-3 w-3" />
 						</span>
-						<span class="management-diff-value" data-side="after"
-							>{formatManagementValue(diff.after)}</span
-						>
+						<span class="management-diff-value" data-side="after">
+							{formatManagementValue(diff.after)}
+						</span>
 						{#if diff.representationLoss}
-							<small class="text-warning sm:col-span-4"
-								>Format representation: {diff.representationLoss}</small
-							>
+							<small class="text-warning sm:col-span-4">
+								Format representation: {diff.representationLoss}
+							</small>
 						{/if}
 					</div>
 				{/each}
@@ -350,8 +352,9 @@
 										<li class="text-xs">
 											{artworkSnapshotDescription(artwork)}<code
 												class="mt-0.5 block text-[0.65rem] text-muted"
-												>{shortFingerprint(artwork.sha256)}</code
 											>
+												{shortFingerprint(artwork.sha256)}
+											</code>
 										</li>
 									{/each}
 								</ul>
@@ -366,8 +369,9 @@
 										<li class="text-xs">
 											{artworkSnapshotDescription(artwork)}<code
 												class="mt-0.5 block text-[0.65rem] text-muted"
-												>{shortFingerprint(artwork.sha256)}</code
 											>
+												{shortFingerprint(artwork.sha256)}
+											</code>
 										</li>
 									{/each}
 								</ul>
@@ -383,13 +387,13 @@
 		<section>
 			<h4 class="management-inspector-section-title">Organization</h4>
 			<div class="grid gap-2 sm:grid-cols-[1fr_auto_1fr]">
-				<code class="management-diff-value" data-side="before"
-					>{displayPath(item.source_root_id, item.source_relative_path)}</code
-				>
+				<code class="management-diff-value" data-side="before">
+					{displayPath(item.source_root_id, item.source_relative_path)}
+				</code>
 				<ArrowRight class="mt-2 h-4 w-4" />
-				<code class="management-diff-value" data-side="after"
-					>{displayPath(item.destination_root_id, item.destination_relative_path)}</code
-				>
+				<code class="management-diff-value" data-side="after">
+					{displayPath(item.destination_root_id, item.destination_relative_path)}
+				</code>
 			</div>
 		</section>
 	{/if}
@@ -443,13 +447,13 @@
 								/>
 							{/if}
 							<div class="min-w-0">
-								<strong
-									>{titleManagementValue(
+								<strong>
+									{titleManagementValue(
 										artworkText(choice, 'output_kind') ?? 'artwork'
 									)}{artworkText(choice, 'image_type')
 										? ` · ${titleManagementValue(artworkText(choice, 'image_type') ?? '')}`
-										: ''}</strong
-								>
+										: ''}
+								</strong>
 								<p class="mt-1 text-muted">
 									{[
 										artworkText(choice, 'source')
@@ -464,8 +468,9 @@
 								</p>
 								{#if artworkText(choice, 'destination_relative_path')}<code
 										class="mt-1 block break-all text-muted"
-										>{artworkText(choice, 'destination_relative_path')}</code
-									>{/if}
+									>
+										{artworkText(choice, 'destination_relative_path')}
+									</code>{/if}
 							</div>
 						</div>
 					</Card>
@@ -489,8 +494,9 @@
 							size="sm"
 							class="mt-3"
 							onclick={(event) => onresolve(item, collision, event.currentTarget)}
-							>Choose resolution...</Button
 						>
+							Choose resolution...
+						</Button>
 					{:else}
 						<span class="badge badge-error badge-outline mt-3">Requires fresh scan evidence</span>
 					{/if}

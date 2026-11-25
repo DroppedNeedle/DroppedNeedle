@@ -30,17 +30,17 @@
 		</h3>
 		{#if album}
 			<div class="flex flex-col items-start gap-1">
-				<AsyncButton variant="outline" size="sm" onclick={onkeep}
-					>Keep your own track list</AsyncButton
-				>
+				<AsyncButton variant="outline" size="sm" onclick={onkeep}>
+					Keep your own track list
+				</AsyncButton>
 				<p class="text-sm text-muted">{customEditionSentence(album)}</p>
 			</div>
 		{/if}
 		{#if canLeave}
 			<div class="flex flex-col items-start gap-1">
-				<AsyncButton variant="outline" size="sm" onclick={onleave}
-					>Leave this album unmanaged</AsyncButton
-				>
+				<AsyncButton variant="outline" size="sm" onclick={onleave}>
+					Leave this album unmanaged
+				</AsyncButton>
 				<p class="text-sm text-muted">{LEAVE_UNMANAGED_SENTENCE}</p>
 			</div>
 		{/if}

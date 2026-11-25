@@ -253,8 +253,9 @@
 								size="xs"
 								icon={Plus}
 								onclick={() => (genres.aliases = [...genres.aliases, { source: '', target: '' }])}
-								>Add alias</Button
 							>
+								Add alias
+							</Button>
 						</div>
 						{#each genres.aliases as alias, index (aliasRowKey(alias))}
 							<div class="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-2">

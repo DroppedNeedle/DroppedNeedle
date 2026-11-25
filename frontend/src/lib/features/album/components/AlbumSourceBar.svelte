@@ -67,8 +67,9 @@
 		{#if hasAnyTracks}
 			<span
 				class="inline-flex h-6 items-center rounded-full bg-base-content px-2.5 text-xs font-bold text-base-100 tabular-nums"
-				>{trackCount}/{totalTracks}</span
 			>
+				{trackCount}/{totalTracks}
+			</span>
 		{/if}
 		{#if extraBadge}
 			<span class="text-sm font-medium text-muted uppercase">{extraBadge}</span>

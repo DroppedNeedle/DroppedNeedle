@@ -171,9 +171,9 @@
 	{#snippet actions()}
 		<div class="flex flex-wrap items-center justify-between gap-2">
 			<div class="flex min-w-0 items-center gap-2">
-				<span class="management-editor-state" data-active={dirty}
-					>{dirty ? 'Unsaved' : 'Saved'}</span
-				>
+				<span class="management-editor-state" data-active={dirty}>
+					{dirty ? 'Unsaved' : 'Saved'}
+				</span>
 				<p class="text-xs text-muted">
 					{dirty
 						? 'Saving validates the full profile. If it expands write access, active roots need a new dry run.'
@@ -182,9 +182,9 @@
 			</div>
 			<div class="ml-auto flex gap-2">
 				<Button variant="ghost" disabled={saving} onclick={requestClose}>Cancel</Button>
-				<Button variant="warning" loading={saving} disabled={!dirty} onclick={() => void save()}
-					>Save profile</Button
-				>
+				<Button variant="warning" loading={saving} disabled={!dirty} onclick={() => void save()}>
+					Save profile
+				</Button>
 			</div>
 		</div>
 	{/snippet}

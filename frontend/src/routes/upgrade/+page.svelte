@@ -78,9 +78,9 @@
 				<AuthCard icon={ArrowUp} title="Nothing to upgrade">
 					<p class="text-sm text-muted">This server already runs v3.</p>
 					{#snippet actions()}
-						<Button variant="primary" size="display" href={withBasePath('/')}
-							>Open DroppedNeedle</Button
-						>
+						<Button variant="primary" size="display" href={withBasePath('/')}>
+							Open DroppedNeedle
+						</Button>
 					{/snippet}
 				</AuthCard>
 			{:else}

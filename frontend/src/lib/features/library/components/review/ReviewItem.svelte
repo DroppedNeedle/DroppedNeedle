@@ -80,14 +80,17 @@
 		</button>
 		<div class="flex shrink-0 flex-col items-end gap-2 sm:flex-row sm:items-center">
 			{#if review.state !== 'pending'}
-				<span class="badge badge-ghost badge-sm whitespace-nowrap">{STATE_LABEL[review.state]}</span
-				>
+				<span class="badge badge-ghost badge-sm whitespace-nowrap">
+					{STATE_LABEL[review.state]}
+				</span>
 			{/if}
 			<Button
 				variant="ghost"
 				size="sm"
-				href={withBasePath(`/album/${encodeURIComponent(review.album_id)}`)}>Open album</Button
+				href={withBasePath(`/album/${encodeURIComponent(review.album_id)}`)}
 			>
+				Open album
+			</Button>
 		</div>
 	</div>
 
@@ -98,37 +101,42 @@
 			<div class="flex flex-wrap gap-2">
 				{#if review.state === 'pending'}
 					{#if authStore.isTrusted}
-						<Button size="sm" disabled={busy} onclick={() => onaction('keep_tagged')}
-							>Keep my tags</Button
-						>
+						<Button size="sm" disabled={busy} onclick={() => onaction('keep_tagged')}>
+							Keep my tags
+						</Button>
 						<Button
 							variant="ghost"
 							size="sm"
 							disabled={busy}
 							title="Take the MusicBrainz match off; the album keeps its own tags"
-							onclick={() => onaction('detach')}>Remove match</Button
+							onclick={() => onaction('detach')}
 						>
-						<Button variant="ghost" size="sm" disabled={busy} onclick={() => onaction('dismiss')}
-							>Decide later</Button
-						>
+							Remove match
+						</Button>
+						<Button variant="ghost" size="sm" disabled={busy} onclick={() => onaction('dismiss')}>
+							Decide later
+						</Button>
 					{/if}
 					{#if authStore.isAdmin}
 						<!-- Retrying would only meet the edition a person chose. -->
 						{#if !review.manual_identity}
-							<Button variant="ghost" size="sm" disabled={busy} onclick={onretry}>Look again</Button
-							>
+							<Button variant="ghost" size="sm" disabled={busy} onclick={onretry}>
+								Look again
+							</Button>
 						{/if}
 						<Button
 							variant="danger-ghost"
 							size="sm"
 							disabled={busy}
-							onclick={() => onaction('exclude')}>Take out of library</Button
+							onclick={() => onaction('exclude')}
 						>
+							Take out of library
+						</Button>
 					{/if}
 				{:else if review.state === 'excluded' && authStore.isAdmin}
-					<Button size="sm" disabled={busy} onclick={() => onaction('restore')}
-						>Put back in library</Button
-					>
+					<Button size="sm" disabled={busy} onclick={() => onaction('restore')}>
+						Put back in library
+					</Button>
 				{/if}
 			</div>
 		</div>

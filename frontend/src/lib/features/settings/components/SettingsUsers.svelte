@@ -595,8 +595,10 @@
 						variant="outline"
 						size="sm"
 						disabled={page === 1 || loading}
-						onclick={() => void loadUsers(page - 1)}>Previous</Button
+						onclick={() => void loadUsers(page - 1)}
 					>
+						Previous
+					</Button>
 					<span class="text-sm text-muted">
 						Showing {rangeStart}-{rangeEnd} of {total} users (page {page} of {totalPages})
 					</span>
@@ -604,8 +606,10 @@
 						variant="outline"
 						size="sm"
 						disabled={page >= totalPages || loading}
-						onclick={() => void loadUsers(page + 1)}>Next</Button
+						onclick={() => void loadUsers(page + 1)}
 					>
+						Next
+					</Button>
 				</div>
 			{/if}
 
@@ -677,24 +681,24 @@
 				<div class="grid gap-2.5 text-sm text-muted">
 					<div class="flex gap-2">
 						<ShieldCheck class="h-4 w-4 text-accent shrink-0 mt-0.5" />
-						<span
-							><strong class="text-base-content">Admin</strong>, full access, approves requests,
-							manages users.</span
-						>
+						<span>
+							<strong class="text-base-content">Admin</strong>, full access, approves requests,
+							manages users.
+						</span>
 					</div>
 					<div class="flex gap-2">
 						<UserCheck class="h-4 w-4 text-info shrink-0 mt-0.5" />
-						<span
-							><strong class="text-base-content">Trusted</strong>, requests auto-approved, no admin
-							functions.</span
-						>
+						<span>
+							<strong class="text-base-content">Trusted</strong>, requests auto-approved, no admin
+							functions.
+						</span>
 					</div>
 					<div class="flex gap-2">
 						<UserX class="h-4 w-4 text-muted shrink-0 mt-0.5" />
-						<span
-							><strong class="text-base-content">User</strong>, requests need admin approval before
-							downloading.</span
-						>
+						<span>
+							<strong class="text-base-content">User</strong>, requests need admin approval before
+							downloading.
+						</span>
 					</div>
 				</div>
 			</div>

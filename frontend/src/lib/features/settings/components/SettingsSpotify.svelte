@@ -82,8 +82,10 @@
 						href="https://developer.spotify.com/dashboard"
 						target="_blank"
 						rel="noopener noreferrer"
-						class="link link-primary">Spotify app dashboard</a
+						class="link link-primary"
 					>
+						Spotify app dashboard
+					</a>
 					under <span class="font-medium">User Management</span>.
 				</p>
 			</div>

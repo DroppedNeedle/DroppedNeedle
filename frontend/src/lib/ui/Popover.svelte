@@ -154,8 +154,9 @@
 			aria-controls={open ? panelId : undefined}
 			onclick={toggle}
 		>
-			{label}{#if count > 0}<span class="badge badge-sm ml-1">{count}</span
-				>{/if}{#if caret}<ChevronDown class="ml-auto size-4" aria-hidden="true" />{/if}
+			{label}{#if count > 0}<span class="badge badge-sm ml-1">
+					{count}
+				</span>{/if}{#if caret}<ChevronDown class="ml-auto size-4" aria-hidden="true" />{/if}
 		</Button>
 	{/if}
 	{#if open}

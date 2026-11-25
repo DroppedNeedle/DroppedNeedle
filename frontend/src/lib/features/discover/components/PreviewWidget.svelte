@@ -184,8 +184,8 @@
 						: ''}"
 				>
 					{entry.artist}{#if providerLabel}<span class="text-muted">
-							· via {providerLabel}</span
-						>{/if}
+							· via {providerLabel}
+						</span>{/if}
 				</svelte:element>
 			</div>
 

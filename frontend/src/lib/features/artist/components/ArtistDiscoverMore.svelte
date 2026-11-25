@@ -49,14 +49,18 @@
 				variant="primary"
 				icon={Plug}
 				class="dn-more__cta"
-				href={withBasePath('/profile#scrobbling')}>Connect a service</Button
+				href={withBasePath('/profile#scrobbling')}
 			>
+				Connect a service
+			</Button>
 		{:else if authStore.isAdmin}
 			<Button
 				variant="primary"
 				class="dn-more__cta"
-				href={withBasePath('/settings?tab=listenbrainz')}>Settings</Button
+				href={withBasePath('/settings?tab=listenbrainz')}
 			>
+				Settings
+			</Button>
 		{/if}
 	</div>
 </Card>

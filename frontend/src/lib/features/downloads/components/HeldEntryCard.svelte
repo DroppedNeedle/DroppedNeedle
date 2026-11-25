@@ -210,9 +210,9 @@
 				<div class="mt-3 border-t border-base-content/8 pt-3">
 					<HeldFileRow {entry} file={files[0]}>
 						{#if checkHref}
-							<Button variant="primary" size="xs" icon={Disc3} href={checkHref}
-								>Check this album</Button
-							>
+							<Button variant="primary" size="xs" icon={Disc3} href={checkHref}>
+								Check this album
+							</Button>
 						{/if}
 						{#if retryTaskId}
 							{@render retryDownloadButton('xs')}
@@ -234,18 +234,18 @@
 				<ul class="mt-2 space-y-0.5 text-sm text-base-content/75">
 					{#each reasons as reason (reason.text)}
 						<li>
-							{reason.text}{#if reasons.length > 1}<span class="text-muted"
-									>{` (${reason.count})`}</span
-								>{/if}
+							{reason.text}{#if reasons.length > 1}<span class="text-muted">
+									{` (${reason.count})`}
+								</span>{/if}
 						</li>
 					{/each}
 				</ul>
 
 				<div class="mt-3 flex flex-wrap items-center gap-2">
 					{#if checkHref}
-						<Button variant="primary" size="sm" icon={Disc3} href={checkHref}
-							>Check this album</Button
-						>
+						<Button variant="primary" size="sm" icon={Disc3} href={checkHref}>
+							Check this album
+						</Button>
 					{/if}
 					{#if importIds.length > 0}
 						<Button

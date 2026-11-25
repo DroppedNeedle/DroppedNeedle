@@ -103,8 +103,9 @@
 						icon={Download}
 						loading={loadingDiscography}
 						onclick={() => discography(artist.title, artist.musicbrainz_id)}
-						>Download discography</Button
 					>
+						Download discography
+					</Button>
 				{/if}
 			{/snippet}
 		</SearchTopCard>
@@ -145,8 +146,10 @@
 				<p>
 					{#if album.year}{album.year}{/if}{#if album.year && album.artist}<span
 							class="mx-2"
-							aria-hidden="true">·</span
-						>{/if}{#if album.artist}{album.artist}{/if}
+							aria-hidden="true"
+						>
+							·
+						</span>{/if}{#if album.artist}{album.artist}{/if}
 				</p>
 				{#if !albumLocal && (inLibrary || requested)}
 					<div class="relative z-2">
@@ -167,16 +170,20 @@
 						size="display-sm"
 						icon={Download}
 						loading={request.pending}
-						onclick={() => void request.request(album)}>Request</Button
+						onclick={() => void request.request(album)}
 					>
+						Request
+					</Button>
 				{/if}
 				<Button
 					variant="paper"
 					size="display-sm"
 					icon={ArrowRight}
 					iconPosition="end"
-					href={albumHref(album.musicbrainz_id)}>View album</Button
+					href={albumHref(album.musicbrainz_id)}
 				>
+					View album
+				</Button>
 			{/snippet}
 		</SearchTopCard>
 	{/if}

@@ -159,8 +159,10 @@
 						iconPosition="end"
 						href={`https://musicbrainz.org/artist/${artist.artist_mbid}`}
 						target="_blank"
-						rel="noreferrer">Open in MusicBrainz</Button
+						rel="noreferrer"
 					>
+						Open in MusicBrainz
+					</Button>
 				{/if}
 				{#if contributing && artist.identity_state === 'local_only'}
 					<Button variant="outline" icon={FileSearch} href="#musicbrainz-albums">
@@ -216,9 +218,12 @@
 								class="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:px-6"
 							>
 								<div class="min-w-0">
-									<a class="font-semibold hover:underline" href={withBasePath(`/album/${album.id}`)}
-										>{album.title}</a
+									<a
+										class="font-semibold hover:underline"
+										href={withBasePath(`/album/${album.id}`)}
 									>
+										{album.title}
+									</a>
 									<p class="mt-0.5 font-mono text-xs text-muted">
 										{album.year ?? 'Year unknown'} · {contributionLabel(album.contribution_state)}
 									</p>

@@ -380,9 +380,9 @@
 										</div>
 									</button>
 									<label class="flex cursor-pointer items-center gap-2">
-										<span class="text-sm font-medium"
-											>{indexer.enabled ? 'Enabled' : 'Disabled'}</span
-										>
+										<span class="text-sm font-medium">
+											{indexer.enabled ? 'Enabled' : 'Disabled'}
+										</span>
 										<input
 											type="checkbox"
 											class="toggle toggle-sm toggle-primary"
@@ -545,8 +545,9 @@
 				</Button>
 			{/if}
 			<Button variant="ghost" size="sm" onclick={cancelEdit}>Cancel</Button>
-			<Button variant="primary" size="sm" onclick={saveDraft} disabled={save.isPending}>Save</Button
-			>
+			<Button variant="primary" size="sm" onclick={saveDraft} disabled={save.isPending}>
+				Save
+			</Button>
 		</div>
 	</div>
 {/snippet}

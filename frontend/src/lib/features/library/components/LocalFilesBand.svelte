@@ -115,24 +115,30 @@
 				icon={Play}
 				loading={busy === 'play'}
 				class="pointer-events-auto"
-				onclick={playAll}>Play All</Button
+				onclick={playAll}
 			>
+				Play All
+			</Button>
 			<Button
 				variant="outline"
 				size="display"
 				icon={Shuffle}
 				loading={busy === 'shuffle'}
 				class="pointer-events-auto"
-				onclick={shuffleAll}>Shuffle</Button
+				onclick={shuffleAll}
 			>
+				Shuffle
+			</Button>
 			<Button
 				variant="outline"
 				size="display"
 				icon={Sparkles}
 				loading={busy === 'surprise'}
 				class="pointer-events-auto"
-				onclick={surprise}>Surprise me</Button
+				onclick={surprise}
 			>
+				Surprise me
+			</Button>
 		</div>
 	</div>
 </section>

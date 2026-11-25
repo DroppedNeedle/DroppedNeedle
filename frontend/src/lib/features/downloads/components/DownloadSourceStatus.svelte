@@ -222,9 +222,9 @@
 
 		<div class="source-facts">
 			{#if attemptNumber > 0 && attemptTotal > 0}
-				<span
-					><ListOrdered class="size-3" aria-hidden="true" /> Trying source {attemptNumber} of {attemptTotal}</span
-				>
+				<span>
+					<ListOrdered class="size-3" aria-hidden="true" /> Trying source {attemptNumber} of {attemptTotal}
+				</span>
 			{/if}
 			{#if isQueued && livePosition}
 				<span>Live position {livePosition}</span>

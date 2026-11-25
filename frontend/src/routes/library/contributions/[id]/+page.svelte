@@ -281,8 +281,10 @@
 									class="grid h-6 w-6 place-items-center rounded-full border text-xs font-bold {index ===
 									0
 										? 'border-primary bg-primary text-primary-content'
-										: 'border-base-content/20'}">{index + 1}</span
+										: 'border-base-content/20'}"
 								>
+									{index + 1}
+								</span>
 								<span>
 									<span class="block text-sm font-semibold">{stage.label}</span>
 									<span class="block text-xs opacity-65">{stage.detail}</span>
@@ -315,11 +317,11 @@
 							</div>
 							<div class="bg-base-100/75 px-5 py-3">
 								<span class="block text-xs text-muted">Media and tracks</span>
-								<span class="block text-sm font-semibold"
-									>{mediaCount}
+								<span class="block text-sm font-semibold">
+									{mediaCount}
 									{mediaCount === 1 ? 'medium' : 'media'} · {trackCount}
-									{trackCount === 1 ? 'track' : 'tracks'}</span
-								>
+									{trackCount === 1 ? 'track' : 'tracks'}
+								</span>
 							</div>
 							<div class="bg-base-100/75 px-5 py-3">
 								<span class="block text-xs text-muted">Local snapshot</span>
@@ -390,9 +392,9 @@
 									<p class="text-sm text-muted">Read from the indexed audio files</p>
 								</div>
 							</div>
-							<span class="badge badge-success badge-outline gap-1"
-								><Check class="h-3.5 w-3.5" /> Current</span
-							>
+							<span class="badge badge-success badge-outline gap-1">
+								<Check class="h-3.5 w-3.5" /> Current
+							</span>
 						</div>
 						<div class="grid gap-4 p-5 sm:grid-cols-2 sm:p-6">
 							<div class="sm:col-span-2">

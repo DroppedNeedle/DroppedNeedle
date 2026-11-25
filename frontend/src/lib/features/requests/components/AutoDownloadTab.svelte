@@ -157,8 +157,10 @@
 							<a
 								href={withBasePath(`/artist/${item.artist_mbid}`)}
 								class="rq-title"
-								title={item.artist_name}>{item.artist_name}</a
+								title={item.artist_name}
 							>
+								{item.artist_name}
+							</a>
 							<p class="rq-meta mt-1.5">
 								<span>{item.user_name ?? 'A user'}</span>
 								<span>requested {timeAgo(item.requested_at)}</span>
@@ -257,8 +259,10 @@
 						<a
 							href={withBasePath(`/artist/${item.artist_mbid}`)}
 							class="rq-title"
-							title={item.artist_name}>{item.artist_name}</a
+							title={item.artist_name}
 						>
+							{item.artist_name}
+						</a>
 						<p class="rq-meta mt-1.5"><span>{item.user_name ?? 'A user'}</span></p>
 					</RequestRow>
 				{/each}

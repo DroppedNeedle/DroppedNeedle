@@ -69,10 +69,10 @@
 			<Tape look="warn">
 				{SOURCES[failing.source]} has not answered since {clockTime(failing.since)}
 			</Tape>
-			<span
-				>This is still week {set.week_number}'s set. Week {set.week_number + 1} is set out as soon as
-				it answers.</span
-			>
+			<span>
+				This is still week {set.week_number}'s set. Week {set.week_number + 1} is set out as soon as it
+				answers.
+			</span>
 		</div>
 	{:else if lines}
 		<p class="dn-week-head__lines">

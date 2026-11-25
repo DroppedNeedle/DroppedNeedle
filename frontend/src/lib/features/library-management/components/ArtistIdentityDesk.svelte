@@ -294,9 +294,9 @@
 				undo that here. Other similar names never merge.
 			</p>
 		</div>
-		<Button href={withBasePath('/library/management?tab=scanning')} variant="ghost" size="sm"
-			>Back to Scan &amp; identify</Button
-		>
+		<Button href={withBasePath('/library/management?tab=scanning')} variant="ghost" size="sm">
+			Back to Scan &amp; identify
+		</Button>
 	</header>
 
 	{#if progressQuery.isLoading}
@@ -307,24 +307,24 @@
 		<Card as="section" variant="bordered" padding="md" aria-label="Artist identity counts">
 			<div class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
 				<div>
-					<span class="block text-xs text-muted">Resolved automatically</span><strong
-						>{progressQuery.data.automatically_resolved_count.toLocaleString()}</strong
-					>
+					<span class="block text-xs text-muted">Resolved automatically</span><strong>
+						{progressQuery.data.automatically_resolved_count.toLocaleString()}
+					</strong>
 				</div>
 				<div>
-					<span class="block text-xs text-muted">Waiting for identity</span><strong
-						>{progressQuery.data.waiting_for_identity_count.toLocaleString()}</strong
-					>
+					<span class="block text-xs text-muted">Waiting for identity</span><strong>
+						{progressQuery.data.waiting_for_identity_count.toLocaleString()}
+					</strong>
 				</div>
 				<div>
-					<span class="block text-xs text-muted">Needs judgement</span><strong
-						>{progressQuery.data.genuine_review_count.toLocaleString()}</strong
-					>
+					<span class="block text-xs text-muted">Needs judgement</span><strong>
+						{progressQuery.data.genuine_review_count.toLocaleString()}
+					</strong>
 				</div>
 				<div>
-					<span class="block text-xs text-muted">Provider conflicts</span><strong
-						>{progressQuery.data.provider_conflict_count.toLocaleString()}</strong
-					>
+					<span class="block text-xs text-muted">Provider conflicts</span><strong>
+						{progressQuery.data.provider_conflict_count.toLocaleString()}
+					</strong>
 				</div>
 			</div>
 		</Card>
@@ -472,13 +472,17 @@
 															value={member.id}
 														/>
 													{/if}
-													<span
-														><strong>{member.name}</strong>{#if member.disambiguation}<span
-																class="block text-xs text-muted">{member.disambiguation}</span
-															>{/if}<span class="block break-all font-mono text-xs text-muted"
-															>{member.id} · revision {member.row_revision}</span
-														></span
-													>
+													<span>
+														<strong>{member.name}</strong>{#if member.disambiguation}<span
+																class="block text-xs text-muted"
+															>
+																{member.disambiguation}
+															</span>{/if}<span
+															class="block break-all font-mono text-xs text-muted"
+														>
+															{member.id} · revision {member.row_revision}
+														</span>
+													</span>
 												</span>
 												<span class="mt-2 block text-xs text-muted">
 													{member.album_credit_count} album · {member.track_credit_count} track credits
@@ -486,8 +490,9 @@
 												</span>
 												{#if member.provider_mbid}<span
 														class="mt-1 block break-all font-mono text-xs text-primary"
-														>MusicBrainz {member.provider_mbid}</span
-													>{/if}
+													>
+														MusicBrainz {member.provider_mbid}
+													</span>{/if}
 											</label>
 										{/each}
 									</div>
@@ -514,12 +519,12 @@
 											{#each detail.evidence as item (`${item.subject_kind}:${item.subject_id}:${item.artist_mbid}`)}
 												<li class="rounded-lg bg-base-100 p-2">
 													<strong>{item.subject_name}</strong>
-													<span class="block text-xs text-muted"
-														>{item.subject_kind} credit “{item.credited_name}{item.join_phrase}”</span
-													>
-													<span class="block break-all font-mono text-xs text-primary"
-														>{item.artist_mbid}</span
-													>
+													<span class="block text-xs text-muted">
+														{item.subject_kind} credit “{item.credited_name}{item.join_phrase}”
+													</span>
+													<span class="block break-all font-mono text-xs text-primary">
+														{item.artist_mbid}
+													</span>
 												</li>
 											{/each}
 										</ul>
@@ -539,15 +544,15 @@
 												<li
 													class="flex items-center justify-between gap-2 rounded-lg border border-base-content/10 p-2"
 												>
-													<span
-														>{release.name}<span class="block text-xs text-muted"
-															>{release.identity_ready
+													<span>
+														{release.name}<span class="block text-xs text-muted">
+															{release.identity_ready
 																? release.exact_track_mapping_ready
 																	? 'Exact release and tracks matched'
 																	: 'Needs exact track mapping'
-																: 'Needs release identification'}</span
-														></span
-													>
+																: 'Needs release identification'}
+														</span>
+													</span>
 													<IconButton
 														size="xs"
 														shape="square"
@@ -566,8 +571,10 @@
 										variant="ghost"
 										icon={Undo2}
 										disabled={undoMutation.isPending}
-										onclick={() => (undoOpen = true)}>Undo this join</Button
+										onclick={() => (undoOpen = true)}
 									>
+										Undo this join
+									</Button>
 								{/if}
 
 								{#if detail.state !== 'resolved_automatically'}
@@ -576,14 +583,18 @@
 											variant="primary"
 											icon={Merge}
 											disabled={!survivingId || previewArtist.isPending}
-											onclick={() => void openMerge()}>Preview group merge</Button
+											onclick={() => void openMerge()}
 										>
+											Preview group merge
+										</Button>
 										<Button
 											variant="ghost"
 											icon={Split}
 											disabled={dismissMutation.isPending}
-											onclick={() => (dismissOpen = true)}>Mark records as distinct</Button
+											onclick={() => (dismissOpen = true)}
 										>
+											Mark records as distinct
+										</Button>
 									</div>
 								{/if}
 							</div>
@@ -652,38 +663,40 @@
 		{#if previewResult.identity_conflicts.length}
 			<fieldset class="mt-4 rounded-box border border-warning/30 p-3">
 				<legend class="px-1 font-semibold">Provider identity conflict</legend>
-				<label class="mt-2 flex gap-2 text-sm"
-					><input
+				<label class="mt-2 flex gap-2 text-sm">
+					<input
 						type="radio"
 						class="radio radio-sm"
 						name="provider-choice"
 						checked={providerChoice === 'retain_survivor'}
 						onchange={() => void chooseProvider('retain_survivor')}
-					/> Keep the chosen survivor's provider identity</label
-				>
-				<label class="mt-2 flex gap-2 text-sm"
-					><input
+					/> Keep the chosen survivor's provider identity
+				</label>
+				<label class="mt-2 flex gap-2 text-sm">
+					<input
 						type="radio"
 						class="radio radio-sm"
 						name="provider-choice"
 						checked={providerChoice === 'detach'}
 						onchange={() => void chooseProvider('detach')}
-					/> Detach conflicting provider identities</label
-				>
+					/> Detach conflicting provider identities
+				</label>
 			</fieldset>
 		{/if}
-		<label class="mt-4 flex items-start gap-2 text-sm"
-			><input type="checkbox" class="checkbox checkbox-sm mt-0.5" bind:checked={confirmed} /> Merge all
-			records in this dossier and preserve retired IDs as aliases.</label
-		>
+		<label class="mt-4 flex items-start gap-2 text-sm">
+			<input type="checkbox" class="checkbox checkbox-sm mt-0.5" bind:checked={confirmed} /> Merge all
+			records in this dossier and preserve retired IDs as aliases.
+		</label>
 	{/if}
 	{#snippet actions()}
 		<Button variant="ghost" onclick={() => (mergeOpen = false)}>Cancel</Button>
 		<Button
 			variant="primary"
 			disabled={!previewResult || !confirmed || applyArtist.isPending || previewArtist.isPending}
-			onclick={() => void mergeArtists()}>Merge artists</Button
+			onclick={() => void mergeArtists()}
 		>
+			Merge artists
+		</Button>
 	{/snippet}
 </Modal>
 

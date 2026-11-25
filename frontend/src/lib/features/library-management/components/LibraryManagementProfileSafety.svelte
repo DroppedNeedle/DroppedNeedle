@@ -81,11 +81,11 @@
 			<div class="mt-3 grid gap-3 sm:grid-cols-2">
 				<div class="management-master-toggle">
 					<Check class="h-4 w-4 shrink-0 text-success" />
-					<span
-						><strong>DroppedNeedle catalog updates immediately</strong><small
-							>Committed tags and paths are updated as part of every successful operation.</small
-						></span
-					>
+					<span>
+						<strong>DroppedNeedle catalog updates immediately</strong><small>
+							Committed tags and paths are updated as part of every successful operation.
+						</small>
+					</span>
 				</div>
 				<ToggleRow
 					label="Refresh media servers"

@@ -68,9 +68,9 @@
 				{/snippet}
 			</Field>
 		{/if}
-		<Button variant="primary" loading={save.isPending} disabled={!dirty} onclick={handleSave}
-			>Save</Button
-		>
+		<Button variant="primary" loading={save.isPending} disabled={!dirty} onclick={handleSave}>
+			Save
+		</Button>
 	</div>
 	{#if isDaily}
 		<p class="text-xs text-muted">

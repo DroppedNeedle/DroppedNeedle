@@ -155,8 +155,10 @@
 			<a
 				href={titleHref}
 				class="rounded-sm transition-colors hover:text-accent"
-				onclick={() => dialog?.close()}>{title}</a
+				onclick={() => dialog?.close()}
 			>
+				{title}
+			</a>
 		{:else}
 			{title}
 		{/if}

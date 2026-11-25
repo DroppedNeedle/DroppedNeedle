@@ -170,9 +170,9 @@
 							<strong>The local library is disabled</strong>
 							<p class="text-sm">
 								No files are changed while it is off. Turn it on in
-								<a class="link link-primary" href={withBasePath('/settings?tab=library')}
-									>Settings</a
-								> to organize files again.
+								<a class="link link-primary" href={withBasePath('/settings?tab=library')}>
+									Settings
+								</a> to organize files again.
 							</p>
 						</div>
 					</div>
@@ -200,9 +200,9 @@
 							<strong>The local library is disabled</strong>
 							<p class="text-sm">
 								Automatic organization is paused. Enable the library in
-								<a class="link link-primary" href={withBasePath('/settings?tab=library')}
-									>Settings</a
-								> to manage profiles and automation again.
+								<a class="link link-primary" href={withBasePath('/settings?tab=library')}>
+									Settings
+								</a> to manage profiles and automation again.
 							</p>
 						</div>
 					</div>

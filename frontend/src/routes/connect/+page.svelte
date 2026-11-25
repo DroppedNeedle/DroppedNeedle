@@ -119,8 +119,9 @@
 	<AuthCard icon={KeyRound} centred>
 		{#if handedBack}
 			<p class="connect-line">Returning to the app.</p>
-			<Button href={handedBack} variant="primary" size="display" class="w-full">Open the app</Button
-			>
+			<Button href={handedBack} variant="primary" size="display" class="w-full">
+				Open the app
+			</Button>
 		{:else if inFrame}
 			{@render problem({
 				error: 'This page cannot be used inside another page.',
@@ -185,16 +186,20 @@
 							size="display"
 							class="flex-1"
 							onclick={() => cancel(view.cancel_redirect)}
-							disabled={authorize.isPending}>Cancel</Button
+							disabled={authorize.isPending}
 						>
+							Cancel
+						</Button>
 						<Button
 							variant="primary"
 							size="display"
 							class="flex-1"
 							onclick={() => allow(view.credential_kind)}
 							loading={authorize.isPending}
-							disabled={authorize.isPending || view.at_limit}>Allow</Button
+							disabled={authorize.isPending || view.at_limit}
 						>
+							Allow
+						</Button>
 					</div>
 				{/snippet}
 			</QueryBoundary>

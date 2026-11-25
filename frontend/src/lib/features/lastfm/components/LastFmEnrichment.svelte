@@ -57,16 +57,20 @@
 						size="sm"
 						icon={ChevronUp}
 						iconPosition="end"
-						onclick={() => (expanded = false)}>Show less</Button
+						onclick={() => (expanded = false)}
 					>
+						Show less
+					</Button>
 				{:else if text && clipped}
 					<Button
 						variant="outline"
 						size="sm"
 						icon={ArrowRight}
 						iconPosition="end"
-						onclick={() => (expanded = true)}>Read more</Button
+						onclick={() => (expanded = true)}
 					>
+						Read more
+					</Button>
 				{/if}
 				{#if link}
 					<Button
@@ -76,8 +80,10 @@
 						iconPosition="end"
 						href={link}
 						target="_blank"
-						rel="noopener noreferrer">View on Last.fm</Button
+						rel="noopener noreferrer"
 					>
+						View on Last.fm
+					</Button>
 				{/if}
 			</div>
 		{/if}

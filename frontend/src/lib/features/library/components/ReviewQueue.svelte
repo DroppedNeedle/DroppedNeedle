@@ -412,9 +412,9 @@
 						/>
 						Include Local metadata folders
 					</label>
-					<Button size="sm" loading={retryAll.isPending} onclick={() => void previewRetry()}
-						>Look again ({total})</Button
-					>
+					<Button size="sm" loading={retryAll.isPending} onclick={() => void previewRetry()}>
+						Look again ({total})
+					</Button>
 				</div>
 			{/if}
 			<Button
@@ -424,8 +424,10 @@
 				class="sm:hidden"
 				aria-expanded={filtersOpen}
 				aria-controls="review-filters"
-				onclick={() => (filtersOpen = !filtersOpen)}>Filters</Button
+				onclick={() => (filtersOpen = !filtersOpen)}
 			>
+				Filters
+			</Button>
 		</div>
 
 		<div id="review-filters" class={filtersOpen ? '' : 'hidden sm:block'}>
@@ -437,8 +439,10 @@
 				<Button
 					size="xs"
 					variant={filters.reasonCode ? 'ghost' : 'primary'}
-					onclick={() => (filters.reasonCode = '')}>All reasons</Button
+					onclick={() => (filters.reasonCode = '')}
 				>
+					All reasons
+				</Button>
 				{#each firstPage?.reason_counts ?? [] as bucket (bucket.reason_code)}
 					<Button
 						size="xs"
@@ -446,9 +450,10 @@
 						class="h-auto max-w-full py-1 text-left whitespace-normal"
 						title={bucket.reason.action}
 						onclick={() => (filters.reasonCode = bucket.reason_code)}
-						>{bucket.reason.message}
-						<span class="badge badge-sm">{bucket.count}</span></Button
 					>
+						{bucket.reason.message}
+						<span class="badge badge-sm">{bucket.count}</span>
+					</Button>
 				{/each}
 			</div>
 		{/if}
@@ -459,27 +464,33 @@
 			>
 				<strong class="mr-1">{selectionCount} selected</strong>
 				{#if !allMatching && total > selected.length}
-					<Button variant="ghost" size="xs" onclick={() => (allMatching = true)}
-						>Select all {total} matching</Button
-					>
+					<Button variant="ghost" size="xs" onclick={() => (allMatching = true)}>
+						Select all {total} matching
+					</Button>
 				{/if}
 				<span class="flex-1"></span>
-				<Button size="sm" disabled={preview.isPending} onclick={() => void startBulk('keep_tagged')}
-					>{BULK_LABEL.keep_tagged}</Button
+				<Button
+					size="sm"
+					disabled={preview.isPending}
+					onclick={() => void startBulk('keep_tagged')}
 				>
-				<Button size="sm" disabled={preview.isPending} onclick={() => void startBulk('accept')}
-					>{BULK_LABEL.accept}</Button
-				>
-				<Button size="sm" disabled={preview.isPending} onclick={() => void startShared()}
-					>Use a shared edition</Button
-				>
+					{BULK_LABEL.keep_tagged}
+				</Button>
+				<Button size="sm" disabled={preview.isPending} onclick={() => void startBulk('accept')}>
+					{BULK_LABEL.accept}
+				</Button>
+				<Button size="sm" disabled={preview.isPending} onclick={() => void startShared()}>
+					Use a shared edition
+				</Button>
 				{#if authStore.isAdmin}
 					<Button
 						variant="danger-ghost"
 						size="sm"
 						disabled={preview.isPending}
-						onclick={() => void startBulk('exclude')}>{BULK_LABEL.exclude}</Button
+						onclick={() => void startBulk('exclude')}
 					>
+						{BULK_LABEL.exclude}
+					</Button>
 				{/if}
 				<Button
 					variant="ghost"
@@ -487,8 +498,10 @@
 					onclick={() => {
 						selected = [];
 						allMatching = false;
-					}}>Clear</Button
+					}}
 				>
+					Clear
+				</Button>
 			</div>
 		{/if}
 
@@ -502,12 +515,12 @@
 							<div class="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
 								<div class="min-w-0 space-y-1.5">
 									<div class="flex flex-wrap items-center gap-2">
-										<strong class="text-sm"
-											>{job.action ? JOB_LABEL[job.action] : 'Changing reviews'}</strong
-										>
-										<span class="badge badge-ghost badge-sm"
-											>{JOB_STATE[job.state] ?? job.state}</span
-										>
+										<strong class="text-sm">
+											{job.action ? JOB_LABEL[job.action] : 'Changing reviews'}
+										</strong>
+										<span class="badge badge-ghost badge-sm">
+											{JOB_STATE[job.state] ?? job.state}
+										</span>
 									</div>
 									{#if active}
 										<progress
@@ -567,9 +580,9 @@
 							<li class="flex flex-wrap items-center gap-2 pt-2">
 								<h3 class="mr-auto text-sm font-semibold">
 									{review.reason.message}
-									<span class="badge badge-sm badge-ghost ml-1"
-										>{reasonCount(review.reason_code)}</span
-									>
+									<span class="badge badge-sm badge-ghost ml-1">
+										{reasonCount(review.reason_code)}
+									</span>
 								</h3>
 								{#if pendingView && authStore.isTrusted}
 									<Button
@@ -577,16 +590,19 @@
 										variant="ghost"
 										disabled={preview.isPending}
 										onclick={() => void startBulk('keep_tagged', review.reason_code)}
-										>Keep my tags for all</Button
 									>
+										Keep my tags for all
+									</Button>
 								{/if}
 								{#if pendingView && authStore.isAdmin}
 									<Button
 										size="xs"
 										variant="ghost"
 										disabled={retryAll.isPending}
-										onclick={() => void previewRetry(review.reason_code)}>Look again at all</Button
+										onclick={() => void previewRetry(review.reason_code)}
 									>
+										Look again at all
+									</Button>
 								{/if}
 							</li>
 						{/if}
@@ -612,8 +628,10 @@
 							<Button
 								size="sm"
 								loading={query.isFetchingNextPage}
-								onclick={() => void query.fetchNextPage()}>Load more</Button
+								onclick={() => void query.fetchNextPage()}
 							>
+								Load more
+							</Button>
 						{/if}
 					</div>
 				{/if}

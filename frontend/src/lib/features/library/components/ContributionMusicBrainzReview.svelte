@@ -295,8 +295,10 @@
 							icon={RefreshCw}
 							loading={retryMutation.isPending}
 							disabled={!canMutate}
-							onclick={retryVerification}>Retry verification</Button
+							onclick={retryVerification}
 						>
+							Retry verification
+						</Button>
 					</div>
 				</div>
 			</div>
@@ -318,8 +320,9 @@
 					loading={checkMutation.isPending}
 					disabled={!canMutate || contribution.validation.length > 0}
 					onclick={() => checkDuplicates()}
-					>{checkMutation.isPending ? 'Checking…' : 'Check MusicBrainz'}</Button
 				>
+					{checkMutation.isPending ? 'Checking…' : 'Check MusicBrainz'}
+				</Button>
 			</div>
 		</div>
 	{:else}
@@ -346,8 +349,10 @@
 									icon={Library}
 									loading={attachMutation.isPending}
 									disabled={!canMutate || !candidate.release_mbid}
-									onclick={() => attach(candidate)}>Use this MusicBrainz release</Button
+									onclick={() => attach(candidate)}
 								>
+									Use this MusicBrainz release
+								</Button>
 								{#if candidateUrl(candidate)}
 									<Button
 										variant="ghost"
@@ -356,8 +361,10 @@
 										iconPosition="end"
 										href={candidateUrl(candidate) ?? undefined}
 										target="_blank"
-										rel="noreferrer">Inspect on MusicBrainz</Button
+										rel="noreferrer"
 									>
+										Inspect on MusicBrainz
+									</Button>
 								{/if}
 							</div>
 						</div>
@@ -419,8 +426,10 @@
 										iconPosition="end"
 										href={candidateUrl(candidate) ?? undefined}
 										target="_blank"
-										rel="noreferrer">Review</Button
+										rel="noreferrer"
 									>
+										Review
+									</Button>
 								{/if}
 							</div>
 						{/each}
@@ -451,8 +460,10 @@
 						class="mt-4 self-start"
 						loading={checkMutation.isPending}
 						disabled={!canMutate || !differentEdition}
-						onclick={() => checkDuplicates(true)}>Confirm and check again</Button
+						onclick={() => checkDuplicates(true)}
 					>
+						Confirm and check again
+					</Button>
 				</Card>
 			{/if}
 
@@ -492,10 +503,9 @@
 							loading={seedMutation.isPending}
 							disabled={!canMutate}
 							onclick={continueOnMusicBrainz}
-							>{contribution.state === 'seeded'
-								? 'Continue again'
-								: 'Continue on MusicBrainz'}</Button
 						>
+							{contribution.state === 'seeded' ? 'Continue again' : 'Continue on MusicBrainz'}
+						</Button>
 					</div>
 					<div class="border-t border-base-content/10 px-4 py-3 text-xs text-muted sm:px-5">
 						Submits a one-time form to

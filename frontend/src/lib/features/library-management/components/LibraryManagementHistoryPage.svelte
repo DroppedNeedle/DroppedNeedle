@@ -110,62 +110,72 @@
 		<section class="lm-bordered hp-filters" aria-labelledby="management-history-filters">
 			<h2 id="management-history-filters" class="lm-cap-title">Filter write-system history</h2>
 			<div class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-				<label class="hp-field"
-					><span>Origin</span><select class="select select-sm" bind:value={origin}
-						><option value="">All origins</option><option value="manual">Manual</option><option
-							value="acquisition">Acquisition</option
-						><option value="drop_import">Drop import</option><option value="scan_discovered"
-							>Scan discovered</option
-						></select
-					></label
-				>
-				<label class="hp-field"
-					><span>Profile</span><select class="select select-sm" bind:value={profileId}
-						><option value="">All profiles</option
-						>{#each settingsQuery.data?.profiles ?? [] as profile (profile.id)}<option
-								value={profile.id}>{profile.name}</option
-							>{/each}</select
-					></label
-				>
-				<label class="hp-field"
-					><span>Root scope</span><select class="select select-sm" bind:value={rootId}
-						><option value="">All roots</option>{#each roots as root (root.id)}<option
-								value={root.id}>{root.label}</option
-							>{/each}</select
-					></label
-				>
-				<label class="hp-field"
-					><span>State</span><select class="select select-sm" bind:value={operationState}
-						><option value="">All states</option
-						>{#each ['queued', 'running', 'paused', 'ready', 'succeeded', 'failed', 'cancelled', 'stopped'] as option (option)}<option
-								value={option}>{titleManagementValue(option)}</option
-							>{/each}</select
-					></label
-				>
-				<label class="hp-field"
-					><span>Mode</span><select class="select select-sm" bind:value={mode}
-						><option value="">All modes</option
-						>{#each ['preview', 'apply', 'automatic_apply', 'undo', 'baseline_restore', 'duplicate_resolution'] as option (option)}<option
-								value={option}>{titleManagementValue(option)}</option
-							>{/each}</select
-					></label
-				>
-				<label class="hp-field"
-					><span>From date</span><Input
+				<label class="hp-field">
+					<span>Origin</span><select class="select select-sm" bind:value={origin}>
+						<option value="">All origins</option><option value="manual">Manual</option><option
+							value="acquisition"
+						>
+							Acquisition
+						</option><option value="drop_import">Drop import</option><option
+							value="scan_discovered"
+						>
+							Scan discovered
+						</option>
+					</select>
+				</label>
+				<label class="hp-field">
+					<span>Profile</span><select class="select select-sm" bind:value={profileId}>
+						<option value="">
+							All profiles
+						</option>{#each settingsQuery.data?.profiles ?? [] as profile (profile.id)}<option
+								value={profile.id}
+							>
+								{profile.name}
+							</option>{/each}
+					</select>
+				</label>
+				<label class="hp-field">
+					<span>Root scope</span><select class="select select-sm" bind:value={rootId}>
+						<option value="">All roots</option>{#each roots as root (root.id)}<option
+								value={root.id}
+							>
+								{root.label}
+							</option>{/each}
+					</select>
+				</label>
+				<label class="hp-field">
+					<span>State</span><select class="select select-sm" bind:value={operationState}>
+						<option value="">
+							All states
+						</option>{#each ['queued', 'running', 'paused', 'ready', 'succeeded', 'failed', 'cancelled', 'stopped'] as option (option)}<option
+								value={option}
+							>
+								{titleManagementValue(option)}
+							</option>{/each}
+					</select>
+				</label>
+				<label class="hp-field">
+					<span>Mode</span><select class="select select-sm" bind:value={mode}>
+						<option value="">
+							All modes
+						</option>{#each ['preview', 'apply', 'automatic_apply', 'undo', 'baseline_restore', 'duplicate_resolution'] as option (option)}<option
+								value={option}
+							>
+								{titleManagementValue(option)}
+							</option>{/each}
+					</select>
+				</label>
+				<label class="hp-field">
+					<span>From date</span><Input
 						type="date"
 						size="sm"
 						label="From date"
 						bind:value={createdFrom}
-					/></label
-				>
-				<label class="hp-field"
-					><span>To date</span><Input
-						type="date"
-						size="sm"
-						label="To date"
-						bind:value={createdTo}
-					/></label
-				>
+					/>
+				</label>
+				<label class="hp-field">
+					<span>To date</span><Input type="date" size="sm" label="To date" bind:value={createdTo} />
+				</label>
 				<div class="flex items-end">
 					<Button
 						variant="caps"
@@ -178,8 +188,10 @@
 							mode = '';
 							createdFrom = '';
 							createdTo = '';
-						}}>Clear filters</Button
+						}}
 					>
+						Clear filters
+					</Button>
 				</div>
 			</div>
 		</section>
@@ -202,9 +214,9 @@
 		{:else}
 			<div class="lm-bordered hp-table">
 				<div class="hp-cols hp-cols--head" aria-hidden="true">
-					<span>Date &amp; time</span><span>Operation</span><span>Profile &amp; scope</span><span
-						>Result</span
-					><span>Changes</span><span></span>
+					<span>Date &amp; time</span><span>Operation</span><span>Profile &amp; scope</span><span>
+						Result
+					</span><span>Changes</span><span></span>
 				</div>
 				{#each historyItems as item (item.operation.id)}
 					<a
@@ -215,50 +227,56 @@
 							item.operation.terminal_code ?? null
 						)}
 					>
-						<span class="hp-when"
-							><span>Started {formatDate(item.operation.created_at)}</span><small
-								>{latestTimestampLabel(item.operation.state)}
-								{formatDate(item.operation.updated_at)}</small
-							></span
-						>
-						<span class="hp-mode"
-							>{item.activation_preview
-								? 'Activation dry run'
-								: titleManagementValue(item.mode)}</span
-						>
-						<span class="min-w-0"
-							><strong>{item.profile_name}</strong><small
-								>{titleManagementValue(item.origin)} · {scopeLabel(
+						<span class="hp-when">
+							<span>Started {formatDate(item.operation.created_at)}</span><small>
+								{latestTimestampLabel(item.operation.state)}
+								{formatDate(item.operation.updated_at)}
+							</small>
+						</span>
+						<span class="hp-mode">
+							{item.activation_preview ? 'Activation dry run' : titleManagementValue(item.mode)}
+						</span>
+						<span class="min-w-0">
+							<strong>{item.profile_name}</strong><small>
+								{titleManagementValue(item.origin)} · {scopeLabel(
 									isRecord(item.selection) ? item.selection : {},
 									item.target_root_id ?? null
-								)}</small
-							></span
-						>
-						<span class="flex flex-wrap items-center gap-1"
-							><StatusChip tone={stateTone(item.operation.state)}
-								>{titleManagementValue(item.operation.state)}</StatusChip
-							>{#if item.operation.state === 'ready' && item.expires_at}
-								<span class="hp-expires">Expires {formatDate(item.expires_at)}</span>{/if}</span
-						>
-						<span class="flex flex-wrap gap-1"
-							>{#if item.operation.state === 'ready'}
-								{#if (item.eligible_count ?? 0) > 0}<span class="badge badge-success badge-sm"
-										>{item.eligible_count} eligible</span
-									>{/if}{#if (item.warning_count ?? 0) > 0}<span
-										class="badge badge-warning badge-sm">{item.warning_count} warning</span
-									>{/if}{#if (item.blocked_count ?? 0) > 0}<span class="badge badge-error badge-sm"
-										>{item.blocked_count} blocked</span
-									>{/if}
+								)}
+							</small>
+						</span>
+						<span class="flex flex-wrap items-center gap-1">
+							<StatusChip tone={stateTone(item.operation.state)}>
+								{titleManagementValue(item.operation.state)}
+							</StatusChip>{#if item.operation.state === 'ready' && item.expires_at}
+								<span class="hp-expires">Expires {formatDate(item.expires_at)}</span>{/if}
+						</span>
+						<span class="flex flex-wrap gap-1">
+							{#if item.operation.state === 'ready'}
+								{#if (item.eligible_count ?? 0) > 0}<span class="badge badge-success badge-sm">
+										{item.eligible_count} eligible
+									</span>{/if}{#if (item.warning_count ?? 0) > 0}<span
+										class="badge badge-warning badge-sm"
+									>
+										{item.warning_count} warning
+									</span>{/if}{#if (item.blocked_count ?? 0) > 0}<span
+										class="badge badge-error badge-sm"
+									>
+										{item.blocked_count} blocked
+									</span>{/if}
 							{:else}
-								{#if item.operation.succeeded_count}<span class="badge badge-success badge-sm"
-										>{item.operation.succeeded_count} succeeded</span
-									>{/if}{#if item.operation.failed_count}<span class="badge badge-error badge-sm"
-										>{item.operation.failed_count} failed</span
-									>{/if}{#if item.operation.skipped_count}<span class="badge badge-warning badge-sm"
-										>{item.operation.skipped_count} skipped</span
-									>{/if}
-							{/if}</span
-						>
+								{#if item.operation.succeeded_count}<span class="badge badge-success badge-sm">
+										{item.operation.succeeded_count} succeeded
+									</span>{/if}{#if item.operation.failed_count}<span
+										class="badge badge-error badge-sm"
+									>
+										{item.operation.failed_count} failed
+									</span>{/if}{#if item.operation.skipped_count}<span
+										class="badge badge-warning badge-sm"
+									>
+										{item.operation.skipped_count} skipped
+									</span>{/if}
+							{/if}
+						</span>
 						<ChevronRight class="hp-go size-5" aria-hidden="true" />
 					</a>
 				{/each}
@@ -267,8 +285,10 @@
 					variant="outline"
 					class="w-full"
 					loading={historyQuery.isFetchingNextPage}
-					onclick={() => void historyQuery.fetchNextPage()}>Load older history</Button
-				>{/if}
+					onclick={() => void historyQuery.fetchNextPage()}
+				>
+					Load older history
+				</Button>{/if}
 		{/if}
 	</main>
 </div>

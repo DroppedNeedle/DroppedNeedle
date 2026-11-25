@@ -77,8 +77,9 @@
 			)}<span
 				class="management-activation-step"
 				data-state={index < wizard.index ? 'done' : index === wizard.index ? 'current' : 'waiting'}
-				>{#if index < wizard.index}<Check class="h-3.5 w-3.5" />{/if}{root?.label ?? rootId}</span
-			>{/each}
+			>
+				{#if index < wizard.index}<Check class="h-3.5 w-3.5" />{/if}{root?.label ?? rootId}
+			</span>{/each}
 	</div>
 	{#if currentRoot}
 		{@const activationProfile = wizard.profileFor(currentRoot.id)}
@@ -93,8 +94,10 @@
 					<strong>{activationProfile.name}</strong>
 					<div class="mt-2 flex flex-wrap gap-1.5">
 						{#each profileAspects(activationProfile) as aspect (aspect)}<span
-								class="management-aspect">{aspect}</span
-							>{/each}
+								class="management-aspect"
+							>
+								{aspect}
+							</span>{/each}
 					</div>
 					<p class="mt-2 text-muted">
 						Organization remains inside this root. Only files with an accepted MusicBrainz release
@@ -109,54 +112,60 @@
 					class="mt-4 self-start"
 					icon={RefreshCw}
 					loading={wizard.starting}
-					onclick={() => void wizard.run()}>Run dry run</Button
+					onclick={() => void wizard.run()}
 				>
+					Run dry run
+				</Button>
 			{:else if wizard.preview.isLoading}
 				<div class="mt-4 skeleton h-20 rounded-xl"></div>
 			{:else if wizard.preview.isError}
 				<div class="alert alert-error mt-4 items-start text-sm" role="alert">
-					<ShieldAlert class="mt-0.5 h-5 w-5" /><span
-						><strong>Could not load this dry run.</strong><br />Retry the status request or run a
-						fresh dry run before enabling anything.</span
-					>
+					<ShieldAlert class="mt-0.5 h-5 w-5" /><span>
+						<strong>Could not load this dry run.</strong><br />Retry the status request or run a
+						fresh dry run before enabling anything.
+					</span>
 				</div>
 				<div class="mt-3 flex flex-wrap gap-1">
 					<Button
 						variant="outline"
 						size="sm"
 						disabled={wizard.preview.isFetching}
-						onclick={() => void wizard.preview.refetch()}>Retry status</Button
+						onclick={() => void wizard.preview.refetch()}
 					>
+						Retry status
+					</Button>
 					<Button
 						variant="ghost"
 						size="sm"
 						disabled={wizard.pending}
-						onclick={() => wizard.discard()}>Start a fresh dry run</Button
+						onclick={() => wizard.discard()}
 					>
+						Start a fresh dry run
+					</Button>
 				</div>
 			{:else if preview}
 				{#if !wizard.ready && (preview.summary.item_count ?? 0) > 0}<div
 						class="mt-4 flex flex-wrap items-baseline justify-between gap-x-5 gap-y-1 rounded-lg border border-library-manage/20 bg-library-manage/5 px-3.5 py-3"
 						aria-live="polite"
 					>
-						<span class="text-xs font-semibold uppercase tracking-[0.16em] text-muted"
-							>Planning progress</span
-						>
-						<span class="font-semibold text-base-content/80"
-							>{(preview.summary.item_count ?? 0).toLocaleString()} files</span
-						>
-						<span class="text-sm text-muted"
-							>{(preview.summary.bundle_count ?? 0).toLocaleString()} release bundles</span
-						>
+						<span class="text-xs font-semibold uppercase tracking-[0.16em] text-muted">
+							Planning progress
+						</span>
+						<span class="font-semibold text-base-content/80">
+							{(preview.summary.item_count ?? 0).toLocaleString()} files
+						</span>
+						<span class="text-sm text-muted">
+							{(preview.summary.bundle_count ?? 0).toLocaleString()} release bundles
+						</span>
 					</div>{:else if !wizard.ready}<div
 						class="mt-4 flex items-center gap-3 rounded-lg border border-library-manage/20 bg-library-manage/5 px-3.5 py-3 text-sm text-muted"
 						aria-live="polite"
 					>
 						<span class="loading loading-spinner loading-sm text-library-manage" aria-hidden="true"
-						></span><span
-							><strong class="block text-base-content/80">Discovering the root</strong>File and
-							release totals appear after the first planning checkpoint.</span
-						>
+						></span><span>
+							<strong class="block text-base-content/80">Discovering the root</strong>File and
+							release totals appear after the first planning checkpoint.
+						</span>
 					</div>{/if}
 				{#if wizard.ready}<div class="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
 						<div class="management-mini-stat">
@@ -184,9 +193,9 @@
 							<span>No change</span><strong>{preview.summary.no_change_count ?? 0}</strong>
 						</div>
 						<div class="management-mini-stat col-span-2 sm:col-span-1">
-							<span>Already organized</span><strong
-								>{managementQuantity(preview.summary.organized_album_count ?? 0, 'album')}</strong
-							>
+							<span>Already organized</span><strong>
+								{managementQuantity(preview.summary.organized_album_count ?? 0, 'album')}
+							</strong>
 						</div>
 					</div>{/if}
 				<Button
@@ -197,8 +206,10 @@
 						`/library/management/previews/${encodeURIComponent(wizard.jobId ?? '')}`
 					)}
 					target="_blank"
-					rel="noopener noreferrer">Review file-by-file dry run</Button
+					rel="noopener noreferrer"
 				>
+					Review file-by-file dry run
+				</Button>
 				{#if preview.stale || preview.expired}<div class="alert alert-error mt-3 text-sm">
 						This dry run is stale or expired. Run it again before enabling anything.
 					</div>
@@ -206,8 +217,10 @@
 						variant="outline"
 						size="sm"
 						class="mt-3 self-start"
-						onclick={() => wizard.discard()}>Run a fresh dry run</Button
+						onclick={() => wizard.discard()}
 					>
+						Run a fresh dry run
+					</Button>
 				{:else if ['failed', 'stopped', 'cancelled'].includes(preview.state)}<div
 						class="alert alert-error mt-3 text-sm"
 						role="alert"
@@ -220,40 +233,42 @@
 						variant="outline"
 						size="sm"
 						class="mt-3 self-start"
-						onclick={() => wizard.discard()}>Run a fresh dry run</Button
+						onclick={() => wizard.discard()}
 					>
+						Run a fresh dry run
+					</Button>
 				{:else if preview.control_request === 'stop'}<div
 						class="mt-3 flex items-center gap-3 rounded-lg border border-warning/20 bg-warning/5 px-3 py-2.5 text-sm text-muted"
 						role="status"
 						aria-live="polite"
 					>
 						<span class="loading loading-spinner loading-sm text-warning" aria-hidden="true"
-						></span><span
-							><strong class="block text-base-content/80">Stopping this dry run</strong>The planner
-							will stop at its next safe checkpoint. No music files are involved.</span
-						>
+						></span><span>
+							<strong class="block text-base-content/80">Stopping this dry run</strong>The planner
+							will stop at its next safe checkpoint. No music files are involved.
+						</span>
 					</div>
 				{:else if wizard.stalled}<div
 						class="alert alert-error mt-3 items-start text-sm"
 						role="alert"
 					>
-						<ShieldAlert class="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" /><span
-							><strong class="block">Planning stopped responding</strong>The last saved checkpoint
+						<ShieldAlert class="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" /><span>
+							<strong class="block">Planning stopped responding</strong>The last saved checkpoint
 							contains {(preview.summary.item_count ?? 0).toLocaleString()}
 							files. No music files changed. Stop this dry run, then start a fresh one; planning resumes
-							from a new operation.</span
-						>
+							from a new operation.
+						</span>
 					</div>
 				{:else if preview.state === 'queued'}<div
 						class="mt-3 flex items-center gap-3 rounded-lg border border-base-content/10 bg-base-200/45 px-3 py-2.5 text-sm text-muted"
 						role="status"
 						aria-live="polite"
 					>
-						<Clock3 class="h-5 w-5 shrink-0 text-library-manage" aria-hidden="true" /><span
-							><strong class="block text-base-content/75">Queued for planning</strong>It starts
+						<Clock3 class="h-5 w-5 shrink-0 text-library-manage" aria-hidden="true" /><span>
+							<strong class="block text-base-content/75">Queued for planning</strong>It starts
 							automatically when the current library operation finishes. You can safely close this
-							dialog.</span
-						>
+							dialog.
+						</span>
 					</div>
 				{:else if !wizard.ready}<div
 						class="mt-3 flex items-center gap-3 rounded-lg border border-base-content/10 bg-base-200/45 px-3 py-2.5 text-sm text-muted"
@@ -261,10 +276,10 @@
 						aria-live="polite"
 					>
 						<span class="loading loading-spinner loading-sm text-library-manage" aria-hidden="true"
-						></span><span
-							><strong class="block text-base-content/75">Planning this dry run</strong>This updates
-							automatically. You can safely close the dialog while it continues.</span
-						>
+						></span><span>
+							<strong class="block text-base-content/75">Planning this dry run</strong>This updates
+							automatically. You can safely close the dialog while it continues.
+						</span>
 					</div>{/if}
 				<Button
 					variant="warning"
@@ -274,25 +289,27 @@
 					iconPosition="end"
 					loading={wizard.accepting}
 					disabled={!wizard.ready || wizard.pending}
-					onclick={() => void wizard.accept()}>Use this dry run</Button
+					onclick={() => void wizard.accept()}
 				>
+					Use this dry run
+				</Button>
 			{/if}
 		</Card>
 	{:else}
 		<section class="mt-5 space-y-3">
 			<div class="alert alert-warning items-start">
-				<ShieldAlert class="mt-0.5 h-5 w-5" /><span
-					>Automatic management will write tags and may move files according to the previewed
-					profiles. Closing this dialog leaves the saved configuration unchanged.</span
-				>
+				<ShieldAlert class="mt-0.5 h-5 w-5" /><span>
+					Automatic management will write tags and may move files according to the previewed
+					profiles. Closing this dialog leaves the saved configuration unchanged.
+				</span>
 			</div>
-			<label class="grid gap-1.5 text-sm"
-				><span>Type <strong>{LIBRARY_MANAGEMENT_CONFIRMATION_PHRASE}</strong></span><Input
+			<label class="grid gap-1.5 text-sm">
+				<span>Type <strong>{LIBRARY_MANAGEMENT_CONFIRMATION_PHRASE}</strong></span><Input
 					label={`Type ${LIBRARY_MANAGEMENT_CONFIRMATION_PHRASE}`}
 					bind:value={wizard.phrase}
 					autocomplete="off"
-				/></label
-			>
+				/>
+			</label>
 		</section>
 	{/if}
 	{#if wizard.error}<div class="alert alert-error mt-4 text-sm" role="alert">
@@ -305,18 +322,23 @@
 				icon={Square}
 				loading={wizard.stopping}
 				disabled={wizard.pending}
-				onclick={() => void wizard.stopRun()}>Stop dry run</Button
+				onclick={() => void wizard.stopRun()}
 			>
+				Stop dry run
+			</Button>
 		{/if}
-		<Button variant="ghost" onclick={() => void close()} disabled={wizard.pending}>Close</Button
-		>{#if !currentRoot}<Button
+		<Button variant="ghost" onclick={() => void close()} disabled={wizard.pending}>
+			Close
+		</Button>{#if !currentRoot}<Button
 				variant="warning"
 				loading={wizard.confirming}
 				disabled={wizard.phrase !== LIBRARY_MANAGEMENT_CONFIRMATION_PHRASE ||
 					wizard.pending ||
 					!wizard.coversDraft}
-				onclick={() => void enable()}>Enable file organization</Button
-			>{/if}
+				onclick={() => void enable()}
+			>
+				Enable file organization
+			</Button>{/if}
 	{/snippet}
 </Modal>
 

@@ -118,8 +118,9 @@
 						{#if facts.length > 0}
 							<p>
 								{#each facts as fact, index (index)}
-									{#if index > 0}<span class="dn-artist-hero__slash" aria-hidden="true">/</span
-										>{/if}<span>{fact}</span>
+									{#if index > 0}<span class="dn-artist-hero__slash" aria-hidden="true">
+											/
+										</span>{/if}<span>{fact}</span>
 								{/each}
 							</p>
 						{/if}
@@ -140,13 +141,13 @@
 
 	{#if credit && creditFileLink}
 		<p class="dn-artist-hero__credit">
-			<a href={creditFileLink} target="_blank" rel="noopener noreferrer"
-				>Photo: {credit.author ?? 'Wikimedia Commons'}</a
-			>{#if credit.licence},
+			<a href={creditFileLink} target="_blank" rel="noopener noreferrer">
+				Photo: {credit.author ?? 'Wikimedia Commons'}
+			</a>{#if credit.licence},
 				{#if creditLicenceLink}
-					<a href={creditLicenceLink} target="_blank" rel="noopener noreferrer license"
-						>{credit.licence}</a
-					>
+					<a href={creditLicenceLink} target="_blank" rel="noopener noreferrer license">
+						{credit.licence}
+					</a>
 				{:else}
 					{credit.licence}
 				{/if}

@@ -99,9 +99,9 @@
 								<LoaderCircle class="size-3 animate-spin motion-keep" aria-hidden="true" /> Working…
 							</StatusChip>
 						{:else if job.status === 'failed'}
-							<span title={job.error ?? undefined}
-								><StatusChip tone="error">Failed</StatusChip></span
-							>
+							<span title={job.error ?? undefined}>
+								<StatusChip tone="error">Failed</StatusChip>
+							</span>
 						{/if}
 					</div>
 

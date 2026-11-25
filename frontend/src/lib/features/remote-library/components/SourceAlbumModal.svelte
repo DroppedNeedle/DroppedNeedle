@@ -400,17 +400,19 @@
 					<Play class="size-4 fill-current" aria-hidden="true" />
 					Play All
 				</Button>
-				<Button variant="ghost" size="sm" icon={Shuffle} onclick={() => playAll(true)}
-					>Shuffle</Button
-				>
+				<Button variant="ghost" size="sm" icon={Shuffle} onclick={() => playAll(true)}>
+					Shuffle
+				</Button>
 				{#if sourceType === 'jellyfin'}
 					<Button
 						variant="outline"
 						size="sm"
 						icon={Radio}
 						loading={mixLoading}
-						onclick={launchInstantMix}>Instant Mix</Button
+						onclick={launchInstantMix}
 					>
+						Instant Mix
+					</Button>
 				{/if}
 				{#if sourceType === 'navidrome'}
 					<Button
@@ -418,8 +420,10 @@
 						size="sm"
 						icon={Info}
 						disabled={infoLoading}
-						onclick={openAlbumInfo}>Info</Button
+						onclick={openAlbumInfo}
 					>
+						Info
+					</Button>
 				{/if}
 				<ContextMenu items={getBulkMenuItems()} position="end" size="sm" />
 			</div>
@@ -464,13 +468,13 @@
 										{trackNum}
 									{/if}
 								</span>
-								<span class="text-sm truncate flex-1 {playing ? 'text-accent' : ''}"
-									>{getTrackName(i)}</span
-								>
+								<span class="text-sm truncate flex-1 {playing ? 'text-accent' : ''}">
+									{getTrackName(i)}
+								</span>
 								{#if remoteTracks[i]?.duration_secs}
-									<span class="text-xs opacity-40 shrink-0"
-										>{formatDuration(remoteTracks[i].duration_secs)}</span
-									>
+									<span class="text-xs opacity-40 shrink-0">
+										{formatDuration(remoteTracks[i].duration_secs)}
+									</span>
 								{/if}
 								<span class={playing ? 'text-accent' : ''}>
 									<Play

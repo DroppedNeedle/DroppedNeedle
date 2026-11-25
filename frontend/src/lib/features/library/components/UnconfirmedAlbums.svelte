@@ -190,8 +190,10 @@
 								<a
 									data-row-focus
 									class="block truncate font-medium hover:underline"
-									href={withBasePath(`/album/${encodeURIComponent(item.album_id)}`)}>{item.title}</a
+									href={withBasePath(`/album/${encodeURIComponent(item.album_id)}`)}
 								>
+									{item.title}
+								</a>
 								<p class="truncate text-xs text-muted">
 									{[item.artist_name, count(item.file_count, 'file', 'files')]
 										.filter(Boolean)
@@ -255,25 +257,29 @@
 									size="sm"
 									disabled={busy}
 									aria-label={`That's right: ${item.title} is ${guess?.title ?? 'this edition'}`}
-									onclick={() => void thatsRight(item)}>That's right</Button
+									onclick={() => void thatsRight(item)}
 								>
+									That's right
+								</Button>
 							{/if}
 							{#if authStore.isTrusted && view === 'looks_wrong'}
 								<Button
 									variant="ghost"
 									size="sm"
 									disabled={busy}
-									onclick={() => void looksFine(item)}>Looks fine</Button
+									onclick={() => void looksFine(item)}
 								>
+									Looks fine
+								</Button>
 							{/if}
 							{#if authStore.isTrusted}
-								<Button variant="ghost" size="sm" href={compareHref(item)}
-									>{needsMatching(item)
+								<Button variant="ghost" size="sm" href={compareHref(item)}>
+									{needsMatching(item)
 										? MATCH_FILES
 										: item.state === 'unmatched'
 											? 'Pick an edition'
-											: 'Compare'}</Button
-								>
+											: 'Compare'}
+								</Button>
 							{/if}
 						</div>
 					</li>
@@ -285,8 +291,10 @@
 					<Button
 						size="sm"
 						loading={query.isFetchingNextPage}
-						onclick={() => void query.fetchNextPage()}>Load more</Button
+						onclick={() => void query.fetchNextPage()}
 					>
+						Load more
+					</Button>
 				</div>
 			{/if}
 		{/snippet}

@@ -97,8 +97,10 @@
 			size="sm"
 			icon={Copy}
 			disabled={!selectedScript}
-			onclick={() => addScript(true)}>Duplicate</Button
+			onclick={() => addScript(true)}
 		>
+			Duplicate
+		</Button>
 	</div>
 
 	{#if selectedScript}
@@ -111,8 +113,9 @@
 					</span>
 				</div>
 				<div class="flex items-center gap-1">
-					{#if kind === 'naming'}<span class="badge badge-ghost badge-sm">{namingAssignment}</span
-						>{/if}
+					{#if kind === 'naming'}<span class="badge badge-ghost badge-sm">
+							{namingAssignment}
+						</span>{/if}
 					{#if kind === 'tagging'}
 						<Button variant="ghost" size="xs" onclick={toggleAttached} aria-pressed={attached}>
 							{attached ? 'Attached' : 'Attach'}

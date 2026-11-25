@@ -83,8 +83,10 @@
 		<p class="search-song__meta">
 			{#if song.artist}{song.artist}<span class="mx-1.5" aria-hidden="true">·</span>{/if}<a
 				href={localAlbumHref(song.track.album_id)}
-				class="search-song__album">{song.track.album_title}</a
+				class="search-song__album"
 			>
+				{song.track.album_title}
+			</a>
 		</p>
 	</div>
 

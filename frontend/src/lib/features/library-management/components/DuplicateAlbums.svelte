@@ -146,8 +146,10 @@
 				<Button
 					variant="ghost"
 					loading={duplicates.isFetchingNextPage}
-					onclick={() => duplicates.fetchNextPage()}>Show more</Button
+					onclick={() => duplicates.fetchNextPage()}
 				>
+					Show more
+				</Button>
 			</div>
 		{/if}
 	</QueryBoundary>

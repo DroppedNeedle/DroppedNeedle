@@ -557,8 +557,10 @@
 								href="https://www.last.fm/api/account/create"
 								target="_blank"
 								rel="noopener noreferrer"
-								class="link">Last.fm API account</a
-							>, then connect.
+								class="link"
+							>
+								Last.fm API account
+							</a>, then connect.
 						</p>
 						<Input
 							label="Last.fm API key"

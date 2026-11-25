@@ -537,9 +537,9 @@
 	});
 </script>
 
-<svelte:head
-	><title>{artist?.name ?? localArtist?.name ?? 'Artist'} - DroppedNeedle</title></svelte:head
->
+<svelte:head>
+	<title>{artist?.name ?? localArtist?.name ?? 'Artist'} - DroppedNeedle</title>
+</svelte:head>
 
 {#snippet back()}
 	<BackButton />
@@ -558,10 +558,10 @@
 	{:else if providerUnavailable && localArtist}
 		<div class="dn-artist-page pb-0">
 			<div class="alert alert-info text-sm">
-				<span
-					>MusicBrainz is unreachable right now, so this page is built from your local files. Some
-					extras are hidden until it returns.</span
-				>
+				<span>
+					MusicBrainz is unreachable right now, so this page is built from your local files. Some
+					extras are hidden until it returns.
+				</span>
 			</div>
 		</div>
 		<LocalArtistPage artistId={localArtist.id} />
@@ -615,16 +615,19 @@
 						class="min-w-28 [&_svg]:fill-current"
 						loading={allPlayback.loading}
 						aria-label="Play all tracks from {artist.name}"
-						onclick={() => allPlayback.play()}>Play</Button
+						onclick={() => allPlayback.play()}
 					>
+						Play
+					</Button>
 					<Button
 						variant="outline"
 						icon={Shuffle}
 						disabled={allPlayback.loading}
 						aria-label="Shuffle all tracks from {artist.name}"
 						onclick={() => allPlayback.shuffle()}
-						><span class="max-sm:sr-only">Shuffle</span></Button
 					>
+						<span class="max-sm:sr-only">Shuffle</span>
+					</Button>
 				{/if}
 				<div class="dn-artist-follow">
 					<FollowControl artistMbid={artist.musicbrainz_id} artistName={artist.name} size="md" />
@@ -740,12 +743,14 @@
 							class="alert alert-warning alert-soft mb-4 flex items-center gap-2 text-sm"
 						>
 							<CircleAlert class="h-4 w-4 shrink-0" />
-							<span
-								>{sourceNoticeParts[0]}{#if sourceNoticeParts.length > 1}<a
+							<span>
+								{sourceNoticeParts[0]}{#if sourceNoticeParts.length > 1}<a
 										class="link font-semibold"
-										href={withBasePath('/profile#scrobbling')}>{SCROBBLING_PLACE}</a
-									>{sourceNoticeParts[1]}{/if}</span
-							>
+										href={withBasePath('/profile#scrobbling')}
+									>
+										{SCROBBLING_PLACE}
+									</a>{sourceNoticeParts[1]}{/if}
+							</span>
 						</div>
 					{/if}
 

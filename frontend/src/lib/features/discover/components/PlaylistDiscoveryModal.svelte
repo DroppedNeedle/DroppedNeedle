@@ -385,13 +385,15 @@
 												<ol class="max-h-56 divide-y divide-line overflow-y-auto">
 													{#each expandedTracks as track (track.position)}
 														<li class="flex items-center gap-3 px-3 py-1.5 text-sm">
-															<span class="w-6 text-right font-mono text-xs text-muted tabular-nums"
-																>{track.position}</span
+															<span
+																class="w-6 text-right font-mono text-xs text-muted tabular-nums"
 															>
+																{track.position}
+															</span>
 															<span class="min-w-0 flex-1 truncate">{track.title}</span>
-															<span class="font-mono text-xs text-muted tabular-nums"
-																>{formatDuration(track.length)}</span
-															>
+															<span class="font-mono text-xs text-muted tabular-nums">
+																{formatDuration(track.length)}
+															</span>
 															<SampleButton
 																sampleKey={`track:${album.artist_name ?? ''}|${track.title}`}
 																artist={album.artist_name ?? ''}

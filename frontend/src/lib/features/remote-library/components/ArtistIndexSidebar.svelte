@@ -54,8 +54,10 @@
 				class="az__letter"
 				class:az__letter--on={activeLetter === letter}
 				onclick={() => scrollToLetter(letter)}
-				aria-label="Jump to {letter}">{letter}</button
+				aria-label="Jump to {letter}"
 			>
+				{letter}
+			</button>
 		{/each}
 	</nav>
 

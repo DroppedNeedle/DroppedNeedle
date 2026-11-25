@@ -136,9 +136,10 @@
 			<p class="dl-pulse">
 				{#each pulse as p, i (p.label)}
 					{#if i > 0}<span class="dl-pulse__dot" aria-hidden="true">·</span>{/if}
-					<span class="dl-pulse__part" data-tone={p.tone}
-						><span class="dl-pulse__n">{p.n}</span> {p.label}</span
-					>
+					<span class="dl-pulse__part" data-tone={p.tone}>
+						<span class="dl-pulse__n">{p.n}</span>
+						{p.label}
+					</span>
 				{/each}
 			</p>
 		{/if}

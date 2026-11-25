@@ -378,8 +378,10 @@
 							size="sm"
 							onclick={() => {
 								confirmingDelete = false;
-							}}>Cancel</Button
+							}}
 						>
+							Cancel
+						</Button>
 					{:else}
 						<IconButton
 							variant="danger-ghost"
@@ -404,9 +406,9 @@
 				<div class="text-center py-10">
 					<div class="alert alert-error max-w-sm mx-auto">
 						<span class="text-sm">Couldn't load the track list</span>
-						<Button variant="ghost" size="sm" onclick={() => void trackLinksQuery.refetch()}
-							>Retry</Button
-						>
+						<Button variant="ghost" size="sm" onclick={() => void trackLinksQuery.refetch()}>
+							Retry
+						</Button>
 					</div>
 				</div>
 			{:else if tracks.length > 0}
@@ -451,9 +453,9 @@
 											{track.track_number}
 										{/if}
 									</span>
-									<span class="text-sm truncate flex-1 {isCurrentlyPlaying ? 'text-accent' : ''}"
-										>{track.track_name}</span
-									>
+									<span class="text-sm truncate flex-1 {isCurrentlyPlaying ? 'text-accent' : ''}">
+										{track.track_name}
+									</span>
 									<Play
 										class="h-4 w-4 shrink-0 transition-opacity {isCurrentlyPlaying
 											? 'opacity-100'

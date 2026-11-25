@@ -161,15 +161,19 @@
 							variant={draft[row.key].source === 'local' ? 'primary' : 'outline'}
 							disabled={!canMutate}
 							aria-pressed={draft[row.key].source === 'local'}
-							onclick={() => onuse(row.key, row.local, 'local')}>Use local</Button
+							onclick={() => onuse(row.key, row.local, 'local')}
 						>
+							Use local
+						</Button>
 						<Button
 							size="sm"
 							variant={draft[row.key].source === 'discogs' ? 'primary' : 'outline'}
 							disabled={!canMutate || row.discogs === null}
 							aria-pressed={draft[row.key].source === 'discogs'}
-							onclick={() => onuse(row.key, row.discogs, 'discogs')}>Use Discogs</Button
+							onclick={() => onuse(row.key, row.discogs, 'discogs')}
 						>
+							Use Discogs
+						</Button>
 					</div>
 				</fieldset>
 			{/each}
@@ -202,8 +206,10 @@
 								onclick={() => {
 									onusemedium(medium.position, 'title', localMedium?.title ?? null, 'local');
 									onusemedium(medium.position, 'format', null, 'local');
-								}}>Use local</Button
+								}}
 							>
+								Use local
+							</Button>
 							<Button
 								size="xs"
 								variant={medium.title.source === 'discogs' || medium.format.source === 'discogs'
@@ -213,8 +219,10 @@
 								onclick={() => {
 									onusemedium(medium.position, 'title', providerMedium?.title ?? null, 'discogs');
 									onusemedium(medium.position, 'format', providerMedium?.format ?? null, 'discogs');
-								}}>Use Discogs</Button
+								}}
 							>
+								Use Discogs
+							</Button>
 						</div>
 					</Card>
 				{/each}
@@ -246,9 +254,10 @@
 						release.artist_name}
 					<li class="rounded-box bg-base-100/45 px-3 py-3 text-sm">
 						<div class="flex items-start justify-between gap-3">
-							<span class="min-w-0 font-semibold"
-								>{localTrack?.disc_number}.{localTrack?.track_number} {localTrack?.title}</span
-							>
+							<span class="min-w-0 font-semibold">
+								{localTrack?.disc_number}.{localTrack?.track_number}
+								{localTrack?.title}
+							</span>
 							<span
 								class="badge badge-sm gap-1 {alignment.classification === 'exact'
 									? 'badge-success'
@@ -287,8 +296,10 @@
 											localTrack.title,
 											localTrack.artist_name,
 											'local'
-										)}>Use local</Button
+										)}
 								>
+									Use local
+								</Button>
 								<Button
 									size="xs"
 									variant={trackDraft.title.source === 'discogs' ? 'primary' : 'outline'}
@@ -299,8 +310,10 @@
 											providerTrack?.title ?? null,
 											providerArtist,
 											'discogs'
-										)}>Use Discogs</Button
+										)}
 								>
+									Use Discogs
+								</Button>
 							</div>
 						{/if}
 					</li>

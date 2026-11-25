@@ -47,9 +47,9 @@
 		</h2>
 	{:else}
 		<h2 class="dl-head__title min-w-0">
-			<span
-				>{title}{#if aside}{` · ${aside}`}{/if}</span
-			>
+			<span>
+				{title}{#if aside}{` · ${aside}`}{/if}
+			</span>
 			{@render countChip()}
 		</h2>
 	{/if}

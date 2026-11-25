@@ -177,9 +177,9 @@
 					aria-label={`${expanded ? 'Hide' : 'Show'} ${additional.length} other ${additional.length === 1 ? 'task' : 'tasks'}`}
 					onclick={() => (expanded = !expanded)}
 				>
-					<span class="max-sm:hidden"
-						>+{additional.length} other {additional.length === 1 ? 'task' : 'tasks'}</span
-					>
+					<span class="max-sm:hidden">
+						+{additional.length} other {additional.length === 1 ? 'task' : 'tasks'}
+					</span>
 					<ChevronDown
 						class={`h-4 w-4 transition-transform motion-reduce:transition-none${expanded ? ' rotate-180' : ''}`}
 					/>

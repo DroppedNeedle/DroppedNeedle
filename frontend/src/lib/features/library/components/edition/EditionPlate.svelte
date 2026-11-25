@@ -266,8 +266,9 @@
 				<a
 					class="link link-warning text-sm"
 					href={withBasePath(`/library/review?review=${encodeURIComponent(reviewId)}`)}
-					>Needs you: open its review</a
 				>
+					Needs you: open its review
+				</a>
 			{/if}
 			{#if !canEdit && status}
 				<Button
@@ -277,8 +278,9 @@
 					aria-pressed={status.looks_wrong}
 					loading={markWrong.isPending}
 					onclick={() => void toggleLooksWrong()}
-					>{status.looks_wrong ? 'Marked as wrong' : 'Looks wrong'}</Button
 				>
+					{status.looks_wrong ? 'Marked as wrong' : 'Looks wrong'}
+				</Button>
 			{/if}
 		</div>
 	{/if}
@@ -340,9 +342,9 @@
 			{/if}
 		</span>
 		<span class="block text-xs text-muted">
-			{copyLines.line2}{#each copyLines.warnings as warning (warning)}<span class="text-warning"
-					>{` · ${warning}`}</span
-				>{/each}
+			{copyLines.line2}{#each copyLines.warnings as warning (warning)}<span class="text-warning">
+					{` · ${warning}`}
+				</span>{/each}
 		</span>
 		{#if status?.keeps_own_tags}
 			<span class="block text-xs text-muted">Folder keeps its own tags</span>

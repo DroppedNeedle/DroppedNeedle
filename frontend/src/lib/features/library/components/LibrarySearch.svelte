@@ -298,9 +298,9 @@
 				</div>
 			{:else}
 				<div class="px-4 py-6 text-center text-sm text-muted">
-					No matches in your library for "<span class="font-medium text-base-content/80"
-						>{debounced}</span
-					>".
+					No matches in your library for "<span class="font-medium text-base-content/80">
+						{debounced}
+					</span>".
 				</div>
 			{/if}
 

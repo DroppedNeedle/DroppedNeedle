@@ -241,10 +241,10 @@
 
 	{#if settingsQuery.isError && settingsQuery.data}
 		<div class="alert alert-warning text-sm">
-			<TriangleAlert class="h-4 w-4" /><span
-				>Could not refresh library settings. You are seeing the last loaded values; saving still
-				checks for conflicting changes.</span
-			>
+			<TriangleAlert class="h-4 w-4" /><span>
+				Could not refresh library settings. You are seeing the last loaded values; saving still
+				checks for conflicting changes.
+			</span>
 		</div>
 	{/if}
 	<header class="library-scanning-header">
@@ -260,10 +260,10 @@
 
 	{#if section.draft && !section.draft.acoustid_api_key}
 		<div class="alert alert-warning">
-			<TriangleAlert class="h-5 w-5" /><span class="text-sm"
-				>No AcoustID key - fingerprint identification is off for files without MusicBrainz tags. Add
-				a key to enable it.</span
-			>
+			<TriangleAlert class="h-5 w-5" /><span class="text-sm">
+				No AcoustID key - fingerprint identification is off for files without MusicBrainz tags. Add
+				a key to enable it.
+			</span>
 		</div>
 	{/if}
 
@@ -281,8 +281,10 @@
 				variant="warning"
 				size="sm"
 				loading={applyPreview.isPending}
-				onclick={() => void previewApply()}>Apply changes...</Button
+				onclick={() => void previewApply()}
 			>
+				Apply changes...
+			</Button>
 		</div>
 	{/if}
 	{#if applyPreview.isError}
@@ -305,9 +307,9 @@
 					</p>
 				</div>
 				{#if restorableRoots.length > 0}
-					<Button variant="outline" size="sm" loading={restore.isPending} onclick={openRestore}
-						>Restore roots...</Button
-					>
+					<Button variant="outline" size="sm" loading={restore.isPending} onclick={openRestore}>
+						Restore roots...
+					</Button>
 				{/if}
 			</div>
 			<div class="mt-3 space-y-2">
@@ -317,9 +319,9 @@
 							<div class="flex flex-wrap items-center gap-2">
 								<strong class="break-all font-mono text-sm">{entry.path ?? entry.root_id}</strong>
 								{#if entry.overlapping_root_label}
-									<span class="removed-roots-tag removed-roots-tag-warn"
-										>Overlaps "{entry.overlapping_root_label}"</span
-									>
+									<span class="removed-roots-tag removed-roots-tag-warn">
+										Overlaps "{entry.overlapping_root_label}"
+									</span>
 								{:else if entry.restorable}
 									<span class="removed-roots-tag">Folder on disk</span>
 								{/if}
@@ -332,8 +334,10 @@
 									variant="warning"
 									size="sm"
 									disabled={!removedRootsRevision || dropRemovedTracks.isPending}
-									onclick={() => openDropRemoved(entry)}>Drop tracks...</Button
+									onclick={() => openDropRemoved(entry)}
 								>
+									Drop tracks...
+								</Button>
 							{/if}
 						</div>
 					</div>
@@ -427,8 +431,10 @@
 					size="sm"
 					loading={requestRun.isPending}
 					disabled={roots.length === 0 || !libraryEnabled}
-					onclick={() => void scanForChanges()}>Scan for changes</Button
+					onclick={() => void scanForChanges()}
 				>
+					Scan for changes
+				</Button>
 				{#if !libraryEnabled}<p class="text-xs text-warning">
 						The local library is disabled. Re-enable it before starting a scan.
 					</p>{/if}
@@ -454,8 +460,10 @@
 				size="sm"
 				href={withBasePath('/library/management?tab=automation')}
 				icon={ArrowRight}
-				iconPosition="end">Open Organize files settings</Button
+				iconPosition="end"
 			>
+				Open Organize files settings
+			</Button>
 		</section>
 	{/if}
 </div>
@@ -528,14 +536,14 @@
 >
 	{#if dropTarget}
 		<p class="text-sm text-muted">
-			This marks <strong class="text-base-content"
-				>{dropTarget.indexed_track_count.toLocaleString()} indexed
-				{dropTarget.indexed_track_count === 1 ? 'track' : 'tracks'}</strong
-			>
+			This marks <strong class="text-base-content">
+				{dropTarget.indexed_track_count.toLocaleString()} indexed
+				{dropTarget.indexed_track_count === 1 ? 'track' : 'tracks'}
+			</strong>
 			from the removed folder
-			<span class="break-all font-mono text-base-content"
-				>{dropTarget.path ?? dropTarget.root_id}</span
-			>
+			<span class="break-all font-mono text-base-content">
+				{dropTarget.path ?? dropTarget.root_id}
+			</span>
 			as missing in the catalog.{#if dropTarget.overlapping_root_label}
 				Your active root "{dropTarget.overlapping_root_label}" is not affected.{/if}
 		</p>

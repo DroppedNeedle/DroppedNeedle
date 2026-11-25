@@ -79,8 +79,10 @@
 							<p class="truncate text-sm font-medium">
 								{candidate.album_title}
 								{#if current && candidate.release_mbid === current}<span
-										class="badge badge-sm badge-ghost ml-1">Current</span
-									>{/if}
+										class="badge badge-sm badge-ghost ml-1"
+									>
+										Current
+									</span>{/if}
 							</p>
 							<p class="truncate text-xs text-muted">
 								{[
@@ -99,8 +101,10 @@
 								variant="primary"
 								size="xs"
 								disabled={busy}
-								onclick={() => onchoose(candidate.candidate_key)}>Use this edition</Button
+								onclick={() => onchoose(candidate.candidate_key)}
 							>
+								Use this edition
+							</Button>
 						{/if}
 					</div>
 					{#if candidate.track_evidence.length}

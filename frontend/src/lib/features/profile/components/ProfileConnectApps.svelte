@@ -154,9 +154,9 @@
 				{#if isAdmin}
 					<p>
 						Streaming isn't turned on yet. You can still create an app-password below, then
-						<a href={withBasePath('/settings?tab=connect-apps')} class="link link-accent"
-							>enable it in Settings</a
-						>.
+						<a href={withBasePath('/settings?tab=connect-apps')} class="link link-accent">
+							enable it in Settings
+						</a>.
 					</p>
 				{:else}
 					<p>

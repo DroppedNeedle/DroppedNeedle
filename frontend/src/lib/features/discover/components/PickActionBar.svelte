@@ -37,12 +37,12 @@
 	aria-label="Answer this pick"
 >
 	{#if look === 'bar'}
-		<Button variant={other} size="display" class="dn-actions__btn" disabled={off} onclick={onno}
-			>No</Button
-		>
-		<Button variant={other} size="display" class="dn-actions__btn" disabled={off} onclick={onlater}
-			>Later</Button
-		>
+		<Button variant={other} size="display" class="dn-actions__btn" disabled={off} onclick={onno}>
+			No
+		</Button>
+		<Button variant={other} size="display" class="dn-actions__btn" disabled={off} onclick={onlater}>
+			Later
+		</Button>
 	{/if}
 	<Button
 		variant="primary"

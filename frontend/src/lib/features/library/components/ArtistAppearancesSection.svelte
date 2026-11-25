@@ -98,9 +98,9 @@
 					</a>
 
 					<div class="min-w-0">
-						<a href={libraryAlbumHref(appearance.album)} class="dn-appear__album-title"
-							>{appearance.album.title}</a
-						>
+						<a href={libraryAlbumHref(appearance.album)} class="dn-appear__album-title">
+							{appearance.album.title}
+						</a>
 						<p class="mt-0.5 truncate font-mono text-xs text-muted">
 							{appearance.album.artist_name || 'Unknown album artist'}
 							{#if appearance.album.year}
@@ -123,10 +123,9 @@
 					size="sm"
 					loading={appearancesQuery.isFetchingNextPage}
 					onclick={() => void appearancesQuery.fetchNextPage()}
-					>{appearancesQuery.isFetchingNextPage
-						? 'Loading appearances'
-						: 'Load more appearances'}</Button
 				>
+					{appearancesQuery.isFetchingNextPage ? 'Loading appearances' : 'Load more appearances'}
+				</Button>
 			</footer>
 		{/if}
 	</Card>

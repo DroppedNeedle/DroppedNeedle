@@ -40,9 +40,9 @@
 	{#each items as item (item.key)}
 		<li class="dn-shelf__item" data-state={item.state}>
 			{#if item.state && item.state !== 'passed'}
-				<span class="dn-shelf__sticker" aria-hidden="true"
-					><Sticker state={item.state} size="sm" /></span
-				>
+				<span class="dn-shelf__sticker" aria-hidden="true">
+					<Sticker state={item.state} size="sm" />
+				</span>
 			{/if}
 			<span class="dn-shelf__cover">{@render cover(item)}</span>
 			<span class="dn-shelf__title">{item.title}</span>

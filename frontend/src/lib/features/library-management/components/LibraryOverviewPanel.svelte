@@ -379,8 +379,9 @@
 							icon={ArrowRight}
 							iconPosition="end"
 							href={withBasePath('/library/management?tab=scanning#scanning-controls')}
-							>View matching progress</Button
 						>
+							View matching progress
+						</Button>
 					</div>
 				{:else}
 					<div class="lm-now__row">
@@ -398,9 +399,9 @@
 			{:else}
 				<div class="space-y-4">
 					<header class="lm-now__row lm-now__row--top">
-						<span class="lm-now__mark lm-now__mark--work"
-							><LibraryWorkIcon item={primary} className="size-6" /></span
-						>
+						<span class="lm-now__mark lm-now__mark--work">
+							<LibraryWorkIcon item={primary} className="size-6" />
+						</span>
 						<div class="min-w-0 flex-1">
 							<p class="lm-mono-head flex items-center gap-1.5">
 								<Radio class="h-3.5 w-3.5" />
@@ -409,12 +410,14 @@
 							<h2 class="lm-now__title">{libraryWorkTitle(primary)}</h2>
 							<div class="lm-now__facts">
 								{#if primary.effect !== 'attention'}<span>{libraryWorkEffect(primary)}</span>{/if}
-								<span class="flex items-center gap-1"
-									><Clock3 class="h-3.5 w-3.5" /> {timing(primary)}</span
-								>
+								<span class="flex items-center gap-1">
+									<Clock3 class="h-3.5 w-3.5" />
+									{timing(primary)}
+								</span>
 								{#if libraryWorkContext(primary)}<span>{libraryWorkContext(primary)}</span>{/if}
-								{#if scanActive && isQueuedPreview(primary)}<span>{WAITING_FOR_SCAN_HINT}</span
-									>{/if}
+								{#if scanActive && isQueuedPreview(primary)}<span>
+										{WAITING_FOR_SCAN_HINT}
+									</span>{/if}
 							</div>
 						</div>
 						<Button
@@ -422,8 +425,10 @@
 							size="sm"
 							icon={ArrowRight}
 							iconPosition="end"
-							href={libraryWorkHref(primary)}>Open details</Button
+							href={libraryWorkHref(primary)}
 						>
+							Open details
+						</Button>
 					</header>
 
 					<LibraryWorkProgress item={primary} />
@@ -452,13 +457,13 @@
 							{#each additional as item (item.id)}
 								<a href={libraryWorkHref(item)} class="lm-others__row">
 									<LibraryWorkIcon {item} className="h-4 w-4 text-muted" />
-									<span class="min-w-0 flex-1"
-										><strong class="font-semibold">{libraryWorkTitle(item)}</strong>
+									<span class="min-w-0 flex-1">
+										<strong class="font-semibold">{libraryWorkTitle(item)}</strong>
 										<span class="text-muted">· {libraryWorkEffect(item)}</span>
-										{#if scanActive && isQueuedPreview(item)}<span class="block text-xs text-muted"
-												>{WAITING_FOR_SCAN_HINT}</span
-											>{/if}</span
-									>
+										{#if scanActive && isQueuedPreview(item)}<span class="block text-xs text-muted">
+												{WAITING_FOR_SCAN_HINT}
+											</span>{/if}
+									</span>
 									<ArrowRight class="h-4 w-4 text-muted" />
 								</a>
 							{/each}
@@ -482,14 +487,14 @@
 				class="lm-stat"
 			>
 				<CalendarDays class="lm-stat__icon" />
-				<strong class="lm-stat__value whitespace-nowrap"
-					>{latestTerminalRun?.terminal_at
+				<strong class="lm-stat__value whitespace-nowrap">
+					{latestTerminalRun?.terminal_at
 						? new Date(latestTerminalRun.terminal_at * 1000).toLocaleDateString()
-						: 'Never'}</strong
-				>
-				<span class="lm-stat__label"
-					>Last scan{latestTerminalRun ? ` · ${stateLabel(latestTerminalRun.state)}` : ''}</span
-				>
+						: 'Never'}
+				</strong>
+				<span class="lm-stat__label">
+					Last scan{latestTerminalRun ? ` · ${stateLabel(latestTerminalRun.state)}` : ''}
+				</span>
 				<ArrowRight class="lm-stat__go" />
 			</Card>
 			<Card
@@ -499,13 +504,13 @@
 				class="lm-stat {reviewCount > 0 ? 'lm-stat--flag' : ''}"
 			>
 				<ListChecks class="lm-stat__icon" />
-				<strong class="lm-stat__value"
-					>{reviewCount.toLocaleString()} <span class="lm-stat__unit">Needs you</span></strong
-				>
-				<span class="lm-stat__note"
-					>{guessCount.toLocaleString()} best {guessCount === 1 ? 'guess' : 'guesses'} · {localOnlyCount.toLocaleString()}
-					local-only</span
-				>
+				<strong class="lm-stat__value">
+					{reviewCount.toLocaleString()} <span class="lm-stat__unit">Needs you</span>
+				</strong>
+				<span class="lm-stat__note">
+					{guessCount.toLocaleString()} best {guessCount === 1 ? 'guess' : 'guesses'} · {localOnlyCount.toLocaleString()}
+					local-only
+				</span>
 				<ArrowRight class="lm-stat__go" />
 			</Card>
 			{#if attentionCount > 0}
@@ -516,10 +521,10 @@
 					class="lm-stat lm-stat--flag"
 				>
 					<TriangleAlert class="lm-stat__icon" />
-					<strong class="lm-stat__value"
-						>{attentionCount.toLocaleString()}
-						<span class="lm-stat__unit">Needs attention</span></strong
-					>
+					<strong class="lm-stat__value">
+						{attentionCount.toLocaleString()}
+						<span class="lm-stat__unit">Needs attention</span>
+					</strong>
 					<ArrowRight class="lm-stat__go" />
 				</Card>
 			{:else}
@@ -530,10 +535,10 @@
 					class="lm-stat"
 				>
 					<Layers class="lm-stat__icon" />
-					<strong class="lm-stat__value"
-						>{readyPreviewCount.toLocaleString()}
-						<span class="lm-stat__unit">Ready previews</span></strong
-					>
+					<strong class="lm-stat__value">
+						{readyPreviewCount.toLocaleString()}
+						<span class="lm-stat__unit">Ready previews</span>
+					</strong>
 					<ArrowRight class="lm-stat__go" />
 				</Card>
 			{/if}
@@ -559,11 +564,13 @@
 						size="display-sm"
 						icon={RefreshCw}
 						disabled={requestRun.isPending || !policyRevision || !libraryEnabled}
-						onclick={startScan}>Scan for changes</Button
+						onclick={startScan}
 					>
-					<a class="lm-action__link" href={withBasePath('/library/management?tab=scanning')}
-						>More scan actions <ArrowRight class="size-4" aria-hidden="true" /></a
-					>
+						Scan for changes
+					</Button>
+					<a class="lm-action__link" href={withBasePath('/library/management?tab=scanning')}>
+						More scan actions <ArrowRight class="size-4" aria-hidden="true" />
+					</a>
 				</div>
 			</Card>
 			<Card variant="torn" padding="none" class="lm-action">
@@ -578,11 +585,12 @@
 						size="display-sm"
 						icon={Sparkles}
 						href={withBasePath('/library/management?tab=organize&runner=manage')}
-						>Preview organization...</Button
 					>
-					<a class="lm-action__link" href={withBasePath('/library/management?tab=automation')}
-						>Automation & profiles <ArrowRight class="size-4" aria-hidden="true" /></a
-					>
+						Preview organization...
+					</Button>
+					<a class="lm-action__link" href={withBasePath('/library/management?tab=automation')}>
+						Automation & profiles <ArrowRight class="size-4" aria-hidden="true" />
+					</a>
 				</div>
 			</Card>
 			<Card variant="torn" padding="none" class="lm-action">
@@ -596,15 +604,17 @@
 						variant="paper"
 						size="display-sm"
 						href={withBasePath('/library/management?tab=organize#identity-readiness')}
-						>Open identity readiness</Button
 					>
+						Open identity readiness
+					</Button>
 					{#if identityShortfall}
 						<a
 							class="lm-action__link"
 							href={withBasePath('/library/management?tab=organize#identity-readiness')}
-							>{identityShortfall.toLocaleString()} albums need preparation
-							<ArrowRight class="size-4" aria-hidden="true" /></a
 						>
+							{identityShortfall.toLocaleString()} albums need preparation
+							<ArrowRight class="size-4" aria-hidden="true" />
+						</a>
 					{/if}
 				</div>
 			</Card>
@@ -614,9 +624,9 @@
 			<section class="lm-recent" aria-labelledby="overview-recent-work">
 				<header class="lm-recent__head">
 					<h2 id="overview-recent-work" class="lm-display-head">Recent management work</h2>
-					<a class="lm-underline" href={withBasePath('/library/management/history')}
-						>View organization history <ArrowUpRight class="size-4" aria-hidden="true" /></a
-					>
+					<a class="lm-underline" href={withBasePath('/library/management/history')}>
+						View organization history <ArrowUpRight class="size-4" aria-hidden="true" />
+					</a>
 				</header>
 				<div class="lm-recent__scroll">
 					<table class="lm-table">
@@ -635,16 +645,16 @@
 							{#each recentRows as row (row.key)}
 								<tr>
 									<td>
-										<span class="lm-result" data-ok={row.ok === null ? undefined : String(row.ok)}
-											>{#if row.ok === true}<CircleCheck
+										<span class="lm-result" data-ok={row.ok === null ? undefined : String(row.ok)}>
+											{#if row.ok === true}<CircleCheck
 													class="size-5"
 													aria-hidden="true"
 												/>{:else if row.ok === false}<CircleX
 													class="size-5"
 													aria-hidden="true"
 												/>{:else}<CircleDashed class="size-5" aria-hidden="true" />{/if}
-											{row.result}</span
-										>
+											{row.result}
+										</span>
 									</td>
 									<td>{row.task}</td>
 									<td>{row.scope}</td>
@@ -652,10 +662,10 @@
 									<td class="lm-table__mono">{stamp(row.finished)}</td>
 									<td>{row.changes}</td>
 									<td class="text-right">
-										<a class="lm-underline" href={row.href}
-											>Details<span class="sr-only">: {row.task}, {stamp(row.started)}</span>
-											<ArrowRight class="size-4" aria-hidden="true" /></a
-										>
+										<a class="lm-underline" href={row.href}>
+											Details<span class="sr-only">: {row.task}, {stamp(row.started)}</span>
+											<ArrowRight class="size-4" aria-hidden="true" />
+										</a>
 									</td>
 								</tr>
 							{/each}
@@ -723,19 +733,19 @@
 		<section class="lm-panel lm-panel--pad" aria-labelledby="overview-quick">
 			<h2 id="overview-quick" class="lm-display-head">Quick actions</h2>
 			<nav class="lm-quick" aria-labelledby="overview-quick">
-				<a href={withBasePath('/library/management?tab=automation')}
-					><Settings2 class="size-5" aria-hidden="true" />Manage automation...</a
-				>
-				<a href={withBasePath('/library/management?tab=automation#management-profiles-title')}
-					><Layers class="size-5" aria-hidden="true" />Edit organization profiles...</a
-				>
-				<a href={withBasePath('/library/management?tab=organize#library-repair')}
-					><Wrench class="size-5" aria-hidden="true" />Repair & re-check...</a
-				>
+				<a href={withBasePath('/library/management?tab=automation')}>
+					<Settings2 class="size-5" aria-hidden="true" />Manage automation...
+				</a>
+				<a href={withBasePath('/library/management?tab=automation#management-profiles-title')}>
+					<Layers class="size-5" aria-hidden="true" />Edit organization profiles...
+				</a>
+				<a href={withBasePath('/library/management?tab=organize#library-repair')}>
+					<Wrench class="size-5" aria-hidden="true" />Repair & re-check...
+				</a>
 				{#if restoreReady}
-					<a href={withBasePath('/library/management?tab=organize&runner=baseline_restore')}
-						><RotateCcw class="size-5" aria-hidden="true" />Restore original state...</a
-					>
+					<a href={withBasePath('/library/management?tab=organize&runner=baseline_restore')}>
+						<RotateCcw class="size-5" aria-hidden="true" />Restore original state...
+					</a>
 				{/if}
 			</nav>
 		</section>
@@ -744,19 +754,19 @@
 			<h2 class="lm-how__title">How it works</h2>
 			<ol class="lm-how__steps">
 				<li>
-					<span class="lm-how__n">1</span><span
-						><strong>Scan for changes</strong>Find new, changed or missing files.</span
-					>
+					<span class="lm-how__n">1</span><span>
+						<strong>Scan for changes</strong>Find new, changed or missing files.
+					</span>
 				</li>
 				<li>
-					<span class="lm-how__n">2</span><span
-						><strong>Review & preview</strong>See exactly what will change (tags, names, paths).</span
-					>
+					<span class="lm-how__n">2</span><span>
+						<strong>Review & preview</strong>See exactly what will change (tags, names, paths).
+					</span>
 				</li>
 				<li>
-					<span class="lm-how__n">3</span><span
-						><strong>Apply</strong>Write the approved changes to your library.</span
-					>
+					<span class="lm-how__n">3</span><span>
+						<strong>Apply</strong>Write the approved changes to your library.
+					</span>
 				</li>
 			</ol>
 		</Card>

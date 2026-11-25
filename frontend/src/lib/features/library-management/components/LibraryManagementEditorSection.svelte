@@ -30,13 +30,13 @@
 <details class="management-editor-section" data-active={active}>
 	<summary class="management-editor-summary">
 		<span class="management-editor-icon"><Icon class="h-4 w-4" /></span>
-		<span class="management-editor-summary__copy"
-			><strong>{title}</strong><small>{subtitle}</small></span
-		>
+		<span class="management-editor-summary__copy">
+			<strong>{title}</strong><small>{subtitle}</small>
+		</span>
 		<span class="management-editor-overview">
-			<span class="management-editor-state" data-active={active}
-				>{state ?? (active ? 'On' : 'Off')}</span
-			>
+			<span class="management-editor-state" data-active={active}>
+				{state ?? (active ? 'On' : 'Off')}
+			</span>
 			{#each chips as chip (chip.label)}
 				<span class="management-editor-chip" data-active={chip.active}>{chip.label}</span>
 			{/each}

@@ -75,8 +75,9 @@
 						<span class="text-sm text-muted">Ref</span>
 						<span
 							class="rounded border border-line px-2 py-0.5 font-mono text-sm font-semibold break-all select-all"
-							>{ref}</span
 						>
+							{ref}
+						</span>
 						{#if canCopy}
 							<Button variant="outline" size="xs" onclick={() => copyRef(ref)}>Copy</Button>
 						{/if}
@@ -87,18 +88,18 @@
 					<div class="flex flex-wrap items-center gap-2">
 						{#if $toastStore.action}
 							{@const action = $toastStore.action}
-							<Button variant="outline" size="xs" onclick={() => runAction(action)}
-								>{action.label}</Button
-							>
+							<Button variant="outline" size="xs" onclick={() => runAction(action)}>
+								{action.label}
+							</Button>
 						{/if}
 						{#if choices}
 							<span class="font-mono text-xs tracking-wide text-muted uppercase">
 								{choices.ask}
 							</span>
 							{#each choices.actions.slice(0, 3) as choice (choice.label)}
-								<Button variant="outline" size="xs" onclick={() => runAction(choice)}
-									>{choice.label}</Button
-								>
+								<Button variant="outline" size="xs" onclick={() => runAction(choice)}>
+									{choice.label}
+								</Button>
 							{/each}
 						{/if}
 					</div>

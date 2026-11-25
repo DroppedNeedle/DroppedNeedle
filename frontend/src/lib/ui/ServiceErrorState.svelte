@@ -42,8 +42,9 @@
 			<span class="text-sm text-muted">Ref</span>
 			<span
 				class="rounded border border-line px-2 py-0.5 font-mono text-sm font-semibold break-all select-all"
-				>{ref}</span
 			>
+				{ref}
+			</span>
 			{#if canCopy}
 				<Button variant="outline" size="xs" onclick={() => copyRef(ref)}>Copy</Button>
 			{/if}

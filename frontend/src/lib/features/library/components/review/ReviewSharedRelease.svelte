@@ -65,9 +65,9 @@
 					/>
 					<span class="min-w-0">
 						<span class="block truncate font-medium">{candidate.album_title}</span>
-						<span class="block truncate text-xs text-muted"
-							>{candidate.album_artist_name} · {percent(candidate.lowest_score)} fit or better</span
-						>
+						<span class="block truncate text-xs text-muted">
+							{candidate.album_artist_name} · {percent(candidate.lowest_score)} fit or better
+						</span>
 					</span>
 				</label>
 			{/each}

@@ -385,13 +385,15 @@
 								? 'success'
 								: operation.state === 'paused'
 									? 'warning'
-									: 'neutral'}>{titleManagementValue(operation.state)}</StatusChip
+									: 'neutral'}
 					>
+						{titleManagementValue(operation.state)}
+					</StatusChip>
 				</div>
 				<div class="lm-bordered op-progress mt-6">
-					<span class="sr-only" role="status" aria-live="polite"
-						>Operation phase: {activePhaseLabel}</span
-					>
+					<span class="sr-only" role="status" aria-live="polite">
+						Operation phase: {activePhaseLabel}
+					</span>
 					<div class="mb-2 flex justify-between gap-3 text-xs">
 						<span>{activePhaseLabel}</span><span>
 							{planningPreview
@@ -418,21 +420,22 @@
 				</div>
 				<div class="mt-4 grid gap-2 sm:grid-cols-4">
 					<div class="management-summary-card">
-						<span class="text-xs text-muted">Succeeded</span><strong
-							>{operation.succeeded_count}</strong
-						>
+						<span class="text-xs text-muted">Succeeded</span><strong>
+							{operation.succeeded_count}
+						</strong>
 					</div>
 					<div class="management-summary-card">
 						<span class="text-xs text-muted">Failed</span><strong>{operation.failed_count}</strong>
 					</div>
 					<div class="management-summary-card">
-						<span class="text-xs text-muted">Skipped</span><strong>{operation.skipped_count}</strong
-						>
+						<span class="text-xs text-muted">Skipped</span><strong>
+							{operation.skipped_count}
+						</strong>
 					</div>
 					<div class="management-summary-card">
-						<span class="text-xs text-muted">Revision</span><strong
-							>{operation.operation_row_revision}</strong
-						>
+						<span class="text-xs text-muted">Revision</span><strong>
+							{operation.operation_row_revision}
+						</strong>
 					</div>
 				</div>
 				<OperationJobStrip
@@ -451,9 +454,9 @@
 				>
 					{#if operation.state === 'succeeded'}<CircleCheckBig
 							class="h-5 w-5"
-						/>{:else}<TriangleAlert class="h-5 w-5" />{/if}<span
-						><strong>{terminalPresentation.label}</strong><br />{terminalPresentation.detail}</span
-					>
+						/>{:else}<TriangleAlert class="h-5 w-5" />{/if}<span>
+						<strong>{terminalPresentation.label}</strong><br />{terminalPresentation.detail}
+					</span>
 				</div>{/if}
 
 			{#if externalRefreshes.length}<Card as="section" variant="bordered" padding="md">
@@ -480,9 +483,9 @@
 												· {managementReasonLabel(refresh.code)}{/if}
 										</p>{/if}
 								</div>
-								<span class="badge badge-sm {refreshBadge(refresh)}"
-									>{titleManagementValue(refresh.state)}</span
-								>
+								<span class="badge badge-sm {refreshBadge(refresh)}">
+									{titleManagementValue(refresh.state)}
+								</span>
 							</div>{/each}
 					</div>
 				</Card>{/if}
@@ -497,8 +500,10 @@
 						variant="ghost"
 						size="sm"
 						icon={History}
-						href={withBasePath('/library/management/history')}>All history</Button
+						href={withBasePath('/library/management/history')}
 					>
+						All history
+					</Button>
 				</div>
 				<LibraryManagementAuditDossiers
 					dossiers={resultDossiers}
@@ -515,8 +520,10 @@
 						variant="outline"
 						class="w-full"
 						loading={resultsQuery.isFetchingNextPage}
-						onclick={() => void resultsQuery.fetchNextPage()}>Load more results</Button
-					>{/if}
+						onclick={() => void resultsQuery.fetchNextPage()}
+					>
+						Load more results
+					</Button>{/if}
 			</Card>
 
 			<section class="grid gap-3 sm:grid-cols-2">
@@ -533,8 +540,10 @@
 						size="sm"
 						class="mt-3 self-start"
 						disabled={!undoAvailable}
-						onclick={() => (undoOpen = true)}>Preview Undo...</Button
-					>{#if operation.undo_available_count > 0 && !undoAvailable && (operation.undo_expires_at == null || operation.undo_expires_at > nowSeconds)}<p
+						onclick={() => (undoOpen = true)}
+					>
+						Preview Undo...
+					</Button>{#if operation.undo_available_count > 0 && !undoAvailable && (operation.undo_expires_at == null || operation.undo_expires_at > nowSeconds)}<p
 							class="mt-2 text-xs text-muted"
 						>
 							Undo becomes available when this operation reaches a successful or stopped state.
@@ -555,8 +564,9 @@
 						size="sm"
 						class="mt-3 self-start"
 						href={withBasePath('/library/management?tab=organize&runner=baseline_restore')}
-						>Open baseline restore...</Button
 					>
+						Open baseline restore...
+					</Button>
 				</Card>
 			</section>
 		{/if}
@@ -589,9 +599,9 @@
 >
 	{#if operation}<p class="mt-2 text-xs text-muted">{undoStatus}</p>{/if}
 	<div class="alert alert-info mt-3 text-sm">
-		<span
-			><strong>Undo is not baseline restore.</strong> It targets only this operation's completed changes.</span
-		>
+		<span>
+			<strong>Undo is not baseline restore.</strong> It targets only this operation's completed changes.
+		</span>
 	</div>
 </ConfirmDialog>
 

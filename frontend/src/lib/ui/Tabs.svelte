@@ -105,13 +105,16 @@
 				aria-controls={panelId}
 				tabindex={tab.id === selected ? 0 : -1}
 				onclick={() => onselect(tab.id)}
-				>{#if tab.icon}<tab.icon
+			>
+				{#if tab.icon}<tab.icon
 						class="h-4 w-4"
 						aria-hidden="true"
 					/>{/if}{tab.label}{#if tab.count != null}&nbsp;<span
-						class="font-mono text-xs tabular-nums opacity-80">{tab.count.toLocaleString()}</span
-					>{/if}</button
-			>
+						class="font-mono text-xs tabular-nums opacity-80"
+					>
+						{tab.count.toLocaleString()}
+					</span>{/if}
+			</button>
 		{/each}
 	</div>
 {/snippet}

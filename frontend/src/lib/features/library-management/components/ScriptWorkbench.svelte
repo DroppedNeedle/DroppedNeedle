@@ -206,8 +206,10 @@
 				class="link text-sm"
 				href={outsideLink(docsUrl('library-management', anchor))}
 				target="_blank"
-				rel="noopener noreferrer">Script reference</a
+				rel="noopener noreferrer"
 			>
+				Script reference
+			</a>
 		{/snippet}
 	</TextAreaField>
 
@@ -223,9 +225,9 @@
 			</p>
 			<div class="flex flex-wrap items-center gap-3">
 				{#if topFault.suggestion}
-					<Button variant="primary" size="sm" onclick={() => useSuggestion(topFault)}
-						>Use "{topFault.suggestion.name}"</Button
-					>
+					<Button variant="primary" size="sm" onclick={() => useSuggestion(topFault)}>
+						Use "{topFault.suggestion.name}"
+					</Button>
 				{/if}
 				<span class="text-xs text-muted">Line {topFault.line}, column {topFault.column}.</span>
 			</div>
@@ -252,8 +254,10 @@
 						pill
 						active={sample === entry.id}
 						aria-pressed={sample === entry.id}
-						onclick={() => (sample = entry.id)}>{entry.label}</Button
+						onclick={() => (sample = entry.id)}
 					>
+						{entry.label}
+					</Button>
 				{/each}
 			</div>
 		</div>
@@ -266,9 +270,13 @@
 				{emptyWarning(emptyParts)}
 			</p>
 			<p class="script-path">
-				<span class="text-muted">/music/</span
-				>{#each emptyParts as part, index (index)}{#if index > 0}<span class="text-muted">/</span
-						>{/if}{#if part === ''}<span class="script-empty">empty</span>{:else}{part}{/if}{/each}
+				<span class="text-muted">
+					/music/
+				</span>{#each emptyParts as part, index (index)}{#if index > 0}<span class="text-muted">
+							/
+						</span>{/if}{#if part === ''}<span class="script-empty">
+							empty
+						</span>{:else}{part}{/if}{/each}
 			</p>
 		{:else if sampleFault}
 			<p class="flex items-center gap-2 text-sm font-semibold text-error" role="alert">
@@ -310,8 +318,10 @@
 			{:else if shown?.path}
 				<p class={['script-path', stale && 'script-stale']}>
 					<span class="text-muted">/music/</span>{#if mark}{shown.path.slice(0, mark.start)}<mark
-							class="script-mark">{shown.path.slice(mark.start, mark.end)}</mark
-						>{shown.path.slice(mark.end)}{:else}{shown.path}{/if}
+							class="script-mark"
+						>
+							{shown.path.slice(mark.start, mark.end)}
+						</mark>{shown.path.slice(mark.end)}{:else}{shown.path}{/if}
 				</p>
 			{/if}
 		{/if}
@@ -338,9 +348,9 @@
 							title={block.code}
 							onclick={() => put(block.code, block.ownLine, block.caret)}
 						>
-							<span class={['font-semibold', block.look === 'between' && 'font-mono']}
-								>{block.label}</span
-							>
+							<span class={['font-semibold', block.look === 'between' && 'font-mono']}>
+								{block.label}
+							</span>
 							{#if shownValue !== null}
 								<span class="font-normal text-muted">{shownValue}</span>
 							{/if}

@@ -67,11 +67,15 @@
 		<p class="search-song__meta">
 			{#if song.artist}{song.artist}{/if}{#if song.artist && detail.album_title}<span
 					class="mx-1.5"
-					aria-hidden="true">·</span
-				>{/if}{#if detail.album_title}<a
+					aria-hidden="true"
+				>
+					·
+				</span>{/if}{#if detail.album_title}<a
 					href={albumHref(detail.release_group_mbid)}
-					class="search-song__album">{detail.album_title}</a
-				>{/if}
+					class="search-song__album"
+				>
+					{detail.album_title}
+				</a>{/if}
 		</p>
 	</div>
 

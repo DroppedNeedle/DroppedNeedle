@@ -109,8 +109,10 @@
 				this={titleAs}
 				class="dn-tile__title"
 				style:--dn-tile-word={fitWord}
-				data-part={part('media-tile-title')}>{title}</svelte:element
+				data-part={part('media-tile-title')}
 			>
+				{title}
+			</svelte:element>
 			{#if meta}
 				<div class="dn-tile__meta">{@render meta()}</div>
 			{/if}

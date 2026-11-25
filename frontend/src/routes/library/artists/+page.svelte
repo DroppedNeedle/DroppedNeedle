@@ -244,8 +244,10 @@
 				variant={browse.favorites ? 'primary' : 'outline'}
 				icon={Heart}
 				aria-pressed={browse.favorites}
-				onclick={toggleFavorites}>Favourites</Button
+				onclick={toggleFavorites}
 			>
+				Favourites
+			</Button>
 			<select
 				class="select dn-toolbar__select"
 				value="{browse.sortBy}:{browse.sortOrder}"

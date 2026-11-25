@@ -36,9 +36,9 @@
 	<section aria-label="On rotation">
 		<SectionHead title="On rotation">
 			{#snippet chips()}
-				<span class="rot-when"
-					>From your library{nextChange ? ` · next change ${changeDay(nextChange)}` : ''}</span
-				>
+				<span class="rot-when">
+					From your library{nextChange ? ` · next change ${changeDay(nextChange)}` : ''}
+				</span>
 			{/snippet}
 		</SectionHead>
 		<div class="rot-grid">

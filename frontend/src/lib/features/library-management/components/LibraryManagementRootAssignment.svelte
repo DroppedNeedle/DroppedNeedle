@@ -86,11 +86,11 @@
 		<div>
 			<div class="flex flex-wrap items-center gap-2">
 				<h4 class="font-display text-lg font-semibold">{root.label}</h4>
-				<span class="badge badge-ghost badge-sm"
-					>Scanning: {root.policy === 'automatic'
+				<span class="badge badge-ghost badge-sm">
+					Scanning: {root.policy === 'automatic'
 						? 'Automatic identification'
-						: root.policy.replace('_', ' ')}</span
-				>
+						: root.policy.replace('_', ' ')}
+				</span>
 			</div>
 			<p class="mt-1 font-mono text-xs text-muted">{root.path}</p>
 		</div>

@@ -326,22 +326,26 @@
 					icon={Sparkles}
 					disabled={recoveryUnavailable || !settingsQuery.data || !policyQuery.data}
 					onclick={(event) => openRunner('manage', event.currentTarget)}
-					>Preview organization...</Button
 				>
+					Preview organization...
+				</Button>
 				<Button
 					variant="paper"
 					size="display-sm"
 					icon={RotateCcw}
 					disabled={recoveryUnavailable || !settingsQuery.data || !policyQuery.data}
 					onclick={(event) => openRunner('baseline_restore', event.currentTarget)}
-					>Restore original state...</Button
 				>
+					Restore original state...
+				</Button>
 				<Button
 					variant="paper"
 					size="sm"
 					icon={Settings2}
-					href={withBasePath('/library/management?tab=automation')}>Automation</Button
+					href={withBasePath('/library/management?tab=automation')}
 				>
+					Automation
+				</Button>
 			</div>
 		</div>
 	</div>
@@ -357,34 +361,35 @@
 		<div class="space-y-5">
 			<div class="grid gap-3 sm:grid-cols-3">
 				<div class="lm-tile">
-					<span class="lm-tile__label"
-						><Layers class="size-4" aria-hidden="true" />Automatic write access</span
-					><strong class="lm-tile__value"
-						>{activeAssignments.length
+					<span class="lm-tile__label">
+						<Layers class="size-4" aria-hidden="true" />Automatic write access
+					</span><strong class="lm-tile__value">
+						{activeAssignments.length
 							? `${activeAssignments.length} library folder${activeAssignments.length === 1 ? '' : 's'}`
-							: 'Off everywhere'}</strong
-					><small class="lm-tile__note"
-						>Manual previews remain available whether automation is on or off.</small
-					>
+							: 'Off everywhere'}
+					</strong><small class="lm-tile__note">
+						Manual previews remain available whether automation is on or off.
+					</small>
 				</div>
 				<div class="lm-tile">
-					<span class="lm-tile__label"
-						><CircleCheck class="size-4" aria-hidden="true" />Ready previews</span
-					><strong class="lm-tile__value">{readyPreviews.length}</strong><small
+					<span class="lm-tile__label">
+						<CircleCheck class="size-4" aria-hidden="true" />Ready previews
+					</span><strong class="lm-tile__value">{readyPreviews.length}</strong><small
 						class="lm-tile__note"
-						>Nothing writes until an administrator opens and applies one.</small
 					>
+						Nothing writes until an administrator opens and applies one.
+					</small>
 				</div>
 				<div class="lm-tile" data-attention={attentionCount > 0 || recoveryUnavailable}>
-					<span class="lm-tile__label"
-						><TriangleAlert class="size-4" aria-hidden="true" />Needs attention</span
-					><strong class="lm-tile__value"
-						>{recoveryUnavailable ? 'Status unavailable' : attentionCount}</strong
-					><small class="lm-tile__note"
-						>{recoveryUnavailable
+					<span class="lm-tile__label">
+						<TriangleAlert class="size-4" aria-hidden="true" />Needs attention
+					</span><strong class="lm-tile__value">
+						{recoveryUnavailable ? 'Status unavailable' : attentionCount}
+					</strong><small class="lm-tile__note">
+						{recoveryUnavailable
 							? "Couldn't check for unfinished file changes."
-							: `Unfinished file changes: ${recoveryQuery.data?.nonterminal_journal_count ?? 0}`}</small
-					>
+							: `Unfinished file changes: ${recoveryQuery.data?.nonterminal_journal_count ?? 0}`}
+					</small>
 				</div>
 			</div>
 
@@ -433,8 +438,10 @@
 								active.operation.state,
 								active.operation.terminal_code ?? null,
 								active.mode
-							)}>Open details</Button
+							)}
 						>
+							Open details
+						</Button>
 					</OperationJobStrip>
 				</article>
 			{/if}
@@ -459,23 +466,29 @@
 									item.mode
 								)}
 								class="management-history-row min-w-0 flex-1"
-								><Sparkles class="h-4 w-4 shrink-0 text-library-manage" /><span
-									class="min-w-0 flex-1"
-									><strong>{item.profile_name}</strong><small
-										>{modeTitle(item.mode)} · {date(item.operation.updated_at)}</small
-									><span class="mt-1 flex flex-wrap gap-1"
-										>{#if (item.eligible_count ?? 0) > 0}<span class="badge badge-success badge-sm"
-												>{item.eligible_count} eligible</span
-											>{/if}{#if (item.warning_count ?? 0) > 0}<span
-												class="badge badge-warning badge-sm">{item.warning_count} warning</span
-											>{/if}{#if (item.blocked_count ?? 0) > 0}<span
-												class="badge badge-error badge-sm">{item.blocked_count} blocked</span
-											>{/if}</span
-									></span
-								><span class="badge badge-outline badge-sm">Review</span><ArrowRight
-									class="h-4 w-4 shrink-0"
-								/></a
 							>
+								<Sparkles class="h-4 w-4 shrink-0 text-library-manage" /><span
+									class="min-w-0 flex-1"
+								>
+									<strong>{item.profile_name}</strong><small>
+										{modeTitle(item.mode)} · {date(item.operation.updated_at)}
+									</small><span class="mt-1 flex flex-wrap gap-1">
+										{#if (item.eligible_count ?? 0) > 0}<span class="badge badge-success badge-sm">
+												{item.eligible_count} eligible
+											</span>{/if}{#if (item.warning_count ?? 0) > 0}<span
+												class="badge badge-warning badge-sm"
+											>
+												{item.warning_count} warning
+											</span>{/if}{#if (item.blocked_count ?? 0) > 0}<span
+												class="badge badge-error badge-sm"
+											>
+												{item.blocked_count} blocked
+											</span>{/if}
+									</span>
+								</span><span class="badge badge-outline badge-sm">Review</span><ArrowRight
+									class="h-4 w-4 shrink-0"
+								/>
+							</a>
 							<LibraryManagementDiscardPreview
 								jobId={item.operation.id}
 								expectedRevision={item.operation.row_revision}
@@ -505,24 +518,27 @@
 									item.mode
 								)}
 								class="management-history-row"
-								><History class="h-4 w-4 text-muted" /><span class="min-w-0 flex-1"
-									><strong>{item.profile_name}</strong><small
-										>{modeTitle(item.mode)} · {title(item.operation.state)} · {date(
+							>
+								<History class="h-4 w-4 text-muted" /><span class="min-w-0 flex-1">
+									<strong>{item.profile_name}</strong><small>
+										{modeTitle(item.mode)} · {title(item.operation.state)} · {date(
 											item.operation.updated_at
-										)}</small
-									><span class="mt-1 flex flex-wrap gap-1"
-										>{#if item.operation.succeeded_count}<span class="badge badge-success badge-sm"
-												>{item.operation.succeeded_count} succeeded</span
-											>{/if}{#if item.operation.failed_count}<span
+										)}
+									</small><span class="mt-1 flex flex-wrap gap-1">
+										{#if item.operation.succeeded_count}<span class="badge badge-success badge-sm">
+												{item.operation.succeeded_count} succeeded
+											</span>{/if}{#if item.operation.failed_count}<span
 												class="badge badge-error badge-sm"
-												>{item.operation.failed_count} failed</span
-											>{/if}{#if item.operation.skipped_count}<span
+											>
+												{item.operation.failed_count} failed
+											</span>{/if}{#if item.operation.skipped_count}<span
 												class="badge badge-warning badge-sm"
-												>{item.operation.skipped_count} skipped</span
-											>{/if}</span
-									></span
-								><ArrowRight class="h-4 w-4" /></a
-							>{/each}
+											>
+												{item.operation.skipped_count} skipped
+											</span>{/if}
+									</span>
+								</span><ArrowRight class="h-4 w-4" />
+							</a>{/each}
 						{#each failedGroups as group (group.key)}
 							{#if group.items.length > 1}
 								<article
@@ -533,9 +549,9 @@
 									<div class="min-w-0 flex-1">
 										<div class="flex flex-wrap items-center gap-2">
 											<strong>{group.items[0].profile_name}</strong>
-											<span class="badge badge-outline badge-sm"
-												>{group.items.length} failed attempts · same album</span
-											>
+											<span class="badge badge-outline badge-sm">
+												{group.items.length} failed attempts · same album
+											</span>
 											{#if group.allStale}
 												<span class="badge badge-neutral badge-sm">Superseded</span>
 											{:else}
@@ -559,12 +575,12 @@
 														? 'text-muted'
 														: 'text-error'}"
 												>
-													<span
-														>{modeTitle(member.mode)} · {isStaleInputTerminal(member.operation)
+													<span>
+														{modeTitle(member.mode)} · {isStaleInputTerminal(member.operation)
 															? 'Superseded · inputs moved'
 															: `${title(member.operation.state)}${member.operation.terminal_code ? ` · ${title(member.operation.terminal_code.toLowerCase())}` : ''}`}
-														· {date(member.operation.updated_at)}</span
-													>
+														· {date(member.operation.updated_at)}
+													</span>
 													<a
 														class="link link-hover font-semibold"
 														href={operationHref(
@@ -572,8 +588,10 @@
 															member.operation.state,
 															member.operation.terminal_code ?? null,
 															member.mode
-														)}>Open details</a
+														)}
 													>
+														Open details
+													</a>
 												</li>
 											{/each}
 										</ul>
@@ -584,15 +602,17 @@
 													size="sm"
 													disabled={bulkPending}
 													onclick={() => void bulkRetryStale(group.items)}
-													>Retry {group.staleCount} stale</Button
 												>
+													Retry {group.staleCount} stale
+												</Button>
 												<Button
 													variant="danger-ghost"
 													size="sm"
 													disabled={bulkPending}
 													onclick={() => void bulkDismissStale(group.items)}
-													>Dismiss {group.staleCount} stale</Button
 												>
+													Dismiss {group.staleCount} stale
+												</Button>
 											</div>
 										{/if}
 									</div>
@@ -608,31 +628,33 @@
 										single.mode
 									)}
 									class="management-history-row"
-									><History class="h-4 w-4 text-muted" /><span class="min-w-0 flex-1"
-										><strong>{single.profile_name}</strong><small
-											>{modeTitle(single.mode)} · {singleStale
+								>
+									<History class="h-4 w-4 text-muted" /><span class="min-w-0 flex-1">
+										<strong>{single.profile_name}</strong><small>
+											{modeTitle(single.mode)} · {singleStale
 												? 'Superseded · inputs moved'
-												: title(single.operation.state)} · {date(
-												single.operation.updated_at
-											)}</small
-										>
+												: title(single.operation.state)} · {date(single.operation.updated_at)}
+										</small>
 										{#if singleStale}
 											<span class="mt-1 block text-xs text-muted">{STALE_INPUT_HINT}</span>
 										{/if}
-										<span class="mt-1 flex flex-wrap gap-1"
-											>{#if single.operation.succeeded_count}<span
+										<span class="mt-1 flex flex-wrap gap-1">
+											{#if single.operation.succeeded_count}<span
 													class="badge badge-success badge-sm"
-													>{single.operation.succeeded_count} succeeded</span
-												>{/if}{#if single.operation.failed_count}<span
+												>
+													{single.operation.succeeded_count} succeeded
+												</span>{/if}{#if single.operation.failed_count}<span
 													class="badge {singleStale ? 'badge-ghost' : 'badge-error'} badge-sm"
-													>{single.operation.failed_count} failed</span
-												>{/if}{#if single.operation.skipped_count}<span
+												>
+													{single.operation.failed_count} failed
+												</span>{/if}{#if single.operation.skipped_count}<span
 													class="badge badge-warning badge-sm"
-													>{single.operation.skipped_count} skipped</span
-												>{/if}</span
-										></span
-									><ArrowRight class="h-4 w-4" /></a
-								>
+												>
+													{single.operation.skipped_count} skipped
+												</span>{/if}
+										</span>
+									</span><ArrowRight class="h-4 w-4" />
+								</a>
 							{/if}
 						{/each}
 						{#if bulkSummary}
@@ -651,69 +673,76 @@
 			{#if recoveryQuery.data && (recoveryQuery.data.needs_attention_count || recoveryQuery.data.cleanup_pending_count)}<div
 					class="alert alert-warning items-start"
 				>
-					<TriangleAlert class="mt-0.5 h-5 w-5" /><span
-						><strong>Some file writes need you</strong><br />{recoveryQuery.data
+					<TriangleAlert class="mt-0.5 h-5 w-5" /><span>
+						<strong>Some file writes need you</strong><br />{recoveryQuery.data
 							.needs_attention_count} files in {needsAttentionBundles.length} writes could not be finished
 						or undone safely; {recoveryQuery.data.cleanup_pending_count} have cleanup still to retry.
 						Nothing uncertain is ever deleted. Check that each file below is where it should be, then
-						mark the write as handled.</span
-					>
+						mark the write as handled.
+					</span>
 					{#if authStore.isAdmin && needsAttentionBundles.length > 0}<ul
 							class="flex w-full flex-col gap-2"
 						>
 							{#each needsAttentionBundles as bundle (bundle.bundle_id)}<li
 									class="flex flex-wrap items-center justify-between gap-2 rounded-md bg-base-100/60 p-2"
 								>
-									<span class="min-w-0 text-sm"
-										>{bundle.file_count ?? 0} files{#if bundle.sample_paths?.length}: <span
-												class="font-mono text-xs break-all">{bundle.sample_paths.join(', ')}</span
-											>{/if}{#if bundle.source_folders?.length}<span
+									<span class="min-w-0 text-sm">
+										{bundle.file_count ?? 0} files{#if bundle.sample_paths?.length}: <span
+												class="font-mono text-xs break-all"
+											>
+												{bundle.sample_paths.join(', ')}
+											</span>{/if}{#if bundle.source_folders?.length}<span
 												class="block text-xs text-muted"
-												>From <span class="font-mono break-all"
-													>{bundle.source_folders.join(', ')}</span
-												></span
-											>{/if}</span
-									><Button
+											>
+												From <span class="font-mono break-all">
+													{bundle.source_folders.join(', ')}
+												</span>
+											</span>{/if}
+									</span><Button
 										variant="warning"
 										size="sm"
 										aria-label={`Mark ${bundle.bundle_id} as handled`}
 										disabled={resolvingBundleId !== null}
 										onclick={() => void resolveNeedsAttentionBundle(bundle.bundle_id)}
-										>Mark as handled</Button
 									>
+										Mark as handled
+									</Button>
 								</li>{/each}
 						</ul>{/if}
 				</div>{:else if recoveryUnavailable}<div class="alert alert-error items-start" role="alert">
-					<TriangleAlert class="mt-0.5 h-5 w-5" /><span
-						><strong>Recovery status is unavailable</strong><br />Don't start new file writes until
-						it loads. Refresh this page or check the server log.</span
-					>
+					<TriangleAlert class="mt-0.5 h-5 w-5" /><span>
+						<strong>Recovery status is unavailable</strong><br />Don't start new file writes until
+						it loads. Refresh this page or check the server log.
+					</span>
 				</div>{/if}
 			{#if retryingBundles.length > 0}<div class="alert alert-warning items-start">
-					<TriangleAlert class="mt-0.5 h-5 w-5" /><span
-						><strong>Some file writes are still being retried</strong><br />{retryingBundles.length}
+					<TriangleAlert class="mt-0.5 h-5 w-5" /><span>
+						<strong>Some file writes are still being retried</strong><br />{retryingBundles.length}
 						{retryingBundles.length === 1 ? 'write' : 'writes'} started more than a day ago
 						{retryingBundles.length === 1 ? 'is' : 'are'} still not finished and could not be undone either.
 						DroppedNeedle tries again every hour and at each start, and has deleted nothing. The usual
 						cause is a library folder that is missing, read-only or full: check the folders these files
-						are in, and the server log.</span
-					>
+						are in, and the server log.
+					</span>
 					<ul class="flex w-full flex-col gap-2">
 						{#each retryingBundles as bundle (bundle.bundle_id)}<li
 								class="rounded-md bg-base-100/60 p-2 text-sm"
 							>
 								{bundle.file_count ?? 0} files{#if bundle.sample_paths?.length}: <span
-										class="font-mono text-xs break-all">{bundle.sample_paths.join(', ')}</span
-									>{/if}{#if bundle.source_folders?.length}<span class="block text-xs text-muted"
-										>From <span class="font-mono break-all">{bundle.source_folders.join(', ')}</span
-										></span
-									>{/if}
+										class="font-mono text-xs break-all"
+									>
+										{bundle.sample_paths.join(', ')}
+									</span>{/if}{#if bundle.source_folders?.length}<span
+										class="block text-xs text-muted"
+									>
+										From <span class="font-mono break-all">{bundle.source_folders.join(', ')}</span>
+									</span>{/if}
 							</li>{/each}
 					</ul>
 				</div>{/if}
 			{#if leftoverFileCount > 0}<div class="alert alert-warning items-start">
-					<TriangleAlert class="mt-0.5 h-5 w-5" /><span
-						><strong>Leftover temporary files found</strong><br />{leftoverFileCount} hidden
+					<TriangleAlert class="mt-0.5 h-5 w-5" /><span>
+						<strong>Leftover temporary files found</strong><br />{leftoverFileCount} hidden
 						{leftoverFileCount === 1 ? 'file' : 'files'} in your library folders
 						{leftoverFileCount === 1 ? 'was' : 'were'} left by a file write that was interrupted, and
 						no record says which write. DroppedNeedle has not deleted or moved any of them and will not.
@@ -726,8 +755,8 @@
 						the hidden file is spare: delete it. If it is missing, copy the hidden file to the normal
 						name and check the copy plays before you delete the hidden one. If the normal file is there
 						but broken, keep both until one of them plays. Each folder is checked every few hours, and
-						a file you delete leaves this list within minutes.</span
-					>
+						a file you delete leaves this list within minutes.
+					</span>
 					<ul class="flex w-full flex-col gap-1">
 						{#each leftoverFiles as file (`${file.root_id}/${file.rel_path}`)}<li
 								class="rounded-md bg-base-100/60 p-2 font-mono text-xs break-all"
@@ -735,9 +764,9 @@
 								{file.root_path.replace(/\/+$/, '')}/{file.rel_path}
 							</li>{/each}
 					</ul>
-					{#if leftoverFileCount > leftoverFiles.length}<span class="text-sm"
-							>Showing the first {leftoverFiles.length}.</span
-						>{/if}
+					{#if leftoverFileCount > leftoverFiles.length}<span class="text-sm">
+							Showing the first {leftoverFiles.length}.
+						</span>{/if}
 				</div>{/if}
 			{#if authStore.isAdmin}
 				<QueryBoundary
@@ -749,13 +778,13 @@
 					{#snippet empty()}{/snippet}
 					{#snippet children(takeovers)}
 						<details class="rounded-lg border border-base-content/10 p-3">
-							<summary class="cursor-pointer text-sm font-semibold"
-								>{#if takeovers.total > 0}{takeovers.total}
+							<summary class="cursor-pointer text-sm font-semibold">
+								{#if takeovers.total > 0}{takeovers.total}
 									{takeovers.total === 1
 										? 'album is left unmanaged because its files were'
 										: 'albums are left unmanaged because their files were'} changed outside DroppedNeedle{:else}{takeovers.handing_back}
-									{takeovers.handing_back === 1 ? 'album is' : 'albums are'} being handed back.{/if}</summary
-							>
+									{takeovers.handing_back === 1 ? 'album is' : 'albums are'} being handed back.{/if}
+							</summary>
 							{#if takeovers.total > 0 && takeovers.handing_back > 0}
 								<p class="mt-2 text-sm text-muted" role="status">
 									{takeovers.handing_back}
@@ -769,8 +798,9 @@
 										size="sm"
 										pending={handBackAll.isPending}
 										onclick={() => handBackAll.mutateAsync().catch(() => undefined)}
-										>Manage all {takeovers.total} again</AsyncButton
 									>
+										Manage all {takeovers.total} again
+									</AsyncButton>
 									<p class="max-w-2xl flex-1 text-sm text-muted">
 										DroppedNeedle will retag and rename the files of all {takeovers.total} albums from
 										their editions. Changes made outside DroppedNeedle are overwritten. Each run can be
@@ -783,26 +813,31 @@
 									{#each takeovers.items as album (album.album_id)}<li
 											class="flex flex-wrap items-center justify-between gap-2"
 										>
-											<span class="min-w-0"
-												><a
+											<span class="min-w-0">
+												<a
 													class="link font-medium"
 													href={withBasePath(`/album/${encodeURIComponent(album.album_id)}`)}
-													>{album.album_title}</a
-												><span class="text-muted"
-													>{album.artist_name ? ` · ${album.artist_name}` : ''} · {day(
+												>
+													{album.album_title}
+												</a><span class="text-muted">
+													{album.artist_name ? ` · ${album.artist_name}` : ''} · {day(
 														album.noticed_at
-													)}</span
-												>{#if album.hand_back_given_up}<span class="block text-warning"
-														>Hand-back stopped: its files could not be read.</span
-													>{/if}{#if handBackRefusals[album.album_id]}<span
+													)}
+												</span>{#if album.hand_back_given_up}<span class="block text-warning">
+														Hand-back stopped: its files could not be read.
+													</span>{/if}{#if handBackRefusals[album.album_id]}<span
 														class="block text-warning"
-														role="status">{handBackRefusals[album.album_id]}</span
-													>{/if}</span
-											><AsyncButton
+														role="status"
+													>
+														{handBackRefusals[album.album_id]}
+													</span>{/if}
+											</span><AsyncButton
 												variant="ghost"
 												size="sm"
-												onclick={() => handBackOne(album.album_id)}>Manage it again</AsyncButton
+												onclick={() => handBackOne(album.album_id)}
 											>
+												Manage it again
+											</AsyncButton>
 										</li>{/each}
 								</ul>
 								<p class="mt-3 text-sm text-muted">
@@ -823,12 +858,12 @@
 					{#snippet empty()}{/snippet}
 					{#snippet children(retagPairs)}
 						<details class="rounded-lg border border-base-content/10 p-3">
-							<summary class="cursor-pointer text-sm font-semibold"
-								>{retagPairs.total ?? retagPairs.items.length}
+							<summary class="cursor-pointer text-sm font-semibold">
+								{retagPairs.total ?? retagPairs.items.length}
 								{(retagPairs.total ?? retagPairs.items.length) === 1
 									? 'pair of albums might be one album'
-									: 'pairs of albums might each be one album'} retagged</summary
-							>
+									: 'pairs of albums might each be one album'} retagged
+							</summary>
 							<div class="mt-3 flex flex-col gap-3">
 								{#each retagPairs.items as pair (`${pair.old_album.id}/${pair.new_album.id}`)}
 									<RetagPairCard {pair} />
@@ -844,17 +879,20 @@
 				</QueryBoundary>
 			{/if}
 			{#if skippedAlbums.length > 0}<details class="rounded-lg border border-base-content/10 p-3">
-					<summary class="cursor-pointer text-sm font-semibold"
-						>Automatic management skipped {skippedAlbums.length}
-						{skippedAlbums.length === 1 ? 'album' : 'albums'}</summary
-					>
+					<summary class="cursor-pointer text-sm font-semibold">
+						Automatic management skipped {skippedAlbums.length}
+						{skippedAlbums.length === 1 ? 'album' : 'albums'}
+					</summary>
 					<ul class="mt-2 flex flex-col gap-2 text-sm">
 						{#each skippedAlbums as album (album.album_id)}<li>
 								<a
 									class="link font-medium"
 									href={withBasePath(`/album/${encodeURIComponent(album.album_id)}`)}
-									>{album.album_title}</a
-								>{#if album.artist_name}<span class="text-muted"> · {album.artist_name}</span>{/if}
+								>
+									{album.album_title}
+								</a>{#if album.artist_name}<span class="text-muted">
+										· {album.artist_name}
+									</span>{/if}
 								<p class="text-base-content/80">{album.reason.message}</p>
 								<p class="text-muted">{album.reason.action}</p>
 							</li>{/each}

@@ -182,9 +182,9 @@
 			<AsyncButton variant="ghost" size="xs" icon={Undo2} onclick={undoWrite}>Undo</AsyncButton>
 		</span>
 	{:else}
-		<span class="text-base-content/80"
-			>{undone ? 'The old tags are back.' : tagsSentence('manual')}</span
-		>
+		<span class="text-base-content/80">
+			{undone ? 'The old tags are back.' : tagsSentence('manual')}
+		</span>
 		{#if planned}
 			{#if changed.length}
 				<ul class="flex w-full flex-col gap-2" aria-label="Tags that change">
@@ -225,18 +225,18 @@
 				<span class="text-warning">{albumBlock}</span>
 			{:else}
 				{#each blocked as file (file.path)}
-					<span class="text-warning"
-						>{fileName(file.path)}: {file.blocked ? reasonSentence(file.blocked) : ''}</span
-					>
+					<span class="text-warning">
+						{fileName(file.path)}: {file.blocked ? reasonSentence(file.blocked) : ''}
+					</span>
 				{/each}
 			{/if}
 			{#if unchanged}
 				<span class="text-muted">{alreadyTaggedSentence(unchanged)}</span>
 			{/if}
 			{#if changed.length && !blocked.length}
-				<AsyncButton variant="primary" size="sm" onclick={writeTags}
-					>{writeTagsLabel(changed.length)}</AsyncButton
-				>
+				<AsyncButton variant="primary" size="sm" onclick={writeTags}>
+					{writeTagsLabel(changed.length)}
+				</AsyncButton>
 			{/if}
 		{:else}
 			<AsyncButton
@@ -244,8 +244,10 @@
 				size="sm"
 				disabled={placing}
 				aria-describedby={placing ? placingSentenceId : undefined}
-				onclick={showPreview}>Preview the new tags</AsyncButton
+				onclick={showPreview}
 			>
+				Preview the new tags
+			</AsyncButton>
 		{/if}
 	{/if}
 	{#if error}

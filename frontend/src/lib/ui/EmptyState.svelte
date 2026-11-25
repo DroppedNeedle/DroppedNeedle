@@ -25,8 +25,9 @@
 		<p class="es-desc">{description}</p>
 	{/if}
 	{#if ctaLabel && ctaHref}
-		<Button variant="primary" size="sm" href={withBasePath(ctaHref)} class="mt-5">{ctaLabel}</Button
-		>
+		<Button variant="primary" size="sm" href={withBasePath(ctaHref)} class="mt-5">
+			{ctaLabel}
+		</Button>
 	{/if}
 </div>
 

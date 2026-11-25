@@ -146,8 +146,9 @@
 						size="sm"
 						disabled={historyOffset === 0}
 						onclick={() => (historyOffset = Math.max(0, historyOffset - PAGE_SIZE))}
-						>Previous</Button
 					>
+						Previous
+					</Button>
 					<span class="text-sm text-muted">
 						Page {currentPage} of {totalPages} ({historyTotal.toLocaleString()} total plays)
 					</span>
@@ -155,8 +156,10 @@
 						variant="outline"
 						size="sm"
 						disabled={historyOffset + PAGE_SIZE >= historyTotal}
-						onclick={() => (historyOffset += PAGE_SIZE)}>Next</Button
+						onclick={() => (historyOffset += PAGE_SIZE)}
 					>
+						Next
+					</Button>
 				</div>
 			{/snippet}
 		</QueryBoundary>

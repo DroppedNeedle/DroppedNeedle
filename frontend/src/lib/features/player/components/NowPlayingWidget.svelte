@@ -44,9 +44,9 @@
 	<section class="space-y-3">
 		<SectionHead title="Now Playing">
 			{#snippet chips()}
-				<span class="now-playing-bars" aria-hidden="true"
-					><span></span><span></span><span></span></span
-				>
+				<span class="now-playing-bars" aria-hidden="true">
+					<span></span><span></span><span></span>
+				</span>
 			{/snippet}
 		</SectionHead>
 
@@ -79,8 +79,10 @@
 							<span
 								class="now-playing-bars now-playing-bars--sm"
 								class:now-playing-bars--paused={session.is_paused}
-								aria-hidden="true"><span></span><span></span><span></span></span
+								aria-hidden="true"
 							>
+								<span></span><span></span><span></span>
+							</span>
 							<span>{session.is_paused ? 'Paused' : 'Now Playing'}</span>
 							{#if session.source}
 								<span aria-hidden="true">·</span>

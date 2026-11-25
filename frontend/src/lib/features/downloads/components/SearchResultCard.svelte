@@ -127,8 +127,10 @@
 						class="badge badge-sm"
 						class:badge-success={recommended}
 						class:badge-error={refusal === 'quality_outside_range'}
-						class:badge-outline={refusal === 'quality_outside_range'}>{candidate.format}</span
+						class:badge-outline={refusal === 'quality_outside_range'}
 					>
+						{candidate.format}
+					</span>
 				{/if}
 				{#if scoreLabel}
 					<span

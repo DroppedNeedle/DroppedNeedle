@@ -47,9 +47,9 @@
 			</p>
 		</div>
 		<div class="flex flex-wrap items-center justify-end gap-1">
-			<span class="badge badge-ghost badge-sm font-mono"
-				>{managementAudioFormat(item.plan).toUpperCase()}</span
-			>
+			<span class="badge badge-ghost badge-sm font-mono">
+				{managementAudioFormat(item.plan).toUpperCase()}
+			</span>
 			<span
 				class="badge badge-sm {item.failure_code
 					? 'badge-error'
@@ -118,9 +118,9 @@
 		{:else if item.result && Object.keys(item.result).length}
 			<Card variant="bordered" padding="sm">
 				<div class="flex items-center gap-2">
-					<FileClock class="h-4 w-4 text-library-manage" /><strong class="text-sm"
-						>Result payload</strong
-					>
+					<FileClock class="h-4 w-4 text-library-manage" /><strong class="text-sm">
+						Result payload
+					</strong>
 				</div>
 				<p class="mt-2 break-words font-mono text-xs text-muted">
 					{formatManagementValue(item.result)}

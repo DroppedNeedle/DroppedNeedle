@@ -54,8 +54,10 @@
 					aria-expanded={open}
 					aria-controls={bodyId}
 					aria-describedby={open ? undefined : summaryId}
-					onclick={() => ontoggle(!open)}>{title}</button
+					onclick={() => ontoggle(!open)}
 				>
+					{title}
+				</button>
 			</h2>
 			{#if open}<p class="pf-sec__blurb">{blurb}</p>{/if}
 		</div>

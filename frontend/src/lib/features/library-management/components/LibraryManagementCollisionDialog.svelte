@@ -171,39 +171,41 @@
 	<fieldset class="mt-4 grid gap-2">
 		<legend class="mb-2 text-sm font-semibold">Resolution</legend>
 		{#each resolutions as option (option.value)}
-			<label class="management-selection-card"
-				><input
+			<label class="management-selection-card">
+				<input
 					type="radio"
 					class="radio radio-sm"
 					name="collision-action"
 					value={option.value}
 					bind:group={action}
-				/><span><strong>{option.title}</strong><small>{option.detail}</small></span></label
-			>
+				/><span><strong>{option.title}</strong><small>{option.detail}</small></span>
+			</label>
 		{/each}
 	</fieldset>
-	{#if action === 'keep_incoming_alternate'}<label class="mt-3 grid gap-1 text-sm"
-			><span>Alternate relative path</span><Input
+	{#if action === 'keep_incoming_alternate'}<label class="mt-3 grid gap-1 text-sm">
+			<span>Alternate relative path</span><Input
 				label="Alternate relative path"
 				mono
 				bind:value={alternateRelativePath}
 				placeholder="Artist/Album/02 Track (alternate).flac"
-			/><small class="text-muted"
-				>Relative to the planned destination root; absolute paths are rejected.</small
-			></label
-		>{/if}
+			/><small class="text-muted">
+				Relative to the planned destination root; absolute paths are rejected.
+			</small>
+		</label>{/if}
 	{#if error}<div class="alert alert-error mt-3 text-sm" role="alert">
 			{error}
 		</div>{/if}
 	{#snippet actions()}
-		<Button variant="ghost" disabled={createResolution.isPending} onclick={() => (shown = false)}
-			>Cancel</Button
-		><Button
+		<Button variant="ghost" disabled={createResolution.isPending} onclick={() => (shown = false)}>
+			Cancel
+		</Button><Button
 			variant="warning"
 			icon={HardDrive}
 			loading={createResolution.isPending}
 			disabled={!requestReady}
-			onclick={() => void resolve()}>Generate resolution preview</Button
+			onclick={() => void resolve()}
 		>
+			Generate resolution preview
+		</Button>
 	{/snippet}
 </Modal>

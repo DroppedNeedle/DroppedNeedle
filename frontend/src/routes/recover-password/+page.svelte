@@ -235,11 +235,11 @@
 					<p class="owner-help__hint">Enter your username above to copy a ready-to-run command.</p>
 				{/if}
 				<p>
-					It prints a code that works once, for 15 minutes. Start the server again (<code
-						>docker compose up -d droppedneedle</code
-					>) and enter the username, the code and a new password above. An account that only signs
-					in through single sign-on, Plex or Jellyfin gets its first password this way and keeps its
-					other sign-in.
+					It prints a code that works once, for 15 minutes. Start the server again (<code>
+						docker compose up -d droppedneedle
+					</code>) and enter the username, the code and a new password above. An account that only
+					signs in through single sign-on, Plex or Jellyfin gets its first password this way and
+					keeps its other sign-in.
 				</p>
 				<p>
 					The username is the DroppedNeedle one, which can differ from the name you have with a

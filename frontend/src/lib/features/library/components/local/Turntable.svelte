@@ -246,11 +246,11 @@
 				<h1 class="dn-deck__title">The Listening Room</h1>
 				<p class="dn-deck__stats">
 					{#if stats}
-						<span>{stats.tracks.toLocaleString()} tracks</span><span class="dn-deck__dot"
-							>&middot;</span
-						><span>{stats.artists.toLocaleString()} artists</span><span class="dn-deck__dot"
-							>&middot;</span
-						><span>{stats.size}</span>
+						<span>{stats.tracks.toLocaleString()} tracks</span><span class="dn-deck__dot">
+							&middot;
+						</span><span>{stats.artists.toLocaleString()} artists</span><span class="dn-deck__dot">
+							&middot;
+						</span><span>{stats.size}</span>
 					{:else}
 						Your local music, ready to spin
 					{/if}
@@ -412,12 +412,14 @@
 											<span class="truncate">{np.trackName ?? np.albumName}</span>
 										</p>
 										<p class="dn-deck__artist">
-											{#if artistLink}<a href={artistLink} class="dn-deck__link">{np.artistName}</a
-												>{:else}{np.artistName}{/if}{#if np.albumName}<span
-													>&nbsp;&middot;
-													{#if albumLink}<a href={albumLink} class="dn-deck__link">{np.albumName}</a
-														>{:else}{np.albumName}{/if}</span
-												>{/if}
+											{#if artistLink}<a href={artistLink} class="dn-deck__link">
+													{np.artistName}
+												</a>{:else}{np.artistName}{/if}{#if np.albumName}<span>
+													&nbsp;&middot;
+													{#if albumLink}<a href={albumLink} class="dn-deck__link">
+															{np.albumName}
+														</a>{:else}{np.albumName}{/if}
+												</span>{/if}
 										</p>
 									</div>
 								</div>
@@ -488,9 +490,9 @@
 								/>
 								<div class="indicator">
 									{#if playerStore.upcomingQueueLength > 0}
-										<span class="badge indicator-item badge-xs badge-primary"
-											>{playerStore.upcomingQueueLength}</span
-										>
+										<span class="badge indicator-item badge-xs badge-primary">
+											{playerStore.upcomingQueueLength}
+										</span>
 									{/if}
 									<IconButton size="sm" icon={ListMusic} label="Open queue" onclick={onOpenQueue} />
 								</div>
@@ -539,15 +541,15 @@
 								Drag a record from the crate onto the deck, or just hit play.
 							</p>
 							<div class="dn-deck__buttons">
-								<Button variant="primary" size="display-sm" icon={Play} onclick={onPlayAll}
-									>Play All</Button
-								>
-								<Button variant="outline" size="sm" icon={Shuffle} onclick={onShuffleAll}
-									>Shuffle</Button
-								>
-								<Button variant="ghost" size="sm" icon={Dices} onclick={onSurprise}
-									>Surprise me</Button
-								>
+								<Button variant="primary" size="display-sm" icon={Play} onclick={onPlayAll}>
+									Play All
+								</Button>
+								<Button variant="outline" size="sm" icon={Shuffle} onclick={onShuffleAll}>
+									Shuffle
+								</Button>
+								<Button variant="ghost" size="sm" icon={Dices} onclick={onSurprise}>
+									Surprise me
+								</Button>
 							</div>
 							<p class="dn-deck__hint">
 								<Sparkles class="size-3" aria-hidden="true" /> your library, ready to spin

@@ -92,9 +92,9 @@
 			</QueryBoundary>
 			{#if nextStep}
 				<div class="flex justify-end pt-2">
-					<Button variant="outline" onclick={() => (step = nextStep)}
-						>Next: {steps.find((item) => item.id === nextStep)?.label}</Button
-					>
+					<Button variant="outline" onclick={() => (step = nextStep)}>
+						Next: {steps.find((item) => item.id === nextStep)?.label}
+					</Button>
 				</div>
 			{/if}
 		</div>

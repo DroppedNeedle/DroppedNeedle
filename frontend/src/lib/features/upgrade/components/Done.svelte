@@ -122,9 +122,9 @@
 	{#snippet actions()}
 		<div class="flex w-full flex-col-reverse gap-2 sm:flex-row sm:justify-between">
 			{#if result?.backup}
-				<Button variant="ghost" size="display-sm" onclick={() => (confirmUndo = true)}
-					>Go back to v2</Button
-				>
+				<Button variant="ghost" size="display-sm" onclick={() => (confirmUndo = true)}>
+					Go back to v2
+				</Button>
 			{:else}
 				<span></span>
 			{/if}

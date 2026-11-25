@@ -70,9 +70,9 @@
 	>
 		<p class="max-w-2xl text-sm">
 			These are server-wide switches. Each person creates their own app-password from their
-			<a href={withBasePath('/profile#connect-apps')} class="link font-semibold"
-				>Profile → Connect Apps</a
-			>.
+			<a href={withBasePath('/profile#connect-apps')} class="link font-semibold">
+				Profile → Connect Apps
+			</a>.
 		</p>
 	</SettingsPaneHeader>
 

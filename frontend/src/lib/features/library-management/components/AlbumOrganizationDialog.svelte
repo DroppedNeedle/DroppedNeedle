@@ -219,11 +219,11 @@
 									previewResult = null;
 								}}
 							/>
-							<span
-								><strong>{item.title}</strong><span class="block text-xs text-muted"
-									>{item.artist_name}</span
-								></span
-							>
+							<span>
+								<strong>{item.title}</strong><span class="block text-xs text-muted">
+									{item.artist_name}
+								</span>
+							</span>
 						</label>
 					{/each}
 				</div>
@@ -286,18 +286,18 @@
 			<ul class="mt-2 space-y-2 text-sm">
 				{#each result.automatic_groups as group, index (group.local_album_id ?? `new-${index}`)}
 					<li>
-						<span class="font-semibold"
-							>{group.track_ids.length}
-							{group.track_ids.length === 1 ? 'track' : 'tracks'}</span
-						>
+						<span class="font-semibold">
+							{group.track_ids.length}
+							{group.track_ids.length === 1 ? 'track' : 'tracks'}
+						</span>
 						go to
 						<strong>{group.title}</strong>
 						{#if group.album_artist_name}<span class="text-muted">
-								by {group.album_artist_name}</span
-							>{/if}
-						<span class="badge badge-ghost badge-sm ml-1"
-							>{group.created ? 'new album' : 'existing album'}</span
-						>
+								by {group.album_artist_name}
+							</span>{/if}
+						<span class="badge badge-ghost badge-sm ml-1">
+							{group.created ? 'new album' : 'existing album'}
+						</span>
 						{#if group.track_ids.length <= 6}
 							<span class="block text-xs text-muted">
 								{group.track_ids.map(trackTitle).join(', ')}
@@ -333,24 +333,24 @@
 							These albums are matched to different editions. Choose what the album that receives
 							the tracks keeps; the preview updates.
 						</p>
-						<label class="mt-2 flex items-center gap-2"
-							><input
+						<label class="mt-2 flex items-center gap-2">
+							<input
 								type="radio"
 								name="identity-choice"
 								class="radio radio-sm"
 								checked={identityChoice === 'detach'}
 								onchange={() => chooseIdentity('detach')}
-							/> Drop all of them and let DroppedNeedle identify the album again</label
-						>
-						<label class="mt-2 flex items-center gap-2"
-							><input
+							/> Drop all of them and let DroppedNeedle identify the album again
+						</label>
+						<label class="mt-2 flex items-center gap-2">
+							<input
 								type="radio"
 								name="identity-choice"
 								class="radio radio-sm"
 								checked={identityChoice === 'retain_manual'}
 								onchange={() => chooseIdentity('retain_manual')}
-							/> Keep the edition of the album that receives the tracks</label
-						>
+							/> Keep the edition of the album that receives the tracks
+						</label>
 					</div>
 				</div>
 			{/if}

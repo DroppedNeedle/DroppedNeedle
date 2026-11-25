@@ -268,8 +268,9 @@
 										{#if playing}
 											<NowPlayingIndicator />
 										{:else if playable}
-											<span class="text-muted text-sm tabular-nums group-hover:hidden">{i + 1}</span
-											>
+											<span class="text-muted text-sm tabular-nums group-hover:hidden">
+												{i + 1}
+											</span>
 											<Play
 												class="h-3.5 w-3.5 fill-current text-primary hidden group-hover:block"
 											/>
@@ -287,9 +288,9 @@
 									</div>
 								</td>
 								<td class="hidden md:table-cell overflow-hidden">
-									<span class="text-sm text-muted truncate block {playing ? 'text-accent/70' : ''}"
-										>{track.artist_name}</span
-									>
+									<span class="text-sm text-muted truncate block {playing ? 'text-accent/70' : ''}">
+										{track.artist_name}
+									</span>
 								</td>
 								<td class="hidden lg:table-cell overflow-hidden">
 									<span class="text-sm text-muted truncate block">{track.album_name}</span>

@@ -257,9 +257,12 @@
 			{/snippet}
 
 			{#snippet meta()}
-				<a href={artistHref(album.artist_mbid ?? album.artist_id)} class="font-bold hover:underline"
-					>{album.artist_name || 'Unknown album artist'}</a
+				<a
+					href={artistHref(album.artist_mbid ?? album.artist_id)}
+					class="font-bold hover:underline"
 				>
+					{album.artist_name || 'Unknown album artist'}
+				</a>
 				<span class="opacity-50" aria-hidden="true">•</span>
 				<span>{album.year ?? 'Year unknown'}</span>
 				<span class="opacity-50" aria-hidden="true">•</span>
@@ -307,8 +310,10 @@
 						icon={Play}
 						class="min-w-28 [&_svg]:fill-current"
 						disabled={!tracks.length}
-						onclick={() => play(false)}>Play</Button
+						onclick={() => play(false)}
 					>
+						Play
+					</Button>
 					<StatusChip size="md" icon={Check}>In Library</StatusChip>
 					<AlbumDownloadButton
 						albumId={album.id}

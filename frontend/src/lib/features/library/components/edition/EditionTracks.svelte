@@ -142,8 +142,10 @@
 		<AsyncButton
 			variant="outline"
 			size="sm"
-			onclick={() => onacquire(outcome?.replaceVersions ?? false)}>Try again</AsyncButton
+			onclick={() => onacquire(outcome?.replaceVersions ?? false)}
 		>
+			Try again
+		</AsyncButton>
 	{:else if latest}
 		<div class="flex w-full flex-col gap-2" role="status" aria-live="polite">
 			{#if summary}
@@ -176,9 +178,9 @@
 							<span class="min-w-0 flex-1 truncate">
 								{titles.get(`${track.disc}-${track.position}`)?.title ?? `Track ${track.position}`}
 							</span>
-							<span class="badge badge-sm shrink-0 {BADGES[track.state]}"
-								>{LABELS[track.state]}</span
-							>
+							<span class="badge badge-sm shrink-0 {BADGES[track.state]}">
+								{LABELS[track.state]}
+							</span>
 						</li>
 					{/each}
 				</ul>
@@ -192,16 +194,20 @@
 						size="sm"
 						icon={Square}
 						disabled={cancel.isPending}
-						onclick={() => cancel.mutate(latest.task_id)}>Stop</Button
+						onclick={() => cancel.mutate(latest.task_id)}
 					>
+						Stop
+					</Button>
 				{/if}
 				{#if latest.can_retry}
 					<AsyncButton
 						variant="outline"
 						size="sm"
 						icon={RotateCcw}
-						onclick={() => onacquire(latest.replace_versions)}>Retry</AsyncButton
+						onclick={() => onacquire(latest.replace_versions)}
 					>
+						Retry
+					</AsyncButton>
 				{/if}
 			</div>
 		{/if}
@@ -212,14 +218,14 @@
 		{#if missing > 0 || versions > 0}
 			<div class="flex flex-wrap gap-2">
 				{#if missing > 0}
-					<AsyncButton variant="outline" size="sm" onclick={() => onacquire(false)}
-						>{getMissingLabel(missing)}</AsyncButton
-					>
+					<AsyncButton variant="outline" size="sm" onclick={() => onacquire(false)}>
+						{getMissingLabel(missing)}
+					</AsyncButton>
 				{/if}
 				{#if versions > 0}
-					<AsyncButton variant="outline" size="sm" onclick={() => onacquire(true)}
-						>{replaceVersionsLabel(versions)}</AsyncButton
-					>
+					<AsyncButton variant="outline" size="sm" onclick={() => onacquire(true)}>
+						{replaceVersionsLabel(versions)}
+					</AsyncButton>
 				{/if}
 			</div>
 			{#if missing > 0 && versions > 0}

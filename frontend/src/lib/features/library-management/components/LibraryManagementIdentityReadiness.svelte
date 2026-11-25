@@ -224,8 +224,10 @@
 			size="sm"
 			icon={ShieldCheck}
 			disabled={Boolean(active)}
-			onclick={openStart}>Prepare identities...</Button
+			onclick={openStart}
 		>
+			Prepare identities...
+		</Button>
 	</div>
 
 	{#if wholeLibraryEstimate.isLoading}
@@ -240,21 +242,21 @@
 		<div class="ir-counts grid gap-px border-t border-line bg-line sm:grid-cols-3">
 			<div class="bg-base-200 p-3 sm:px-4">
 				<span class="text-xs text-muted">Ready now</span>
-				<strong class="mt-1 block text-lg"
-					>{wholeLibraryEstimate.data.ready_album_count.toLocaleString()}</strong
-				>
+				<strong class="mt-1 block text-lg">
+					{wholeLibraryEstimate.data.ready_album_count.toLocaleString()}
+				</strong>
 			</div>
 			<div class="bg-base-200 p-3 sm:px-4">
 				<span class="text-xs text-muted">Need exact track maps</span>
-				<strong class="mt-1 block text-lg"
-					>{wholeLibraryEstimate.data.mapping_required_count.toLocaleString()}</strong
-				>
+				<strong class="mt-1 block text-lg">
+					{wholeLibraryEstimate.data.mapping_required_count.toLocaleString()}
+				</strong>
 			</div>
 			<div class="bg-base-200 p-3 sm:px-4">
 				<span class="text-xs text-muted">Need an exact edition</span>
-				<strong class="mt-1 block text-lg"
-					>{wholeLibraryEstimate.data.exact_release_required_count.toLocaleString()}</strong
-				>
+				<strong class="mt-1 block text-lg">
+					{wholeLibraryEstimate.data.exact_release_required_count.toLocaleString()}
+				</strong>
 			</div>
 		</div>
 	{/if}
@@ -308,21 +310,25 @@
 							variant="primary"
 							size="sm"
 							icon={Database}
-							onclick={() => openConfirmation('apply')}>Accept mappings...</Button
+							onclick={() => openConfirmation('apply')}
 						>
+							Accept mappings...
+						</Button>
 					{/if}
 					{#if report.state === 'ready' && !refreshRequired && suggestedCount > 0}
-						<Button variant="primary" size="sm" onclick={() => openConfirmation('apply')}
-							>Accept editions ({suggestedCount})...</Button
-						>
+						<Button variant="primary" size="sm" onclick={() => openConfirmation('apply')}>
+							Accept editions ({suggestedCount})...
+						</Button>
 					{/if}
 					{#if report.state === 'ready'}
 						<Button
 							variant="ghost"
 							size="sm"
 							icon={Trash2}
-							onclick={() => openConfirmation('discard')}>Dismiss report</Button
+							onclick={() => openConfirmation('discard')}
 						>
+							Dismiss report
+						</Button>
 					{/if}
 				</div>
 			</div>
@@ -348,8 +354,9 @@
 						class:tab-active={activeTab === tab.id}
 						aria-pressed={activeTab === tab.id}
 						onclick={() => (activeTab = tab.id)}
-						>{tab.label}<span class="badge badge-sm ml-1">{tabCount(report, tab.id)}</span></button
 					>
+						{tab.label}<span class="badge badge-sm ml-1">{tabCount(report, tab.id)}</span>
+					</button>
 				{/each}
 			</div>
 			<p class="mt-3 text-xs leading-5 text-muted">
@@ -399,9 +406,9 @@
 												: ''} · {finding.suggested_edition.track_count} tracks
 										</p>
 										{#if finding.suggested_edition.competing_count > 1}
-											<span class="badge badge-sm badge-outline shrink-0"
-												>1 of {finding.suggested_edition.competing_count} matching editions</span
-											>
+											<span class="badge badge-sm badge-outline shrink-0">
+												1 of {finding.suggested_edition.competing_count} matching editions
+											</span>
 										{/if}
 									</div>
 								{/if}
@@ -444,8 +451,10 @@
 									iconPosition="end"
 									href={withBasePath(
 										`/album/${encodeURIComponent(finding.local_album_id)}?edition=choose`
-									)}>Choose edition</Button
+									)}
 								>
+									Choose edition
+								</Button>
 							{:else if !refreshRequired}
 								<Button
 									variant="ghost"
@@ -453,8 +462,9 @@
 									icon={ArrowRight}
 									iconPosition="end"
 									href={withBasePath(`/album/${encodeURIComponent(finding.local_album_id)}`)}
-									>Open release</Button
 								>
+									Open release
+								</Button>
 							{/if}
 						</div>
 					{/each}
@@ -467,8 +477,9 @@
 					class="mt-3"
 					disabled={findingsQuery.isFetchingNextPage}
 					onclick={() => void findingsQuery.fetchNextPage()}
-					>{findingsQuery.isFetchingNextPage ? 'Loading...' : 'Load more releases'}</Button
 				>
+					{findingsQuery.isFetchingNextPage ? 'Loading...' : 'Load more releases'}
+				</Button>
 			{/if}
 		</div>
 	{/if}
@@ -489,11 +500,11 @@
 				checked={scopeMode === 'all'}
 				onchange={() => (scopeMode = 'all')}
 			/>
-			<span
-				><strong>Whole library</strong><small class="block text-muted"
-					>Every active release in every root.</small
-				></span
-			>
+			<span>
+				<strong>Whole library</strong><small class="block text-muted">
+					Every active release in every root.
+				</small>
+			</span>
 		</label>
 		<label class="flex cursor-pointer gap-3 rounded-box border border-base-content/10 p-3 text-sm">
 			<input
@@ -503,11 +514,11 @@
 				checked={scopeMode === 'selected'}
 				onchange={chooseSelectedRoots}
 			/>
-			<span
-				><strong>Selected roots</strong><small class="block text-muted"
-					>Limit the check to specific library roots.</small
-				></span
-			>
+			<span>
+				<strong>Selected roots</strong><small class="block text-muted">
+					Limit the check to specific library roots.
+				</small>
+			</span>
 		</label>
 	</fieldset>
 	{#if scopeMode === 'selected'}
@@ -520,11 +531,11 @@
 						checked={selectedRootIds.includes(root.id)}
 						onchange={(event) => toggleRoot(root.id, event.currentTarget.checked)}
 					/>
-					<span class="min-w-0"
-						><strong>{root.label}</strong><small class="block truncate text-muted"
-							>{root.path}</small
-						></span
-					>
+					<span class="min-w-0">
+						<strong>{root.label}</strong><small class="block truncate text-muted">
+							{root.path}
+						</small>
+					</span>
 				</label>
 			{/each}
 		</div>

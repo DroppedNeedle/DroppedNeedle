@@ -69,16 +69,20 @@
 				{size}
 				icon={CirclePlay}
 				aria-label={named('Resume')}
-				onclick={() => onresume?.()}>Resume</AsyncButton
+				onclick={() => onresume?.()}
 			>
+				Resume
+			</AsyncButton>
 		{:else if canPause}
 			<AsyncButton
 				variant="outline"
 				{size}
 				icon={CirclePause}
 				aria-label={named('Pause')}
-				onclick={() => onpause?.()}>Pause</AsyncButton
+				onclick={() => onpause?.()}
 			>
+				Pause
+			</AsyncButton>
 		{/if}
 		{#if canStop}
 			<AsyncButton
@@ -89,8 +93,9 @@
 				disabled={controlRequest === 'pause'}
 				bind:ref={stopButton}
 				onclick={() => stopButton && onstop?.(stopButton)}
-				>{confirmStop ? 'Stop...' : 'Stop'}</AsyncButton
 			>
+				{confirmStop ? 'Stop...' : 'Stop'}
+			</AsyncButton>
 		{/if}
 		{@render children?.()}
 	</div>

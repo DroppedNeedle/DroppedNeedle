@@ -35,16 +35,17 @@
 	<div class="flex flex-wrap items-center gap-3 text-sm text-muted">
 		<p>Recommendations are turned off.</p>
 		{#if authStore.isAdmin}
-			<Button variant="primary" size="sm" href={withBasePath('/settings?tab=listenbrainz')}
-				>Settings</Button
-			>
+			<Button variant="primary" size="sm" href={withBasePath('/settings?tab=listenbrainz')}>
+				Settings
+			</Button>
 		{/if}
 	</div>
 {:else if !configured}
 	<div class="flex flex-wrap items-center gap-3 text-sm text-muted">
 		<p>Connect a music service to see similar artists</p>
-		<Button variant="primary" size="sm" href={withBasePath('/profile#scrobbling')}>Configure</Button
-		>
+		<Button variant="primary" size="sm" href={withBasePath('/profile#scrobbling')}>
+			Configure
+		</Button>
 	</div>
 {:else if artists.length === 0}
 	<p class="text-sm text-muted">No similar artists found</p>

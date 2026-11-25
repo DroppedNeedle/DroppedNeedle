@@ -182,19 +182,25 @@
 						{#if repair.repair_summary}<Button
 								variant="outline"
 								size="xs"
-								onclick={() => openReport(repair)}>View report</Button
-							>{/if}
+								onclick={() => openReport(repair)}
+							>
+								View report
+							</Button>{/if}
 						{#if repair.state === 'ready' && repair.repair_summary?.estimated_apply_changes}<Button
 								variant="warning"
 								size="xs"
-								onclick={() => openApply(repair)}>Apply safe repairs...</Button
-							>{/if}
+								onclick={() => openApply(repair)}
+							>
+								Apply safe repairs...
+							</Button>{/if}
 					</OperationJobStrip>
 					{#if repair.state === 'succeeded' && repair.repair_summary?.estimated_apply_changes}
 						<a
 							class="text-sm link link-primary sm:col-span-2 sm:justify-self-end"
-							href={withBasePath('/library/review?view=unmatched')}>Review detached albums</a
+							href={withBasePath('/library/review?view=unmatched')}
 						>
+							Review detached albums
+						</a>
 					{/if}
 				</div>
 			{/each}
@@ -262,9 +268,10 @@
 						class="tab whitespace-nowrap"
 						aria-selected={activeTab === tab.id}
 						onclick={() => (activeTab = tab.id)}
-						>{tab.label}
-						<span class="badge badge-sm ml-1">{tabCount(selected, tab.id)}</span></button
-					>{/each}
+					>
+						{tab.label}
+						<span class="badge badge-sm ml-1">{tabCount(selected, tab.id)}</span>
+					</button>{/each}
 			</div>
 			{#if findingsQuery.isLoading}<div
 					class="skeleton mt-3 h-24"
@@ -281,11 +288,11 @@
 							class="grid gap-2 p-3 sm:grid-cols-[1fr_auto] sm:items-center"
 						>
 							<div class="min-w-0">
-								<strong class="block truncate"
-									>{finding.album_title}{finding.album_artist_name
+								<strong class="block truncate">
+									{finding.album_title}{finding.album_artist_name
 										? ` · ${finding.album_artist_name}`
-										: ''}</strong
-								>
+										: ''}
+								</strong>
 								<p class="mt-1 text-sm">
 									{finding.reason?.message ??
 										finding.reason_code.replaceAll('_', ' ').toLowerCase()}
@@ -309,8 +316,9 @@
 								href={finding.review_id
 									? withBasePath(`/library/review?review=${finding.review_id}`)
 									: withBasePath(`/album/${finding.local_album_id}`)}
-								>{finding.review_id ? 'Open evidence' : 'Open local album'}</Button
 							>
+								{finding.review_id ? 'Open evidence' : 'Open local album'}
+							</Button>
 						</article>{/each}
 				</div>{/if}
 			{#if findingsQuery.hasNextPage}<Button
@@ -318,8 +326,10 @@
 					size="sm"
 					class="mt-3"
 					disabled={findingsQuery.isFetchingNextPage}
-					onclick={() => void findingsQuery.fetchNextPage()}>Load more findings</Button
-				>{/if}
+					onclick={() => void findingsQuery.fetchNextPage()}
+				>
+					Load more findings
+				</Button>{/if}
 		</section>
 	{/if}
 </Card>
@@ -341,11 +351,11 @@
 				checked={scopeMode === 'all'}
 				onchange={() => (scopeMode = 'all')}
 			/>
-			<span
-				><strong>Whole library</strong><span class="block text-xs text-muted"
-					>Check every imported identity.</span
-				></span
-			>
+			<span>
+				<strong>Whole library</strong><span class="block text-xs text-muted">
+					Check every imported identity.
+				</span>
+			</span>
 		</label>
 		<label
 			class="flex cursor-pointer items-center gap-2 rounded-box border border-base-content/10 p-3 text-sm"
@@ -357,11 +367,11 @@
 				checked={scopeMode === 'selected'}
 				onchange={chooseSelectedRoots}
 			/>
-			<span
-				><strong>Selected roots</strong><span class="block text-xs text-muted"
-					>Limit this check to chosen library roots.</span
-				></span
-			>
+			<span>
+				<strong>Selected roots</strong><span class="block text-xs text-muted">
+					Limit this check to chosen library roots.
+				</span>
+			</span>
 		</label>
 		{#if scopeMode === 'selected'}
 			<div class="ml-4 space-y-1 border-l border-base-content/15 pl-3">
@@ -403,8 +413,10 @@
 			variant="primary"
 			loading={createRepair.isPending}
 			disabled={estimateQuery.isLoading || !estimateQuery.data}
-			onclick={() => void startCheck()}>Start check</Button
+			onclick={() => void startCheck()}
 		>
+			Start check
+		</Button>
 	{/snippet}
 </Modal>
 

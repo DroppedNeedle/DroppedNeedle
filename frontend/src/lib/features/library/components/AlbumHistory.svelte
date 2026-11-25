@@ -154,13 +154,15 @@
 							<time
 								class="text-xs text-muted"
 								datetime={at.toISOString()}
-								title={at.toLocaleString()}>{formatRelativeTime(at)}</time
+								title={at.toLocaleString()}
 							>
+								{formatRelativeTime(at)}
+							</time>
 							{#if entry.undo_id && authStore.isTrusted}
 								{@const id = entry.undo_id}
-								<Button variant="outline" size="xs" icon={Undo2} onclick={() => askUndo(entry, id)}
-									>Undo</Button
-								>
+								<Button variant="outline" size="xs" icon={Undo2} onclick={() => askUndo(entry, id)}>
+									Undo
+								</Button>
 							{/if}
 						</span>
 					</li>

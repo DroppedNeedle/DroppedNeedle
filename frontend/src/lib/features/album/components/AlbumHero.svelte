@@ -86,9 +86,9 @@
 				{#if facts.length > 0}
 					<p class="dn-album-hero__facts-line">
 						{#each facts as fact, index (fact.label)}
-							{#if index > 0}<span aria-hidden="true" class="mx-1.5">·</span>{/if}<span
-								><span class="sr-only">{fact.label}: </span>{fact.value}</span
-							>
+							{#if index > 0}<span aria-hidden="true" class="mx-1.5">·</span>{/if}<span>
+								<span class="sr-only">{fact.label}: </span>{fact.value}
+							</span>
 						{/each}
 					</p>
 				{/if}

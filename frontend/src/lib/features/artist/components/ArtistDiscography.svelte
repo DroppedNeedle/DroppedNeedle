@@ -158,8 +158,10 @@
 						{#snippet meta()}
 							{#if release.year}{release.year}{/if}{#if held}{#if release.year}<span
 										class="mx-1"
-										aria-hidden="true">·</span
-									>{/if}{trackCountLabel(held.held, held.expected)}{/if}
+										aria-hidden="true"
+									>
+										·
+									</span>{/if}{trackCountLabel(held.held, held.expected)}{/if}
 						{/snippet}
 						{#snippet overlay()}
 							{#if owned || requested}

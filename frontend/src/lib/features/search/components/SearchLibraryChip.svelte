@@ -35,8 +35,10 @@
 		tone={status === 'library' ? 'action' : 'warning'}
 		size="xs"
 		icon={status === 'library' ? Check : Clock}
-		class="search-chip__state">{label}</StatusChip
+		class="search-chip__state"
 	>
+		{label}
+	</StatusChip>
 {/snippet}
 
 {#if authStore.isAdmin}

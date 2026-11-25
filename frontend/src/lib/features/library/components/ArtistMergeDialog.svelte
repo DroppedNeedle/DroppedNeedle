@@ -17,6 +17,6 @@
 	);
 </script>
 
-<Button variant="ghost" size="sm" icon={FingerprintPattern} href={identityDeskUrl}
-	>Open artist identity desk</Button
->
+<Button variant="ghost" size="sm" icon={FingerprintPattern} href={identityDeskUrl}>
+	Open artist identity desk
+</Button>

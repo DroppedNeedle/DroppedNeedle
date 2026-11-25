@@ -148,9 +148,9 @@
 					<Button variant="outline" size="sm" href={getGenreHref(item)}>
 						{item.name}
 						{#if item.listen_count}
-							<span class="badge badge-ghost badge-xs ml-1"
-								>{formatListenCount(item.listen_count)}</span
-							>
+							<span class="badge badge-ghost badge-xs ml-1">
+								{formatListenCount(item.listen_count)}
+							</span>
 						{/if}
 					</Button>
 				{/if}

@@ -170,10 +170,10 @@
 	{:else if providerUnavailable && fallbackAlbum}
 		<div class="dn-album-page pb-0">
 			<div class="alert alert-info text-sm">
-				<span
-					>MusicBrainz is unreachable right now, so this page is built from your local files. Some
-					extras are hidden until it returns.</span
-				>
+				<span>
+					MusicBrainz is unreachable right now, so this page is built from your local files. Some
+					extras are hidden until it returns.
+				</span>
 			</div>
 		</div>
 		<LocalAlbumPage albumId={fallbackAlbum.id} />

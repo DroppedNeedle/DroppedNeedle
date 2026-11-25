@@ -33,6 +33,7 @@
 </script>
 
 {#if config}
-	<StatusChip tone={config.tone} size={size === 'badge-xs' ? 'xs' : 'sm'}>{config.label}</StatusChip
-	>
+	<StatusChip tone={config.tone} size={size === 'badge-xs' ? 'xs' : 'sm'}>
+		{config.label}
+	</StatusChip>
 {/if}

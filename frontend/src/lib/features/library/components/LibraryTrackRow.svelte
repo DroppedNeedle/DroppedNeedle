@@ -30,8 +30,10 @@
 				size="xs"
 				icon={Pencil}
 				class="ml-auto"
-				onclick={() => (editing = true)}>Edit tags</Button
+				onclick={() => (editing = true)}
 			>
+				Edit tags
+			</Button>
 		{/if}
 	</div>
 

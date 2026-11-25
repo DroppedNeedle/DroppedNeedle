@@ -82,9 +82,10 @@
 			</span>
 			<span class="yr-months__words">
 				<span class="yr-months__when">{monthName(busiest.month)} · On repeat</span>
-				<span class="yr-months__album"
-					>{album.name} · {count(album.plays)} {album.plays === 1 ? 'play' : 'plays'}</span
-				>
+				<span class="yr-months__album">
+					{album.name} · {count(album.plays)}
+					{album.plays === 1 ? 'play' : 'plays'}
+				</span>
 			</span>
 		</a>
 	{/if}

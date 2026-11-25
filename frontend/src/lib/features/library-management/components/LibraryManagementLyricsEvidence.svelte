@@ -78,19 +78,21 @@
 			<span
 				class="badge badge-sm {projection.status === 'available'
 					? 'badge-success'
-					: 'badge-warning'}">{statusLabel()}</span
+					: 'badge-warning'}"
 			>
+				{statusLabel()}
+			</span>
 		</div>
 		<div class="mt-3 grid gap-2 sm:grid-cols-2">
 			<Card variant="bordered" padding="sm">
 				<small class="block text-muted">Plain lyrics</small>
-				<strong class="text-sm"
-					>{writeLabel(
+				<strong class="text-sm">
+					{writeLabel(
 						projection.plainSelected,
 						projection.plainAvailable,
 						plainDiff?.operation ?? null
-					)}</strong
-				>
+					)}
+				</strong>
 			</Card>
 			<Card variant="bordered" padding="sm">
 				<small class="block text-muted">Synchronized lyrics</small>

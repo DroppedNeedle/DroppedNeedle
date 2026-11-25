@@ -59,9 +59,9 @@
 					</p>
 					<p class="text-xs">{checkNote}</p>
 				</div>
-				<AsyncButton size="sm" pending={checking} onclick={() => check.mutate(rootId)}
-					>Check again</AsyncButton
-				>
+				<AsyncButton size="sm" pending={checking} onclick={() => check.mutate(rootId)}>
+					Check again
+				</AsyncButton>
 			</div>
 		{:else if mode === 'unknown'}
 			<p class="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted">
@@ -70,8 +70,10 @@
 					variant="ghost"
 					size="xs"
 					pending={checking}
-					onclick={() => check.mutate(rootId)}>Check again</AsyncButton
+					onclick={() => check.mutate(rootId)}
 				>
+					Check again
+				</AsyncButton>
 				<span class="basis-full">{checkNote}</span>
 			</p>
 		{/if}

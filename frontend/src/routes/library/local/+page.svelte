@@ -502,8 +502,10 @@
 						{#if authStore.isAdmin}
 							Add a music folder in <a
 								href={withBasePath('/settings?tab=library')}
-								class="link link-accent">Settings &rarr; Library</a
-							>, then run a scan.
+								class="link link-accent"
+							>
+								Settings &rarr; Library
+							</a>, then run a scan.
 						{:else}
 							Ask an admin to add a music folder.
 						{/if}

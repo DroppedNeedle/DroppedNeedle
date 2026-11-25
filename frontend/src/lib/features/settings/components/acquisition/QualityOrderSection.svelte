@@ -326,9 +326,9 @@
 				>
 					<span class="min-w-0">
 						<span class="block font-medium">{preset.label}</span>
-						<span class="mt-0.5 block text-xs font-normal leading-4 text-muted"
-							>{preset.descriptor}</span
-						>
+						<span class="mt-0.5 block text-xs font-normal leading-4 text-muted">
+							{preset.descriptor}
+						</span>
 					</span>
 					<span class="flex shrink-0 flex-col items-end gap-1">
 						{#if savedPreset === key}
@@ -425,15 +425,16 @@
 							</span>
 							<div class="min-w-0 flex-1">
 								<div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-									<span class="text-xs font-semibold uppercase tracking-[0.12em] text-muted"
-										>{entry.format}</span
-									>
+									<span class="text-xs font-semibold uppercase tracking-[0.12em] text-muted">
+										{entry.format}
+									</span>
 									<span class="break-words font-medium">{recipeEntryLabel(entry)}</span>
-									{#if index === 0}<span class="badge badge-primary badge-sm">First choice</span
-										>{/if}
-									{#if index === qualityRecipe.length - 1}<span class="badge badge-ghost badge-sm"
-											>Last resort</span
-										>{/if}
+									{#if index === 0}<span class="badge badge-primary badge-sm">
+											First choice
+										</span>{/if}
+									{#if index === qualityRecipe.length - 1}<span class="badge badge-ghost badge-sm">
+											Last resort
+										</span>{/if}
 								</div>
 								{#if entry.format === 'mp3' && entry.quality === 'custom'}
 									<p class="mt-1 text-xs text-muted">Inclusive range</p>
@@ -524,11 +525,13 @@
 						checked={flacQuality === 'custom'}
 						onchange={() => (flacQuality = 'custom')}
 					/>
-					<span class="min-w-0"
-						><span class="block text-sm font-medium">Custom</span><span
-							class="block text-xs leading-4 text-muted">Exact bit depth and sample rate</span
-						></span
-					>
+					<span class="min-w-0">
+						<span class="block text-sm font-medium">Custom</span><span
+							class="block text-xs leading-4 text-muted"
+						>
+							Exact bit depth and sample rate
+						</span>
+					</span>
 				</label>
 			</div>
 			{#if flacQuality === 'custom'}
@@ -600,12 +603,13 @@
 							checked={mp3Quality === option.quality}
 							onchange={() => (mp3Quality = option.quality as Mp3Quality)}
 						/>
-						<span class="min-w-0"
-							><span class="block text-sm font-medium">{option.label} kbps</span><span
+						<span class="min-w-0">
+							<span class="block text-sm font-medium">{option.label} kbps</span><span
 								class="block text-xs leading-4 text-muted"
-								>{position ? `Already at position ${position}` : option.detail}</span
-							></span
-						>
+							>
+								{position ? `Already at position ${position}` : option.detail}
+							</span>
+						</span>
 					</label>
 				{/each}
 				<label
@@ -619,17 +623,19 @@
 						checked={mp3Quality === 'custom'}
 						onchange={() => (mp3Quality = 'custom')}
 					/>
-					<span class="min-w-0"
-						><span class="block text-sm font-medium">Custom</span><span
-							class="block text-xs leading-4 text-muted">Inclusive minimum and maximum</span
-						></span
-					>
+					<span class="min-w-0">
+						<span class="block text-sm font-medium">Custom</span><span
+							class="block text-xs leading-4 text-muted"
+						>
+							Inclusive minimum and maximum
+						</span>
+					</span>
 				</label>
 			</div>
 			{#if mp3Quality === 'custom'}
 				<div class="grid min-w-0 gap-2 sm:grid-cols-2">
-					<label class="flex min-w-0 flex-col gap-1"
-						><span class="text-xs text-muted">Minimum (kbps)</span><Input
+					<label class="flex min-w-0 flex-col gap-1">
+						<span class="text-xs text-muted">Minimum (kbps)</span><Input
 							label="Custom MP3 minimum bitrate"
 							type="number"
 							size="sm"
@@ -639,10 +645,10 @@
 							step="1"
 							placeholder="16-2048"
 							bind:value={customMp3Min}
-						/></label
-					>
-					<label class="flex min-w-0 flex-col gap-1"
-						><span class="text-xs text-muted">Maximum (kbps)</span><Input
+						/>
+					</label>
+					<label class="flex min-w-0 flex-col gap-1">
+						<span class="text-xs text-muted">Maximum (kbps)</span><Input
 							label="Custom MP3 maximum bitrate"
 							type="number"
 							size="sm"
@@ -652,8 +658,8 @@
 							step="1"
 							placeholder="16-2048"
 							bind:value={customMp3Max}
-						/></label
-					>
+						/>
+					</label>
 				</div>
 			{/if}
 			<div class="mt-auto flex flex-wrap items-center justify-between gap-2 pt-2">

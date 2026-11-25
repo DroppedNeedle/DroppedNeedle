@@ -124,9 +124,9 @@
 			{/each}
 		</ul>
 		<div class="px-6 pb-5">
-			<Button variant="outline" size="sm" href={withBasePath('/settings/setup')}
-				>Open setup guide</Button
-			>
+			<Button variant="outline" size="sm" href={withBasePath('/settings/setup')}>
+				Open setup guide
+			</Button>
 		</div>
 	{/if}
 </Card>

@@ -877,8 +877,10 @@
 						size="sm"
 						icon={ChevronLeft}
 						class="-ml-2 self-start md:hidden"
-						onclick={() => (step = 'list')}>All editions</Button
+						onclick={() => (step = 'list')}
 					>
+						All editions
+					</Button>
 					{#if view === 'next' && chosen}
 						<EditionNextSteps
 							name={chosen.name}
@@ -1016,8 +1018,10 @@
 				size="sm"
 				icon={ChevronLeft}
 				class="-ml-2 self-start md:hidden"
-				onclick={() => (step = 'list')}>All editions</Button
+				onclick={() => (step = 'list')}
 			>
+				All editions
+			</Button>
 			{#if selected}
 				{@const facts = factsOf(selected)}
 				{@const link = outsideLink(`https://musicbrainz.org/release/${selected}`)}
@@ -1040,8 +1044,9 @@
 								href={link}
 								target="_blank"
 								rel="noreferrer"
-								>Open in MusicBrainz <ExternalLink class="h-3 w-3" aria-hidden="true" /></a
 							>
+								Open in MusicBrainz <ExternalLink class="h-3 w-3" aria-hidden="true" />
+							</a>
 						{/if}
 					</div>
 				</header>
@@ -1052,13 +1057,13 @@
 						<ol class="flex flex-col text-sm" aria-label="Tracks">
 							{#each info.tracks as track (`${track.disc_number}-${track.position}`)}
 								<li class="flex items-baseline gap-3 border-b border-base-content/5 py-1.5">
-									<span class="w-8 shrink-0 text-right text-muted tabular-nums"
-										>{discs > 1 ? `${track.disc_number}-${track.position}` : track.position}</span
-									>
+									<span class="w-8 shrink-0 text-right text-muted tabular-nums">
+										{discs > 1 ? `${track.disc_number}-${track.position}` : track.position}
+									</span>
 									<span class="min-w-0 flex-1 truncate">{track.title}</span>
-									<span class="shrink-0 text-muted tabular-nums"
-										>{formatDuration(track.length)}</span
-									>
+									<span class="shrink-0 text-muted tabular-nums">
+										{formatDuration(track.length)}
+									</span>
 								</li>
 							{/each}
 						</ol>
@@ -1076,22 +1081,22 @@
 {/snippet}
 
 {#snippet pickAction()}
-	<AsyncButton variant="primary" size="sm" onclick={pickEdition}
-		>{request?.requested ? 'Switch to this edition' : 'Choose this edition'}</AsyncButton
-	>
+	<AsyncButton variant="primary" size="sm" onclick={pickEdition}>
+		{request?.requested ? 'Switch to this edition' : 'Choose this edition'}
+	</AsyncButton>
 {/snippet}
 
 {#snippet primaryAction()}
 	{#if primaryKind === 'keep'}
-		<AsyncButton variant="primary" size="sm" pending={confirm.isPending} onclick={keepEdition}
-			>That's right</AsyncButton
-		>
+		<AsyncButton variant="primary" size="sm" pending={confirm.isPending} onclick={keepEdition}>
+			That's right
+		</AsyncButton>
 	{:else if primaryKind === 'use'}
 		{@const noneFit = selectedPlan ? fitsNoFile(selectedPlan) : false}
 		{#if noneFit}
-			<AsyncButton variant="outline" size="sm" pending={choose.isPending} onclick={useAnyway}
-				>{USE_ANYWAY}</AsyncButton
-			>
+			<AsyncButton variant="outline" size="sm" pending={choose.isPending} onclick={useAnyway}>
+				{USE_ANYWAY}
+			</AsyncButton>
 			<span class="hidden text-sm text-muted md:inline">{USE_ANYWAY_NOTE}</span>
 		{:else}
 			<AsyncButton
@@ -1100,21 +1105,23 @@
 				pending={choose.isPending}
 				pendingLabel="Matching your files..."
 				disabled={!selectedPlan}
-				onclick={useEdition}>Use this edition</AsyncButton
+				onclick={useEdition}
 			>
+				Use this edition
+			</AsyncButton>
 		{/if}
 	{/if}
 {/snippet}
 
 {#snippet footerLinks()}
 	{#if canEdit && letChooseLabel && view !== 'handedBack'}
-		<AsyncButton variant="ghost" size="sm" pending={handBack.isPending} onclick={letChoose}
-			>{letChooseLabel}</AsyncButton
-		>
+		<AsyncButton variant="ghost" size="sm" pending={handBack.isPending} onclick={letChoose}>
+			{letChooseLabel}
+		</AsyncButton>
 	{/if}
 	{#if canEdit && status?.undo_available && view === 'compare'}
-		<AsyncButton variant="ghost" size="sm" pending={undo.isPending} onclick={undoChange}
-			>Undo last change</AsyncButton
-		>
+		<AsyncButton variant="ghost" size="sm" pending={undo.isPending} onclick={undoChange}>
+			Undo last change
+		</AsyncButton>
 	{/if}
 {/snippet}

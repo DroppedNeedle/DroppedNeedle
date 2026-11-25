@@ -123,8 +123,10 @@
 
 {#snippet album(side: RetagPair['old_album'])}<a
 		class="link font-semibold"
-		href={withBasePath(`/album/${encodeURIComponent(side.id)}`)}>{side.title}</a
-	>{/snippet}
+		href={withBasePath(`/album/${encodeURIComponent(side.id)}`)}
+	>
+		{side.title}
+	</a>{/snippet}
 
 <Card
 	as="article"
@@ -223,14 +225,18 @@
 			size="sm"
 			disabled={mergeBlocked || dismiss.isPending}
 			pending={join.isPending}
-			onclick={merge}>Merge into one album</AsyncButton
+			onclick={merge}
 		>
+			Merge into one album
+		</AsyncButton>
 		<AsyncButton
 			variant="ghost"
 			size="sm"
 			disabled={join.isPending}
 			pending={dismiss.isPending}
-			onclick={keepApart}>Keep them apart</AsyncButton
+			onclick={keepApart}
 		>
+			Keep them apart
+		</AsyncButton>
 	</div>
 </Card>

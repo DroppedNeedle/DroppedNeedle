@@ -127,16 +127,19 @@
 					Or set it up later in <a
 						class="link"
 						href={withBasePath(`/settings?tab=${SERVICE_TABS[service.kind]}`)}
-						>Settings > {SERVICE_NAMES[service.kind]}</a
-					>.
+					>
+						Settings > {SERVICE_NAMES[service.kind]}
+					</a>.
 				</p>
 			{/each}
 			{#if !progress.acoustid}
 				<p class="text-sm">
 					Add an AcoustID key so music with no tags can be identified, in <a
 						class="link"
-						href={withBasePath('/settings?tab=library')}>Settings > Library</a
-					>.
+						href={withBasePath('/settings?tab=library')}
+					>
+						Settings > Library
+					</a>.
 				</p>
 			{/if}
 		</section>

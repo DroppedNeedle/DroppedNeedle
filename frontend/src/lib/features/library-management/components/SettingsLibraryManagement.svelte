@@ -318,8 +318,10 @@
 								variant="warning"
 								size="sm"
 								disabled={section.saving}
-								onclick={() => void section.save()}>Save these settings</Button
+								onclick={() => void section.save()}
 							>
+								Save these settings
+							</Button>
 						</div>
 					</div>
 				{/if}
@@ -355,14 +357,15 @@
 				</section>
 
 				<details class="management-retention-panel">
-					<summary
-						><span class="management-editor-icon"><History class="h-4 w-4" /></span><span
+					<summary>
+						<span class="management-editor-icon"><History class="h-4 w-4" /></span><span
 							class="flex flex-col"
-							><strong>Recycle bin, retention and refresh</strong><small class="text-xs text-muted"
-								>Advanced recovery settings</small
-							></span
-						><ChevronRight class="ml-auto h-4 w-4 management-editor-chevron" /></summary
-					>
+						>
+							<strong>Recycle bin, retention and refresh</strong><small class="text-xs text-muted">
+								Advanced recovery settings
+							</small>
+						</span><ChevronRight class="ml-auto h-4 w-4 management-editor-chevron" />
+					</summary>
 					<div class="mt-4 grid gap-x-4 gap-y-2 sm:grid-cols-2">
 						<div class="sm:col-span-2">
 							<TextField
@@ -465,18 +468,21 @@
 									icon={RefreshCw}
 									disabled={wizard.pending}
 									onclick={(event: MouseEvent & { currentTarget: HTMLElement }) =>
-										void saveChanges(event.currentTarget)}>Restart review</Button
+										void saveChanges(event.currentTarget)}
 								>
+									Restart review
+								</Button>
 							{:else}<Button
 									variant="warning"
 									size="sm"
 									onclick={(event: MouseEvent & { currentTarget: HTMLElement }) =>
 										activationDialog?.show(event.currentTarget)}
-									>{#if currentActivationRoot && activationPreview?.state === 'running' && !wizard.stalled}<span
+								>
+									{#if currentActivationRoot && activationPreview?.state === 'running' && !wizard.stalled}<span
 											class="loading loading-spinner loading-sm"
 											aria-hidden="true"
-										></span>{/if}<ShieldAlert class="h-4 w-4" /> View dry run</Button
-								>
+										></span>{/if}<ShieldAlert class="h-4 w-4" /> View dry run
+								</Button>
 							{/if}
 						</div>
 					{:else if remoteActivation}
@@ -501,8 +507,10 @@
 								icon={ShieldAlert}
 								href={withBasePath(
 									`/library/management/previews/${encodeURIComponent(remoteActivation.operation.id)}`
-								)}>Review dry run</Button
+								)}
 							>
+								Review dry run
+							</Button>
 						</div>
 					{:else if activationHealthQuery.isError}
 						<div class="management-save-bar__notice">
@@ -517,8 +525,10 @@
 								size="sm"
 								icon={RefreshCw}
 								disabled={activationHealthQuery.isFetching}
-								onclick={() => void activationHealthQuery.refetch()}>Retry status check</Button
+								onclick={() => void activationHealthQuery.refetch()}
 							>
+								Retry status check
+							</Button>
 						</div>
 					{:else if activationHealthQuery.isLoading}
 						<div class="management-save-bar__notice">
@@ -551,8 +561,10 @@
 								size="sm"
 								icon={RefreshCw}
 								disabled={activationHealthQuery.isFetching}
-								onclick={() => void activationHealthQuery.refetch()}>Recheck</Button
+								onclick={() => void activationHealthQuery.refetch()}
 							>
+								Recheck
+							</Button>
 						</div>
 					{:else if staleActivationRootIds.length > 0}
 						<div class="management-save-bar__notice">
@@ -574,8 +586,10 @@
 								icon={ShieldAlert}
 								disabled={wizard.pending || activationHealthQuery.isFetching || settings.dirty}
 								onclick={(event: MouseEvent & { currentTarget: HTMLElement }) =>
-									startFreshActivation(event.currentTarget)}>Run a fresh dry run</Button
+									startFreshActivation(event.currentTarget)}
 							>
+								Run a fresh dry run
+							</Button>
 						</div>
 					{/if}
 					<SaveBar

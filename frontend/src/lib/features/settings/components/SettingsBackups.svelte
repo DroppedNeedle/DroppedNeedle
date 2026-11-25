@@ -112,8 +112,10 @@
 						class="link whitespace-nowrap"
 						href={outsideLink(STORAGE_DOCS)}
 						target="_blank"
-						rel="noopener noreferrer">How to move it</a
+						rel="noopener noreferrer"
 					>
+						How to move it
+					</a>
 				</p>
 			</div>
 		</div>
@@ -179,8 +181,10 @@
 				class="link whitespace-nowrap"
 				href={outsideLink(RESTORE_DOCS)}
 				target="_blank"
-				rel="noopener noreferrer">How to restore</a
+				rel="noopener noreferrer"
 			>
+				How to restore
+			</a>
 		</p>
 	</Card>
 </div>

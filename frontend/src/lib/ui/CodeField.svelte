@@ -110,8 +110,10 @@
 			id="{id}-label"
 			class="fieldset-legend cursor-text"
 			tabindex="-1"
-			onclick={() => editor?.focus()}>{label}</button
+			onclick={() => editor?.focus()}
 		>
+			{label}
+		</button>
 		{#if aside}{@render aside()}{/if}
 	</div>
 	<div class="code-host" class:focused bind:this={host}>

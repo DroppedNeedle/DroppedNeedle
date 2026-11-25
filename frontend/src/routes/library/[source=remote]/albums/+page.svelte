@@ -398,8 +398,10 @@
 					<Button
 						variant="ghost"
 						loading={albumsQuery.isFetchingNextPage}
-						onclick={() => void albumsQuery.fetchNextPage()}>Show more</Button
+						onclick={() => void albumsQuery.fetchNextPage()}
 					>
+						Show more
+					</Button>
 				</div>
 			{/if}
 		{/snippet}

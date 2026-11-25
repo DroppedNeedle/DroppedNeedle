@@ -87,7 +87,9 @@
 			icon={Search}
 			loading={searching}
 			disabled={!title.trim()}
-			class="mt-1 self-start">Search MusicBrainz</Button
+			class="mt-1 self-start"
 		>
+			Search MusicBrainz
+		</Button>
 	{/if}
 </form>

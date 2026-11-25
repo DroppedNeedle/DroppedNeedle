@@ -63,8 +63,10 @@
 					size="xs"
 					href={releaseLink}
 					target="_blank"
-					rel="noopener noreferrer">Details</Button
+					rel="noopener noreferrer"
 				>
+					Details
+				</Button>
 			{/if}
 			<IconButton size="sm" icon={X} label="Dismiss update notification" onclick={dismiss} />
 		</div>

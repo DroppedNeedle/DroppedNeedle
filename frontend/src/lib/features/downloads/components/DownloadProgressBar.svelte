@@ -37,8 +37,9 @@
 <div class="dl-progress" role="status" aria-live="polite" aria-label="Download progress">
 	<p class="dl-progress__facts">
 		<span class="sr-only">{clamped.toFixed(0)}%</span>
-		{#each facts as fact, i (fact)}{#if i > 0}<span class="dl-progress__dot mx-1.5">·</span
-				>{/if}{fact}{/each}
+		{#each facts as fact, i (fact)}{#if i > 0}<span class="dl-progress__dot mx-1.5">
+					·
+				</span>{/if}{fact}{/each}
 	</p>
 	<div class="dl-track" aria-hidden="true">
 		<div class="dl-fill" style:width="{clamped}%"></div>

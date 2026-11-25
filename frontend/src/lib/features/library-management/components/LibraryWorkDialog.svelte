@@ -166,8 +166,9 @@
 							/>
 							<span class="min-w-0 flex-1 truncate text-sm">{rule.label}</span>
 							<span class="badge badge-ghost badge-sm">{rule.policy.replace('_', ' ')}</span>
-							{#if !rule.available}<span class="badge badge-warning badge-sm">Unavailable</span
-								>{/if}
+							{#if !rule.available}<span class="badge badge-warning badge-sm">
+									Unavailable
+								</span>{/if}
 						</label>
 					{/each}
 				{/each}
@@ -183,16 +184,16 @@
 			{:else if kind === 'retry_identification' && pendingCount === null}
 				<span class="text-muted">Preview to count albums</span>
 			{:else if kind === 'retry_identification'}
-				<strong
-					>{(pendingCount ?? 0).toLocaleString()}
+				<strong>
+					{(pendingCount ?? 0).toLocaleString()}
 					{retryPreview.data
 						? pendingCount === 1
 							? 'album would start'
 							: 'albums would start'
 						: pendingCount === 1
 							? 'album waits for a decision'
-							: 'albums wait for a decision'}</strong
-				>
+							: 'albums wait for a decision'}
+				</strong>
 			{:else if estimateQuery.isFetching}
 				<span class="skeleton h-4 w-28"></span>
 			{:else if estimatedFiles !== null && estimatedFiles !== undefined}
@@ -214,21 +215,21 @@
 	{#if kind === 'retry_identification'}
 		<label class="label mt-4 cursor-pointer justify-start gap-3 text-sm">
 			<input type="checkbox" class="checkbox checkbox-sm" bind:checked={confirmLocalMetadata} />
-			<span
-				>Also look up albums in Local metadata folders. This is a one-off lookup; the folder's
-				policy does not change.</span
-			>
+			<span>
+				Also look up albums in Local metadata folders. This is a one-off lookup; the folder's policy
+				does not change.
+			</span>
 		</label>
 		{#if retryPreview.data?.skipped.length && !retryAll.data}
 			<ul class="mt-3 space-y-1 text-sm">
 				{#each retryPreview.data.skipped as group (group.reason.code)}
 					<li class="flex gap-2">
 						<TriangleAlert class="mt-0.5 h-4 w-4 shrink-0 text-warning" />
-						<span
-							><strong>{group.count.toLocaleString()}</strong> would not start: {group.reason
+						<span>
+							<strong>{group.count.toLocaleString()}</strong> would not start: {group.reason
 								.message}
-							<span class="text-muted">{group.reason.action}</span></span
-						>
+							<span class="text-muted">{group.reason.action}</span>
+						</span>
 					</li>
 				{/each}
 			</ul>
@@ -236,10 +237,10 @@
 		{#if retryAll.isError || retryPreview.isError}
 			<div class="alert alert-error mt-4 text-sm">
 				{#if retryIsTransport}
-					<span
-						>DroppedNeedle could not reach the server, so the retry did not start. You can try again
-						without closing this dialog.</span
-					>
+					<span>
+						DroppedNeedle could not reach the server, so the retry did not start. You can try again
+						without closing this dialog.
+					</span>
 				{:else}
 					<span>The retry could not start. No library data was changed.</span>
 				{/if}
@@ -249,15 +250,17 @@
 			{@const result = retryAll.data}
 			<div class="mt-4 rounded-box border border-primary/20 bg-base-100 p-4 text-sm" role="status">
 				<p>
-					<strong
-						>Retrying {result.started.toLocaleString()}
-						{result.started === 1 ? 'album' : 'albums'}</strong
-					> in the background. Pause or stop it from the review page.
+					<strong>
+						Retrying {result.started.toLocaleString()}
+						{result.started === 1 ? 'album' : 'albums'}
+					</strong> in the background. Pause or stop it from the review page.
 				</p>
 				<a
 					class="link link-primary mt-2 inline-block"
-					href={withBasePath('/library/review?state=pending')}>Open the reviews</a
+					href={withBasePath('/library/review?state=pending')}
 				>
+					Open the reviews
+				</a>
 			</div>
 		{/if}
 	{/if}
@@ -269,15 +272,18 @@
 					variant="primary"
 					loading={retryPreview.isPending}
 					disabled={pendingCount === 0}
-					onclick={() => void previewRetry()}>Preview retry</Button
-				>{:else if !retryAll.data}<Button
+					onclick={() => void previewRetry()}
+				>
+					Preview retry
+				</Button>{:else if !retryAll.data}<Button
 					variant="primary"
 					loading={retryAll.isPending}
 					disabled={!retryPreview.data?.started}
 					onclick={() => void startRetry()}
-					>Retry {(retryPreview.data?.started ?? 0).toLocaleString()}
-					{retryPreview.data?.started === 1 ? 'album' : 'albums'}</Button
-				>{/if}
+				>
+					Retry {(retryPreview.data?.started ?? 0).toLocaleString()}
+					{retryPreview.data?.started === 1 ? 'album' : 'albums'}
+				</Button>{/if}
 		{:else}<Button
 				variant="primary"
 				loading={pending}

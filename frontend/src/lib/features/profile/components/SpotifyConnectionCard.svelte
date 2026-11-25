@@ -102,9 +102,9 @@
 		<p class="mt-2.5 text-sm">Reconnect to sync Liked Songs.</p>
 	{/if}
 	<p class="mt-2.5 text-sm text-muted">
-		Connected. Go to your <a href={withBasePath('/playlists')} class="link link-primary"
-			>Playlists</a
-		> to import your playlists and Liked Songs, and keep them in sync.
+		Connected. Go to your <a href={withBasePath('/playlists')} class="link link-primary">
+			Playlists
+		</a> to import your playlists and Liked Songs, and keep them in sync.
 	</p>
 {:else}
 	<p class="mt-2.5 text-sm text-muted">

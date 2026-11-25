@@ -181,10 +181,10 @@
 						{#if !draft.hibp_check}
 							<div class="alert alert-warning alert-soft text-sm">
 								<CircleAlert class="h-4 w-4 shrink-0" />
-								<span
-									>HIBP checking is disabled. Users may set passwords from known breach databases.
-									Only turn this off for air-gapped or offline installs.</span
-								>
+								<span>
+									HIBP checking is disabled. Users may set passwords from known breach databases.
+									Only turn this off for air-gapped or offline installs.
+								</span>
 							</div>
 						{/if}
 
@@ -223,8 +223,10 @@
 										href="https://haveibeenpwned.com/Passwords"
 										target="_blank"
 										rel="noopener noreferrer"
-										class="link link-primary">"Pwned Passwords" file (ordered by hash)</a
-									>. When set and the file exists, no outbound API calls are made. If the path is
+										class="link link-primary"
+									>
+										"Pwned Passwords" file (ordered by hash)
+									</a>. When set and the file exists, no outbound API calls are made. If the path is
 									set but the file is missing, the check is skipped rather than falling back to the
 									API.
 								</p>
@@ -382,8 +384,10 @@
 									href="https://hstspreload.org"
 									target="_blank"
 									rel="noopener noreferrer"
-									class="link link-accent">hstspreload.org</a
-								>.
+									class="link link-accent"
+								>
+									hstspreload.org
+								</a>.
 							</p>
 						</div>
 

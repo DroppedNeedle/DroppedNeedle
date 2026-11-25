@@ -180,9 +180,9 @@
 >
 	{#if impact.data}<div class="space-y-3 text-sm">
 			<p>
-				<strong
-					>{impact.data.indexed_file_count?.toLocaleString() ?? 'An unknown number of'} indexed files</strong
-				>
+				<strong>
+					{impact.data.indexed_file_count?.toLocaleString() ?? 'An unknown number of'} indexed files
+				</strong>
 				and {impact.data.on_disk_file_count?.toLocaleString() ?? 'an unknown number of'} files on disk
 				are in the affected scopes.
 			</p>

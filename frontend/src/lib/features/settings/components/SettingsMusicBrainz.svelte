@@ -570,9 +570,9 @@
 									<div class="min-w-0 space-y-1">
 										<h3 id="brainzmash-pending-heading" class="font-semibold">BrainzMash setup</h3>
 										<p class="text-sm text-muted">
-											Built-in endpoint: <code
-												>{pendingBrainzMash?.endpoint ?? BRAINZMASH_ENDPOINT_URL}</code
-											>
+											Built-in endpoint: <code>
+												{pendingBrainzMash?.endpoint ?? BRAINZMASH_ENDPOINT_URL}
+											</code>
 										</p>
 										<p class="text-xs text-muted">
 											Supported read-only route families: {BRAINZMASH_SUPPORTED_ROUTE_FAMILIES.join(
@@ -632,12 +632,12 @@
 														void acceptBrainzMashDisclosure();
 												}}
 											/>
-											<span class="text-sm"
-												>{COMMUNITY_CONFIRM_LABEL.replace(
+											<span class="text-sm">
+												{COMMUNITY_CONFIRM_LABEL.replace(
 													'routing identity data through a server I do not control',
 													'routing MusicBrainz query data through BrainzMash'
-												)}</span
-											>
+												)}
+											</span>
 										</label>
 
 										<div class="flex flex-wrap gap-2">
@@ -704,8 +704,10 @@
 												)}
 												target="_blank"
 												rel="noopener noreferrer"
-												class="link link-hover text-primary">setup guide</a
-											>.
+												class="link link-hover text-primary"
+											>
+												setup guide
+											</a>.
 										</p>
 									{/if}
 								</div>
@@ -769,10 +771,11 @@
 										target="_blank"
 										rel="noopener noreferrer"
 										class="link link-hover inline-flex items-center gap-1 text-primary"
-										><ExternalLink class="h-3 w-3" aria-hidden="true" />{selectedMode === 'mirror'
-											? 'Mirror setup guide'
-											: 'Setup guide'}</a
 									>
+										<ExternalLink class="h-3 w-3" aria-hidden="true" />{selectedMode === 'mirror'
+											? 'Mirror setup guide'
+											: 'Setup guide'}
+									</a>
 								</div>
 							</div>
 						{/if}

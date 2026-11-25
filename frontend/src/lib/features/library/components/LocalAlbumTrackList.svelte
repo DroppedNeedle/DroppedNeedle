@@ -81,24 +81,27 @@
 		>
 			<!-- One line from 640 up; narrower, the format and length drop under the title. -->
 			<div class="flex min-h-9 flex-wrap items-center gap-x-2 sm:flex-nowrap sm:gap-x-3">
-				<span class="w-8 shrink-0 text-center text-sm text-muted tabular-nums"
-					>{track.disc_number}.{track.track_number}</span
-				>
+				<span class="w-8 shrink-0 text-center text-sm text-muted tabular-nums">
+					{track.disc_number}.{track.track_number}
+				</span>
 				<div class="order-last flex basis-full items-center gap-2 pb-1 pl-10 sm:contents">
 					<div class="shrink-0 sm:order-1 sm:w-[5.5rem]">
 						<LibraryFormatBadge format={track.format} bitrate={track.bit_rate} size="badge-xs" />
 					</div>
 					<span
 						class="shrink-0 text-xs text-muted tabular-nums sm:order-5 sm:w-10 sm:text-right sm:text-sm sm:text-base-content"
-						>{formatDurationSec(track.duration_seconds)}</span
 					>
+						{formatDurationSec(track.duration_seconds)}
+					</span>
 				</div>
 				<div class="order-2 min-w-0 flex-1 py-1">
 					<p class="text-[0.9375rem] leading-snug font-semibold break-words">{track.title}</p>
 					<a
 						href={artistHref(track.artist_mbid ?? track.artist_id ?? '')}
-						class="text-xs text-muted hover:underline">{track.artist_name || 'Unknown artist'}</a
+						class="text-xs text-muted hover:underline"
 					>
+						{track.artist_name || 'Unknown artist'}
+					</a>
 					{#if notes?.get(track.id)}
 						<p class="text-xs text-info">{notes.get(track.id)}</p>
 					{/if}
@@ -108,9 +111,9 @@
 						{@render rateAndHeart(track)}
 					</div>
 				{/if}
-				<span class="order-6 hidden w-16 shrink-0 text-right text-sm tabular-nums sm:block"
-					>{track.file_size_bytes > 0 ? formatBytes(track.file_size_bytes) : '—'}</span
-				>
+				<span class="order-6 hidden w-16 shrink-0 text-right text-sm tabular-nums sm:block">
+					{track.file_size_bytes > 0 ? formatBytes(track.file_size_bytes) : '—'}
+				</span>
 				<Button
 					variant="accent"
 					size="xs"
@@ -149,10 +152,10 @@
 						? 'md:hidden'
 						: 'sm:hidden'}"
 				>
-					<span class="sm:hidden"
-						><span class="text-muted">Size:</span>
-						{track.file_size_bytes > 0 ? formatBytes(track.file_size_bytes) : '—'}</span
-					>
+					<span class="sm:hidden">
+						<span class="text-muted">Size:</span>
+						{track.file_size_bytes > 0 ? formatBytes(track.file_size_bytes) : '—'}
+					</span>
 					{#if rated}
 						<div class="flex items-center">{@render rateAndHeart(track)}</div>
 					{/if}

@@ -62,8 +62,10 @@
 								href="https://console.cloud.google.com/apis/library/youtube.googleapis.com"
 								target="_blank"
 								rel="noopener noreferrer"
-								class="link link-primary">Google Cloud Console</a
-							>.
+								class="link link-primary"
+							>
+								Google Cloud Console
+							</a>.
 						</p>
 
 						<SecretField

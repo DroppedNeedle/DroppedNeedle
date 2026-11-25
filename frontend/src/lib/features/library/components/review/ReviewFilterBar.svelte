@@ -20,8 +20,9 @@
 	<label class="grid gap-1 text-xs">
 		<span>Order</span>
 		<select class="select select-sm" bind:value={filters.sort}>
-			{#each REVIEW_SORTS as sort (sort.value)}<option value={sort.value}>{sort.label}</option
-				>{/each}
+			{#each REVIEW_SORTS as sort (sort.value)}<option value={sort.value}>
+					{sort.label}
+				</option>{/each}
 		</select>
 	</label>
 	{#if authStore.isAdmin && roots.length > 1}

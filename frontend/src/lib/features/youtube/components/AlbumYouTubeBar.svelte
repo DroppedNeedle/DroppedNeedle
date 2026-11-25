@@ -204,8 +204,9 @@
 			{#if hasAnyTrackLinks}
 				<span
 					class="inline-flex h-6 items-center rounded-full bg-base-content px-2.5 text-xs font-bold text-base-100 tabular-nums"
-					>{generatedCount}/{tracks.length}</span
 				>
+					{generatedCount}/{tracks.length}
+				</span>
 			{/if}
 		</div>
 

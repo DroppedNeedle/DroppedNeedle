@@ -131,9 +131,9 @@
 				needed.
 			</p>
 		</div>
-		<Button variant="outline" size="sm" icon={FolderPlus} onclick={() => (rootOpen = true)}
-			>Add root</Button
-		>
+		<Button variant="outline" size="sm" icon={FolderPlus} onclick={() => (rootOpen = true)}>
+			Add root
+		</Button>
 	</div>
 
 	{#if roots.length === 0}
@@ -151,9 +151,9 @@
 				<div class="min-w-0">
 					<div class="flex flex-wrap items-center gap-2">
 						<h4 class="font-semibold">{root.label}</h4>
-						{#if treeRoot && !treeRoot.available}<span class="badge badge-warning badge-sm"
-								>Unavailable</span
-							>{/if}
+						{#if treeRoot && !treeRoot.available}<span class="badge badge-warning badge-sm">
+								Unavailable
+							</span>{/if}
 					</div>
 					<p class="truncate font-mono text-xs text-muted" title={root.path}>
 						{root.path}
@@ -174,9 +174,9 @@
 								policy: event.currentTarget.value as LibraryIdentificationPolicy
 							}))}
 					>
-						<option value="local_metadata">Local metadata</option><option value="automatic"
-							>Automatic identification</option
-						><option value="excluded">Excluded</option>
+						<option value="local_metadata">Local metadata</option><option value="automatic">
+							Automatic identification
+						</option><option value="excluded">Excluded</option>
 					</select>
 					<span class="mt-1 text-xs text-muted">{policyCopy[root.policy]}</span>
 				</label>
@@ -189,10 +189,11 @@
 								? expanded.filter((id) => id !== root.id)
 								: [...expanded, root.id])}
 						aria-expanded={expanded.includes(root.id)}
-						><ChevronDown
-							class={`h-4 w-4 transition-transform ${expanded.includes(root.id) ? 'rotate-180' : ''}`}
-						/> Rules</Button
 					>
+						<ChevronDown
+							class={`h-4 w-4 transition-transform ${expanded.includes(root.id) ? 'rotate-180' : ''}`}
+						/> Rules
+					</Button>
 					<IconButton
 						variant="danger-ghost"
 						size="sm"
@@ -207,9 +208,9 @@
 				<div class="border-t border-base-content/10 p-3">
 					<div class="mb-2 flex items-center justify-between">
 						<h5 class="text-sm font-semibold">Directory overrides</h5>
-						<Button variant="ghost" size="xs" icon={Plus} onclick={() => openRule(root.id)}
-							>Add override</Button
-						>
+						<Button variant="ghost" size="xs" icon={Plus} onclick={() => openRule(root.id)}>
+							Add override
+						</Button>
 					</div>
 					{#if effectiveRows.length === 0}<p class="text-xs text-muted">
 							Every directory inherits {root.policy.replace('_', ' ')}.
@@ -246,10 +247,11 @@
 														: current
 												)
 											}))}
-										><option value="local_metadata">Local metadata</option><option value="automatic"
-											>Automatic</option
-										><option value="excluded">Excluded</option></select
 									>
+										<option value="local_metadata">Local metadata</option><option value="automatic">
+											Automatic
+										</option><option value="excluded">Excluded</option>
+									</select>
 									<IconButton
 										size="xs"
 										shape="square"
@@ -320,8 +322,10 @@
 			type="submit"
 			form={rootFormId}
 			variant="primary"
-			disabled={!newRootLabel.trim() || !newRootPath.trim()}>Add root</Button
+			disabled={!newRootLabel.trim() || !newRootPath.trim()}
 		>
+			Add root
+		</Button>
 	{/snippet}
 </Modal>
 
@@ -349,7 +353,9 @@
 		<Button variant="ghost" onclick={() => (ruleOpen = false)}>Cancel</Button><Button
 			variant="primary"
 			disabled={!newRulePath.trim()}
-			onclick={addRule}>Add override</Button
+			onclick={addRule}
 		>
+			Add override
+		</Button>
 	{/snippet}
 </Modal>

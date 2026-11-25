@@ -219,8 +219,10 @@
 					href={withBasePath('/settings?tab=library')}
 					variant="ghost"
 					size="sm"
-					icon={Settings2}>Settings</Button
+					icon={Settings2}
 				>
+					Settings
+				</Button>
 			</div>
 		</div>
 		{#if !libraryEnabled}
@@ -250,8 +252,10 @@
 					size="display"
 					icon={RefreshCw}
 					disabled={requestRun.isPending || !policyRevision}
-					onclick={() => void startRun('incremental')}>Scan for changes</Button
+					onclick={() => void startRun('incremental')}
 				>
+					Scan for changes
+				</Button>
 			</div>
 			<div class="mt-4 space-y-3">
 				<div
@@ -261,8 +265,10 @@
 						variant="outline"
 						size="sm"
 						icon={ScanLine}
-						onclick={() => openWork('rescan_files')}>Rescan files...</Button
+						onclick={() => openWork('rescan_files')}
 					>
+						Rescan files...
+					</Button>
 					<p class="text-muted">
 						Deep re-read of selected folders. Use after fixing files outside DroppedNeedle.
 					</p>
@@ -274,8 +280,10 @@
 						variant="outline"
 						size="sm"
 						icon={ListChecks}
-						onclick={() => openWork('retry_identification')}>Retry identification...</Button
+						onclick={() => openWork('retry_identification')}
 					>
+						Retry identification...
+					</Button>
 					<p class="text-muted">
 						Re-runs matching for albums still waiting on review or a provider.
 					</p>
@@ -303,8 +311,10 @@
 						variant="outline"
 						size="sm"
 						disabled={!heldScopesRevision || !libraryEnabled || confirmHeldScopes.isPending}
-						onclick={() => openConfirmHeld(heldScopes)}>Confirm all...</Button
+						onclick={() => openConfirmHeld(heldScopes)}
 					>
+						Confirm all...
+					</Button>
 				{/if}
 			</div>
 			<div class="mt-3 space-y-2">
@@ -313,9 +323,9 @@
 						<div class="min-w-0 flex-1 space-y-0.5">
 							<div class="flex flex-wrap items-center gap-2">
 								<strong class="text-sm">{heldScopeTitle(scope)}</strong>
-								<span class="sp-held-tag" class:sp-held-tag-root={scope.kind === 'root'}
-									>{heldScopeKindLabel(scope.kind)}</span
-								>
+								<span class="sp-held-tag" class:sp-held-tag-root={scope.kind === 'root'}>
+									{heldScopeKindLabel(scope.kind)}
+								</span>
 								<span class="break-all font-mono text-xs text-muted">{scope.folder_path}</span>
 							</div>
 							<p class="text-xs text-muted">
@@ -326,8 +336,10 @@
 							variant="warning"
 							size="sm"
 							disabled={!heldScopesRevision || !libraryEnabled || confirmHeldScopes.isPending}
-							onclick={() => openConfirmHeld([scope])}>Confirm deleted...</Button
+							onclick={() => openConfirmHeld([scope])}
 						>
+							Confirm deleted...
+						</Button>
 					</div>
 				{/each}
 			</div>
@@ -382,49 +394,49 @@
 					<LibraryWorkLane kind="scan" item={scan} />
 					<div class="sp-counts grid grid-cols-2 gap-2 text-sm sm:grid-cols-4 lg:grid-cols-9">
 						<div>
-							<span class="block text-xs text-muted">New</span><strong
-								>{(counters?.new_count ?? 0).toLocaleString()}</strong
-							>
+							<span class="block text-xs text-muted">New</span><strong>
+								{(counters?.new_count ?? 0).toLocaleString()}
+							</strong>
 						</div>
 						<div>
-							<span class="block text-xs text-muted">Elapsed</span><strong
-								>{activeRun?.started_at ? formatDuration(elapsed) : '-'}</strong
-							>
+							<span class="block text-xs text-muted">Elapsed</span><strong>
+								{activeRun?.started_at ? formatDuration(elapsed) : '-'}
+							</strong>
 						</div>
 						<div>
-							<span class="block text-xs text-muted">Changed</span><strong
-								>{(counters?.changed_count ?? 0).toLocaleString()}</strong
-							>
+							<span class="block text-xs text-muted">Changed</span><strong>
+								{(counters?.changed_count ?? 0).toLocaleString()}
+							</strong>
 						</div>
 						<div>
-							<span class="block text-xs text-muted">Unchanged</span><strong
-								>{(counters?.unchanged_count ?? 0).toLocaleString()}</strong
-							>
+							<span class="block text-xs text-muted">Unchanged</span><strong>
+								{(counters?.unchanged_count ?? 0).toLocaleString()}
+							</strong>
 						</div>
 						<div>
-							<span class="block text-xs text-muted">Excluded</span><strong
-								>{(counters?.excluded_count ?? 0).toLocaleString()}</strong
-							>
+							<span class="block text-xs text-muted">Excluded</span><strong>
+								{(counters?.excluded_count ?? 0).toLocaleString()}
+							</strong>
 						</div>
 						<div>
-							<span class="block text-xs text-muted">Missing</span><strong
-								>{(counters?.missing_count ?? 0).toLocaleString()}</strong
-							>
+							<span class="block text-xs text-muted">Missing</span><strong>
+								{(counters?.missing_count ?? 0).toLocaleString()}
+							</strong>
 						</div>
 						<div>
-							<span class="block text-xs text-muted">Errors</span><strong
-								>{(counters?.errored_count ?? 0).toLocaleString()}</strong
-							>
+							<span class="block text-xs text-muted">Errors</span><strong>
+								{(counters?.errored_count ?? 0).toLocaleString()}
+							</strong>
 						</div>
 						<div>
-							<span class="block text-xs text-muted">Rate</span><strong
-								>{throughput ? `${throughput.toFixed(1)}/s` : '-'}</strong
-							>
+							<span class="block text-xs text-muted">Rate</span><strong>
+								{throughput ? `${throughput.toFixed(1)}/s` : '-'}
+							</strong>
 						</div>
 						<div>
-							<span class="block text-xs text-muted">ETA</span><strong
-								>{eta && elapsed > 30 ? formatDuration(eta) : '-'}</strong
-							>
+							<span class="block text-xs text-muted">ETA</span><strong>
+								{eta && elapsed > 30 ? formatDuration(eta) : '-'}
+							</strong>
 						</div>
 					</div>
 					{#if scopes.length}<details class="text-sm">
@@ -459,10 +471,11 @@
 					{#if activeRun?.state === 'superseded_policy_changed'}<div
 							class="alert alert-warning text-sm"
 						>
-							<ShieldAlert class="h-4 w-4" /><span>Stopped because library policy changed</span
-							><Button size="sm" onclick={() => openWork('policy_reconcile')}
-								>Apply policy changes...</Button
-							>
+							<ShieldAlert class="h-4 w-4" /><span>
+								Stopped because library policy changed
+							</span><Button size="sm" onclick={() => openWork('policy_reconcile')}>
+								Apply policy changes...
+							</Button>
 						</div>{/if}
 				</div>
 			</Card>
@@ -500,41 +513,41 @@
 					<LibraryWorkLane kind="identification" item={identification} />
 					<div class="sp-counts grid grid-cols-2 gap-2 text-sm sm:grid-cols-4 lg:grid-cols-7">
 						<div>
-							<span class="block text-xs text-muted">Complete</span><strong
-								>{(identification?.processed ?? 0).toLocaleString()}</strong
-							>
+							<span class="block text-xs text-muted">Complete</span><strong>
+								{(identification?.processed ?? 0).toLocaleString()}
+							</strong>
 						</div>
 						<div>
-							<span class="block text-xs text-muted">Identified</span><strong
-								>{(identification?.identified_count ?? 0).toLocaleString()}</strong
-							>
+							<span class="block text-xs text-muted">Identified</span><strong>
+								{(identification?.identified_count ?? 0).toLocaleString()}
+							</strong>
 						</div>
 						<div>
-							<span class="block text-xs text-muted">Waiting</span><strong
-								>{(identification?.waiting_count ?? 0).toLocaleString()}</strong
-							>
+							<span class="block text-xs text-muted">Waiting</span><strong>
+								{(identification?.waiting_count ?? 0).toLocaleString()}
+							</strong>
 							<span class="block text-xs text-muted">will auto-retry</span>
 						</div>
 						<div>
-							<span class="block text-xs text-muted">Kept local</span><strong
-								>{(identification?.kept_local_count ?? 0).toLocaleString()}</strong
-							>
+							<span class="block text-xs text-muted">Kept local</span><strong>
+								{(identification?.kept_local_count ?? 0).toLocaleString()}
+							</strong>
 						</div>
 						<div>
-							<span class="block text-xs text-muted">Failed</span><strong
-								>{(identification?.failed_count ?? 0).toLocaleString()}</strong
-							>
+							<span class="block text-xs text-muted">Failed</span><strong>
+								{(identification?.failed_count ?? 0).toLocaleString()}
+							</strong>
 						</div>
 						<div>
-							<span class="block text-xs text-muted">Needs decision</span><strong
-								>{(identification?.needs_review_count ?? reviewCount).toLocaleString()}</strong
-							>
+							<span class="block text-xs text-muted">Needs decision</span><strong>
+								{(identification?.needs_review_count ?? reviewCount).toLocaleString()}
+							</strong>
 							<span class="block text-xs text-muted">will not auto-resolve</span>
 						</div>
 						<div>
-							<span class="block text-xs text-muted">Deferred</span><strong
-								>{(identification?.deferred_count ?? 0).toLocaleString()}</strong
-							>
+							<span class="block text-xs text-muted">Deferred</span><strong>
+								{(identification?.deferred_count ?? 0).toLocaleString()}
+							</strong>
 						</div>
 					</div>
 					<div class="flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted">
@@ -563,13 +576,14 @@
 								<ul class="mt-1 space-y-0.5">
 									{#each deferredJobs as job (job.job_id)}
 										<li class="text-xs">
-											<span class="font-medium">{job.album_title ?? 'Track-level work'}</span
-											>{#if job.artist_name}<span class="text-muted">
-													- {job.artist_name}</span
-												>{/if}
+											<span class="font-medium">
+												{job.album_title ?? 'Track-level work'}
+											</span>{#if job.artist_name}<span class="text-muted">
+													- {job.artist_name}
+												</span>{/if}
 											<span class="text-muted">
-												· {deferredReasonLabel(job.last_failure_code)} · attempt {job.attempt_count.toLocaleString()}</span
-											>
+												· {deferredReasonLabel(job.last_failure_code)} · attempt {job.attempt_count.toLocaleString()}
+											</span>
 										</li>
 									{/each}
 									{#if hiddenDeferredJobs > 0}
@@ -582,11 +596,14 @@
 						</div>
 					{/if}
 					<div class="flex flex-wrap items-center justify-between gap-2 text-sm">
-						<span class="text-muted"
-							>Provider work runs in the background without delaying local playback.</span
-						><a class="link link-primary" href={withBasePath('/library/review?state=needs_review')}
-							>Review identification</a
+						<span class="text-muted">
+							Provider work runs in the background without delaying local playback.
+						</span><a
+							class="link link-primary"
+							href={withBasePath('/library/review?state=needs_review')}
 						>
+							Review identification
+						</a>
 					</div>
 				</div>
 			</Card>
@@ -605,27 +622,23 @@
 						</p>
 					</div>
 					<div class="flex gap-5 text-sm">
-						<span
-							><strong
-								>{(
+						<span>
+							<strong>
+								{(
 									artistReconciliationQuery.data?.automatically_resolved_count ?? 0
-								).toLocaleString()}</strong
-							><span class="block text-xs text-muted">resolved</span></span
-						>
-						<span
-							><strong
-								>{(
-									artistReconciliationQuery.data?.waiting_for_identity_count ?? 0
-								).toLocaleString()}</strong
-							><span class="block text-xs text-muted">waiting</span></span
-						>
-						<span
-							><strong
-								>{(
-									artistReconciliationQuery.data?.genuine_review_count ?? 0
-								).toLocaleString()}</strong
-							><span class="block text-xs text-muted">review</span></span
-						>
+								).toLocaleString()}
+							</strong><span class="block text-xs text-muted">resolved</span>
+						</span>
+						<span>
+							<strong>
+								{(artistReconciliationQuery.data?.waiting_for_identity_count ?? 0).toLocaleString()}
+							</strong><span class="block text-xs text-muted">waiting</span>
+						</span>
+						<span>
+							<strong>
+								{(artistReconciliationQuery.data?.genuine_review_count ?? 0).toLocaleString()}
+							</strong><span class="block text-xs text-muted">review</span>
+						</span>
 					</div>
 				</div>
 			</Card>
@@ -659,9 +672,9 @@
 >
 	{#if confirmHeldTargets.length === 1}
 		<p class="text-sm text-muted">
-			Folder: <span class="break-all font-mono text-base-content"
-				>{confirmHeldTargets[0].folder_path}</span
-			>
+			Folder: <span class="break-all font-mono text-base-content">
+				{confirmHeldTargets[0].folder_path}
+			</span>
 			- <strong class="text-base-content">{heldScopeCounts(confirmHeldTargets[0])}</strong>.
 		</p>
 	{:else if confirmHeldTargets.length > 1}

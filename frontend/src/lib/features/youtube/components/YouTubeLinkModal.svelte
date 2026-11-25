@@ -169,8 +169,10 @@
 				aria-selected={mode === 'manual'}
 				onclick={() => {
 					mode = 'manual';
-				}}>Manual Entry</button
+				}}
 			>
+				Manual Entry
+			</button>
 			<button
 				type="button"
 				role="tab"
@@ -179,8 +181,10 @@
 				aria-selected={mode === 'search'}
 				onclick={() => {
 					mode = 'search';
-				}}>Search Album</button
+				}}
 			>
+				Search Album
+			</button>
 		</div>
 	{/if}
 

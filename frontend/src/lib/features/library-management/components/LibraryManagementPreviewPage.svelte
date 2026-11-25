@@ -267,102 +267,103 @@
 							)}
 						</p>
 					</div>
-					<span class="pv-phase" data-ready={preview.ready_for_confirmation}
-						>{preview.terminal_code === 'PREVIEW_DISCARDED'
+					<span class="pv-phase" data-ready={preview.ready_for_confirmation}>
+						{preview.terminal_code === 'PREVIEW_DISCARDED'
 							? 'Discarded'
-							: titleManagementValue(preview.phase)}</span
-					>
+							: titleManagementValue(preview.phase)}
+					</span>
 				</div>
 				<div class="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
 					<div class="management-summary-card">
-						<span class="text-xs text-muted">Eligible to write</span><strong
-							>{preview.summary.eligible_count + preview.summary.warning_count}</strong
-						><small>{preview.summary.warning_count} with warnings</small>
+						<span class="text-xs text-muted">Eligible to write</span><strong>
+							{preview.summary.eligible_count + preview.summary.warning_count}
+						</strong><small>{preview.summary.warning_count} with warnings</small>
 					</div>
 					<div class="management-summary-card">
-						<span class="text-xs text-muted">Blocked / unchanged</span><strong
-							>{preview.summary.blocked_count} / {preview.summary.no_change_count}</strong
-						><small>Never implicitly included</small>
+						<span class="text-xs text-muted">Blocked / unchanged</span><strong>
+							{preview.summary.blocked_count} / {preview.summary.no_change_count}
+						</strong><small>Never implicitly included</small>
 					</div>
 					<div class="management-summary-card">
-						<span class="text-xs text-muted">Bundles / files</span><strong
-							>{preview.summary.bundle_count} / {preview.summary.item_count}</strong
-						><small>{preview.summary.expanded_track_count} tracks added by expansion</small>
+						<span class="text-xs text-muted">Bundles / files</span><strong>
+							{preview.summary.bundle_count} / {preview.summary.item_count}
+						</strong><small>{preview.summary.expanded_track_count} tracks added by expansion</small>
 					</div>
 					<div class="management-summary-card">
-						<span class="text-xs text-muted">Temporary disk</span><strong
-							>{formatManagementBytes(preview.summary.estimated_temporary_bytes)}</strong
-						><small>Required for staging and recovery</small>
+						<span class="text-xs text-muted">Temporary disk</span><strong>
+							{formatManagementBytes(preview.summary.estimated_temporary_bytes)}
+						</strong><small>Required for staging and recovery</small>
 					</div>
 				</div>
 				<div class="mt-3 flex flex-wrap gap-2 text-xs">
-					<span class="pv-pill"
-						><Tags class="h-3 w-3" />
-						{managementQuantity(preview.summary.tag_change_count, 'tag change')}</span
-					>
-					<span class="pv-pill"
-						><Sparkles class="h-3 w-3" />
-						{managementQuantity(preview.summary.artwork_change_count, 'artwork change')}</span
-					>
-					<span class="pv-pill"
-						><FolderCog class="h-3 w-3" />
-						{managementQuantity(preview.summary.path_change_count, 'path change')}</span
-					>
-					<span class="pv-pill"
-						><Layers class="h-3 w-3" />
-						{managementQuantity(preview.summary.sidecar_change_count, 'sidecar change')}</span
-					>
-					<span class="pv-pill"
-						><Clock3 class="h-3 w-3" /> Expires {formatManagementDate(preview.expires_at)}</span
-					>
-					<span class="pv-pill"
-						><HardDrive class="h-3 w-3" /> {managementProviderStatus(preview)}</span
-					>
+					<span class="pv-pill">
+						<Tags class="h-3 w-3" />
+						{managementQuantity(preview.summary.tag_change_count, 'tag change')}
+					</span>
+					<span class="pv-pill">
+						<Sparkles class="h-3 w-3" />
+						{managementQuantity(preview.summary.artwork_change_count, 'artwork change')}
+					</span>
+					<span class="pv-pill">
+						<FolderCog class="h-3 w-3" />
+						{managementQuantity(preview.summary.path_change_count, 'path change')}
+					</span>
+					<span class="pv-pill">
+						<Layers class="h-3 w-3" />
+						{managementQuantity(preview.summary.sidecar_change_count, 'sidecar change')}
+					</span>
+					<span class="pv-pill">
+						<Clock3 class="h-3 w-3" /> Expires {formatManagementDate(preview.expires_at)}
+					</span>
+					<span class="pv-pill">
+						<HardDrive class="h-3 w-3" />
+						{managementProviderStatus(preview)}
+					</span>
 				</div>
 				{#if preview.summary.organized_album_count > 0}<p
 						class="mt-4 flex items-center gap-2 text-sm"
 					>
-						<CheckCheck class="h-4 w-4 shrink-0 text-success" /><span
-							><strong>{managementQuantity(preview.summary.organized_album_count, 'album')}</strong>
-							<span class="text-muted"
-								>({managementQuantity(preview.summary.organized_file_count, 'file')})</span
-							> already organized left out</span
-						>
+						<CheckCheck class="h-4 w-4 shrink-0 text-success" /><span>
+							<strong>{managementQuantity(preview.summary.organized_album_count, 'album')}</strong>
+							<span class="text-muted">
+								({managementQuantity(preview.summary.organized_file_count, 'file')})
+							</span> already organized left out
+						</span>
 					</p>{/if}
 			</header>
 
 			{#if preview.stale || preview.expired}
 				<div class="alert alert-error items-start" role="alert">
-					<ShieldAlert class="mt-0.5 h-5 w-5" /><span
-						><strong>This preview cannot be applied.</strong><br />{preview.expired
+					<ShieldAlert class="mt-0.5 h-5 w-5" /><span>
+						<strong>This preview cannot be applied.</strong><br />{preview.expired
 							? 'It expired. Generate a fresh preview.'
-							: managementStaleBannerDetail(preview)}</span
-					>
+							: managementStaleBannerDetail(preview)}
+					</span>
 				</div>
 			{:else if preview.state === 'failed'}
 				<div class="alert alert-error items-start" role="alert">
-					<ShieldAlert class="mt-0.5 h-5 w-5" /><span
-						><strong>Preview planning failed.</strong><br />{preview.terminal_code
+					<ShieldAlert class="mt-0.5 h-5 w-5" /><span>
+						<strong>Preview planning failed.</strong><br />{preview.terminal_code
 							? titleManagementValue(preview.terminal_code)
-							: 'Generate a fresh preview and try again.'} No files were changed.</span
-					>
+							: 'Generate a fresh preview and try again.'} No files were changed.
+					</span>
 				</div>
 			{:else if ['queued', 'running', 'paused'].includes(preview.state)}
 				<div class="alert alert-info">
-					<span class="loading loading-spinner loading-sm"></span><span
-						>Planning is still read-only. {preview.summary.item_count > 0
+					<span class="loading loading-spinner loading-sm"></span><span>
+						Planning is still read-only. {preview.summary.item_count > 0
 							? `${preview.summary.item_count.toLocaleString()} files are planned so far; the total is discovered as DroppedNeedle works.`
-							: 'DroppedNeedle is discovering the files in this scope.'}</span
-					>
+							: 'DroppedNeedle is discovering the files in this scope.'}
+					</span>
 				</div>
 			{:else if preview.state !== 'ready'}
 				<div class="alert alert-info items-start">
-					<ShieldAlert class="mt-0.5 h-5 w-5" /><span
-						><strong>This preview is no longer awaiting confirmation.</strong><br
+					<ShieldAlert class="mt-0.5 h-5 w-5" /><span>
+						<strong>This preview is no longer awaiting confirmation.</strong><br
 						/>{preview.terminal_code
 							? titleManagementValue(preview.terminal_code)
-							: titleManagementValue(preview.state)}. No further write can start from this page.</span
-					>
+							: titleManagementValue(preview.state)}. No further write can start from this page.
+					</span>
 				</div>
 			{/if}
 
@@ -391,8 +392,10 @@
 									onclick={() => {
 										filters.reasonCode = topBlockers[0][0];
 										filters.scope = 'all';
-									}}>Filter to {qualifiedManagementReasonLabel(topBlockers[0][0])}</button
+									}}
 								>
+									Filter to {qualifiedManagementReasonLabel(topBlockers[0][0])}
+								</button>
 							</p>
 						{/if}
 						{#if identityBlockerCount > 0}
@@ -407,8 +410,9 @@
 								icon={ArrowRight}
 								iconPosition="end"
 								href={withBasePath('/library/management?tab=organize#identity-readiness')}
-								>Open identity readiness</Button
 							>
+								Open identity readiness
+							</Button>
 						{/if}
 					</div>
 				</div>
@@ -416,8 +420,9 @@
 				<div class="alert alert-warning items-start">
 					<BookOpenCheck class="mt-0.5 h-5 w-5" />
 					<div class="min-w-0 flex-1">
-						<strong>{identityBlockerCount.toLocaleString()} files need identity preparation.</strong
-						>
+						<strong>
+							{identityBlockerCount.toLocaleString()} files need identity preparation.
+						</strong>
 						<p class="mt-1 text-sm">
 							Selecting a root chooses files; it does not choose each release's exact MusicBrainz
 							edition. Prepare identities first, then generate a fresh management preview.
@@ -429,8 +434,9 @@
 							icon={ArrowRight}
 							iconPosition="end"
 							href={withBasePath('/library/management?tab=organize#identity-readiness')}
-							>Open identity readiness</Button
 						>
+							Open identity readiness
+						</Button>
 					</div>
 				</div>
 			{/if}
@@ -471,9 +477,9 @@
 					>
 						Nothing in this preview changes a file.
 						<div class="mt-3">
-							<Button variant="ghost" size="sm" onclick={() => (filters.scope = 'all')}
-								>Show all files</Button
-							>
+							<Button variant="ghost" size="sm" onclick={() => (filters.scope = 'all')}>
+								Show all files
+							</Button>
 						</div>
 					</div>
 				{:else}
@@ -482,9 +488,9 @@
 					>
 						No files match these filters.
 						<div class="mt-3">
-							<Button variant="ghost" size="sm" onclick={() => filters.clear()}
-								>Clear filters</Button
-							>
+							<Button variant="ghost" size="sm" onclick={() => filters.clear()}>
+								Clear filters
+							</Button>
 						</div>
 					</div>
 				{/if}
@@ -506,8 +512,10 @@
 					variant="outline"
 					class="w-full"
 					loading={itemsQuery.isFetchingNextPage}
-					onclick={() => void itemsQuery.fetchNextPage()}>Load more files</Button
-				>{/if}
+					onclick={() => void itemsQuery.fetchNextPage()}
+				>
+					Load more files
+				</Button>{/if}
 
 			{#if preview.state === 'ready'}
 				{#if activationPreview}<div
@@ -532,9 +540,9 @@
 								profileName={preview.profile_name}
 								ondiscard={() => goto(withBasePath('/library/management?tab=organize'))}
 							/>
-							<Button variant="ghost" size="sm" href={withBasePath('/settings?tab=library')}
-								>Library settings</Button
-							>
+							<Button variant="ghost" size="sm" href={withBasePath('/settings?tab=library')}>
+								Library settings
+							</Button>
 						</div>
 					</div>{:else}<div
 						bind:this={stickyFooterElement}
@@ -571,8 +579,10 @@
 								variant="warning"
 								size="display-sm"
 								disabled={!canApply}
-								onclick={() => applyDialog?.open()}>{applyCopy.button}</Button
+								onclick={() => applyDialog?.open()}
 							>
+								{applyCopy.button}
+							</Button>
 						</div>
 					</div>{/if}
 			{/if}

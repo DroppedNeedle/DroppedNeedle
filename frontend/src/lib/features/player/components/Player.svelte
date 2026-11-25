@@ -253,8 +253,9 @@
 						{#if np.trackName}{np.trackName}{:else}{@render albumName()}{/if}
 					</p>
 					<p class="truncate text-xs text-muted md:text-[0.8125rem]">
-						{#if np.trackName}{@render albumName()}<span class="px-1" aria-hidden="true">·</span
-							>{/if}{@render artistName()}
+						{#if np.trackName}{@render albumName()}<span class="px-1" aria-hidden="true">
+								·
+							</span>{/if}{@render artistName()}
 					</p>
 					{#if floorStopped}
 						<p class="dn-player__mono mt-0.5" role="status">
@@ -275,9 +276,9 @@
 								{unplayableNote}
 							{/if}
 							{#if unplayableReason === 'converting_off' && authStore.isAdmin}
-								<a href={withBasePath('/settings?tab=connect-apps')} class="dn-player__link"
-									>Turn on</a
-								>
+								<a href={withBasePath('/settings?tab=connect-apps')} class="dn-player__link">
+									Turn on
+								</a>
 							{/if}
 						</p>
 					{:else}
@@ -355,8 +356,10 @@
 									onclick={() => {
 										skipByRating.turnOff();
 										close();
-									}}>Turn off</Button
+									}}
 								>
+									Turn off
+								</Button>
 							{/snippet}
 						</Popover>
 						<IconButton
@@ -441,8 +444,9 @@
 								class="dn-player__count"
 								class:dn-player__count--on={isOpenOn('queue')}
 								aria-label="{playerStore.upcomingQueueLength} upcoming"
-								>{playerStore.upcomingQueueLength}</span
 							>
+								{playerStore.upcomingQueueLength}
+							</span>
 						{/if}
 					</span>
 					{#if supportsLyrics}
@@ -523,9 +527,9 @@
 						<span class="dn-player__source-name">Local</span>
 						{#if playerStore.currentQueueItem?.format}
 							<span class="dn-player__source-name" aria-hidden="true">·</span>
-							<span class="dn-player__source-name font-mono uppercase"
-								>{playerStore.currentQueueItem.format}</span
-							>
+							<span class="dn-player__source-name font-mono uppercase">
+								{playerStore.currentQueueItem.format}
+							</span>
 						{/if}
 					</span>
 				{/if}

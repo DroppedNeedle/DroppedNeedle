@@ -277,18 +277,19 @@
 											<span><Tags class="h-3 w-3" /> {changeCount(dossier, 'tags')} tags</span>
 										{/if}
 										{#if changeCount(dossier, 'artwork')}
-											<span
-												><Image class="h-3 w-3" /> {changeCount(dossier, 'artwork')} artwork</span
-											>
+											<span>
+												<Image class="h-3 w-3" />
+												{changeCount(dossier, 'artwork')} artwork
+											</span>
 										{/if}
 										{#if changeCount(dossier, 'path')}
 											<span><FolderCog class="h-3 w-3" /> {changeCount(dossier, 'path')} path</span>
 										{/if}
 										{#if changeCount(dossier, 'sidecars')}
-											<span
-												><Layers class="h-3 w-3" />
-												{changeCount(dossier, 'sidecars')} sidecars</span
-											>
+											<span>
+												<Layers class="h-3 w-3" />
+												{changeCount(dossier, 'sidecars')} sidecars
+											</span>
 										{/if}
 									</div>
 									{#if top}
@@ -332,18 +333,18 @@
 											onclick={() => (selectedOrdinal = entry.ordinal)}
 										>
 											<span class="management-audit-track-number">{entry.trackLabel}</span>
-											<span class="badge badge-ghost badge-sm font-mono"
-												>{entry.format.toUpperCase()}</span
-											>
+											<span class="badge badge-ghost badge-sm font-mono">
+												{entry.format.toUpperCase()}
+											</span>
 											<span class="min-w-0 flex-1 text-left">
 												<strong class="block truncate text-sm">{entry.title}</strong>
 												{#if entry.artist && entry.artist !== dossier.artist}
 													<small class="block truncate text-muted">{entry.artist}</small>
 												{/if}
 												{#if entry.reason && active}
-													<small class="block truncate font-semibold text-error"
-														>{entry.reason}</small
-													>
+													<small class="block truncate font-semibold text-error">
+														{entry.reason}
+													</small>
 												{/if}
 												{#if pathChanged(entry)}
 													<span
@@ -354,16 +355,16 @@
 															? displayPath(entry.sourceRoot, entry.sourcePath)
 															: fileName(entry.sourcePath)}
 														<ArrowRight class="h-3 w-3 shrink-0" />
-														<strong
-															>{showFullPaths
+														<strong>
+															{showFullPaths
 																? displayPath(entry.destinationRoot, entry.destinationPath)
-																: fileName(entry.destinationPath)}</strong
-														>
+																: fileName(entry.destinationPath)}
+														</strong>
 													</span>
 												{:else if showFullPaths}
-													<span class="management-audit-path"
-														>{displayPath(entry.sourceRoot, entry.sourcePath)}</span
-													>
+													<span class="management-audit-path">
+														{displayPath(entry.sourceRoot, entry.sourcePath)}
+													</span>
 												{/if}
 											</span>
 											<span class="management-audit-changes">
@@ -387,8 +388,10 @@
 														? 'badge-warning'
 														: entry.statusTone === 'error'
 															? 'badge-error'
-															: 'badge-outline'}">{entry.status}</span
+															: 'badge-outline'}"
 											>
+												{entry.status}
+											</span>
 											<ChevronRight class="h-4 w-4 shrink-0 text-base-content/35" />
 										</button>
 										{#if !isWide && active}

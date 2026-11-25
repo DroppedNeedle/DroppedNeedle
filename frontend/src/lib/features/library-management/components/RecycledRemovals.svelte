@@ -92,8 +92,10 @@
 										size="sm"
 										icon={Undo2}
 										pendingLabel="Putting back..."
-										onclick={() => run(removal)}>Put back</AsyncButton
+										onclick={() => run(removal)}
 									>
+										Put back
+									</AsyncButton>
 								{/if}
 								{#if notes[removal.id]}
 									<p class="basis-full text-sm text-error" role="alert">{notes[removal.id]}</p>

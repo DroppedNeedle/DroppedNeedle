@@ -617,9 +617,9 @@
 
 					<span class="pl-row__title">
 						{#if albumLinked}
-							<a href={withBasePath(`/album/${track.album_id}`)} class="pl-row__name"
-								>{track.track_name}</a
-							>
+							<a href={withBasePath(`/album/${track.album_id}`)} class="pl-row__name">
+								{track.track_name}
+							</a>
 						{:else}
 							<span class="pl-row__name">{track.track_name}</span>
 						{/if}
@@ -628,9 +628,9 @@
 						{/if}
 						<span class="pl-row__sub">
 							{#if track.artist_id}
-								<a href={withBasePath(`/artist/${track.artist_id}`)} class="hover:underline"
-									>{track.artist_name}</a
-								>
+								<a href={withBasePath(`/artist/${track.artist_id}`)} class="hover:underline">
+									{track.artist_name}
+								</a>
 							{:else}
 								{track.artist_name}
 							{/if}
@@ -638,9 +638,9 @@
 								<span class="md:hidden">
 									<span aria-hidden="true"> · </span>
 									{#if albumLinked}
-										<a href={withBasePath(`/album/${track.album_id}`)} class="hover:underline"
-											>{track.album_name}</a
-										>
+										<a href={withBasePath(`/album/${track.album_id}`)} class="hover:underline">
+											{track.album_name}
+										</a>
 									{:else}
 										{track.album_name}
 									{/if}
@@ -648,9 +648,9 @@
 							{/if}
 						</span>
 						{#if entry?.listed_on}
-							<span class="pl-row__listed pl-row__listed--phone"
-								>Spotify lists it on {entry.listed_on}</span
-							>
+							<span class="pl-row__listed pl-row__listed--phone">
+								Spotify lists it on {entry.listed_on}
+							</span>
 						{/if}
 					</span>
 
@@ -670,9 +670,9 @@
 					<span class="pl-row__album">
 						{#if track.album_name}
 							{#if albumLinked}
-								<a href={withBasePath(`/album/${track.album_id}`)} class="hover:underline"
-									>{track.album_name}</a
-								>
+								<a href={withBasePath(`/album/${track.album_id}`)} class="hover:underline">
+									{track.album_name}
+								</a>
 							{:else}
 								{track.album_name}
 							{/if}

@@ -111,27 +111,26 @@
 	{:else}
 		<div class="hidden overflow-x-auto md:block">
 			<table class="table table-sm">
-				<thead
-					><tr
-						><th>Result</th><th>Trigger</th><th>Scope</th><th>Started</th><th>Finished</th><th
-							>Counts</th
-						><th>Duration</th><th><span class="sr-only">Actions</span></th></tr
-					></thead
-				>
+				<thead>
+					<tr>
+						<th>Result</th><th>Trigger</th><th>Scope</th><th>Started</th><th>Finished</th><th>
+							Counts
+						</th><th>Duration</th><th><span class="sr-only">Actions</span></th>
+					</tr>
+				</thead>
 				<tbody>
 					{#each visibleRuns as run (run.id)}
 						<tr>
-							<td
-								><span class="badge badge-ghost badge-sm">{run.state.replaceAll('_', ' ')}</span
-								></td
-							>
-							<td>{run.trigger.replaceAll('_', ' ')}</td><td>{run.aggregate_scope}</td><td
-								>{formatTime(run.started_at)}</td
-							><td>{formatTime(run.terminal_at)}</td><td class="text-xs"
-								>{(run.counters.changed_count ?? 0).toLocaleString()} changed · {(
+							<td>
+								<span class="badge badge-ghost badge-sm">{run.state.replaceAll('_', ' ')}</span>
+							</td>
+							<td>{run.trigger.replaceAll('_', ' ')}</td><td>{run.aggregate_scope}</td><td>
+								{formatTime(run.started_at)}
+							</td><td>{formatTime(run.terminal_at)}</td><td class="text-xs">
+								{(run.counters.changed_count ?? 0).toLocaleString()} changed · {(
 									run.counters.errored_count ?? 0
-								).toLocaleString()} errors</td
-							><td>{duration(run)}</td>
+								).toLocaleString()} errors
+							</td><td>{duration(run)}</td>
 							<td class="text-right">
 								<Button variant="ghost" size="xs" onclick={() => openDetails(run)}>Details</Button>
 							</td>
@@ -143,19 +142,21 @@
 		<div class="divide-y divide-base-content/10 md:hidden">
 			{#each visibleRuns as run (run.id)}
 				<div class="grid grid-cols-2 gap-2 p-4 text-sm">
-					<strong>{run.state.replaceAll('_', ' ')}</strong><span class="text-right"
-						>{duration(run)}</span
-					>
+					<strong>{run.state.replaceAll('_', ' ')}</strong><span class="text-right">
+						{duration(run)}
+					</span>
 					<span class="text-muted">{run.trigger.replaceAll('_', ' ')} · {run.aggregate_scope}</span>
-					<span class="text-right text-xs"
-						>{(run.counters.changed_count ?? 0).toLocaleString()} changed</span
-					>
+					<span class="text-right text-xs">
+						{(run.counters.changed_count ?? 0).toLocaleString()} changed
+					</span>
 					<Button
 						variant="ghost"
 						size="xs"
 						class="col-span-2 justify-self-start"
-						onclick={() => openDetails(run)}>Details</Button
+						onclick={() => openDetails(run)}
 					>
+						Details
+					</Button>
 				</div>
 			{/each}
 		</div>
@@ -174,8 +175,10 @@
 					variant="ghost"
 					size="sm"
 					loading={historyQuery.isFetchingNextPage}
-					onclick={() => void historyQuery.fetchNextPage()}>Load older runs</Button
+					onclick={() => void historyQuery.fetchNextPage()}
 				>
+					Load older runs
+				</Button>
 			</div>
 		{/if}
 	{/if}
@@ -243,8 +246,10 @@
 							variant="ghost"
 							size="sm"
 							loading={failuresQuery.isFetchingNextPage}
-							onclick={() => failuresQuery.fetchNextPage()}>Load more</Button
+							onclick={() => failuresQuery.fetchNextPage()}
 						>
+							Load more
+						</Button>
 					</div>
 				{/if}
 			{/if}
@@ -258,8 +263,10 @@
 				icon={Download}
 				class="mr-auto"
 				onclick={openDetailExport}
-				aria-label={`Export diagnostics for run ${detailRun.id}`}>Export diagnostics</Button
+				aria-label={`Export diagnostics for run ${detailRun.id}`}
 			>
+				Export diagnostics
+			</Button>
 		{/if}
 		<Button variant="ghost" onclick={() => (detailOpen = false)}>Close</Button>
 	{/snippet}

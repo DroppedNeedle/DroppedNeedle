@@ -238,8 +238,10 @@
 			variant={params.favorites ? 'primary' : 'outline'}
 			icon={Heart}
 			aria-pressed={params.favorites}
-			onclick={toggleFavorites}>Favourites</Button
+			onclick={toggleFavorites}
 		>
+			Favourites
+		</Button>
 		<select
 			class="select dn-toolbar__select"
 			value={params.sort}

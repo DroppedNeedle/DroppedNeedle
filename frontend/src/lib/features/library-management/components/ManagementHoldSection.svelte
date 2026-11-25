@@ -123,8 +123,10 @@
 								hold.exclusion_revision != null &&
 								reenableManagement
 									.mutateAsync({ albumId: album.id, expectedRevision: hold.exclusion_revision })
-									.catch(() => undefined)}>Manage it again</AsyncButton
+									.catch(() => undefined)}
 						>
+							Manage it again
+						</AsyncButton>
 					{:else}
 						<AsyncButton
 							variant="outline"
@@ -132,8 +134,9 @@
 							disabled={hold.handing_back}
 							pending={handBack.isPending}
 							onclick={() => handBack.mutateAsync({ albumId: album.id }).catch(() => undefined)}
-							>{hold.handing_back ? 'Being handed back' : 'Manage it again'}</AsyncButton
 						>
+							{hold.handing_back ? 'Being handed back' : 'Manage it again'}
+						</AsyncButton>
 						<p class="max-w-xl flex-1 text-xs text-muted">{handBackNote}</p>
 					{/if}
 				</div>

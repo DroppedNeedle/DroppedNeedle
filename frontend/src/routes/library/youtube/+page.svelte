@@ -151,21 +151,23 @@
 	{#if !integrations.current.youtube}
 		<div class="alert alert-warning mb-4">
 			<Info class="h-4 w-4" />
-			<span
-				>YouTube is not enabled. <a href={withBasePath('/settings?tab=youtube')} class="link"
-					>Enable it in settings</a
-				> to use YouTube features.</span
-			>
+			<span>
+				YouTube is not enabled. <a href={withBasePath('/settings?tab=youtube')} class="link">
+					Enable it in settings
+				</a> to use YouTube features.
+			</span>
 		</div>
 	{:else if !integrations.current.youtube_api}
 		<div class="alert alert-info mb-4">
 			<Info class="h-4 w-4" />
-			<span
-				>YouTube API is not configured. You can add links manually, or <a
+			<span>
+				YouTube API is not configured. You can add links manually, or <a
 					href={withBasePath('/settings?tab=youtube')}
-					class="link">enable the API in settings</a
-				> for auto-generation.</span
-			>
+					class="link"
+				>
+					enable the API in settings
+				</a> for auto-generation.
+			</span>
 		</div>
 	{/if}
 
