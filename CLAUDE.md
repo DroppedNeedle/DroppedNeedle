@@ -1046,7 +1046,9 @@ Run from the repo root. `make help` lists every target.
   `player/playback/transition.ts`: it alone starts the next deck, schedules
   gains and ends a tail. The two `<audio>` decks are handed out only by
   `audioElement.ts`, and a fade between tracks is a gain on the audio
-  engine, never `element.volume`.
+  engine, never `element.volume`. The engine claims a `playback` audio
+  session (`navigator.audioSession`) where the browser has one, so iOS
+  keeps it running with the screen locked.
 - A Discover or Home section is one entry in the registry in
   `catalog/src/discover/sections.rs` (its page, zone, settings
   title, the reads it needs, its dedupe); the page build, the section
