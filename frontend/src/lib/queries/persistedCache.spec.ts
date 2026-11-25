@@ -82,6 +82,35 @@ describe('the browser copy of query answers', () => {
 		expect([...rows.values()].map((row) => row.state.data)).toEqual([{ albums: [1] }]);
 	});
 
+	it('keeps only the first page of a long list', async () => {
+		const { rows, client } = setup();
+		const result = await client.infiniteQuery({
+			queryKey: LibraryQueryKeyFactory.catalog.albumPages('a', { limit: 50 }),
+			meta: PERSIST,
+			initialPageParam: 0,
+			pages: 3,
+			getNextPageParam: (last: { next: number }) => last.next,
+			queryFn: ({ pageParam }) => ({ items: [pageParam], next: pageParam + 1 })
+		});
+		await settled();
+		expect(result.pages).toHaveLength(3);
+		expect([...rows.values()].map((row) => row.state.data)).toEqual([
+			{ pages: [{ items: [0], next: 1 }], pageParams: [0] }
+		]);
+	});
+
+	it('keeps a plain answer whole, even one with pages in it', async () => {
+		const { rows, client } = setup();
+		const answer = { pages: [{ items: [1] }, { items: [2] }], pageParams: [0, 1] };
+		await client.fetchQuery({
+			queryKey: LibraryQueryKeyFactory.catalog.stats('a'),
+			meta: PERSIST,
+			queryFn: () => answer
+		});
+		await settled();
+		expect([...rows.values()].map((row) => row.state.data)).toEqual([answer]);
+	});
+
 	it('never restores a provider answer under another MusicBrainz source', async () => {
 		let source = 'source-a';
 		const { rows, persister, client } = setup(() => source);
@@ -111,5 +140,31 @@ describe('the browser copy of query answers', () => {
 		rows.set(`${PERSISTER_KEY_PREFIX}-${row.queryHash}`, row);
 
 		await expect(persister.read(row.queryHash, undefined)).resolves.toEqual(row);
+	});
+
+	it('restores a saved long list as its first page', async () => {
+		const { rows, client } = setup();
+		const queryKey = LibraryQueryKeyFactory.catalog.albumPages('a', { limit: 50 });
+		const row = storedRow(
+			queryKey,
+			{
+				pages: [
+					{ items: ['saved'], next: 1 },
+					{ items: ['saved'], next: 2 }
+				],
+				pageParams: [0, 1]
+			},
+			PERSISTED_CACHE_BUSTER
+		);
+		rows.set(`${PERSISTER_KEY_PREFIX}-${row.queryHash}`, row);
+
+		const result = await client.infiniteQuery({
+			queryKey,
+			meta: PERSIST,
+			initialPageParam: 0,
+			getNextPageParam: (last: { next: number }) => last.next,
+			queryFn: ({ pageParam }) => ({ items: ['fetched'], next: pageParam + 1 })
+		});
+		expect(result.pages).toEqual([{ items: ['saved'], next: 1 }]);
 	});
 });

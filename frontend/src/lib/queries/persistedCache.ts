@@ -5,6 +5,7 @@ import {
 	type PersistedQuery
 } from '@tanstack/svelte-query-persist-client';
 import {
+	type InfiniteData,
 	notifyManager,
 	type Query,
 	type QueryFunctionContext,
@@ -48,6 +49,16 @@ export const PERSISTED_CACHE_BUSTER = 'droppedneedle-v3-8';
 const PERSISTED_CACHE_MAX_AGE = 1000 * 60 * 60 * 24 * 7;
 
 const storageKey = (queryHash: string) => `${PERSISTER_KEY_PREFIX}-${queryHash}`;
+
+/**
+ * A long list is saved and restored as its first page; the later pages are
+ * read again on demand. Written whole, the row grew with every "Load more".
+ */
+function firstPageOnly(query: Query, data: unknown): unknown {
+	if (query.queryType !== 'infinite' || data === undefined || data === null) return data;
+	const { pages, pageParams } = data as InfiniteData<unknown, unknown>;
+	return { pages: pages.slice(0, 1), pageParams: pageParams.slice(0, 1) };
+}
 
 /**
  * The one persister. A query is saved and restored only when its meta says
@@ -102,7 +113,7 @@ export function createPersistedQueryPersister(
 			buster: PERSISTED_CACHE_BUSTER,
 			queryHash: query.queryHash,
 			queryKey: query.queryKey,
-			state: query.state
+			state: { ...query.state, data: firstPageOnly(query, query.state.data) }
 		};
 		if (stamp) row.provider = stamp;
 		await storage.setItem(storageKey(query.queryHash), row);
@@ -132,7 +143,7 @@ export function createPersistedQueryPersister(
 						// eslint-disable-next-line no-restricted-syntax -- TanStack's Query.fetch, not a network call
 						if (query.isStale()) void query.fetch().catch(() => undefined);
 					});
-					return row.state.data as T;
+					return firstPageOnly(query, row.state.data) as T;
 				}
 			}
 			const data = await queryFn(context);
