@@ -32,6 +32,12 @@ let decks: Deck[] = [];
 let plays = 0;
 let engine: AudioEngine | null = null;
 
+// Lock screen Play after a call reaches the element, not the player: a deck
+// that starts while the engine is stopped wakes it.
+function onDeckPlaying(): void {
+	if (engine && !engine.running) void resumeAudioEngine();
+}
+
 /** Mounts the decks and wires them through the audio engine. */
 export function setAudioDecks(elements: readonly HTMLAudioElement[]): void {
 	const same =
@@ -39,6 +45,8 @@ export function setAudioDecks(elements: readonly HTMLAudioElement[]): void {
 	if (same && engine) return;
 	engine?.destroy();
 	engine = null;
+	for (const deck of decks) deck.element.removeEventListener('playing', onDeckPlaying);
+	for (const element of elements) element.addEventListener('playing', onDeckPlaying);
 	decks = elements.map((element) => ({ element, generation: 0, held: false, playedAt: 0 }));
 	plays = 0;
 	try {

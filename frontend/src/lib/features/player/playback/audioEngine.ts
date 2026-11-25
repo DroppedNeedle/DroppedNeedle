@@ -33,6 +33,23 @@ interface DeckNodes {
 	plan: Fade;
 }
 
+// Safari's DOM audio session, which TypeScript's DOM types do not have yet.
+type AudioSessionNavigator = Navigator & { audioSession?: { type: string } };
+
+/**
+ * iOS keeps a context running with the screen locked only under a playback
+ * session. Claimed when a song starts, not at load, since it stops other
+ * apps' sound; safe to call again.
+ */
+export function claimPlaybackSession(): void {
+	try {
+		const session = (navigator as AudioSessionNavigator).audioSession;
+		if (session) session.type = 'playback';
+	} catch {
+		// WebKit throws InvalidStateError once the page has gone; the song still plays.
+	}
+}
+
 function shape(fade: Fade, x: number): number {
 	if (fade.curve === 'linear') return x;
 	return fade.to > fade.from ? Math.sin((x * Math.PI) / 2) : 1 - Math.cos((x * Math.PI) / 2);

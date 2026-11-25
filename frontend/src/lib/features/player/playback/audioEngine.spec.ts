@@ -64,7 +64,8 @@ function createMockContext(
 
 vi.stubGlobal('AudioContext', vi.fn());
 
-import { AudioEngine } from './audioEngine';
+import { AudioEngine, claimPlaybackSession } from './audioEngine';
+import { setAudioDecks } from './audioElement';
 
 describe('AudioEngine', () => {
 	let engine: AudioEngine;
@@ -77,6 +78,7 @@ describe('AudioEngine', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.stubGlobal('navigator', {});
 		engine = new AudioEngine();
 		mockSource = createMockSource();
 		mockFilters = [];
@@ -120,6 +122,61 @@ describe('AudioEngine', () => {
 
 			expect(mockSource.disconnect).toHaveBeenCalled();
 			expect(AudioContext).toHaveBeenCalledTimes(2);
+		});
+	});
+
+	describe('audio session', () => {
+		it('claims a playback session where the browser has one', () => {
+			expect.assertions(1);
+			const audioSession = { type: 'auto' };
+			vi.stubGlobal('navigator', { audioSession });
+			claimPlaybackSession();
+			expect(audioSession.type).toBe('playback');
+		});
+
+		it('sets nothing where the browser has none, or refuses the type', () => {
+			expect.assertions(3);
+			const nav = {};
+			vi.stubGlobal('navigator', nav);
+			expect(() => claimPlaybackSession()).not.toThrow();
+			expect(nav).toEqual({});
+
+			const refusing = {
+				set type(_: string) {
+					throw new DOMException('no page', 'InvalidStateError');
+				}
+			};
+			vi.stubGlobal('navigator', { audioSession: refusing });
+			expect(() => claimPlaybackSession()).not.toThrow();
+		});
+
+		it('is not claimed by building the engine, which happens at load', () => {
+			expect.assertions(1);
+			const audioSession = { type: 'auto' };
+			vi.stubGlobal('navigator', { audioSession });
+			engine.connect([mockAudio]);
+			expect(audioSession.type).toBe('auto');
+		});
+	});
+
+	describe('a deck that starts playing', () => {
+		function deck(): HTMLAudioElement {
+			return Object.assign(new EventTarget(), { src: '' }) as unknown as HTMLAudioElement;
+		}
+
+		it('wakes an interrupted engine once and leaves a running one alone', () => {
+			expect.assertions(2);
+			const a = deck();
+			setAudioDecks([a, deck()]);
+
+			mockCtx.state = 'interrupted';
+			a.dispatchEvent(new Event('playing'));
+			expect(mockCtx.resume).toHaveBeenCalledTimes(1);
+
+			mockCtx.resume.mockClear();
+			mockCtx.state = 'running';
+			a.dispatchEvent(new Event('playing'));
+			expect(mockCtx.resume).not.toHaveBeenCalled();
 		});
 	});
 

@@ -155,4 +155,16 @@ describe('NativeAudioSource', () => {
 			expect(states.at(-1)).toBe('playing');
 		}
 	});
+
+	it('claims a playback audio session when a song starts', async () => {
+		fresh();
+		const audioSession = { type: 'auto' };
+		vi.stubGlobal('navigator', { audioSession });
+		const source = new NativeAudioSource('local', { deck, url: '/a.mp3', seekable: true });
+		expect(audioSession.type).toBe('auto');
+		source.play();
+		await Promise.resolve();
+		expect(audioSession.type).toBe('playback');
+		vi.unstubAllGlobals();
+	});
 });

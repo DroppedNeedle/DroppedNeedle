@@ -1,6 +1,7 @@
 import type { PlaybackSource, PlaybackState } from './types';
 import type { StreamRefusal } from './streamRefusal';
 import { resumeAudioEngine, tryGetAudioEngine, type DeckLease } from './audioElement';
+import { claimPlaybackSession } from './audioEngine';
 
 const LOAD_TIMEOUT_MS = 15_000;
 const STALL_TIMEOUT_MS = 15_000;
@@ -342,6 +343,7 @@ export class NativeAudioSource implements PlaybackSource {
 	}
 
 	private async playWithEngineResume(): Promise<void> {
+		claimPlaybackSession();
 		// Waits only for a context that is not running, so a deck started on time plays at once.
 		const engine = tryGetAudioEngine();
 		if (engine && !engine.running) {
