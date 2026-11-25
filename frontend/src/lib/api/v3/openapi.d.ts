@@ -12805,6 +12805,16 @@ export interface components {
              */
             cover_images: number;
             /**
+             * @description Whether the bound is worked out from the library, rather than set
+             *     by `COVER_CACHE_MAX_SIZE_MB`.
+             */
+            cover_limit_automatic: boolean;
+            /**
+             * Format: int64
+             * @description The image cache's size bound in bytes.
+             */
+            cover_limit_bytes: number;
+            /**
              * Format: int64
              * @description Size of the database file in bytes, 0 when it cannot be read.
              */

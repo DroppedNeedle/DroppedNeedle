@@ -48,8 +48,8 @@ pub const DEPLOYMENT_VARS: &[DeploymentVar] = &[
     },
     DeploymentVar {
         env_name: "COVER_CACHE_MAX_SIZE_MB",
-        default: "500",
-        note: "Size bound on the cover image cache under <cache>/covers.",
+        default: "automatic",
+        note: "Fixed bound on the cover cache under <cache>/covers; unset, it follows the library.",
     },
     DeploymentVar {
         env_name: "LIBRARY_DB_PATH",

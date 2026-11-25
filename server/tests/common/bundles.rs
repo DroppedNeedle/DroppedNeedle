@@ -724,11 +724,15 @@ impl droppedneedle_kernel::jobs::personal_mix::PersonalMixer for NoMixer {
     }
 }
 
-/// The cover and artist image cache under the platform's cache folder.
+/// The cover and artist image cache under the platform's cache folder,
+/// with the platform's fixed bound, or 500 MiB where it sets none.
 pub fn covers_at(platform: &Platform) -> droppedneedle_catalog::artwork::cache::ArtworkCache {
     droppedneedle_catalog::artwork::cache::ArtworkCache::new(
         platform.config.cache_dir.join("covers"),
-        platform.config.cover_cache_max_bytes,
+        platform
+            .config
+            .cover_cache_max_bytes
+            .unwrap_or(500 * 1024 * 1024),
         platform.clock.clone(),
     )
 }

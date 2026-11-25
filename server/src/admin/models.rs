@@ -97,6 +97,11 @@ pub struct CacheStatsResponse {
     pub cover_images: u64,
     /// Their total size in bytes.
     pub cover_bytes: u64,
+    /// The image cache's size bound in bytes.
+    pub cover_limit_bytes: u64,
+    /// Whether the bound is worked out from the library, rather than set
+    /// by `COVER_CACHE_MAX_SIZE_MB`.
+    pub cover_limit_automatic: bool,
     /// Size of the database file in bytes, 0 when it cannot be read.
     pub database_bytes: u64,
     /// Size of its write-ahead log in bytes, 0 when there is none.

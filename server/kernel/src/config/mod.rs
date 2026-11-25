@@ -36,9 +36,6 @@ pub const DEFAULT_SLSKD_DOWNLOADS_PATH: &str = "/data/downloads/slskd";
 /// Default seconds to wait for connections and background work on shutdown.
 pub const DEFAULT_SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 
-/// Default bound on the cover image cache, in MiB (v2 default).
-pub const DEFAULT_COVER_CACHE_MAX_SIZE_MB: u64 = 500;
-
 /// Default trusted proxies: the loopbacks, the v2 default.
 pub const DEFAULT_TRUSTED_PROXY_IPS: &str = "127.0.0.1,::1";
 
@@ -62,8 +59,10 @@ pub struct AppConfig {
     pub root_app_dir: PathBuf,
     /// Directory for covers, backups, the stamped web UI and disk caches.
     pub cache_dir: PathBuf,
-    /// Bound on the cover image cache under `<cache_dir>/covers`, in bytes.
-    pub cover_cache_max_bytes: u64,
+    /// Fixed bound on the cover image cache under `<cache_dir>/covers`, in
+    /// bytes (`COVER_CACHE_MAX_SIZE_MB`). `None` sizes the cache to the
+    /// library.
+    pub cover_cache_max_bytes: Option<u64>,
     /// The single SQLite WAL file.
     pub library_db_path: PathBuf,
     /// Holds `data_enc.key`, the key that seals stored secrets.
@@ -133,7 +132,7 @@ impl AppConfig {
             root_app_dir: root.to_owned(),
             library_db_path: cache_dir.join("library.db"),
             cache_dir,
-            cover_cache_max_bytes: DEFAULT_COVER_CACHE_MAX_SIZE_MB * 1024 * 1024,
+            cover_cache_max_bytes: None,
             config_dir: root.join("config"),
             base_path: String::new(),
             static_dir: root.join("static"),
@@ -198,7 +197,7 @@ impl AppConfig {
                 name: "COVER_CACHE_MAX_SIZE_MB",
                 value: megabytes.clone(),
             })?;
-            config.cover_cache_max_bytes = parsed.saturating_mul(1024 * 1024);
+            config.cover_cache_max_bytes = Some(parsed.saturating_mul(1024 * 1024));
         }
         if let Some(db) = path("LIBRARY_DB_PATH") {
             config.library_db_path = db;

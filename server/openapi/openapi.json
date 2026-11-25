@@ -43337,6 +43337,8 @@
           "kept_facts",
           "cover_images",
           "cover_bytes",
+          "cover_limit_bytes",
+          "cover_limit_automatic",
           "database_bytes",
           "wal_bytes"
         ],
@@ -43351,6 +43353,16 @@
             "type": "integer",
             "format": "int64",
             "description": "Cover and artist images on disk.",
+            "minimum": 0
+          },
+          "cover_limit_automatic": {
+            "type": "boolean",
+            "description": "Whether the bound is worked out from the library, rather than set\nby `COVER_CACHE_MAX_SIZE_MB`."
+          },
+          "cover_limit_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The image cache's size bound in bytes.",
             "minimum": 0
           },
           "database_bytes": {

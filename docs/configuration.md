@@ -42,7 +42,7 @@ Everything user-editable lives in the web UI and is stored in the database, so a
 | `RUST_LOG` | unset | Full log filter (e.g. `info,droppedneedle_library=debug`, or `droppedneedle_auth=debug` for sign-in); wins over `LOG_LEVEL` |
 | `ROOT_APP_DIR` | `/app` | Base for the cache, database, config and web UI paths below, and for `/app/plugins` and `/app/imports` |
 | `CACHE_DIR` | `/app/cache` | Database, backups, served web UI, caches |
-| `COVER_CACHE_MAX_SIZE_MB` | `500` | Size cap for downloaded and extracted cover art under `CACHE_DIR/covers`; the least recently shown covers go first |
+| `COVER_CACHE_MAX_SIZE_MB` | automatic | Size cap for downloaded and extracted cover art under `CACHE_DIR/covers`; the least recently shown covers go first. Unset, the cap follows the library: 512 MB plus 0.5 MB per album, at least 1 GB, and never more than a quarter of the free space on the cache's disk (counting what the cache holds), with 64 MB as the least. Set it to fix the cap at that many MB |
 | `LIBRARY_DB_PATH` | `/app/cache/library.db` | The database file; backups go in `backups/` and Undo's saved copies in `undo/` next to it. `droppedneedle-tool restore` writes a backup back under this file name |
 | `CONFIG_DIR` | `/app/config` | Holds `data_enc.key`, the key that seals stored secrets. `CONFIG_FILE_PATH` is no longer read and stops the start: remove it, and if it named a `config.json` outside `ROOT_APP_DIR/config`, move that file there first, beside v2's `.env` |
 | `DROPPEDNEEDLE_STATIC_DIR` | `/app/static` | The web UI build shipped in the image |

@@ -107,7 +107,7 @@
 				<span>Admin access is required to view cache statistics.</span>
 			</div>
 		{:else if stats}
-			<div class="stats stats-vertical sm:stats-horizontal bg-base-100 mb-6 w-full">
+			<div class="stats stats-vertical sm:stats-horizontal bg-base-100 mb-2 w-full">
 				<div class="stat">
 					<div class="stat-title">Provider data</div>
 					<div class="stat-value text-primary">{formatCount(stats.entries)}</div>
@@ -126,6 +126,10 @@
 					<div class="stat-desc">Write-ahead log {formatBytes(stats.wal_bytes)}</div>
 				</div>
 			</div>
+			<p class="text-sm text-muted mb-6">
+				Image limit {formatBytes(stats.cover_limit_bytes)}
+				({stats.cover_limit_automatic ? 'automatic' : 'set by COVER_CACHE_MAX_SIZE_MB'})
+			</p>
 
 			{#if !stats.provider_data_on}
 				<div role="alert" class="alert alert-warning mb-6">

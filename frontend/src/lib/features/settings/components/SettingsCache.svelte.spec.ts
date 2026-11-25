@@ -2,20 +2,25 @@ import { page } from 'vitest/browser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
-const h = vi.hoisted(() => ({ clear: vi.fn() }));
+const h = vi.hoisted(() => {
+	const stats = () => ({
+		entries: 42,
+		sources: [],
+		provider_data_on: true,
+		kept_facts: 12,
+		cover_images: 0,
+		cover_bytes: 0,
+		cover_limit_bytes: 1536 * 1024 * 1024,
+		cover_limit_automatic: true,
+		database_bytes: 0,
+		wal_bytes: 0
+	});
+	return { clear: vi.fn(), stats, data: stats() };
+});
 
 vi.mock('$lib/features/settings/queries/AdminCacheQueries.svelte', () => ({
 	getCacheStatsQuery: () => ({
-		data: {
-			entries: 42,
-			sources: [],
-			provider_data_on: true,
-			kept_facts: 12,
-			cover_images: 0,
-			cover_bytes: 0,
-			database_bytes: 0,
-			wal_bytes: 0
-		},
+		data: h.data,
 		isPending: false,
 		error: null,
 		refetch: vi.fn()
@@ -30,6 +35,20 @@ describe('SettingsCache', () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
 		h.clear.mockReset();
+		h.data = h.stats();
+	});
+
+	it('shows an automatic image limit', async () => {
+		await render(SettingsCache);
+		await expect.element(page.getByText('Image limit 1.5 GB (automatic)')).toBeInTheDocument();
+	});
+
+	it('names the variable that set a fixed image limit', async () => {
+		h.data = { ...h.stats(), cover_limit_bytes: 500 * 1024 * 1024, cover_limit_automatic: false };
+		await render(SettingsCache);
+		await expect
+			.element(page.getByText('Image limit 500 MB (set by COVER_CACHE_MAX_SIZE_MB)'))
+			.toBeInTheDocument();
 	});
 
 	it('shows how many provider facts are kept', async () => {

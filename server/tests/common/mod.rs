@@ -311,7 +311,7 @@ pub fn catalog_inputs(
     let dir = &platform.config.root_app_dir;
     droppedneedle_catalog::wiring::CatalogInputs {
         covers_dir: dir.join("covers"),
-        cover_cache_max_bytes: 16 * 1024 * 1024,
+        cover_cache_max_bytes: Some(16 * 1024 * 1024),
         http: http.shared().clone(),
         providers: Arc::new(droppedneedle_providers::Providers::closed()),
         listening: listening_store(platform),

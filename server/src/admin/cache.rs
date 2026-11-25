@@ -29,8 +29,8 @@ use droppedneedle_catalog::discover::facts as kept_facts;
 use droppedneedle_providers::ProviderCacheStore;
 
 /// Rows and bytes per provider, whether the cache file is working, the kept
-/// facts, the images on disk and the size of the database and its
-/// write-ahead log.
+/// facts, the images on disk and their bound, and the size of the database
+/// and its write-ahead log.
 pub async fn cache_stats(
     cache: &ProviderCacheStore,
     db: &AdminDb,
@@ -38,6 +38,7 @@ pub async fn cache_stats(
 ) -> CacheStatsResponse {
     let (database_bytes, wal_bytes) = database_sizes(db.db.path()).await;
     let (cover_images, cover_bytes) = covers.usage().await;
+    let limit = covers.limit();
     // The count is for display: one that cannot be read shows as none.
     let kept = kept_facts::kept_rows(&db.db).await.unwrap_or_else(|error| {
         tracing::warn!(%error, "kept facts uncounted for the cache stats");
@@ -60,6 +61,8 @@ pub async fn cache_stats(
         kept_facts: kept,
         cover_images,
         cover_bytes,
+        cover_limit_bytes: limit.bytes,
+        cover_limit_automatic: limit.automatic,
         database_bytes,
         wal_bytes,
     }

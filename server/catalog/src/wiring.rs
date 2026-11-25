@@ -77,6 +77,8 @@ pub struct CatalogPorts {
 /// The cover and artist image service: local and Cover Art Archive art
 /// through the disk cache, and artist images named by `artists` (the
 /// catalog). The library plans covers through it before the bundle exists.
+/// Without a fixed bound the cache is sized to the library's albums and
+/// the room on the cache folder's volume.
 pub fn artwork(
     platform: &droppedneedle_kernel::platform::Platform,
     inputs: &CatalogInputs,
@@ -84,12 +86,22 @@ pub fn artwork(
 ) -> art::ArtworkService {
     use art::{ArtworkService, cache::ArtworkCache, local::LocalArtwork};
 
+    let covers = inputs.covers_dir.clone();
+    let clock = Arc::clone(&platform.clock);
+    let cache = match inputs.cover_cache_max_bytes {
+        Some(max_bytes) => ArtworkCache::new(covers, max_bytes, clock),
+        None => {
+            let volume = covers.parent().unwrap_or(&covers).to_owned();
+            ArtworkCache::sized_to_library(
+                covers,
+                crate::local::store::LocalCatalog::new(platform.db.clone()),
+                volume,
+                clock,
+            )
+        }
+    };
     ArtworkService::new(
-        ArtworkCache::new(
-            inputs.covers_dir.clone(),
-            inputs.cover_cache_max_bytes,
-            Arc::clone(&platform.clock),
-        ),
+        cache,
         LocalArtwork::new(platform.db.clone()),
         Arc::new(inputs.providers.coverart.clone()),
         platform.settings.live(),
@@ -257,8 +269,9 @@ fn server_zone(configured: Option<&str>) -> year::ServerZone {
 pub struct CatalogInputs {
     /// Root of the cover cache (`<cache_dir>/covers`).
     pub covers_dir: std::path::PathBuf,
-    /// Size bound of the cover cache in bytes.
-    pub cover_cache_max_bytes: u64,
+    /// Fixed size bound of the cover cache in bytes; `None` sizes it to
+    /// the library.
+    pub cover_cache_max_bytes: Option<u64>,
     /// The factory's shared client.
     pub http: reqwest::Client,
     /// Shared provider limiters.
