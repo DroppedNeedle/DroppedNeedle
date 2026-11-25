@@ -28,6 +28,7 @@ pub mod handlers;
 pub mod middleware;
 pub mod security_headers;
 pub mod settings;
+pub mod setup;
 pub mod state;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;

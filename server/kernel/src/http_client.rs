@@ -10,14 +10,20 @@
 //! that take a key in a header, and the
 //! [`direct_no_redirect`](HttpClientFactory::direct_no_redirect) one also
 //! skips any proxy and has no total timeout, for plugin audio streams.
+//! The [`lan_probe`](HttpClientFactory::lan_probe) one reaches only
+//! private and loopback addresses, for the setup guide's look at the
+//! services on the user's own network.
 //! Provider rates live in the providers crate's rate table, and every
 //! provider in that crate sends through its executor, which paces,
 //! retries and cools down.
 
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::{
     Client, Url,
+    dns::{Addrs, Name, Resolve, Resolving},
     redirect::{Attempt, Policy},
 };
 use thiserror::Error;
@@ -78,6 +84,7 @@ pub struct HttpClientFactory {
     same_host: Client,
     remote_audio: Client,
     direct: Client,
+    lan_probe: Client,
 }
 
 impl HttpClientFactory {
@@ -123,6 +130,17 @@ impl HttpClientFactory {
                 .redirect(Policy::none())
                 .no_proxy()
                 .build()?,
+            // The setup guide asks fixed names on the user's network, and a
+            // name the network's DNS passes upstream must not reach the
+            // internet or a cloud metadata address.
+            lan_probe: Client::builder()
+                .user_agent(settings.user_agent())
+                .timeout(LAN_PROBE_TIMEOUT)
+                .connect_timeout(LAN_PROBE_TIMEOUT)
+                .redirect(Policy::none())
+                .no_proxy()
+                .dns_resolver(Arc::new(LanResolver))
+                .build()?,
         })
     }
 
@@ -156,6 +174,101 @@ impl HttpClientFactory {
     /// peer (plugin stream URLs) sees the real server, not a proxy.
     pub fn direct_no_redirect(&self) -> &Client {
         &self.direct
+    }
+
+    /// For the setup guide's keyless look at the services on the user's
+    /// network: a name resolves only to the addresses [`keep_lan_address`]
+    /// keeps, with no proxy (so the connection goes to those addresses), no
+    /// redirects, no cookies and [`LAN_PROBE_TIMEOUT`] for the whole
+    /// request. A URL naming an address instead of a host is not resolved,
+    /// so its caller checks the address itself.
+    pub fn lan_probe(&self) -> &Client {
+        &self.lan_probe
+    }
+}
+
+/// The whole of one [`HttpClientFactory::lan_probe`] request: lookup,
+/// connect and body.
+pub const LAN_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+/// One name lookup for [`HttpClientFactory::lan_probe`].
+const LAN_LOOKUP_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Whether the setup guide's client may connect to `address`: private
+/// (10/8, 172.16/12, 192.168/16), carrier-grade NAT (100.64/10), loopback
+/// and unique local (fc00::/7) addresses, IPv4 ones written as IPv6
+/// included. Everything else is refused, the cloud metadata addresses
+/// inside those ranges among them.
+pub fn keep_lan_address(address: IpAddr) -> bool {
+    const METADATA_V4: Ipv4Addr = Ipv4Addr::new(100, 100, 100, 200);
+    const METADATA_V6: Ipv6Addr = Ipv6Addr::new(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254);
+    match address.to_canonical() {
+        IpAddr::V4(v4) => {
+            let [a, b, ..] = v4.octets();
+            v4 != METADATA_V4
+                && (a == 10
+                    || a == 127
+                    || (a == 172 && (16..32).contains(&b))
+                    || (a == 192 && b == 168)
+                    || (a == 100 && (64..128).contains(&b)))
+        }
+        IpAddr::V6(v6) => {
+            v6 != METADATA_V6
+                && (v6 == Ipv6Addr::LOCALHOST || (v6.segments()[0] & 0xfe00) == 0xfc00)
+        }
+    }
+}
+
+/// Why [`HttpClientFactory::lan_probe`]'s lookup gave no address.
+#[derive(Debug, Error)]
+#[error("the name has no private address")]
+pub struct LanLookupError;
+
+/// What a [`HttpClientFactory::lan_probe`] request's failure means.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LanProbeFailure {
+    /// The name does not resolve, or only to addresses it may not reach.
+    NotFound,
+    /// Nothing answered in time, or the connection was refused or broke.
+    NoAnswer,
+    /// Anything else.
+    Other,
+}
+
+/// Read a [`HttpClientFactory::lan_probe`] request's error.
+pub fn lan_probe_failure(error: &reqwest::Error) -> LanProbeFailure {
+    let first: &(dyn std::error::Error + 'static) = error;
+    let mut causes = std::iter::successors(Some(first), |inner| inner.source());
+    if causes.any(|inner| inner.is::<LanLookupError>()) {
+        return LanProbeFailure::NotFound;
+    }
+    if error.is_timeout() || error.is_connect() || error.is_body() || error.is_request() {
+        LanProbeFailure::NoAnswer
+    } else {
+        LanProbeFailure::Other
+    }
+}
+
+/// Looks a name up as given, with a trailing dot so no search domain is
+/// added, and keeps only the addresses [`keep_lan_address`] keeps.
+struct LanResolver;
+
+impl Resolve for LanResolver {
+    fn resolve(&self, name: Name) -> Resolving {
+        let host = name.as_str().trim_end_matches('.').to_owned();
+        Box::pin(async move {
+            let lookup = tokio::net::lookup_host((format!("{host}."), 0));
+            let found: Vec<SocketAddr> =
+                match tokio::time::timeout(LAN_LOOKUP_TIMEOUT, lookup).await {
+                    Ok(Ok(addresses)) => addresses
+                        .filter(|address| keep_lan_address(address.ip()))
+                        .collect(),
+                    _ => Vec::new(),
+                };
+            if found.is_empty() {
+                return Err(Box::new(LanLookupError) as Box<dyn std::error::Error + Send + Sync>);
+            }
+            Ok(Box::new(found.into_iter()) as Addrs)
+        })
     }
 }
 
@@ -389,6 +502,37 @@ mod tests {
         assert!(!hop("http://h:8080/", "http://h:8081/"));
         assert!(!hop("https://h/", "http://h/"));
         assert!(!hop("https://h:32400/", "http://h:32400/"));
+    }
+
+    /// The setup guide's client reaches private, unique local and loopback
+    /// addresses only, however they are written.
+    #[test]
+    fn the_lan_probe_keeps_only_private_and_loopback_addresses() {
+        let cases = [
+            ("0.0.0.0", false),
+            ("::", false),
+            ("169.254.169.254", false),
+            ("fe80::1", false),
+            ("::ffff:169.254.169.254", false),
+            ("::ffff:10.0.0.1", true),
+            ("64:ff9b::1", false),
+            ("ff02::1", false),
+            ("100.100.100.200", false),
+            ("fd00:ec2::254", false),
+            ("172.17.0.2", true),
+            ("fd12::1", true),
+            ("::1", true),
+            ("127.0.0.1", true),
+            ("192.168.1.20", true),
+            ("100.64.0.1", true),
+            ("172.32.0.1", false),
+            ("8.8.8.8", false),
+            ("2606:4700::1111", false),
+        ];
+        for (address, kept) in cases {
+            let ip: IpAddr = address.parse().unwrap();
+            assert_eq!(keep_lan_address(ip), kept, "{address}");
+        }
     }
 
     #[tokio::test]

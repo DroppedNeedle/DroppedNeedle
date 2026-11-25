@@ -10331,6 +10331,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/setup/found": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What the setup guide found: the services answering on this network and
+         *     the folders worth suggesting. A look that failed is part of the answer.
+         */
+        get: operations["get_setup_found"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/stream/{source}/{*key}": {
         parameters: {
             query?: never;
@@ -16469,6 +16489,11 @@ export interface components {
          * @enum {string}
          */
         FindingState: "open" | "applied" | "skipped" | "stale";
+        /**
+         * @description How a folder look went.
+         * @enum {string}
+         */
+        FolderLookState: "complete" | "scan_running" | "not_read";
         /** @description Navidrome folder preference resolution for the caller. */
         FolderResolutionView: {
             /** @description Folders the server currently exposes. */
@@ -16541,6 +16566,46 @@ export interface components {
          * @enum {string}
          */
         FoundBy: "co_listening" | "source_pick";
+        /** @description One folder the setup guide found. */
+        FoundFolder: {
+            /**
+             * @description It is already a library folder, the import folder or a download
+             *     folder.
+             */
+            already_set: boolean;
+            /**
+             * Format: int64
+             * @description Audio files counted so far.
+             */
+            audio_files: number;
+            /**
+             * @description False when the count stopped at its budget (or waits for a scan),
+             *     so there may be more.
+             */
+            counted_all: boolean;
+            /** @description The folder, as this container sees it. */
+            path: string;
+            /** @description What it could be. */
+            role: components["schemas"]["SetupFolderRole"];
+            /**
+             * @description Whether the server can write in it. A library folder it cannot
+             *     write can still be scanned and played, but not tagged or renamed.
+             */
+            writable: boolean;
+        };
+        /** @description One candidate service and what answered there. */
+        FoundService: {
+            /** @description Which service was looked for. */
+            kind: components["schemas"]["SetupServiceKind"];
+            /** @description Something to know before setting it up. */
+            note?: null | components["schemas"]["ServiceNote"];
+            /** @description What answered. */
+            outcome: components["schemas"]["ProbeOutcome"];
+            /** @description The fixed address asked, never one taken from an answer. */
+            url: string;
+            /** @description The version it reported, when it gave a short plain one. */
+            version?: string | null;
+        };
         /** @description One genre alias. */
         GenreAlias: {
             /**
@@ -22609,6 +22674,11 @@ export interface components {
             /** @description Track title. */
             title: string;
         };
+        /**
+         * @description What answered at a candidate address.
+         * @enum {string}
+         */
+        ProbeOutcome: "not_found" | "no_answer" | "found" | "something_else";
         /** @description One problem. */
         Problem: {
             /**
@@ -25695,6 +25765,11 @@ export interface components {
             /** @description Always `degraded`; v2 also defined `down` but never sent it. */
             severity: string;
         };
+        /**
+         * @description Something to know about a service that answered.
+         * @enum {string}
+         */
+        ServiceNote: "sabnzbd_host_not_whitelisted";
         /** @description A card nudging the user to connect a service. */
         ServicePrompt: {
             /** @description Accent color token. */
@@ -25904,6 +25979,28 @@ export interface components {
             /** @description Login username, 3-32 chars. */
             username: string;
         };
+        /**
+         * @description What a found folder could be.
+         * @enum {string}
+         */
+        SetupFolderRole: "library" | "import_folder" | "downloads";
+        /**
+         * @description Everything the setup guide found. A look that failed is part of the
+         *     answer.
+         */
+        SetupFound: {
+            /** @description How the folder look went. */
+            folder_look: components["schemas"]["FolderLookState"];
+            /** @description The folders worth suggesting, and those already set. */
+            folders: components["schemas"]["FoundFolder"][];
+            /** @description One per candidate, in the candidates' order. */
+            services: components["schemas"]["FoundService"][];
+        };
+        /**
+         * @description A service the setup guide looks for.
+         * @enum {string}
+         */
+        SetupServiceKind: "slskd" | "sabnzbd" | "nzbget" | "prowlarr" | "lidarr" | "jellyfin" | "navidrome" | "plex" | "deemix";
         /** @description Setup-required probe for the SPA first-run gate. */
         SetupStatusBody: {
             /**
@@ -54304,6 +54401,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VerifyConnectionResponse"];
+                };
+            };
+        };
+    };
+    get_setup_found: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description What the look found */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetupFound"];
                 };
             };
         };

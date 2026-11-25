@@ -5,17 +5,26 @@
 //! addresses. It is a constructor argument only: nothing reads it from the
 //! environment or from settings. Services an admin points somewhere in
 //! Settings (download clients, indexers, media servers, the OIDC issuer, a
-//! MusicBrainz mirror) are not listed.
+//! MusicBrainz mirror) are reached only at the address saved there.
 //!
 //! It also carries the two provider ports the library's identification and
 //! contributions read through. `main` leaves both alone, so the live
 //! clients are built; a test puts scripted ones there. And it carries the
 //! ffmpeg the server transcodes with: [`Outbound::live`] finds it on
 //! `PATH` once, at boot; a test gives a stand-in or none.
+//!
+//! The setup guide's candidates are here too: fixed names and ports where
+//! the services the user may run beside the app usually answer, used only
+//! by the guide's keyless probe and never as a saved address, and the
+//! mount table its folder look reads
+//! ([`Outbound::live`] reads `/proc/self/mountinfo` once; a test gives its
+//! own table or none).
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::setup::SetupCandidates;
+use droppedneedle_acquire::imports::mount::MountRow;
 use droppedneedle_library::{contrib::ContribProviders, identify::providers::IdentifyProviders};
 use droppedneedle_providers::{
     acoustid, audiodb, coverart, discogs, geocoding, github, hibp, images, itunes, lastfm,
@@ -126,6 +135,10 @@ pub struct Outbound {
     /// The ffmpeg program transcodes run. `None` turns transcoding off:
     /// every stream is the file as it is.
     pub ffmpeg: Option<PathBuf>,
+    /// The setup guide's candidate services, asked only by its probe.
+    pub setup_candidates: SetupCandidates,
+    /// The mount table the setup guide's folder look starts from.
+    pub setup_mounts: Vec<MountRow>,
 }
 
 impl Outbound {
@@ -165,6 +178,8 @@ impl Outbound {
             identify_providers: Port::live(),
             contribution_providers: Port::live(),
             ffmpeg: droppedneedle_media::stream::transcode::ffmpeg_on_path(),
+            setup_candidates: SetupCandidates::live(),
+            setup_mounts: droppedneedle_acquire::imports::mount::read_mounts(),
         }
     }
 

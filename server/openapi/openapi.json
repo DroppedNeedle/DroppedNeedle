@@ -37859,6 +37859,34 @@
         ]
       }
     },
+    "/api/v3/setup/found": {
+      "get": {
+        "tags": [
+          "setup"
+        ],
+        "summary": "What the setup guide found: the services answering on this network and\nthe folders worth suggesting. A look that failed is part of the answer.",
+        "operationId": "get_setup_found",
+        "responses": {
+          "200": {
+            "description": "What the look found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupFound"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/stream/{source}/{*key}": {
       "get": {
         "tags": [
@@ -51795,6 +51823,15 @@
           "stale"
         ]
       },
+      "FolderLookState": {
+        "type": "string",
+        "description": "How a folder look went.",
+        "enum": [
+          "complete",
+          "scan_running",
+          "not_read"
+        ]
+      },
       "FolderResolutionView": {
         "type": "object",
         "description": "Navidrome folder preference resolution for the caller.",
@@ -51972,6 +52009,87 @@
           "co_listening",
           "source_pick"
         ]
+      },
+      "FoundFolder": {
+        "type": "object",
+        "description": "One folder the setup guide found.",
+        "required": [
+          "path",
+          "role",
+          "audio_files",
+          "counted_all",
+          "writable",
+          "already_set"
+        ],
+        "properties": {
+          "already_set": {
+            "type": "boolean",
+            "description": "It is already a library folder, the import folder or a download\nfolder."
+          },
+          "audio_files": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Audio files counted so far.",
+            "minimum": 0
+          },
+          "counted_all": {
+            "type": "boolean",
+            "description": "False when the count stopped at its budget (or waits for a scan),\nso there may be more."
+          },
+          "path": {
+            "type": "string",
+            "description": "The folder, as this container sees it."
+          },
+          "role": {
+            "$ref": "#/components/schemas/SetupFolderRole",
+            "description": "What it could be."
+          },
+          "writable": {
+            "type": "boolean",
+            "description": "Whether the server can write in it. A library folder it cannot\nwrite can still be scanned and played, but not tagged or renamed."
+          }
+        }
+      },
+      "FoundService": {
+        "type": "object",
+        "description": "One candidate service and what answered there.",
+        "required": [
+          "kind",
+          "url",
+          "outcome"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/SetupServiceKind",
+            "description": "Which service was looked for."
+          },
+          "note": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ServiceNote"
+              }
+            ],
+            "description": "Something to know before setting it up."
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/ProbeOutcome",
+            "description": "What answered."
+          },
+          "url": {
+            "type": "string",
+            "description": "The fixed address asked, never one taken from an answer."
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The version it reported, when it gave a short plain one."
+          }
+        }
       },
       "GenreAlias": {
         "type": "object",
@@ -65266,6 +65384,16 @@
           }
         }
       },
+      "ProbeOutcome": {
+        "type": "string",
+        "description": "What answered at a candidate address.",
+        "enum": [
+          "not_found",
+          "no_answer",
+          "found",
+          "something_else"
+        ]
+      },
       "Problem": {
         "type": "object",
         "description": "One problem.",
@@ -72250,6 +72378,13 @@
           }
         }
       },
+      "ServiceNote": {
+        "type": "string",
+        "description": "Something to know about a service that answered.",
+        "enum": [
+          "sabnzbd_host_not_whitelisted"
+        ]
+      },
       "ServicePrompt": {
         "type": "object",
         "description": "A card nudging the user to connect a service.",
@@ -72658,6 +72793,59 @@
             "description": "Login username, 3-32 chars."
           }
         }
+      },
+      "SetupFolderRole": {
+        "type": "string",
+        "description": "What a found folder could be.",
+        "enum": [
+          "library",
+          "import_folder",
+          "downloads"
+        ]
+      },
+      "SetupFound": {
+        "type": "object",
+        "description": "Everything the setup guide found. A look that failed is part of the\nanswer.",
+        "required": [
+          "services",
+          "folders",
+          "folder_look"
+        ],
+        "properties": {
+          "folder_look": {
+            "$ref": "#/components/schemas/FolderLookState",
+            "description": "How the folder look went."
+          },
+          "folders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FoundFolder"
+            },
+            "description": "The folders worth suggesting, and those already set."
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FoundService"
+            },
+            "description": "One per candidate, in the candidates' order."
+          }
+        }
+      },
+      "SetupServiceKind": {
+        "type": "string",
+        "description": "A service the setup guide looks for.",
+        "enum": [
+          "slskd",
+          "sabnzbd",
+          "nzbget",
+          "prowlarr",
+          "lidarr",
+          "jellyfin",
+          "navidrome",
+          "plex",
+          "deemix"
+        ]
       },
       "SetupStatusBody": {
         "type": "object",

@@ -750,6 +750,14 @@ pub(crate) async fn build_on(
     // Every publishing bundle took the hub when it was built, so what the
     // loops started above (plugin sync, settings effects, media drains)
     // and the ones started below publish reaches open streams.
+    let setup = Arc::new(crate::setup::SetupFinder::new(
+        http.lan_probe().clone(),
+        outbound.setup_candidates.clone(),
+        outbound.setup_mounts.clone(),
+        acquire.setup_folders.clone(),
+        db.clone(),
+        config_store.live(),
+    ));
     let state = AppState::new(
         p.ids.clone(),
         config.clone(),
@@ -761,6 +769,7 @@ pub(crate) async fn build_on(
         compat,
         admin,
         settings,
+        setup,
         jobs.clone(),
         plugins,
         concerts,

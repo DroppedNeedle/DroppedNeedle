@@ -366,6 +366,9 @@ pub fn outbound_at(origin: &str) -> droppedneedle::bootstrap::Outbound {
         identify_providers: droppedneedle::bootstrap::Port::live(),
         contribution_providers: droppedneedle::bootstrap::Port::live(),
         ffmpeg: None,
+        // Closed: the discard port answers nothing.
+        setup_candidates: droppedneedle::setup::SetupCandidates::all_at("http://127.0.0.1:9"),
+        setup_mounts: Vec::new(),
     }
 }
 

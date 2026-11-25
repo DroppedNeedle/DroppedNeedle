@@ -46,6 +46,7 @@ mod settings_deemix;
 mod settings_readers;
 mod settings_sections;
 mod settings_store;
+mod setup_found;
 mod support_bundle;
 mod upgrade_mode;
 mod web;

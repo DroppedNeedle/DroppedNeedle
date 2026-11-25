@@ -880,6 +880,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("acquire/src/requests/mix.rs", 1, MIX_REFRESH),
     ("acquire/src/requests/service/edition.rs", 1, AWAITED),
     ("acquire/src/search_jobs/mod.rs", 1, SEARCH),
+    ("acquire/src/setup_folders/mod.rs", 1, AWAITED),
     ("acquire/src/slskd/repository.rs", 3, AWAITED),
     ("acquire/src/usenet/nzbget.rs", 2, AWAITED),
     ("acquire/src/usenet/sabnzbd.rs", 4, AWAITED),

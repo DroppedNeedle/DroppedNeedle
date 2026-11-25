@@ -9,7 +9,7 @@
 //! nothing in it is read or removed. Blocking: callers run it off the
 //! async runtime.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use droppedneedle_kernel::runtime_config::Live;
@@ -87,28 +87,35 @@ impl ImportSite {
         if configured.is_empty() {
             return Err(Unusable::Off);
         }
-        let real = std::fs::canonicalize(configured).map_err(|_| Unusable::Unreachable)?;
-        if !real.is_dir() {
-            return Err(Unusable::Unreachable);
-        }
-        if !crate::library_ready::writable(&real) {
-            return Err(Unusable::ReadOnly);
-        }
+        let real = usable_dir(Path::new(configured))?;
+        self.neighbours()?.clear(&real)?;
+        Ok(real)
+    }
+
+    /// The folder the setting names, trimmed. `None` while it is not set
+    /// or does not read.
+    pub fn configured(&self) -> Option<PathBuf> {
+        let section = self.section.read()?;
+        Some(section.path.trim())
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from)
+    }
+
+    /// Every folder the import folder must stay clear of, read now.
+    pub fn neighbours(&self) -> Result<Neighbours, Unusable> {
         let management = self.management.read().ok_or(Unusable::SettingsUnreadable)?;
         let downloads = (self.downloads)().ok_or(Unusable::SettingsUnreadable)?;
-        let bin: Vec<PathBuf> = Some(management.recycle_bin_path.trim())
+        let recycle_bin: Vec<PathBuf> = Some(management.recycle_bin_path.trim())
             .filter(|path| !path.is_empty())
             .map(PathBuf::from)
             .into_iter()
             .collect();
-        let others = [
-            (ImportFolderOverlap::Library, self.library.library_dirs()),
-            (ImportFolderOverlap::RecycleBin, bin),
-            (ImportFolderOverlap::Downloads, downloads),
-            (ImportFolderOverlap::App, self.app.clone()),
-        ];
-        folder_clear(&real, others).map_err(|(kind, other)| Unusable::Overlaps(kind, other))?;
-        Ok(real)
+        Ok(Neighbours {
+            library: self.library.library_dirs(),
+            recycle_bin,
+            downloads,
+            app: self.app.clone(),
+        })
     }
 
     /// The import folder's real path for files a job read from `job_dir`:
@@ -121,4 +128,59 @@ impl ImportSite {
             Err(Unusable::Off)
         }
     }
+}
+
+/// The folders the import folder stays clear of, by kind.
+#[derive(Debug, Clone, Default)]
+pub struct Neighbours {
+    /// The library folders.
+    pub library: Vec<PathBuf>,
+    /// The recycle bin, when one is set.
+    pub recycle_bin: Vec<PathBuf>,
+    /// The download folders and the download staging folder.
+    pub downloads: Vec<PathBuf>,
+    /// The app's own folders.
+    pub app: Vec<PathBuf>,
+}
+
+impl Neighbours {
+    /// Whether `real`, a folder's real path, is clear of every one of them.
+    pub fn clear(&self, real: &Path) -> Result<(), Unusable> {
+        let others = [
+            (ImportFolderOverlap::Library, self.library.clone()),
+            (ImportFolderOverlap::RecycleBin, self.recycle_bin.clone()),
+            (ImportFolderOverlap::Downloads, self.downloads.clone()),
+            (ImportFolderOverlap::App, self.app.clone()),
+        ];
+        folder_clear(real, others).map_err(|(kind, other)| Unusable::Overlaps(kind, other))
+    }
+
+    /// What [`ImportSite::check`] would answer for `candidate` as the
+    /// import folder, with the folders in `proposed_library` counted as
+    /// library folders beside these. Blocking.
+    pub fn import_candidate(
+        &self,
+        candidate: &Path,
+        proposed_library: &[PathBuf],
+    ) -> Result<PathBuf, Unusable> {
+        let real = usable_dir(candidate)?;
+        let mut with_proposed = self.clone();
+        with_proposed
+            .library
+            .extend(proposed_library.iter().cloned());
+        with_proposed.clear(&real)?;
+        Ok(real)
+    }
+}
+
+/// The real path of `path`, when it is a folder the server can write in.
+fn usable_dir(path: &Path) -> Result<PathBuf, Unusable> {
+    let real = std::fs::canonicalize(path).map_err(|_| Unusable::Unreachable)?;
+    if !real.is_dir() {
+        return Err(Unusable::Unreachable);
+    }
+    if !crate::library_ready::writable(&real) {
+        return Err(Unusable::ReadOnly);
+    }
+    Ok(real)
 }

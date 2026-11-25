@@ -65,6 +65,7 @@ pub mod requests;
 pub mod search;
 pub mod search_jobs;
 pub mod settings;
+pub mod setup_folders;
 pub mod slskd;
 pub mod sources;
 pub mod spotify_sync;

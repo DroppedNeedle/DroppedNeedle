@@ -350,6 +350,14 @@ impl E2e {
             providers.github_repos.clone(),
         );
         let settings = crate::common::bundles::settings_closed(p);
+        let setup = Arc::new(droppedneedle::setup::SetupFinder::new(
+            p.http.lan_probe().clone(),
+            droppedneedle::setup::SetupCandidates::all_at("http://127.0.0.1:9"),
+            Vec::new(),
+            acquire.setup_folders.clone(),
+            p.db.clone(),
+            p.settings.live(),
+        ));
         AppState::new(
             Arc::clone(&p.ids),
             p.config.clone(),
@@ -361,6 +369,7 @@ impl E2e {
             compat,
             admin,
             settings,
+            setup,
             jobs,
             plugins,
             concerts,

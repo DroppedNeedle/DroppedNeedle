@@ -192,7 +192,7 @@ const HTTP: Rule = Rule {
         },
         Shape {
             name: "factory",
-            pattern: r"\bHttpClientFactory\b|\.\s*(?:no_redirect|remote_audio|direct_no_redirect)\(\)|\b\w*(?:http|factory)\w*\s*\.\s*shared\(\)",
+            pattern: r"\bHttpClientFactory\b|\.\s*(?:no_redirect|remote_audio|direct_no_redirect|lan_probe)\(\)|\b\w*(?:http|factory)\w*\s*\.\s*shared\(\)",
         },
         Shape {
             name: "send",
@@ -328,6 +328,17 @@ const HTTP: Rule = Rule {
             path: "acquire/src/deemix/client.rs",
             shapes: &["client"],
             why: USER_RUN,
+        },
+        Allow {
+            path: "src/setup/mod.rs",
+            shapes: &["client"],
+            why: "holds the factory's `lan_probe` client for the setup guide's probes",
+        },
+        Allow {
+            path: "src/setup/probes.rs",
+            shapes: &["client", "send"],
+            why: "the setup guide's one keyless GET to each candidate service the user may run, \
+                  over the factory's `lan_probe` client",
         },
         Allow {
             path: "auth/src/federated/jellyfin_http.rs",

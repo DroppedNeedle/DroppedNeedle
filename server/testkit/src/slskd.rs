@@ -590,8 +590,20 @@ async fn remove_transfer(
     Json(json!({"removed": transfer_id})).into_response()
 }
 
+/// The keyless `GET /api/v0/session/enabled`: whether sign-in is on.
+async fn session_enabled() -> Json<bool> {
+    Json(true)
+}
+
+/// The web UI's page, which needs no key.
+async fn web_root() -> axum::response::Html<&'static str> {
+    axum::response::Html("<!doctype html><html><head><title>slskd</title></head></html>")
+}
+
 fn router(state: AppState) -> axum::Router {
     axum::Router::new()
+        .route("/", get(web_root))
+        .route("/api/v0/session/enabled", get(session_enabled))
         .route("/api/v0/application", get(application))
         .route("/api/v0/options", get(options))
         .route("/api/v0/searches", post(start_search))

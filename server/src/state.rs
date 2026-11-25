@@ -6,7 +6,10 @@
 
 use std::sync::Arc;
 
-use crate::{admin::AdminSetup, bootstrap::jobs::JobsSetup, settings::wiring::SettingsSetup};
+use crate::{
+    admin::AdminSetup, bootstrap::jobs::JobsSetup, settings::wiring::SettingsSetup,
+    setup::SetupFinder,
+};
 use droppedneedle_acquire::AcquireSetup;
 use droppedneedle_auth::wiring::AuthSetup;
 use droppedneedle_catalog::{concerts::ConcertsSetup, wiring::CatalogSetup};
@@ -44,6 +47,8 @@ pub struct AppState {
     pub admin: AdminSetup,
     /// Settings: section service with save effects.
     pub settings: SettingsSetup,
+    /// The setup guide's look at services and folders.
+    pub setup: Arc<SetupFinder>,
     /// Jobs: registry, playlist route, boot loops.
     pub jobs: JobsSetup,
     /// Plugins: host, routes, scrobble backend, ticks.
@@ -71,6 +76,7 @@ impl AppState {
         compat: CompatSetup,
         admin: AdminSetup,
         settings: SettingsSetup,
+        setup: Arc<SetupFinder>,
         jobs: JobsSetup,
         plugins: PluginsSetup,
         concerts: ConcertsSetup,
@@ -88,6 +94,7 @@ impl AppState {
             compat,
             admin,
             settings,
+            setup,
             jobs,
             plugins,
             concerts,

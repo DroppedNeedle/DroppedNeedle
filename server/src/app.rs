@@ -203,6 +203,7 @@ fn mount(m: Mount<'_>) -> Mount<'_> {
             crate::admin::problems::routes(),
             crate::admin::problems::Problems::from_state,
         )
+        .area(crate::setup::routes(), |state| state.setup.clone())
         .area(crate::settings::wiring::routes(), |state| {
             state.settings.clone()
         })

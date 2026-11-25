@@ -56,6 +56,7 @@ use crate::requests::state::{AcquireReadiness, MixRoutes, RequestsPorts, Request
 use crate::search_jobs::SearchJobs;
 use crate::search_jobs::store::JobStore;
 use crate::settings::{ConfigLidarrSettings, ConfigSpotifySettings};
+use crate::setup_folders::SetupFolders;
 use crate::spotify_sync::job::SpotifySyncJobs;
 use crate::spotify_sync::store::SyncStore;
 use crate::spotify_sync::{SpotifySync, WalkPorts};
@@ -267,6 +268,8 @@ pub struct AcquireSetup {
     pub spotify_sync: Arc<SpotifySync>,
     /// Runs the sync passes; registered on the jobs table.
     pub spotify_sync_jobs: Arc<SpotifySyncJobs>,
+    /// The setup guide's look at the mounted folders.
+    pub setup_folders: Arc<SetupFolders>,
 }
 
 /// The drop-import service over the landing's library port, a staging
@@ -1019,6 +1022,16 @@ impl AcquireSetup {
             stores.folders.clone(),
             site.clone(),
         ));
+        let setup_folders = Arc::new(SetupFolders::new(
+            site.clone(),
+            landing.library().clone(),
+            vec![
+                staging_root.clone(),
+                config.plugins_dir(),
+                config.static_dir.clone(),
+                config.temp_dir.clone(),
+            ],
+        ));
         let import_folder = Arc::new(ImportFolders::new(
             site,
             drops.clone(),
@@ -1053,6 +1066,7 @@ impl AcquireSetup {
             deemix: deemix_checks,
             spotify_sync,
             spotify_sync_jobs,
+            setup_folders,
         })
     }
 

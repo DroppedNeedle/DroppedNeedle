@@ -81,9 +81,7 @@ pub fn check_downloads_mount(path: &Path, library_roots: &[PathBuf]) -> MountChe
     if roots.is_empty() {
         return verdict(true, false, MountReason::Ok);
     }
-    let mounts = std::fs::read_to_string("/proc/self/mountinfo")
-        .map(|content| parse_mountinfo(&content))
-        .unwrap_or_default();
+    let mounts = read_mounts();
     let boundaries: Vec<MountReason> = roots
         .iter()
         .map(|root| move_boundary(path, root, &mounts))
@@ -113,17 +111,39 @@ fn writable(path: &Path) -> bool {
     unsafe { libc::access(c_path.as_ptr(), libc::W_OK) == 0 }
 }
 
-/// `/proc/self/mountinfo` rows as (mount id, mount point).
-fn parse_mountinfo(content: &str) -> Vec<(i64, PathBuf)> {
+/// One row of `/proc/self/mountinfo`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MountRow {
+    /// The mount id.
+    pub id: i64,
+    /// Where it is mounted, in this container.
+    pub point: PathBuf,
+    /// The filesystem type (`ext4`, `nfs4`, `tmpfs`).
+    pub fs_type: String,
+}
+
+/// This process's mount table. Empty when it cannot be read. Blocking.
+pub fn read_mounts() -> Vec<MountRow> {
+    std::fs::read_to_string("/proc/self/mountinfo")
+        .map(|content| parse_mountinfo(&content))
+        .unwrap_or_default()
+}
+
+/// The rows of a `/proc/self/mountinfo` text.
+pub fn parse_mountinfo(content: &str) -> Vec<MountRow> {
     content
         .lines()
         .filter_map(|line| {
             let fields: Vec<&str> = line.split_whitespace().collect();
-            if fields.len() < 6 || !fields.contains(&"-") {
+            let dash = fields.iter().position(|field| *field == "-")?;
+            if dash < 6 {
                 return None;
             }
-            let id = fields[0].parse().ok()?;
-            Some((id, PathBuf::from(unescape_mount_path(fields[4]))))
+            Some(MountRow {
+                id: fields[0].parse().ok()?,
+                point: PathBuf::from(unescape_mount_path(fields[4])),
+                fs_type: (*fields.get(dash + 1)?).to_owned(),
+            })
         })
         .collect()
 }
@@ -137,19 +157,19 @@ fn unescape_mount_path(value: &str) -> String {
 }
 
 /// The innermost mount holding `path`.
-fn containing_mount(path: &Path, mounts: &[(i64, PathBuf)]) -> Option<i64> {
+pub(crate) fn containing_mount(path: &Path, mounts: &[MountRow]) -> Option<i64> {
     let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     mounts
         .iter()
-        .filter(|(_, mount)| resolved.starts_with(mount))
-        .max_by_key(|(_, mount)| mount.components().count())
-        .map(|(id, _)| *id)
+        .filter(|mount| resolved.starts_with(&mount.point))
+        .max_by_key(|mount| mount.point.components().count())
+        .map(|mount| mount.id)
 }
 
 /// Whether a rename from `source` to `destination` stays on one mount.
 /// Mount ids decide when mountinfo is readable; the device id is the
 /// fallback.
-fn move_boundary(source: &Path, destination: &Path, mounts: &[(i64, PathBuf)]) -> MountReason {
+fn move_boundary(source: &Path, destination: &Path, mounts: &[MountRow]) -> MountReason {
     if let (Some(from), Some(to)) = (
         containing_mount(source, mounts),
         containing_mount(destination, mounts),
