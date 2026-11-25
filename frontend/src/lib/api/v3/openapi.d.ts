@@ -44616,6 +44616,8 @@ export interface operations {
                  *     comes first, and `order=asc` puts the oldest first.
                  */
                 favorites?: boolean;
+                /** @description Include the caller's play count and most recent play time for each track on this page. */
+                include_play_stats?: boolean;
             };
             header?: never;
             path?: never;

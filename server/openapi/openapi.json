@@ -23412,6 +23412,15 @@
             "schema": {
               "type": "boolean"
             }
+          },
+          {
+            "name": "include_play_stats",
+            "in": "query",
+            "description": "Include the caller's play count and most recent play time for each track on this page.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
