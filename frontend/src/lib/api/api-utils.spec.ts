@@ -13,8 +13,10 @@ vi.mock('$app/paths', () => ({
 	}
 }));
 
-vi.mock('$env/dynamic/public', () => ({
-	env: mocks.publicEnv
+vi.mock('$env/static/public', () => ({
+	get PUBLIC_API_URL() {
+		return mocks.publicEnv.PUBLIC_API_URL;
+	}
 }));
 
 import { getApiUrl } from './api-utils';

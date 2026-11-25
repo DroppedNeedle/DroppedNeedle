@@ -3,7 +3,7 @@ import { playwright } from '@vitest/browser-playwright';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vitest/config';
 
-// `$env/dynamic/public` reads an SSR-injected global absent in the chromium test env and throws on import; alias to an empty-env stub so component tests can load
+// Browser specs read an empty public env, so a PUBLIC_API_URL set where they run cannot point their API URLs elsewhere
 const envPublicStub = fileURLToPath(new URL('./src/lib/test/env-public-stub.ts', import.meta.url));
 
 export default defineConfig({
@@ -14,7 +14,7 @@ export default defineConfig({
 			{
 				extends: true,
 				resolve: {
-					alias: { '$env/dynamic/public': envPublicStub }
+					alias: { '$env/static/public': envPublicStub }
 				},
 				test: {
 					name: 'client',

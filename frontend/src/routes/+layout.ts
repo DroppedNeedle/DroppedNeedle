@@ -3,9 +3,13 @@ import { browser } from '$app/environment';
 import { api } from '$lib/api/client';
 import { ApiError, TransportError } from '$lib/api/errors';
 import { collectPersistedGarbage, queryClient } from '$lib/queries/QueryClient';
-import { AUTH_FREE_PATHS, UPGRADE_PATH } from '$lib/constants';
+import { AUTH_FREE_PATHS, SHELL_FREE_PATHS, UPGRADE_PATH } from '$lib/constants';
 import { toAuthUser } from '$lib/features/auth/queries/types';
-import { getScrobblePreferencesQueryOptions } from '$lib/features/profile/queries/scrobble-preferences.svelte';
+import {
+	getScrobblePreferencesQueryOptions,
+	type ScrobblePreferences
+} from '$lib/features/profile/queries/scrobble-preferences.svelte';
+import { loadAuthenticatedAppShell } from '$lib/shell/lazyComponentLoaders';
 import { DEFAULT_SOURCE, isMusicSource } from '$lib/stores/musicSource';
 import { authStore, LAST_USER_ID_KEY } from '$lib/stores/authStore.svelte';
 import { clearUserSessionState } from '$lib/utils/userSessionCleanup';
@@ -52,18 +56,48 @@ function startupError(cause: unknown): never {
 	error(500, cause instanceof ApiError ? cause.message : 'Internal Error');
 }
 
+// The shell's code downloads while the session is read, so a signed-in page
+// does not wait for it after the bootstrap. The page's own import gets the
+// same module, and a failed download shows the page's retry.
+function preloadShell(): void {
+	void loadAuthenticatedAppShell().catch(() => undefined);
+}
+
 export const load: LayoutLoad = async ({ url }) => {
 	const path = withoutBasePath(url.pathname);
 	const isAuthFree = AUTH_FREE_PATHS.some((p) => path.startsWith(p));
+	const needsShell = !SHELL_FREE_PATHS.some((p) => path.startsWith(p));
 	// The upgrade page runs before there is an app to sign in to.
 	if (path.startsWith(UPGRADE_PATH)) return { primarySource: DEFAULT_SOURCE, user: null };
 
 	let setupRequired = authStore.setupRequired;
+	// Read at the first load, beside the session, when a session is likely.
+	let earlyPreferences: Promise<ScrobblePreferences> | undefined;
 	if (!authStore.initialized) {
+		const sessionLikely = browser && localStorage.getItem(LAST_USER_ID_KEY) !== null;
+		const shellStarted = sessionLikely && needsShell;
+		if (shellStarted) preloadShell();
+
+		// The setup check and the session read run side by side. The setup
+		// answer is read first, so an upgrade, a busy server and the setup
+		// redirect win as before.
+		const setupRead = retryUnreached(() =>
+			api.v3.GET(v3('/api/v3/auth/setup/status'), { timeoutMs: BOOTSTRAP_TIMEOUT_MS })
+		);
+		const sessionRead = retryUnreached(() =>
+			api.v3.GET(v3('/api/v3/me'), { timeoutMs: BOOTSTRAP_TIMEOUT_MS })
+		);
+		// A failure read later, or never read when setup fails, is not unhandled.
+		sessionRead.catch(() => undefined);
+		if (sessionLikely && !isAuthFree) {
+			earlyPreferences = api.v3.GET(v3('/api/v3/me/scrobble-preferences'), {
+				timeoutMs: BOOTSTRAP_TIMEOUT_MS
+			});
+			earlyPreferences.catch(() => undefined);
+		}
+
 		try {
-			const status = await retryUnreached(() =>
-				api.v3.GET(v3('/api/v3/auth/setup/status'), { timeoutMs: BOOTSTRAP_TIMEOUT_MS })
-			);
+			const status = await setupRead;
 			setupRequired = status.setup_required;
 			authStore.setSetupRequired(setupRequired, status.code_required);
 		} catch (cause) {
@@ -71,10 +105,9 @@ export const load: LayoutLoad = async ({ url }) => {
 		}
 
 		try {
-			const user = await retryUnreached(() =>
-				api.v3.GET(v3('/api/v3/me'), { timeoutMs: BOOTSTRAP_TIMEOUT_MS })
-			);
+			const user = await sessionRead;
 			authStore.setUser(toAuthUser(user));
+			if (needsShell && !shellStarted) preloadShell();
 		} catch (cause) {
 			if (cause instanceof ApiError && cause.status === 401) {
 				await clearUserSessionState().catch(() => undefined);
@@ -113,10 +146,13 @@ export const load: LayoutLoad = async ({ url }) => {
 	let primarySource = DEFAULT_SOURCE;
 	if (authStore.isAuthenticated) {
 		const options = getScrobblePreferencesQueryOptions(authStore.user?.id);
+		const early = earlyPreferences;
 		try {
 			const cached = queryClient.getQueryData(options.queryKey);
 			if (cached) void queryClient.prefetchQuery(options);
-			const data = cached ?? (await queryClient.ensureQueryData(options));
+			const data =
+				cached ??
+				(await queryClient.ensureQueryData(early ? { ...options, queryFn: () => early } : options));
 			if (isMusicSource(data.primary_music_source)) primarySource = data.primary_music_source;
 		} catch {
 			primarySource = DEFAULT_SOURCE;

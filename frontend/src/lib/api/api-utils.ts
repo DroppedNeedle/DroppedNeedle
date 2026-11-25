@@ -1,5 +1,10 @@
-import { env } from '$env/dynamic/public';
+import * as publicEnv from '$env/static/public';
 import { withBasePath } from '$lib/utils/basePath';
+
+// PUBLIC_API_URL is set only for `vite dev` against a server on another port
+// (env.development.example). It is fixed when the app is built, so the page
+// fetches no runtime env file, and a build made without it has none.
+const configuredEnv: Record<string, string | undefined> = publicEnv;
 
 /**
  * Normalizes an API path by prepending the deployment base path (once) and the
@@ -22,8 +27,9 @@ export function getApiUrl(path: string): string {
 	}
 
 	const basedPath = withBasePath(path);
-	if (env.PUBLIC_API_URL) {
-		return `${env.PUBLIC_API_URL.replace(/\/+$/, '')}${basedPath}`;
+	const apiOrigin = configuredEnv.PUBLIC_API_URL;
+	if (apiOrigin) {
+		return `${apiOrigin.replace(/\/+$/, '')}${basedPath}`;
 	}
 
 	return basedPath;

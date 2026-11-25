@@ -1,0 +1,23 @@
+/* The root layout's own look, so the loading screen and its retry show the
+   theme's page and ink before the app shell's stylesheet arrives. */
+@import 'tailwindcss' source(none);
+@import './theme.css';
+@import './fonts.css';
+@source './routes/+layout.svelte';
+@source './lib/ui/Button.svelte';
+
+html,
+body {
+	min-height: 100%;
+	background: var(--color-base-100);
+}
+
+body {
+	min-height: 100dvh;
+	font-family: var(--font-sans);
+}
+
+/* The wrapper around the app in app.html takes no box of its own. */
+#app-root {
+	display: contents;
+}

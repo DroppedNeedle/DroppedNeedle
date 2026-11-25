@@ -36,7 +36,7 @@ test('a page whose code fails to download as it opens reloads and shows', async 
 	page.on('request', (request) => {
 		if (request.isNavigationRequest() && request.frame() === page.mainFrame()) documents += 1;
 	});
-	await page.route('**/_app/env.js', (route) =>
+	await page.route('**/_app/immutable/entry/start.*.js', (route) =>
 		documents < 2 ? route.abort('connectionreset') : route.fallback()
 	);
 

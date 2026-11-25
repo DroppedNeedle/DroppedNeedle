@@ -22,7 +22,8 @@ const state = vi.hoisted(() => ({
 	resetQueryCache: vi.fn(),
 	sessionCleanup: vi.fn(),
 	musicSourceReset: vi.fn(),
-	scrobbleReset: vi.fn()
+	scrobbleReset: vi.fn(),
+	shellLoad: vi.fn()
 }));
 
 const storage = new Map<string, string>();
@@ -38,7 +39,11 @@ vi.mock('$lib/stores/theme.svelte', () => ({}));
 vi.mock('$lib/api/client', () => ({ api: { v3: { GET: state.apiGet } } }));
 vi.mock('$lib/constants', () => ({
 	AUTH_FREE_PATHS: ['/login', '/setup', '/upgrade'],
+	SHELL_FREE_PATHS: ['/login', '/setup', '/upgrade', '/connect'],
 	UPGRADE_PATH: '/upgrade'
+}));
+vi.mock('$lib/shell/lazyComponentLoaders', () => ({
+	loadAuthenticatedAppShell: state.shellLoad
 }));
 vi.mock('$lib/queries/QueryClient', () => ({
 	queryClient: {
@@ -114,6 +119,9 @@ function loadPage(path = '/') {
 
 function reset(): void {
 	state.apiGet.mockReset();
+	state.apiGet.mockRejectedValue(new Error('no answer set for this request'));
+	state.shellLoad.mockReset();
+	state.shellLoad.mockResolvedValue(() => null);
 	state.clear.mockReset();
 	state.markInitialized.mockReset();
 	state.ensureQueryData.mockReset();
@@ -140,6 +148,47 @@ function reset(): void {
 
 describe('+layout load session bootstrap', () => {
 	beforeEach(reset);
+
+	it('setup status and the session read both start before either answers', async () => {
+		storage.set('test:last-user', 'user-1');
+		const answers: Array<(value: unknown) => void> = [];
+		state.apiGet.mockImplementation(() => new Promise((resolve) => answers.push(resolve)));
+		state.ensureQueryData.mockImplementationOnce((options: { queryFn: () => unknown }) =>
+			options.queryFn()
+		);
+
+		const loading = loadPage();
+
+		// A session is likely, so its preferences and the shell's code start too.
+		expect(state.apiGet.mock.calls.map(([url]) => url)).toEqual([
+			'/api/v3/auth/setup/status',
+			'/api/v3/me',
+			'/api/v3/me/scrobble-preferences'
+		]);
+		expect(state.shellLoad).toHaveBeenCalledOnce();
+		answers[0]({ setup_required: false, code_required: false });
+		answers[1](user);
+		answers[2]({ primary_music_source: 'lastfm' });
+		await expect(loading).resolves.toEqual({ primarySource: 'lastfm', user });
+		expect(state.apiGet).toHaveBeenCalledTimes(3);
+		expect(state.shellLoad).toHaveBeenCalledOnce();
+	});
+
+	it('starts the shell once the session answers when none was likely, and never on sign-in', async () => {
+		state.apiGet
+			.mockResolvedValueOnce({ setup_required: false, code_required: false })
+			.mockRejectedValueOnce(new ApiError(401, 'Unauthorized'));
+		await expect(loadPage('/login')).resolves.toMatchObject({ user: null });
+		expect(state.shellLoad).not.toHaveBeenCalled();
+
+		reset();
+		state.apiGet
+			.mockResolvedValueOnce({ setup_required: false, code_required: false })
+			.mockResolvedValueOnce(user);
+		await expect(loadPage('/library')).resolves.toMatchObject({ user });
+		expect(state.shellLoad).toHaveBeenCalledOnce();
+		expect(state.apiGet).toHaveBeenCalledTimes(2);
+	});
 
 	it('keeps the session intact and reports an unreachable server when /api/v3/me times out', async () => {
 		state.user = user;

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '../boot.css';
 	import { page } from '$app/state';
 	import { SHELL_FREE_PATHS } from '$lib/constants';
 	import { loadAuthenticatedAppShell } from '$lib/shell/lazyComponentLoaders';
