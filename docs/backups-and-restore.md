@@ -6,6 +6,7 @@ A backup is a copy of the database, which holds your settings, accounts, playlis
 
 - [Making backups](#making-backups)
 - [What to keep](#what-to-keep)
+- [A second folder](#a-second-folder)
 - [Restoring a backup](#restoring-a-backup)
 - [Going back after a failed update](#going-back-after-a-failed-update)
 - [How a restore works](#how-a-restore-works)
@@ -33,6 +34,18 @@ Restoring is always done on the host, never from the web UI.
 - **The key file `config/data_enc.key`.** A backup holds your settings too, and the stored passwords and API keys in it are sealed with this key. A backup cannot be used without it. See [The key file](#the-key-file).
 
 Backups leave out `metadata-cache.db` on purpose: it holds only provider answers that are fetched again when needed.
+
+## A second folder
+
+A copy on the same disk does not survive that disk failing. Under Settings > Backups, "Second folder" names a folder on another disk, such as a NAS share mounted into the container, and each backup is then copied there too, with the undo copies it names, in the same layout as `backups`. Each copy is checked against its manifest before it takes its name, and the folder keeps backups by the same rules as `backups`, judged from the files in it.
+
+- Save the folder while the share is mounted. It must be empty when you save it (a `lost+found`, `@eaDir` or `#recycle` folder is fine), writable, and on another disk than `backups`. Saving it leaves a file named `.droppedneedle-backups` in it, which marks it as DroppedNeedle's.
+- A folder without that file is never written to. If the share is not mounted, the empty folder underneath is not marked, so nothing is copied onto the wrong disk; copying starts again when the share is back.
+- It cannot be, hold or sit inside the `backups` folder, the database, cache or config folders, a library folder, the recycle bin, the import folder or a download folder.
+- When the folder runs out of room, copying stops and the backup job reports `BACKUP_COPY_NO_ROOM`. It does not free room by itself: remove files there or give it more space.
+- The key file `config/data_enc.key` is never copied there. Keep it somewhere safe yourself: a backup cannot be used without it (see [The key file](#the-key-file)).
+
+To restore from the second folder, point `--backup` at the backup there: the undo copies it needs sit in its own `undo` folder.
 
 ## Restoring a backup
 

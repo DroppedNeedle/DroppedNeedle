@@ -340,18 +340,168 @@ async fn a_nightly_backup_is_taken_once_a_day() {
     let token = CancellationToken::new();
     const HOUR: i64 = 60 * 60 * 1000;
 
-    let mut nightly = NightlyBackup::new(service(), platform.settings.live());
+    let mut nightly = NightlyBackup::new(service(), &platform);
     nightly.pass(&token).await.expect("the first pass backs up");
     assert_eq!(nightly_count(), 1);
 
     clock.advance(23 * HOUR);
-    let mut nightly = NightlyBackup::new(service(), platform.settings.live());
+    let mut nightly = NightlyBackup::new(service(), &platform);
     nightly.pass(&token).await.expect("a pass after a restart");
     assert_eq!(nightly_count(), 1, "a backup under a day old was doubled");
 
     clock.advance(HOUR);
     nightly.pass(&token).await.expect("a pass a day later");
     assert_eq!(nightly_count(), 2);
+    drop(runtime);
+}
+
+/// A folder on a filesystem of its own, removed when dropped. `/dev/shm` is
+/// a memory filesystem apart from the scratch folders on Linux hosts.
+struct OtherDisk(std::path::PathBuf);
+
+impl OtherDisk {
+    fn new(tag: &str) -> Self {
+        let path = std::path::Path::new("/dev/shm").join(format!(
+            "dn-{tag}-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&path).expect("the other disk's folder");
+        Self(path)
+    }
+}
+
+impl Drop for OtherDisk {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A second folder gets nothing until an admin's save marked it: one on the
+/// backups' own disk, and one on another disk that holds someone's files
+/// and no marker, are refused and the pass says why. A folder the save
+/// accepted gets each backup with a copy that matches its manifest, and is
+/// pruned by its own manifests, not by the backups folder.
+#[tokio::test]
+async fn the_second_folder_gets_copies_only_once_an_admin_marked_it() {
+    use droppedneedle::admin::backups::{
+        BACKUP_COPY_FOLDER_MISSING, BACKUP_COPY_SAME_DISK, SecondFolderSite,
+    };
+    use droppedneedle_kernel::db::backup::{MANIFEST_SUFFIX, SECOND_FOLDER_MARKER, file_sha256};
+    use droppedneedle_kernel::runtime_config::sections::Backups;
+
+    let scratch = crate::common::ScratchDir::new("admin-backups-second");
+    let dir = scratch.to_path_buf();
+    let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
+    let platform = crate::common::TestPlatform::on(runtime.db(), &dir)
+        .build()
+        .await;
+    let day = 24 * 60 * 60 * 1000;
+    let clock = ManualClock::at(1_767_225_600_000);
+    let backups = dir.join("backups");
+    let service = Arc::new(BackupService::new(
+        &dir.join("app.db"),
+        &backups,
+        Arc::new(clock.clone()),
+        false,
+    ));
+    let mut nightly = NightlyBackup::new(service.clone(), &platform);
+    let token = CancellationToken::new();
+    let use_folder = |folder: &std::path::Path| Backups {
+        nightly: true,
+        second_folder: folder.to_string_lossy().into_owned(),
+    };
+
+    // The backups' own disk, marked by hand.
+    let same_disk = dir.join("second");
+    std::fs::create_dir_all(&same_disk).unwrap();
+    std::fs::write(same_disk.join(SECOND_FOLDER_MARKER), b"").unwrap();
+    platform
+        .settings
+        .save(use_folder(&same_disk))
+        .await
+        .unwrap();
+    let refused = nightly.pass(&token).await.expect_err("same disk");
+    assert_eq!(refused.code(), BACKUP_COPY_SAME_DISK);
+    assert_eq!(files(&same_disk), vec![SECOND_FOLDER_MARKER]);
+
+    // Another disk, holding someone's file and no marker.
+    let theirs = OtherDisk::new("second-theirs");
+    std::fs::write(theirs.0.join("notes.txt"), b"mine").unwrap();
+    platform.settings.save(use_folder(&theirs.0)).await.unwrap();
+    clock.advance(day);
+    let refused = nightly.pass(&token).await.expect_err("unmarked");
+    assert_eq!(refused.code(), BACKUP_COPY_FOLDER_MISSING);
+    assert_eq!(files(&theirs.0), vec!["notes.txt"]);
+    let site = SecondFolderSite::new(&platform);
+    let path = theirs.0.to_string_lossy().into_owned();
+    assert!(
+        tokio::task::spawn_blocking(move || site.accept(&path))
+            .await
+            .unwrap()
+            .is_err(),
+        "a save took a folder holding someone's files"
+    );
+
+    // Another disk, empty, accepted by an admin's save.
+    let ours = OtherDisk::new("second-ours");
+    let site = SecondFolderSite::new(&platform);
+    let path = ours.0.to_string_lossy().into_owned();
+    tokio::task::spawn_blocking(move || site.accept(&path))
+        .await
+        .unwrap()
+        .expect("an empty folder on another disk is accepted");
+    platform.settings.save(use_folder(&ours.0)).await.unwrap();
+    // Four taken by hand there only: its own retention keeps three.
+    for days_ago in [10, 9, 8, 7] {
+        let millis = 1_767_225_600_000 - days_ago * day;
+        let name = format!("library-{millis}-0.db.gz");
+        std::fs::write(ours.0.join(&name), b"x").unwrap();
+        let manifest = serde_json::json!({
+            "format_version": 3,
+            "sha256": "",
+            "size_bytes": 1,
+            "user_version": 1,
+            "created_at": {"secs_since_epoch": millis / 1000, "nanos_since_epoch": 0},
+            "kind": "manual",
+            "compression": "gzip",
+            "undo_named": [],
+        });
+        std::fs::write(
+            ours.0.join(format!("{name}{MANIFEST_SUFFIX}")),
+            manifest.to_string(),
+        )
+        .unwrap();
+    }
+    clock.advance(day);
+    nightly.pass(&token).await.expect("the pass copies");
+
+    let local: Vec<String> = files(&backups)
+        .into_iter()
+        .filter(|name| name.ends_with(".db.gz"))
+        .collect();
+    assert_eq!(local.len(), 3, "{local:?}");
+    for name in &local {
+        let manifest: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(ours.0.join(format!("{name}{MANIFEST_SUFFIX}"))).unwrap(),
+        )
+        .unwrap();
+        let (sha256, _) = file_sha256(&ours.0.join(name)).unwrap();
+        assert_eq!(
+            manifest["sha256"],
+            serde_json::Value::from(sha256),
+            "{name}"
+        );
+    }
+    let oldest = format!("library-{}-0.db.gz", 1_767_225_600_000 - 10 * day);
+    let there = files(&ours.0);
+    assert!(!there.contains(&oldest), "{there:?}");
+    let manual = there
+        .iter()
+        .filter(|name| name.ends_with(".db.gz") && !local.contains(name))
+        .count();
+    assert_eq!(manual, 3, "{there:?}");
+    assert!(!there.iter().any(|name| name.contains("data_enc")));
     drop(runtime);
 }
 

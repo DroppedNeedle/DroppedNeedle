@@ -783,7 +783,7 @@ pub(crate) async fn build_on(
     jobs::spawn_provider_cache_sweep(supervisor, providers.cache.clone()).map_err(|_| {
         stage("jobs loops")("the provider cache sweep is already running".to_owned())
     })?;
-    crate::admin::backups::NightlyBackup::new(runtime.backups().clone(), config_store.live())
+    crate::admin::backups::NightlyBackup::new(runtime.backups().clone(), p)
         .spawn_on(supervisor)
         .map_err(|_| stage("jobs loops")("the nightly backup is already running".to_owned()))?;
 

@@ -15,6 +15,7 @@
 
 use std::sync::Arc;
 
+use crate::admin::backups::SecondFolderSite;
 use crate::appearance::store::AppearanceStore;
 use crate::appearance::wiring::AppearanceSetup;
 use crate::bootstrap::Outbound;
@@ -55,6 +56,8 @@ pub struct SettingsSetup {
     appearance: AppearanceSetup,
     /// Deemix's Test, on the session DroppedNeedle keeps with Deemix.
     deemix: Arc<DeemixChecks>,
+    /// Checks and marks the second backups folder an admin saves.
+    second_folder: SecondFolderSite,
 }
 
 impl SettingsSetup {
@@ -103,6 +106,7 @@ impl SettingsSetup {
             bins,
             scans: Arc::new(LocalCatalog::new(platform.db.clone())),
             deemix,
+            second_folder: SecondFolderSite::new(platform),
         }
     }
 
@@ -120,6 +124,11 @@ impl SettingsSetup {
     /// The wired section service.
     pub fn service(&self) -> &SettingsService {
         &self.service
+    }
+
+    /// The second backups folder's checks.
+    pub fn second_folder(&self) -> &SecondFolderSite {
+        &self.second_folder
     }
 
     /// `response` with what keeps a recycle bin from being used, if

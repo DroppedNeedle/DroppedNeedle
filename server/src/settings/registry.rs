@@ -27,6 +27,7 @@ use droppedneedle_kernel::runtime_config::sections::{
     GetIt, ImportFolder, ListenBrainzSettings, LyricsSettings, PlainSection, PublicAddress,
     SecuritySettings, UserPreferences, WantedWatcher,
 };
+use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_kernel::runtime_config::{Masked, SecretSection, Section};
 
 type JsonResult<T> = Result<Json<T>, ApiError>;
@@ -47,6 +48,47 @@ async fn save_plain<S: PlainSection + Send + 'static>(
         .await
         .map(Json)
         .map_err(ApiError::from)
+}
+
+/// Save the backups section. A second folder that changed is checked
+/// first and marked as the app's ([`SecondFolderSite::accept`]); a refusal
+/// names the field and nothing is saved. An unchanged one is checked where
+/// it is used, so a folder that is away for a while never stops a save.
+///
+/// [`SecondFolderSite::accept`]: crate::admin::backups::SecondFolderSite::accept
+async fn save_backups(settings: &SettingsSetup, body: Backups) -> JsonResult<Backups> {
+    body.validate()
+        .map_err(|error| ApiError::from(SettingsError::from_config(error)))?;
+    let configured = body.second_folder.trim().to_owned();
+    // A stored section that does not read counts as a change, so saving it
+    // again is how it heals.
+    let unchanged = settings
+        .service()
+        .get::<Backups>()
+        .is_ok_and(|stored| stored.second_folder.trim() == configured);
+    if !configured.is_empty() && !unchanged {
+        let site = settings.second_folder().clone();
+        let accepted = tokio::task::spawn_blocking(move || site.accept(&configured))
+            .await
+            .map_err(|error| {
+                ApiError::internal(format_args!("second folder check failed: {error}"))
+            })?;
+        match accepted {
+            Ok(free) => {
+                tracing::info!(
+                    free_mb = free / (1024 * 1024),
+                    "second backups folder accepted"
+                );
+            }
+            Err(refusal) => {
+                return Err(ApiError::from(SettingsError::InvalidField {
+                    field: "second_folder".to_owned(),
+                    reason: refusal.reason(),
+                }));
+            }
+        }
+    }
+    save_plain(settings, body).await
 }
 
 /// Read a secret section with its secrets masked.
@@ -135,10 +177,13 @@ macro_rules! section_routes {
     (@caller admin) => { Admin };
     (@caller user) => { User };
     (@wire plain $ty:ident) => { $ty };
+    (@wire checked $ty:ident) => { $ty };
     (@wire secret $ty:ident) => { Masked<$ty> };
     (@read plain $settings:ident) => { read_plain(&$settings) };
+    (@read checked $settings:ident) => { read_plain(&$settings) };
     (@read secret $settings:ident) => { read_secret(&$settings) };
     (@save plain $settings:ident $body:ident) => { save_plain(&$settings, $body).await };
+    (@save checked $settings:ident $body:ident) => { save_backups(&$settings, $body).await };
     (@save secret $settings:ident $body:ident) => { save_secret(&$settings, $body).await };
 }
 
@@ -161,11 +206,12 @@ section_routes! {
         put put_import_folder: "Save the import folder. Music copied there is imported, then\nremoved from it."
             => "Saved import folder";
     }
-    plain Backups at "/api/v3/settings/backups", read admin, write admin {
-        get get_backup_settings: "Read whether the database is backed up every night."
-            => "Nightly backups switch";
-        put put_backup_settings: "Save whether the database is backed up every night."
-            => "Saved switch";
+    checked Backups at "/api/v3/settings/backups", read admin, write admin {
+        get get_backup_settings: "Read the nightly backups switch and the second backups folder."
+            => "Backup settings";
+        put put_backup_settings: "Save the nightly backups switch and the second backups folder. A new\nfolder must be empty, writable and on another disk, and is marked as the\napp's."
+            => "Saved settings",
+            (status = 400, description = "The second folder is not there, not empty, not writable, on the backups' disk, or inside a folder it must stay clear of");
     }
     plain ListenBrainzSettings at "/api/v3/settings/listenbrainz", read admin, write admin {
         get get_listenbrainz: "Read the ListenBrainz reads switch."

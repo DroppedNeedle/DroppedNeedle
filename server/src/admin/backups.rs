@@ -1,4 +1,5 @@
-//! Backup UX: list, run, pre-restore reports, and the nightly loop.
+//! Backup UX: list, run, pre-restore reports, the nightly loop and the
+//! second backups folder.
 //!
 //! The mechanism lives in [`droppedneedle_kernel::db::backup`]; this module is the admin
 //! face over it. Each kind of backup is kept by its own rule
@@ -13,7 +14,8 @@
 //! database.
 
 use std::{
-    path::Path,
+    fmt,
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -26,12 +28,13 @@ use super::{
         BackupKeep, BackupListResponse, BackupRunResponse, BackupView, RestoreCheck, RestoreReport,
     },
 };
+use droppedneedle_acquire::folder_overlap::folder_clear;
 use droppedneedle_kernel::db::{
     BackupError, BackupKind, BackupManifest, BackupReport, BackupService, RETENTION, SchemaError,
     Stamp, UndoDir,
     backup::{
-        PACKED_SUFFIX, PLAIN_SUFFIX, backup_order, backup_undo_names, is_backup_name,
-        is_packed_name, manifest_path, open_immutable,
+        PACKED_SUFFIX, PLAIN_SUFFIX, SecondFolderError, backup_order, backup_undo_names,
+        is_backup_name, is_packed_name, manifest_path, mark_second_folder, open_immutable,
     },
     undo_dir::UNDO_DIR_NAME,
     writer::CancelFlag,
@@ -40,8 +43,11 @@ use droppedneedle_kernel::jobs::{
     AlreadyRunning, CancellationToken, Next, Schedule, Supervisor, Tick, TickCtx, TickError,
     TickResult,
 };
+use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::Live;
-use droppedneedle_kernel::runtime_config::sections::Backups;
+use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
+use droppedneedle_kernel::runtime_config::sections::{Backups, ImportFolder, LibraryManagement};
+use droppedneedle_library::publish::bin::DownloadTrees;
 
 /// The restore report's check on the backup's undo copies. A restore
 /// does not stop on it.
@@ -67,8 +73,22 @@ const INTEGRITY_HOLD_MS: i64 = 6 * 60 * 60 * 1000;
 pub const BACKUP_INTEGRITY_FAILED: &str = "BACKUP_INTEGRITY_FAILED";
 /// The backups folder has no room for a backup.
 pub const BACKUP_NO_ROOM: &str = "BACKUP_NO_ROOM";
+/// The loop's code while the backups settings section cannot be read.
+pub const BACKUP_SETTINGS_UNREADABLE: &str = "BACKUP_SETTINGS_UNREADABLE";
 /// A backup failed otherwise; the log says why.
 pub const BACKUP_FAILED: &str = "BACKUP_FAILED";
+/// The second folder is not there, not marked as the app's, or not
+/// writable: nothing was copied.
+pub const BACKUP_COPY_FOLDER_MISSING: &str = "BACKUP_COPY_FOLDER_MISSING";
+/// The second folder is, holds or sits inside a folder it must stay clear
+/// of: nothing was copied.
+pub const BACKUP_COPY_FOLDER_REFUSED: &str = "BACKUP_COPY_FOLDER_REFUSED";
+/// The second folder is on the backups' own disk: nothing was copied.
+pub const BACKUP_COPY_SAME_DISK: &str = "BACKUP_COPY_SAME_DISK";
+/// The second folder lacks the room the copies need: nothing was copied.
+pub const BACKUP_COPY_NO_ROOM: &str = "BACKUP_COPY_NO_ROOM";
+/// A copy to the second folder failed otherwise; the log says why.
+pub const BACKUP_COPY_FAILED: &str = "BACKUP_COPY_FAILED";
 
 /// List the backups on disk, oldest first, with whether the boot check found the database
 /// held in memory. Blocking file IO. Files without a manifest sidecar still list with their
@@ -145,23 +165,173 @@ pub async fn run_backup(service: &BackupService) -> Result<BackupRunResponse, Ba
     Ok(run_response(&report))
 }
 
+/// The second backups folder's setting and the folders it must stay clear
+/// of: the backups folder, the database, cache and config folders, the
+/// library folders, the recycle bin, the import folder and the download
+/// folders. Each use resolves the folder to its real path and checks it
+/// there, as an admin's save does: a library or download folder can be
+/// added inside it at any time.
+#[derive(Clone)]
+pub struct SecondFolderSite {
+    library: Live<TypedLibrary>,
+    management: Live<LibraryManagement>,
+    import_folder: Live<ImportFolder>,
+    downloads: DownloadTrees,
+    backup_dir: PathBuf,
+    app: Vec<PathBuf>,
+}
+
+/// Why a second backups folder is refused, or not used now.
+#[derive(Debug)]
+pub enum SecondFolderRefusal {
+    /// A setting it is checked against cannot be read.
+    SettingsUnreadable,
+    /// It is not there, or does not resolve to a folder.
+    Missing,
+    /// It is, holds or sits inside another folder, of this kind.
+    Overlaps(&'static str),
+    /// The folder itself: unmarked and not empty, read-only, on the same
+    /// disk, short of room.
+    Folder(SecondFolderError),
+}
+
+impl SecondFolderRefusal {
+    /// What an admin's save says about it, beside the field.
+    pub fn reason(&self) -> String {
+        match self {
+            Self::SettingsUnreadable => {
+                "A setting this folder is checked against cannot be read; save that setting again first"
+                    .to_owned()
+            }
+            Self::Missing => "That folder is not there".to_owned(),
+            Self::Overlaps(kind) => format!("That folder is, holds or sits inside a {kind}"),
+            Self::Folder(SecondFolderError::SameDisk) => {
+                "That folder is on the same disk as the backups; pick one on another disk".to_owned()
+            }
+            Self::Folder(SecondFolderError::NotEmpty) => {
+                "That folder is not empty; pick an empty folder".to_owned()
+            }
+            Self::Folder(SecondFolderError::ReadOnly) => {
+                "DroppedNeedle cannot write in that folder".to_owned()
+            }
+            Self::Folder(_) => "DroppedNeedle cannot read or write that folder".to_owned(),
+        }
+    }
+}
+
+impl SecondFolderSite {
+    /// The site over the platform's settings and folders.
+    pub fn new(platform: &Platform) -> Self {
+        let config = &platform.config;
+        let store = &platform.settings;
+        let backup_dir = droppedneedle_kernel::db::factory::backup_dir_for(&config.library_db_path);
+        let app = [
+            Some(config.cache_dir.clone()),
+            Some(config.config_dir.clone()),
+            config.library_db_path.parent().map(Path::to_path_buf),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        Self {
+            library: store.live(),
+            management: store.live(),
+            import_folder: store.live(),
+            downloads: droppedneedle_acquire::wiring::recycle_guard(
+                store,
+                config.imports_dir(),
+                config.slskd_downloads_path.clone(),
+                config.plugins_dir(),
+            ),
+            backup_dir,
+            app,
+        }
+    }
+
+    /// The sets the folder stays clear of, read now; the kind reads after
+    /// "a". `None` while a setting they come from cannot be read.
+    fn sets(&self) -> Option<Vec<(&'static str, Vec<PathBuf>)>> {
+        let one = |path: &str| -> Vec<PathBuf> {
+            Some(path.trim())
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from)
+                .into_iter()
+                .collect()
+        };
+        let library = self
+            .library
+            .read()?
+            .library_roots
+            .iter()
+            .map(|root| PathBuf::from(&root.path))
+            .collect();
+        Some(vec![
+            ("backups folder", vec![self.backup_dir.clone()]),
+            ("folder DroppedNeedle keeps its data in", self.app.clone()),
+            ("library folder", library),
+            (
+                "recycle bin",
+                one(&self.management.read()?.recycle_bin_path),
+            ),
+            (
+                "folder set for imports",
+                one(&self.import_folder.read()?.path),
+            ),
+            ("download folder", (self.downloads)()?),
+        ])
+    }
+
+    /// The real path of `configured` when it is clear of every folder it
+    /// must stay clear of. Blocking.
+    fn clear_path(&self, configured: &str) -> Result<PathBuf, SecondFolderRefusal> {
+        let real = std::fs::canonicalize(configured).map_err(|_| SecondFolderRefusal::Missing)?;
+        if !real.is_dir() {
+            return Err(SecondFolderRefusal::Missing);
+        }
+        let sets = self.sets().ok_or(SecondFolderRefusal::SettingsUnreadable)?;
+        folder_clear(&real, sets).map_err(|(kind, _)| SecondFolderRefusal::Overlaps(kind))?;
+        Ok(real)
+    }
+
+    /// An admin's save of `configured`: clear of every other folder, then
+    /// on another disk, writable, and empty (marked here) or already
+    /// marked. Answers its free bytes. Blocking.
+    pub fn accept(&self, configured: &str) -> Result<u64, SecondFolderRefusal> {
+        let real = self.clear_path(configured)?;
+        mark_second_folder(&self.backup_dir, &real).map_err(SecondFolderRefusal::Folder)
+    }
+}
+
+impl fmt::Display for SecondFolderRefusal {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Folder(error) => write!(formatter, "{error}"),
+            other => formatter.write_str(&other.reason()),
+        }
+    }
+}
+
 /// The nightly backup loop: every half hour, a scheduled backup once the
-/// newest one in the folder is a day old. What is due is read from the
-/// backups folder alone, so a restart never doubles a backup.
+/// newest one in the folder is a day old, then a copy of every kept backup
+/// the second folder lacks. What is due is read from the backups folders
+/// alone, so a restart never doubles a backup.
 pub struct NightlyBackup {
     service: Arc<BackupService>,
     settings: Live<Backups>,
+    site: SecondFolderSite,
     /// No backup is tried before this time (kernel clock milliseconds): a
     /// failed integrity check holds the loop off. In memory only.
     held_until: Option<i64>,
 }
 
 impl NightlyBackup {
-    /// The loop over the one backup service and its settings section.
-    pub fn new(service: Arc<BackupService>, settings: Live<Backups>) -> Self {
+    /// The loop over the one backup service, its settings section and the
+    /// platform's folders.
+    pub fn new(service: Arc<BackupService>, platform: &Platform) -> Self {
         Self {
             service,
-            settings,
+            settings: platform.settings.live(),
+            site: SecondFolderSite::new(platform),
             held_until: None,
         }
     }
@@ -175,17 +345,80 @@ impl NightlyBackup {
     }
 
     /// One pass: take a scheduled backup when nightly backups are on and
-    /// one is due. An unreadable settings section skips the pass. An
-    /// integrity failure answers its code and holds the loop off for
-    /// [`INTEGRITY_HOLD_MS`], answering the same code meanwhile.
+    /// one is due, then copy to the second folder when one is set. An
+    /// unreadable settings section skips the pass and answers its code. An
+    /// integrity failure answers its code and holds backups off for
+    /// [`INTEGRITY_HOLD_MS`],
+    /// answering the same code meanwhile. A backup's failure is answered
+    /// before a copy's.
     pub async fn pass(&mut self, token: &CancellationToken) -> TickResult {
         let Some(settings) = self.settings.read() else {
-            return Ok(Next::Continue);
+            return Err(TickError::new(
+                BACKUP_SETTINGS_UNREADABLE,
+                "the backups settings cannot be read; no backup is taken until they are saved again",
+            ));
         };
-        if !settings.nightly {
+        let nightly = settings.nightly;
+        let second_folder = settings.second_folder.trim().to_owned();
+        drop(settings);
+        let backup = if nightly {
+            self.nightly_backup(token).await
+        } else {
+            Ok(Next::Continue)
+        };
+        if matches!(backup, Ok(Next::Finish)) {
+            return backup;
+        }
+        let copy = self.copy_to_second(second_folder).await;
+        backup.and(copy)
+    }
+
+    /// Copy every kept backup the second folder lacks into it, then prune
+    /// it. A folder that cannot be used answers why; a setting it is
+    /// checked against that cannot be read makes the copy wait.
+    async fn copy_to_second(&self, configured: String) -> TickResult {
+        if configured.is_empty() {
             return Ok(Next::Continue);
         }
-        drop(settings);
+        let (site, service) = (self.site.clone(), Arc::clone(&self.service));
+        let copied = tokio::task::spawn_blocking(move || {
+            let real = site.clear_path(&configured)?;
+            service
+                .copy_to_second(&real)
+                .map_err(SecondFolderRefusal::Folder)
+        })
+        .await
+        .map_err(|error| TickError::new(BACKUP_COPY_FAILED, error))?;
+        let refusal = match copied {
+            Ok(copy) => {
+                if copy.copied > 0 {
+                    tracing::info!(copied = copy.copied, "backups copied to the second folder");
+                }
+                return Ok(Next::Continue);
+            }
+            Err(refusal) => refusal,
+        };
+        let code = match &refusal {
+            SecondFolderRefusal::SettingsUnreadable
+            | SecondFolderRefusal::Folder(SecondFolderError::Running) => {
+                return Ok(Next::Continue);
+            }
+            SecondFolderRefusal::Missing
+            | SecondFolderRefusal::Folder(
+                SecondFolderError::Missing
+                | SecondFolderError::NotEmpty
+                | SecondFolderError::ReadOnly,
+            ) => BACKUP_COPY_FOLDER_MISSING,
+            SecondFolderRefusal::Overlaps(_) => BACKUP_COPY_FOLDER_REFUSED,
+            SecondFolderRefusal::Folder(SecondFolderError::SameDisk) => BACKUP_COPY_SAME_DISK,
+            SecondFolderRefusal::Folder(SecondFolderError::NoRoom { .. }) => BACKUP_COPY_NO_ROOM,
+            SecondFolderRefusal::Folder(SecondFolderError::Db(_)) => BACKUP_COPY_FAILED,
+        };
+        Err(TickError::new(code, refusal))
+    }
+
+    /// Take a scheduled backup when one is due.
+    async fn nightly_backup(&mut self, token: &CancellationToken) -> TickResult {
         let now = self.service.now_ms();
         if let Some(until) = self.held_until {
             if now < until {

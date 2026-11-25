@@ -33399,11 +33399,11 @@
         "tags": [
           "settings"
         ],
-        "summary": "Read whether the database is backed up every night.",
+        "summary": "Read the nightly backups switch and the second backups folder.",
         "operationId": "get_backup_settings",
         "responses": {
           "200": {
-            "description": "Nightly backups switch",
+            "description": "Backup settings",
             "content": {
               "application/json": {
                 "schema": {
@@ -33425,7 +33425,7 @@
         "tags": [
           "settings"
         ],
-        "summary": "Save whether the database is backed up every night.",
+        "summary": "Save the nightly backups switch and the second backups folder. A new\nfolder must be empty, writable and on another disk, and is marked as the\napp's.",
         "operationId": "put_backup_settings",
         "requestBody": {
           "content": {
@@ -33439,11 +33439,21 @@
         },
         "responses": {
           "200": {
-            "description": "Saved switch",
+            "description": "Saved settings",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Backups"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The second folder is not there, not empty, not writable, on the backups' disk, or inside a folder it must stay clear of",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -43592,12 +43602,17 @@
       },
       "Backups": {
         "type": "object",
-        "description": "Whether the server backs the database up every night. What each kind\nof backup keeps is fixed, not a setting.",
+        "description": "Whether the server backs the database up every night, and a second\nfolder each backup is copied to. What each kind of backup keeps is\nfixed, not a setting.",
         "properties": {
           "nightly": {
             "type": "boolean",
             "description": "Take a backup once a day.",
             "default": true
+          },
+          "second_folder": {
+            "type": "string",
+            "description": "An absolute folder path on another disk, as the server sees it, or\nempty for none. The save checks it and marks it as the app's.",
+            "default": ""
           }
         }
       },

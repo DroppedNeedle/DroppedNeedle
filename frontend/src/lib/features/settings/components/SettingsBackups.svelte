@@ -20,6 +20,7 @@
 	import Modal from '$lib/ui/Modal.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import SaveBar from '$lib/ui/SaveBar.svelte';
+	import TextField from '$lib/ui/TextField.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
 
@@ -125,6 +126,15 @@
 						label="Back up every night"
 						description="Once a day, while the server runs."
 						bind:checked={draft.nightly}
+						disabled={settings.saving}
+					/>
+					<TextField
+						label="Second folder"
+						help="Optional. Each backup is also copied here. Use an empty folder on another disk. The key file is not copied, so keep it safe yourself."
+						placeholder="/backups"
+						mono
+						bind:value={draft.second_folder}
+						error={settings.fieldError('second_folder')}
 						disabled={settings.saving}
 					/>
 					<SaveBar {...settings.bar} />

@@ -148,10 +148,7 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
         tracing::warn!(path = %path.display(), filesystem, "{IN_MEMORY_WARNING}");
     }
 
-    let backup_dir = path
-        .parent()
-        .map(|parent| parent.join("backups"))
-        .unwrap_or_else(|| PathBuf::from("backups"));
+    let backup_dir = backup_dir_for(&path);
     let backups = Arc::new(BackupService::new(
         &path,
         &backup_dir,
@@ -214,6 +211,15 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
         checkpoint,
         backups,
     })
+}
+
+/// The backups folder for a database file: `backups` beside it.
+#[must_use]
+pub fn backup_dir_for(db_path: &Path) -> PathBuf {
+    db_path
+        .parent()
+        .map(|parent| parent.join("backups"))
+        .unwrap_or_else(|| PathBuf::from("backups"))
 }
 
 /// Work out the schema plan from the stamp, read without writing, before

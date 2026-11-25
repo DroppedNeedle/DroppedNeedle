@@ -44,6 +44,12 @@
 //! own database for older ones). A restore puts the copies back first and
 //! the database last, so a crash in between never leaves a database naming
 //! copies that are not there.
+//!
+//! A second backups folder, when an admin set one, gets a checked copy of
+//! each kept backup and the undo copies it names, in the same layout, and
+//! is pruned by the same retention over its own manifests. It is used only
+//! while it holds the app's marker and sits on another filesystem. The key
+//! file is never copied there.
 
 use std::{
     collections::HashSet,
@@ -908,6 +914,278 @@ impl Drop for CheckCopy<'_> {
     }
 }
 
+/// The file that marks a second backups folder as the app's own. Only an
+/// admin's save writes it, and only into an empty folder: an unmounted
+/// share is an empty folder on the host's own disk, so the copy never
+/// writes into one by itself.
+pub const SECOND_FOLDER_MARKER: &str = ".droppedneedle-backups";
+
+/// Why a second backups folder is not used.
+#[derive(Debug, thiserror::Error)]
+pub enum SecondFolderError {
+    /// It is not there, is not a folder, or does not hold the marker.
+    #[error("the second backups folder is not there or not marked as the app's")]
+    Missing,
+    /// It sits on the same filesystem as the backups folder, where a copy
+    /// protects nothing.
+    #[error("the second backups folder is on the same disk as the backups folder")]
+    SameDisk,
+    /// It holds files and no marker, so it may be someone else's folder.
+    #[error("the second backups folder holds files and is not marked as the app's")]
+    NotEmpty,
+    /// The server cannot write in it.
+    #[error("the second backups folder cannot be written")]
+    ReadOnly,
+    /// It lacks the room the copies need. Nothing was copied.
+    #[error(
+        "no room in the second backups folder: the copies need {needed} bytes and {free} are free"
+    )]
+    NoRoom {
+        /// Bytes the copies need.
+        needed: u64,
+        /// Bytes free.
+        free: u64,
+    },
+    /// A backup is running; the next pass copies.
+    #[error("a backup is running")]
+    Running,
+    /// Reading or writing failed.
+    #[error(transparent)]
+    Db(#[from] DbError),
+}
+
+/// What one copy to the second folder did.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct SecondFolderCopy {
+    /// Backups copied.
+    pub copied: usize,
+}
+
+/// Check `folder` for an admin's save of it as the second backups folder
+/// of `backup_dir`: it is a folder on another filesystem, the server can
+/// write in it, and it is empty or already marked. Writes the marker into
+/// an empty one. Answers its free bytes. Blocking.
+pub fn mark_second_folder(backup_dir: &Path, folder: &Path) -> Result<u64, SecondFolderError> {
+    if !std::fs::metadata(folder).is_ok_and(|meta| meta.is_dir()) {
+        return Err(SecondFolderError::Missing);
+    }
+    ensure_dir(backup_dir).map_err(DbError::from)?;
+    if same_filesystem(backup_dir, folder).map_err(DbError::from)? {
+        return Err(SecondFolderError::SameDisk);
+    }
+    if is_marked(folder) {
+        if !writable(folder) {
+            return Err(SecondFolderError::ReadOnly);
+        }
+    } else {
+        let holds_files = std::fs::read_dir(folder)
+            .map_err(DbError::from)?
+            .flatten()
+            .any(|entry| !NAS_FOLDERS.contains(&&*entry.file_name().to_string_lossy()));
+        if holds_files {
+            return Err(SecondFolderError::NotEmpty);
+        }
+        let written = std::fs::File::create_new(folder.join(SECOND_FOLDER_MARKER))
+            .and_then(|file| file.sync_all());
+        if let Err(error) = written {
+            return Err(match error.kind() {
+                io::ErrorKind::PermissionDenied | io::ErrorKind::ReadOnlyFilesystem => {
+                    SecondFolderError::ReadOnly
+                }
+                _ => DbError::from(error).into(),
+            });
+        }
+        sync_dir(folder).map_err(DbError::from)?;
+    }
+    Ok(crate::disk::free_bytes(folder).map_err(DbError::from)?)
+}
+
+impl BackupService {
+    /// Copy every backup in the backups folder that `folder` lacks and
+    /// would keep, with the undo copies it names that `folder` lacks, then
+    /// remove from `folder` what its own manifests say retention does not
+    /// keep. The folder mirrors the backups folder's layout (`undo` beside
+    /// the backups), so a restore reads from it as from the first. Each
+    /// file goes to a temporary name, is synced and checked against its
+    /// manifest's SHA-256, then renamed. Used only while `folder` holds the
+    /// marker and sits on another filesystem. The key file is never copied.
+    /// Blocking.
+    pub fn copy_to_second(&self, folder: &Path) -> Result<SecondFolderCopy, SecondFolderError> {
+        let _turn = Turn::take(&self.running).ok_or(SecondFolderError::Running)?;
+        if !is_marked(folder) {
+            return Err(SecondFolderError::Missing);
+        }
+        if same_filesystem(&self.backup_dir, folder).map_err(DbError::from)? {
+            return Err(SecondFolderError::SameDisk);
+        }
+        sweep_copy_temps(folder);
+        let now_ms = self.clock.now_ms();
+        let here = listed_backups(&self.backup_dir)?;
+        let there = listed_backups(folder)?;
+        let present: HashSet<OsString> = there
+            .iter()
+            .filter_map(|entry| entry.path.file_name().map(ToOwned::to_owned))
+            .collect();
+        // Weighed together with what the folder holds, so a backup its own
+        // retention would remove at once is never copied in.
+        let candidates: Vec<(Listed, BackupManifest)> = here
+            .into_iter()
+            .filter(|entry| is_packed_name(&entry.path))
+            .filter(|entry| {
+                entry
+                    .path
+                    .file_name()
+                    .is_some_and(|name| !present.contains(name))
+            })
+            .filter_map(|entry| read_manifest(&entry.path).map(|manifest| (entry, manifest)))
+            .collect();
+        let mut weighed: Vec<Listed> = there
+            .into_iter()
+            .chain(candidates.iter().map(|(entry, _)| entry.clone()))
+            .collect();
+        weighed.sort_by_cached_key(|entry| backup_order(&entry.path).0);
+        let keep = kept(&weighed, now_ms, RETENTION);
+        let kept_names: HashSet<OsString> = weighed
+            .iter()
+            .zip(keep)
+            .filter(|(_, keep)| *keep)
+            .filter_map(|(entry, _)| entry.path.file_name().map(ToOwned::to_owned))
+            .collect();
+        let wanted: Vec<&(Listed, BackupManifest)> = candidates
+            .iter()
+            .filter(|(entry, _)| {
+                entry
+                    .path
+                    .file_name()
+                    .is_some_and(|name| kept_names.contains(name))
+            })
+            .collect();
+
+        let pool = UndoDir::new(self.backup_dir.join(UNDO_DIR_NAME));
+        let second_pool = UndoDir::new(folder.join(UNDO_DIR_NAME));
+        let pool_hold = pool.hold_shared().map_err(DbError::from)?;
+        let second_hold = second_pool.hold_exclusive().map_err(DbError::from)?;
+        let mut undo_needed: Vec<String> = Vec::new();
+        let mut needed = ROOM_MARGIN_BYTES;
+        for (_, manifest) in &wanted {
+            needed = needed.saturating_add(manifest.size_bytes);
+            for sha256 in manifest.undo_named.iter().flatten() {
+                if !second_pool.contains(sha256) && !undo_needed.contains(sha256) {
+                    needed = needed.saturating_add(pool.size_of(sha256).unwrap_or(0));
+                    undo_needed.push(sha256.clone());
+                }
+            }
+        }
+        if !wanted.is_empty() {
+            let free = (self.free_space)(folder).map_err(DbError::from)?;
+            if free < needed {
+                return Err(SecondFolderError::NoRoom { needed, free });
+            }
+        }
+
+        let mut copied = SecondFolderCopy::default();
+        for (entry, manifest) in wanted {
+            for sha256 in manifest.undo_named.iter().flatten() {
+                match pool
+                    .copy_to(&second_pool, &second_hold, sha256)
+                    .map_err(DbError::from)?
+                {
+                    Copied::Copied(_) | Copied::Already(_) => {}
+                    Copied::Missing | Copied::Corrupt => {
+                        tracing::debug!(blob = %sha256, "an undo copy a backup names is not in the pool, so the second folder lacks it too");
+                    }
+                }
+            }
+            copy_checked(&entry.path, folder, manifest)?;
+            copied.copied += 1;
+        }
+        drop(pool_hold);
+        if let Err(error) = rotate_backups(folder, now_ms, RETENTION) {
+            tracing::warn!(%error, "older backups in the second folder stay until the next copy");
+        }
+        if let Err(error) = clean_pool(folder, &second_pool, &second_hold) {
+            tracing::warn!(%error, "undo copies in the second folder no backup there names stay until the next copy");
+        }
+        Ok(copied)
+    }
+}
+
+/// Folders a filesystem or NAS keeps in a share of its own accord. A
+/// second folder holding only these counts as empty.
+const NAS_FOLDERS: [&str; 3] = ["lost+found", "@eaDir", "#recycle"];
+
+/// True when `folder` holds the second-folder marker.
+fn is_marked(folder: &Path) -> bool {
+    std::fs::symlink_metadata(folder.join(SECOND_FOLDER_MARKER)).is_ok_and(|meta| meta.is_file())
+}
+
+/// True when the server can write in `folder`: a file made there and
+/// removed again.
+fn writable(folder: &Path) -> bool {
+    let probe = folder.join(format!(".droppedneedle-write-{}", std::process::id()));
+    let made = std::fs::File::create_new(&probe).is_ok();
+    let _ = std::fs::remove_file(&probe);
+    made
+}
+
+/// The temporary name a copy into the second folder takes.
+const COPY_TEMP_PREFIX: &str = ".copy-";
+
+/// Remove what a copy into the second folder left mid-write.
+fn sweep_copy_temps(folder: &Path) {
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with(COPY_TEMP_PREFIX)
+            && name.ends_with(".tmp")
+            && let Err(error) = std::fs::remove_file(entry.path())
+        {
+            tracing::debug!(file = name, %error, "a copy's leftover stays for the next pass");
+        }
+    }
+}
+
+/// Copy one backup and its manifest into `folder`: each to a temporary
+/// name, synced, the backup checked against the manifest's SHA-256 and
+/// size, then renamed, the manifest first.
+fn copy_checked(backup: &Path, folder: &Path, manifest: &BackupManifest) -> Result<(), DbError> {
+    let Some(name) = backup.file_name().and_then(|name| name.to_str()) else {
+        return Ok(());
+    };
+    let target = folder.join(name);
+    let temp = folder.join(format!("{COPY_TEMP_PREFIX}{name}.tmp"));
+    let manifest_temp = folder.join(format!("{COPY_TEMP_PREFIX}{name}{MANIFEST_SUFFIX}.tmp"));
+    let copied = (|| -> Result<(), DbError> {
+        let mut source = std::fs::File::open(backup)?;
+        let mut written = create_fresh(&temp)?;
+        io::copy(&mut source, &mut written)?;
+        written.sync_all()?;
+        drop(written);
+        let (sha256, size_bytes) = file_sha256(&temp)?;
+        if sha256 != manifest.sha256 || size_bytes != manifest.size_bytes {
+            return Err(DbError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "the copy in the second folder does not match its manifest",
+            )));
+        }
+        write_synced(
+            &manifest_temp,
+            &manifest_path(&target),
+            serde_json::to_string_pretty(manifest)?.as_bytes(),
+        )?;
+        sync_dir(folder)?;
+        std::fs::rename(&temp, &target)?;
+        sync_dir(folder)?;
+        Ok(())
+    })();
+    if copied.is_err() {
+        let _ = std::fs::remove_file(&temp);
+        let _ = std::fs::remove_file(&manifest_temp);
+    }
+    copied
+}
 /// The undo copies a database file names that live in the undo folder
 /// rather than in its own table. A database from before the undo tables
 /// names none. The file is opened read-only and immutable, so nothing is
@@ -1332,10 +1610,21 @@ fn remove_staging_tree(staging: &Path) {
     remove_staging_sidecars(staging);
 }
 
+/// A new file at `temp`, made by the call that creates it, so a link or
+/// a file someone placed there is never written through. A leftover of an
+/// earlier run is removed first; removing a link removes only the link.
+fn create_fresh(temp: &Path) -> io::Result<std::fs::File> {
+    match std::fs::remove_file(temp) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+        _ => {}
+    }
+    std::fs::File::create_new(temp)
+}
+
 /// Write `bytes` to `temp`, sync it, rename it to `path`. The caller
 /// syncs the folder.
 fn write_synced(temp: &Path, path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let written = std::fs::File::create(temp)
+    let written = create_fresh(temp)
         .and_then(|mut file| file.write_all(bytes).and_then(|()| file.sync_all()))
         .and_then(|()| std::fs::rename(temp, path));
     if written.is_err() {
@@ -1507,7 +1796,7 @@ fn user_version(connection: &Connection) -> rusqlite::Result<i64> {
 }
 
 /// One of the app's own backups, as rotation weighs it.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Listed {
     path: PathBuf,
     /// When it was taken, from its name.

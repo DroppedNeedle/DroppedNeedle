@@ -8800,9 +8800,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Read whether the database is backed up every night. */
+        /** Read the nightly backups switch and the second backups folder. */
         get: operations["get_backup_settings"];
-        /** Save whether the database is backed up every night. */
+        /**
+         * Save the nightly backups switch and the second backups folder. A new
+         *     folder must be empty, writable and on another disk, and is marked as the
+         *     app's.
+         */
         put: operations["put_backup_settings"];
         post?: never;
         delete?: never;
@@ -12701,8 +12705,9 @@ export interface components {
             user_version?: number | null;
         };
         /**
-         * @description Whether the server backs the database up every night. What each kind
-         *     of backup keeps is fixed, not a setting.
+         * @description Whether the server backs the database up every night, and a second
+         *     folder each backup is copied to. What each kind of backup keeps is
+         *     fixed, not a setting.
          */
         Backups: {
             /**
@@ -12710,6 +12715,12 @@ export interface components {
              * @default true
              */
             nightly: boolean;
+            /**
+             * @description An absolute folder path on another disk, as the server sees it, or
+             *     empty for none. The save checks it and marks it as the app's.
+             * @default
+             */
+            second_folder: string;
         };
         /** @description Batch-cancel body. Dedupe is by exact string before lookup. */
         BatchCancelBody: {
@@ -50791,7 +50802,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Nightly backups switch */
+            /** @description Backup settings */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -50815,13 +50826,22 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Saved switch */
+            /** @description Saved settings */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["Backups"];
+                };
+            };
+            /** @description The second folder is not there, not empty, not writable, on the backups' disk, or inside a folder it must stay clear of */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
