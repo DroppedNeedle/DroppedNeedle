@@ -3,16 +3,17 @@
 //! Services return domain failures that handlers convert; the `From` impl
 //! below is the only place a status is chosen. Reporting itself almost
 //! never errors: a failed forward is logged and swallowed, so a report never
-//! fails the player. These errors cover only unknown tracks and malformed
-//! bodies.
+//! fails the player. Handoffs can also conflict with an active transfer.
 
 use droppedneedle_kernel::error::ApiError;
 
 /// Every failure the playback routes can return to a caller.
 #[derive(Debug)]
 pub enum PlaybackError {
-    /// Unknown track id. Always the same fixed message.
+    /// Unknown track or unavailable player.
     NotFound,
+    /// Handoff cannot proceed in the players' current state.
+    Conflict(&'static str),
     /// Bad input. The message is shown to the user.
     InvalidInput {
         /// What was wrong.
@@ -23,6 +24,7 @@ pub enum PlaybackError {
 impl From<PlaybackError> for ApiError {
     fn from(error: PlaybackError) -> Self {
         match error {
+            PlaybackError::Conflict(reason) => ApiError::conflict(reason),
             PlaybackError::NotFound => ApiError::not_found(),
             PlaybackError::InvalidInput { message } => ApiError::invalid_input(message),
         }

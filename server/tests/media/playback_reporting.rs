@@ -175,6 +175,7 @@ fn rig() -> Rig {
         remotes: remotes.clone(),
         sessions: SessionStore::new(),
         presence: PresenceRegistry::new(droppedneedle_kernel::events::EventHub::new()),
+        handoff: Default::default(),
         dedup: ScrobbleDedup::new(),
         clock: Arc::new(clock.clone()),
         events: Arc::new(playback::ports::NoPlayEvents),
@@ -2992,3 +2993,6 @@ async fn a_playback_event_is_a_record_of_its_own_and_never_a_play() {
     );
     assert_eq!(rig.plays(), 2, "forgetting leaves the plays");
 }
+
+#[path = "playback_handoff.rs"]
+mod playback_handoff;

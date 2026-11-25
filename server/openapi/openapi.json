@@ -25344,6 +25344,155 @@
         ]
       }
     },
+    "/api/v3/playback/handoff": {
+      "post": {
+        "tags": [
+          "playback"
+        ],
+        "summary": "Start a local queue transfer between two of the caller's active players.",
+        "operationId": "start_handoff",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HandoffRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Transfer queued"
+          },
+          "400": {
+            "description": "Invalid transfer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Player unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Transfer busy or source unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/playback/handoff/sync": {
+      "post": {
+        "tags": [
+          "playback"
+        ],
+        "summary": "Sign this player up for handoff, read peers and acknowledge any outstanding transfer.",
+        "operationId": "sync_handoff",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HandoffHeartbeat"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Your active players and this player's next step",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HandoffUpdate"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid player identity or name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Player unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Player capacity reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/playback/progress": {
       "post": {
         "tags": [
@@ -51064,6 +51213,350 @@
           "handed_back": {
             "type": "boolean",
             "description": "False when DroppedNeedle had not stepped back from the album."
+          }
+        }
+      },
+      "HandoffCommand": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Capture the queue and continue playing.",
+            "required": [
+              "transfer_id",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "offer"
+                ]
+              },
+              "transfer_id": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Restore the queue, then accept or decline.",
+            "required": [
+              "transfer_id",
+              "queue",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "receive"
+                ]
+              },
+              "queue": {
+                "$ref": "#/components/schemas/HandoffQueue"
+              },
+              "transfer_id": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The destination accepted. Pause the source if the offered session is still current.",
+            "required": [
+              "transfer_id",
+              "destination_id",
+              "kind"
+            ],
+            "properties": {
+              "destination_id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "release"
+                ]
+              },
+              "transfer_id": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "transfer_id",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "failed"
+                ]
+              },
+              "transfer_id": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "HandoffHeartbeat": {
+        "type": "object",
+        "required": [
+          "player_id",
+          "name",
+          "can_send"
+        ],
+        "properties": {
+          "can_send": {
+            "type": "boolean",
+            "description": "Whether the player has a local queue it can transfer."
+          },
+          "disconnect": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "player_id": {
+            "type": "string",
+            "description": "A UUID chosen by this running player."
+          },
+          "receipt": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HandoffReceipt"
+              }
+            ]
+          }
+        }
+      },
+      "HandoffPlayer": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "can_send"
+        ],
+        "properties": {
+          "can_send": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "HandoffQueue": {
+        "type": "object",
+        "required": [
+          "tracks",
+          "index",
+          "position_ms",
+          "playing"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "Zero-based position in `tracks`.",
+            "minimum": 0
+          },
+          "playing": {
+            "type": "boolean"
+          },
+          "position_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HandoffTrack"
+            },
+            "description": "In playback order, including repeated tracks."
+          }
+        }
+      },
+      "HandoffReceipt": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "transfer_id",
+              "queue",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "offered"
+                ]
+              },
+              "queue": {
+                "$ref": "#/components/schemas/HandoffQueue"
+              },
+              "transfer_id": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "transfer_id",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "accepted"
+                ]
+              },
+              "transfer_id": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "transfer_id",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "released"
+                ]
+              },
+              "transfer_id": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "transfer_id",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "declined"
+                ]
+              },
+              "transfer_id": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "HandoffRequest": {
+        "type": "object",
+        "required": [
+          "transfer_id",
+          "player_id",
+          "source_id",
+          "destination_id"
+        ],
+        "properties": {
+          "destination_id": {
+            "type": "string"
+          },
+          "player_id": {
+            "type": "string",
+            "description": "The initiating player, either the source or the destination."
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "transfer_id": {
+            "type": "string",
+            "description": "A fresh UUID for this transfer, reused when retrying this request."
+          }
+        }
+      },
+      "HandoffTrack": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "artist",
+          "album"
+        ],
+        "properties": {
+          "album": {
+            "type": "string"
+          },
+          "album_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "artist": {
+            "type": "string"
+          },
+          "artist_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duration": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Duration in seconds, when known."
+          },
+          "id": {
+            "type": "string",
+            "description": "Local library track ID. Each player constructs its own authenticated stream address."
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "HandoffUpdate": {
+        "type": "object",
+        "required": [
+          "players"
+        ],
+        "properties": {
+          "command": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HandoffCommand"
+              }
+            ]
+          },
+          "players": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HandoffPlayer"
+            }
           }
         }
       },
