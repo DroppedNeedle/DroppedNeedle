@@ -44,7 +44,7 @@ import { SettingsQueryKeyFactory } from '$lib/features/settings/queries/Settings
 import { SourcePlaylistQueryKeyFactory } from '$lib/queries/featureKeys';
 import { SpotifyQueryKeyFactory } from '$lib/queries/featureKeys';
 import { PlaylistSyncApprovalsQueryKeyFactory } from '$lib/queries/featureKeys';
-import { SystemQueryKeyFactory } from '$lib/queries/featureKeys';
+import { ProblemsQueryKeyFactory, SystemQueryKeyFactory } from '$lib/queries/featureKeys';
 import { YearReviewQueryKeyFactory } from '$lib/queries/featureKeys';
 import { PlaylistQueryKeyFactory } from '$lib/features/playlists/queries/PlaylistQueryKeyFactory';
 import type { RemoteSource } from '$lib/features/remote-library/queries/types';
@@ -326,19 +326,27 @@ export const EFFECTS = {
 		{ key: DownloadQueryKeyFactory.sabnzbdStatus() },
 		{ key: DownloadQueryKeyFactory.nzbgetStatus() },
 		{ key: DownloadQueryKeyFactory.deemixStatus() },
-		{ everyScope: [HomeQueryKeyFactory.feature] }
+		{ everyScope: [HomeQueryKeyFactory.feature] },
+		{ key: ProblemsQueryKeyFactory.list() }
 	],
 	/** The Soulseek connection settings. */
-	slskdSettingsChanged: (): Sweep[] => [{ key: DownloadQueryKeyFactory.clientConfig() }],
+	slskdSettingsChanged: (): Sweep[] => [
+		{ key: DownloadQueryKeyFactory.clientConfig() },
+		{ key: ProblemsQueryKeyFactory.list() }
+	],
 	/** The Usenet settings: SABnzbd, NZBGet, Prowlarr, the indexers and the search backend. */
 	usenetSettingsChanged: (): Sweep[] => [
 		{ key: DownloadQueryKeyFactory.sabnzbd() },
 		{ key: DownloadQueryKeyFactory.nzbget() },
 		{ key: DownloadQueryKeyFactory.prowlarr() },
-		{ key: DownloadQueryKeyFactory.indexers() }
+		{ key: DownloadQueryKeyFactory.indexers() },
+		{ key: ProblemsQueryKeyFactory.list() }
 	],
 	/** The Deemix connection settings. */
-	deemixSettingsChanged: (): Sweep[] => [{ key: DownloadQueryKeyFactory.deemix() }],
+	deemixSettingsChanged: (): Sweep[] => [
+		{ key: DownloadQueryKeyFactory.deemix() },
+		{ key: ProblemsQueryKeyFactory.list() }
+	],
 	/** The order download sources are tried in. */
 	sourcePriorityChanged: (): Sweep[] => [{ key: DownloadQueryKeyFactory.sourcePriority() }],
 	/** The download policy. */
@@ -347,7 +355,8 @@ export const EFFECTS = {
 	wantedSettingsChanged: (): Sweep[] => [{ key: DownloadQueryKeyFactory.wantedSettings() }],
 	/** The import folder setting, and so what its status says. */
 	importFolderChanged: (userId: UserId): Sweep[] => [
-		{ key: SettingsQueryKeyFactory.importFolderStatus(userId) }
+		{ key: SettingsQueryKeyFactory.importFolderStatus(userId) },
+		{ key: ProblemsQueryKeyFactory.list() }
 	],
 	/** Any download, in the caller's views and the admin's. */
 	anyDownloadChanged: (): Sweep[] => [{ everyScope: [DownloadQueryKeyFactory.feature] }],
@@ -479,7 +488,10 @@ export const EFFECTS = {
 	/** The caller's signed-in sessions. */
 	sessionsChanged: (userId: UserId): Sweep[] => [{ key: SessionsQueryKeyFactory.list(userId) }],
 	/** The database backups and their checks. */
-	backupsChanged: (): Sweep[] => [{ key: SystemQueryKeyFactory.backups() }],
+	backupsChanged: (): Sweep[] => [
+		{ key: SystemQueryKeyFactory.backups() },
+		{ key: ProblemsQueryKeyFactory.list() }
+	],
 	/** The metadata cache's sizes. */
 	cacheStatsChanged: (userId: UserId): Sweep[] => [
 		{ key: SettingsQueryKeyFactory.cacheStats(userId) }

@@ -32,7 +32,8 @@
 		Palette,
 		Activity,
 		Disc3,
-		DatabaseBackup
+		DatabaseBackup,
+		HeartPulse
 	} from 'lucide-svelte';
 	import JellyfinIcon from '$lib/media/icons/JellyfinIcon.svelte';
 	import NavidromeIcon from '$lib/media/icons/NavidromeIcon.svelte';
@@ -94,6 +95,7 @@
 		{ id: 'sidebar', label: 'Sidebar', tier: 'personalize', icon: PanelLeft },
 		{ id: 'appearance', label: 'Appearance', tier: 'personalize', icon: Palette },
 		{ id: 'music-source', label: 'Music Source', tier: 'personalize', icon: ChartColumn },
+		{ id: 'health', label: 'Health', tier: 'system', icon: HeartPulse },
 		{ id: 'cache', label: 'Cache', tier: 'system', icon: Database },
 		{ id: 'musicbrainz', label: 'MusicBrainz', tier: 'system', icon: Globe },
 		{ id: 'users', label: 'Users', tier: 'system', icon: Users },

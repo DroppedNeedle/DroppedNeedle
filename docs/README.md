@@ -21,6 +21,7 @@
 - [Connect your music app](connect-your-app.md): what to enter in Symfonium, Finamp, Feishin and other Subsonic or Jellyfin apps.
 - [Custom CSS](custom-css.md): restyling the app, and the style hooks that stay stable across releases.
 - [Troubleshooting](troubleshooting.md): common problems and their fixes.
+- [Health](health.md): what Settings > Health lists and how to fix each problem.
 
 ## Run and extend
 

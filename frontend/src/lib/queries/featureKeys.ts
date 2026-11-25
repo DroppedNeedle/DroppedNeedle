@@ -196,6 +196,11 @@ export const SystemQueryKeyFactory = {
 	restoreReport: (name: string) => key(ADMIN, 'system', 'backups', name, 'restore-report')
 };
 
+// What is wrong now, for the admin's Health page and header mark.
+export const ProblemsQueryKeyFactory = {
+	list: () => key(ADMIN, 'health', 'problems')
+};
+
 // The caller's year in review, counted in the time zone in its key.
 export const YearReviewQueryKeyFactory = {
 	feature: 'year',

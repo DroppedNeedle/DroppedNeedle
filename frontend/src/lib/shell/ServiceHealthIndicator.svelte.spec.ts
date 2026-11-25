@@ -40,6 +40,11 @@ vi.mock('$lib/features/settings/queries/system.svelte', () => {
 	};
 });
 
+// These cases are a plain user's: the admin's problems list stays empty.
+vi.mock('$lib/features/health/queries/problems.svelte', () => ({
+	getAdminProblemsQuery: () => ({ data: undefined })
+}));
+
 const toast = vi.hoisted(() => ({ show: vi.fn() }));
 vi.mock('$lib/stores/toast', () => ({ toastStore: toast }));
 

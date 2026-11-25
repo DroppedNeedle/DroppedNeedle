@@ -59,6 +59,7 @@
 		"queries/AdminApprovalsQueries.svelte.ts"
 	],
 	"genre": ["components/GenreAlbumCard.svelte"],
+	"health": ["components/problemText.ts", "queries/problems.svelte.ts"],
 	"home": ["queries/home.svelte.ts"],
 	"lastfm": ["components/LastFmAlbumEnrichment.svelte", "components/LastFmEnrichment.svelte"],
 	"library": [
@@ -104,6 +105,7 @@
 		"components/LibraryScanScheduleControl.svelte",
 		"components/ManagementHoldSection.svelte",
 		"components/OperationJobStrip.svelte",
+		"components/RecycleBinFolderAccept.svelte",
 		"components/RecycledRemovals.svelte",
 		"components/ScriptWorkbench.svelte",
 		"queries/DuplicateQueries.svelte.ts",

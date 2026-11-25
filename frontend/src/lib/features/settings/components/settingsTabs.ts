@@ -33,6 +33,7 @@ const settingsTabLoaders: Record<string, SettingsLoader> = {
 	sidebar: () => import('./SettingsSidebar.svelte'),
 	appearance: () => import('./SettingsAppearance.svelte'),
 	'music-source': () => import('./SettingsMusicSource.svelte'),
+	health: () => import('./SettingsHealth.svelte'),
 	cache: () => import('./SettingsCache.svelte'),
 	musicbrainz: () => import('./SettingsMusicBrainz.svelte'),
 	diagnostics: () => import('./SettingsDiagnostics.svelte'),

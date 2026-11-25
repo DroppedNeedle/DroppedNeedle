@@ -11,9 +11,21 @@
 	import { toastStore } from '$lib/stores/toast';
 	import { PROVIDER_NAMES } from '$lib/utils/serviceError';
 	import IconButton from '$lib/ui/IconButton.svelte';
+	import Button from '$lib/ui/Button.svelte';
 	import type { ServiceHealthItem } from '$lib/features/settings/queries/system.svelte';
+	import { getAdminProblemsQuery } from '$lib/features/health/queries/problems.svelte';
+	import { countBySeverity, describeProblem } from '$lib/features/health/components/problemText';
+	import { authStore } from '$lib/stores/authStore.svelte';
+	import { withBasePath } from '$lib/utils/basePath';
 
 	const query = getSystemHealthQuery();
+	// Admins see one mark for everything the Health tab lists; everyone
+	// else sees the outside services' dot.
+	const problemsQuery = getAdminProblemsQuery();
+	const problems = $derived(problemsQuery.data?.problems ?? []);
+	const counts = $derived(countBySeverity(problems));
+	const lookAt = $derived(counts.warning + counts.info);
+	const HEALTH_TAB = '/settings?tab=health';
 	const degraded = $derived<ServiceHealthItem[]>(query.data?.degraded ?? []);
 	const hasDegradation = $derived(degraded.length > 0);
 
@@ -90,7 +102,42 @@
 	}
 </script>
 
-{#if hasDegradation}
+{#if authStore.isAdmin}
+	{#if counts.broken || lookAt}
+		<div class="relative">
+			<Button
+				variant={counts.broken ? 'danger' : 'warning'}
+				size="xs"
+				icon={TriangleAlert}
+				aria-expanded={open}
+				onclick={toggle}
+			>
+				{counts.broken ? `${counts.broken} need you` : `${lookAt} to look at`}
+			</Button>
+			{#if open}
+				<!-- click-away scrim -->
+				<button class="fixed inset-0 z-40 cursor-default" aria-label="Close status" onclick={close}
+				></button>
+				<div
+					class="absolute right-0 z-50 mt-1 w-72 overflow-hidden rounded-xl border border-base-300 bg-base-100 shadow-xl"
+					role="dialog"
+					aria-label="What is wrong"
+				>
+					<ul class="divide-y divide-base-200">
+						{#each problems.slice(0, 3) as problem (problem.kind + ':' + (problem.subject ?? ''))}
+							<li class="px-4 py-3 text-sm">{describeProblem(problem).sentence}</li>
+						{/each}
+					</ul>
+					<div class="border-t border-base-200 px-4 py-2.5">
+						<Button variant="ghost" size="xs" href={withBasePath(HEALTH_TAB)} onclick={close}>
+							See all problems
+						</Button>
+					</div>
+				</div>
+			{/if}
+		</div>
+	{/if}
+{:else if hasDegradation}
 	<div class="relative">
 		<IconButton
 			icon={Activity}
