@@ -18,11 +18,11 @@ use super::views::ReadFailed;
 pub(super) async fn decode_playlist(
     state: &JellyfinState,
     jf_id: &str,
-) -> Result<String, Response> {
+) -> Result<String, Box<Response>> {
     match state.ids.from_jf(jf_id).await {
         Ok(Some((kind, internal))) if kind == "playlist" => Ok(internal),
-        Ok(_) => Err(error(StatusCode::NOT_FOUND)),
-        Err(failed) => Err(ApiError::from(failed).into_response()),
+        Ok(_) => Err(Box::new(error(StatusCode::NOT_FOUND))),
+        Err(failed) => Err(Box::new(ApiError::from(failed).into_response())),
     }
 }
 
@@ -90,7 +90,7 @@ pub(super) async fn get_playlist(
 ) -> Response {
     let internal = match decode_playlist(&state, &playlist_id).await {
         Ok(internal) => internal,
-        Err(denied) => return denied,
+        Err(denied) => return *denied,
     };
     let detail = match state.library.playlist(&ctx.principal.id, &internal).await {
         Ok(Some(detail)) => detail,
@@ -137,7 +137,7 @@ pub(super) async fn playlist_items_inner(
 ) -> Response {
     let internal = match decode_playlist(state, playlist_id).await {
         Ok(internal) => internal,
-        Err(denied) => return denied,
+        Err(denied) => return *denied,
     };
     let detail = match state.library.playlist(user_id, &internal).await {
         Ok(Some(detail)) => detail,
@@ -198,7 +198,7 @@ pub(super) async fn playlist_add(
     let raw_query = request.uri().query().map(str::to_owned);
     let internal = match decode_playlist(&state, &playlist_id).await {
         Ok(internal) => internal,
-        Err(denied) => return denied,
+        Err(denied) => return *denied,
     };
     let q = CiParams::parse(raw_query.as_deref());
     let file_ids = match track_file_ids(&state, &params::ids_param(&q, &["ids", "Ids"])).await {
@@ -224,7 +224,7 @@ pub(super) async fn playlist_remove(
     let raw_query = request.uri().query().map(str::to_owned);
     let internal = match decode_playlist(&state, &playlist_id).await {
         Ok(internal) => internal,
-        Err(denied) => return denied,
+        Err(denied) => return *denied,
     };
     let q = CiParams::parse(raw_query.as_deref());
     let entry_ids = params::ids_param(&q, &["entryIds", "EntryIds"]);
@@ -249,7 +249,7 @@ pub(super) async fn playlist_move(
     };
     let internal = match decode_playlist(&state, &playlist_id).await {
         Ok(internal) => internal,
-        Err(denied) => return denied,
+        Err(denied) => return *denied,
     };
     if let Err(refusal) = state
         .library

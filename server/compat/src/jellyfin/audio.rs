@@ -47,11 +47,14 @@ pub(super) fn map_codec(codec: Option<&str>) -> Option<String> {
 }
 
 /// Decode an audio item id to its file id.
-pub(super) async fn decode_track(state: &JellyfinState, item_id: &str) -> Result<String, Response> {
+pub(super) async fn decode_track(
+    state: &JellyfinState,
+    item_id: &str,
+) -> Result<String, Box<Response>> {
     match state.ids.from_jf(item_id).await {
         Ok(Some((kind, internal))) if kind == "track" => Ok(internal),
-        Ok(_) => Err(error(StatusCode::NOT_FOUND)),
-        Err(failed) => Err(ApiError::from(failed).into_response()),
+        Ok(_) => Err(Box::new(error(StatusCode::NOT_FOUND))),
+        Err(failed) => Err(Box::new(ApiError::from(failed).into_response())),
     }
 }
 
@@ -139,7 +142,7 @@ pub(super) async fn hls_playlist(
     }
     let internal = match decode_track(state, item_id).await {
         Ok(internal) => internal,
-        Err(denied) => return denied,
+        Err(denied) => return *denied,
     };
     let track = match state.library.track("", &internal).await {
         Ok(track) => track,
@@ -183,7 +186,7 @@ pub(super) async fn hls_segment(
     }
     let internal = match decode_track(state, item_id).await {
         Ok(internal) => internal,
-        Err(denied) => return denied,
+        Err(denied) => return *denied,
     };
     let q = CiParams::parse(query);
     let params = StreamParams {
@@ -312,7 +315,7 @@ async fn original_file(
     }
     let internal = match decode_track(state, item_id).await {
         Ok(internal) => internal,
-        Err(denied) => return denied,
+        Err(denied) => return *denied,
     };
     let range = header(headers, "range");
     let mut outcome = state
@@ -424,7 +427,7 @@ pub(super) async fn universal(
 ) -> Response {
     let internal = match decode_track(state, item_id).await {
         Ok(internal) => internal,
-        Err(denied) => return denied,
+        Err(denied) => return *denied,
     };
     let q = CiParams::parse(query);
     let accepted = accepted_containers(q.get("Container"));
@@ -461,7 +464,7 @@ pub(super) async fn audio_stream(
 ) -> Response {
     let internal = match decode_track(state, item_id).await {
         Ok(internal) => internal,
-        Err(denied) => return denied,
+        Err(denied) => return *denied,
     };
     let q = CiParams::parse(query);
     let params = if q.get("static").unwrap_or("").eq_ignore_ascii_case("true") {
@@ -493,7 +496,7 @@ pub(super) async fn playback_info(
     let body = request.into_body();
     let internal = match decode_track(&state, &item_id).await {
         Ok(internal) => internal,
-        Err(denied) => return denied,
+        Err(denied) => return *denied,
     };
     let track = match state.library.track(&authed.principal.id, &internal).await {
         Ok(Some(track)) => track,
