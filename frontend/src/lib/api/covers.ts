@@ -1,5 +1,4 @@
-import { env } from '$env/dynamic/public';
-import { getApiUrl } from './api-utils';
+import { apiOrigin, getApiUrl } from './api-utils';
 import { v3, type V3Url } from './v3/endpoint';
 
 /**
@@ -84,8 +83,8 @@ const SERVER_SIZES = [250, 375, 500, 1200] as const;
  * smaller to offer.
  */
 export function coverSrcset(url: string): string | undefined {
-	const apiOrigin = env.PUBLIC_API_URL?.replace(/\/+$/, '');
-	const local = apiOrigin && url.startsWith(`${apiOrigin}/`) ? url.slice(apiOrigin.length) : url;
+	const origin = apiOrigin();
+	const local = origin && url.startsWith(`${origin}/`) ? url.slice(origin.length) : url;
 	if (!local.startsWith('/') || local.startsWith('//')) return undefined;
 	const [address] = url.split('#');
 	const at = address.indexOf('?');

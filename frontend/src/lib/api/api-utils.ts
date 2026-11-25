@@ -27,10 +27,11 @@ export function getApiUrl(path: string): string {
 	}
 
 	const basedPath = withBasePath(path);
-	const apiOrigin = configuredEnv.PUBLIC_API_URL;
-	if (apiOrigin) {
-		return `${apiOrigin.replace(/\/+$/, '')}${basedPath}`;
-	}
+	const origin = apiOrigin();
+	return origin ? `${origin}${basedPath}` : basedPath;
+}
 
-	return basedPath;
+/** The PUBLIC_API_URL origin `getApiUrl` puts before a path, without a trailing slash, or undefined when unset. */
+export function apiOrigin(): string | undefined {
+	return configuredEnv.PUBLIC_API_URL?.replace(/\/+$/, '') || undefined;
 }

@@ -5,8 +5,12 @@ import { renderWithQuery } from '$lib/test/render';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 // Keep the image on its first source: the test has no server to answer it.
+// An eager image with a srcset is handed its src here, as the real module does.
 vi.mock('$lib/media/lazyImage', () => ({
-	lazyImage: () => ({ destroy() {} }),
+	lazyImage: (img: HTMLImageElement, options: { eager?: boolean } = {}) => {
+		if (options.eager && img.dataset.src) img.src = img.dataset.src;
+		return { destroy() {} };
+	},
 	resetLazyImage: () => {}
 }));
 

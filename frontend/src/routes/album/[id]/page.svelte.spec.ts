@@ -286,6 +286,8 @@ beforeEach(async () => {
 	localStorage.clear();
 	window.scrollTo(0, 0);
 	h.goto.mockReset();
+	// A request marks the album requested in the shared library store.
+	libraryStore.removeMbid(albumId);
 	status = notHeld;
 	guessContradicted = false;
 	h.url = new URL('http://localhost/album/x');
@@ -455,9 +457,6 @@ describe('matched album edition controls', () => {
 
 describe('choosing the edition to request', () => {
 	const requestRoute = 'POST /api/v3/requests/albums' as const;
-
-	// A request marks the album requested in the shared library store.
-	beforeEach(() => libraryStore.removeMbid(albumId));
 
 	function editions(): void {
 		api.use({
