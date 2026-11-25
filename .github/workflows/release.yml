@@ -403,11 +403,82 @@ jobs:
           retention-days: 7
           compression-level: 0
 
+  # The .deb and the .rpm, made from the release files above, so they carry
+  # the binaries the image ships. Each is installed and started on the systems
+  # it promises to run on, then the .deb runs under systemd on the runner.
+  # This runs while publish waits for approval.
+  packages:
+    name: Packages (${{ matrix.arch }})
+    needs: [checks, build]
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+            triple: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+            triple: aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      VERSION: ${{ needs.checks.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Fetch the release files
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-files-*
+          path: assets
+          merge-multiple: true
+
+      - name: Build the packages
+        env:
+          ARCH: ${{ matrix.arch }}
+          TRIPLE: ${{ matrix.triple }}
+        run: |
+          mkdir files
+          tar -xzf "assets/droppedneedle-${VERSION}-${TRIPLE}-linux.tar.gz" -C files
+          tar -xzf "assets/droppedneedle-frontend-${VERSION}.tar.gz" -C files
+          ./packaging/build.sh "$ARCH" "$VERSION" \
+            "files/droppedneedle-${VERSION}-${TRIPLE}-linux" \
+            "files/droppedneedle-frontend-${VERSION}" packages
+
+      - name: Install and start them in each system
+        run: ./server/scripts/package-test.sh packages
+
+      - name: Install the .deb and start it under systemd
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ./packages/*.deb
+          for _ in $(seq 1 60); do
+            if /usr/lib/droppedneedle/droppedneedle --health-check > /dev/null 2>&1; then
+              test "$(ps -o uid= -C droppedneedle | tr -d ' ')" = "$(id -u droppedneedle)"
+              systemctl is-active droppedneedle
+              sudo systemctl stop droppedneedle
+              exit 0
+            fi
+            sleep 1
+          done
+          sudo journalctl -u droppedneedle --no-pager
+          echo "::error::The packaged service did not report healthy within 60 seconds."
+          exit 1
+
+      - name: Keep the packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: packages-${{ matrix.arch }}
+          path: packages/
+          if-no-files-found: error
+          retention-days: 7
+
   # Builds nothing: it pushes the two images the build jobs made and joins
   # them into one multi-arch image. A dry run joins them without pushing.
   publish:
     name: Publish multi-arch image
-    needs: [checks, build]
+    needs: [checks, build, packages]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: release
@@ -511,6 +582,13 @@ jobs:
           path: assets
           merge-multiple: true
 
+      - name: Fetch the packages
+        uses: actions/download-artifact@v8
+        with:
+          pattern: packages-*
+          path: assets
+          merge-multiple: true
+
       - name: Attach them to the release
         working-directory: assets
         run: |
@@ -518,7 +596,7 @@ jobs:
             echo "::error::There is no GitHub release for $VERSION. Make it on the Releases page, then re-run this job within 7 days."
             exit 1
           fi
-          sha256sum -- *.tar.gz > SHA256SUMS
+          sha256sum -- *.tar.gz *.deb *.rpm > SHA256SUMS
           cat SHA256SUMS
-          gh release upload "$VERSION" --repo "$GITHUB_REPOSITORY" --clobber -- *.tar.gz
+          gh release upload "$VERSION" --repo "$GITHUB_REPOSITORY" --clobber -- *.tar.gz *.deb *.rpm
           gh release upload "$VERSION" --repo "$GITHUB_REPOSITORY" --clobber -- SHA256SUMS

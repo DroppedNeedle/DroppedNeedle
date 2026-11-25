@@ -1,0 +1,88 @@
+# One package description for the .deb and the .rpm. build.sh runs nfpm from
+# a folder it lays out, so every source path here is relative to that folder,
+# and sets VERSION and ARCH (amd64 or arm64; nfpm names them for each format).
+name: droppedneedle
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+version_schema: none
+release: "1"
+section: sound
+priority: optional
+maintainer: DroppedNeedle <contact@droppedneedle.com>
+vendor: DroppedNeedle
+homepage: https://droppedneedle.com
+license: AGPL-3.0-or-later
+description: |-
+  Self-hosted music requests, discovery and library management.
+  DroppedNeedle manages a music library, fetches what people ask for and
+  serves it to music apps through the Subsonic and Jellyfin APIs.
+
+overrides:
+  deb:
+    depends:
+      - libc6 (>= 2.28)
+      - ffmpeg
+      - util-linux
+    recommends:
+      - python3
+      - ca-certificates
+  rpm:
+    depends:
+      - glibc >= 2.28
+      - /usr/bin/ffmpeg
+      - /usr/bin/setpriv
+    recommends:
+      - python3
+
+contents:
+  # The tool sits beside the server: the v2 upgrade page runs it from there.
+  - src: server/droppedneedle
+    dst: /usr/lib/droppedneedle/droppedneedle
+    file_info:
+      mode: 0755
+  - src: server/droppedneedle-tool
+    dst: /usr/lib/droppedneedle/droppedneedle-tool
+    file_info:
+      mode: 0755
+  - src: packaging/droppedneedle-tool
+    dst: /usr/bin/droppedneedle-tool
+    file_info:
+      mode: 0755
+  - src: web-ui/static
+    dst: /usr/share/droppedneedle/web-ui
+    type: tree
+  - src: packaging/droppedneedle.service
+    dst: /usr/lib/systemd/system/droppedneedle.service
+    file_info:
+      mode: 0644
+  - src: packaging/sysusers.conf
+    dst: /usr/lib/sysusers.d/droppedneedle.conf
+    file_info:
+      mode: 0644
+  - src: packaging/droppedneedle.env
+    dst: /etc/droppedneedle/droppedneedle.env
+    type: config|noreplace
+    file_info:
+      mode: 0644
+  - src: server/LICENSE
+    dst: /usr/share/doc/droppedneedle/LICENSE
+    file_info:
+      mode: 0644
+  - src: server/NOTICES-server.txt
+    dst: /usr/share/doc/droppedneedle/NOTICES-server.txt
+    file_info:
+      mode: 0644
+  - src: web-ui/NOTICES-web-ui.txt
+    dst: /usr/share/doc/droppedneedle/NOTICES-web-ui.txt
+    file_info:
+      mode: 0644
+
+scripts:
+  postinstall: packaging/scripts/postinstall.sh
+  preremove: packaging/scripts/preremove.sh
+  postremove: packaging/scripts/postremove.sh
+
+rpm:
+  scripts:
+    posttrans: packaging/scripts/posttrans.sh

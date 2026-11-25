@@ -1,0 +1,62 @@
+#!/bin/sh
+# Runs droppedneedle-tool as the service's account, with the variables the
+# service starts with: the unit's Environment= lines, its drop-ins', then the
+# settings file, in the order systemd applies them. Run it with sudo; it never
+# runs the tool as root.
+set -eu
+
+account=droppedneedle
+unit=/usr/lib/systemd/system/droppedneedle.service
+dropins=/etc/systemd/system/droppedneedle.service.d
+settings=/etc/droppedneedle/droppedneedle.env
+tool=/usr/lib/droppedneedle/droppedneedle-tool
+
+# Exports each NAME=value line in file $1 that starts with prefix $2. Nothing
+# in the file is run. Quotes around the line or the value are dropped.
+load() {
+    [ -r "$1" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            "$2"*) line=${line#"$2"} ;;
+            *) continue ;;
+        esac
+        case "$line" in
+            \"*\") line=${line#\"}; line=${line%\"} ;;
+        esac
+        name=${line%%=*}
+        [ "$name" != "$line" ] || continue
+        case "$name" in
+            '' | [0-9]* | *[!A-Za-z0-9_]*) continue ;;
+        esac
+        value=${line#*=}
+        case "$value" in
+            \"*\") value=${value#\"}; value=${value%\"} ;;
+            \'*\') value=${value#\'}; value=${value%\'} ;;
+        esac
+        export "$name=$value"
+    done < "$1"
+}
+
+if ! uid=$(id -u "$account" 2>/dev/null) || ! gid=$(id -g "$account" 2>/dev/null); then
+    echo "droppedneedle-tool: the $account account does not exist; reinstall the package" >&2
+    exit 1
+fi
+
+load "$unit" Environment=
+for dropin in "$dropins"/*.conf; do
+    load "$dropin" Environment=
+done
+load "$settings" ""
+
+umask 027
+export HOME=/var/lib/droppedneedle
+cd /
+
+if [ "$(id -u)" -eq 0 ]; then
+    exec setpriv --reuid="$uid" --regid="$gid" --init-groups -- "$tool" "$@"
+fi
+if [ "$(id -u)" -eq "$uid" ]; then
+    exec "$tool" "$@"
+fi
+echo "droppedneedle-tool: run it with sudo, so it runs as the $account account" >&2
+exit 1

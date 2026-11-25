@@ -1,0 +1,58 @@
+[Unit]
+Description=DroppedNeedle music server
+Documentation=https://droppedneedle.com/docs/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=droppedneedle
+Group=droppedneedle
+UMask=0027
+StateDirectory=droppedneedle
+StateDirectoryMode=0750
+WorkingDirectory=/var/lib/droppedneedle
+# droppedneedle-tool in /usr/bin reads these lines too, so the tool and the
+# server see the same folders. The settings file below overrides them.
+Environment=ROOT_APP_DIR=/var/lib/droppedneedle
+Environment=DROPPEDNEEDLE_STATIC_DIR=/usr/share/droppedneedle/web-ui
+Environment=COMMIT_TAG=@COMMIT_TAG@
+Environment=NO_COLOR=1
+EnvironmentFile=-/etc/droppedneedle/droppedneedle.env
+ExecStart=/usr/lib/droppedneedle/droppedneedle
+Restart=on-failure
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Plugins set their own resource limits, so @resources stays allowed.
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+SystemCallErrorNumber=EPERM
+# Only /usr, /boot and /etc are read-only. Library folders the admin picks in
+# the web UI can be anywhere, /home included, and moves between them must stay
+# on one mount, which a list of writable paths would split. A plugin's own
+# program may compile code as it runs, so MemoryDenyWriteExecute stays off.
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

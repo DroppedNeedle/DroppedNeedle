@@ -201,14 +201,54 @@ Pre-releases are published to the same image under their own version tag, for ex
 
 ## Running without Docker
 
-Each release on GitHub carries Linux builds, for a machine or container without Docker:
+### Debian, Ubuntu, Fedora, RHEL: install the package
+
+Each release on GitHub carries a `.deb` and an `.rpm` for 64-bit Intel and AMD (`amd64`, `x86_64`) and 64-bit ARM (`arm64`, `aarch64`). Download the one for your system from the release and install it with the system's package manager, which also installs `ffmpeg`:
+
+```sh
+sudo apt install ./droppedneedle_<version>_amd64.deb      # Debian, Ubuntu
+sudo dnf install ./droppedneedle-<version>-1.x86_64.rpm   # Fedora, RHEL, Rocky, AlmaLinux
+```
+
+On RHEL, Rocky and AlmaLinux 9 and later, `ffmpeg` comes from EPEL with CodeReady Builder turned on (`sudo dnf install epel-release && sudo dnf config-manager --set-enabled crb`) or from RPM Fusion; on version 8, from RPM Fusion.
+
+The `.deb` starts the server straight away. The `.rpm` does not, as Fedora and RHEL expect: run `sudo systemctl enable --now droppedneedle`. Then open `http://<this machine>:8688`.
+
+| What | Where |
+|-|-|
+| Server and `droppedneedle-tool` | `/usr/lib/droppedneedle/` |
+| Web UI | `/usr/share/droppedneedle/web-ui` |
+| Data: database, backups, key, plugins, uploads | `/var/lib/droppedneedle` (the `ROOT_APP_DIR`) |
+| Settings | `/etc/droppedneedle/droppedneedle.env`, the variables above. Upgrades keep your changes |
+| Logs | the journal: `journalctl -u droppedneedle` |
+
+The server runs as its own `droppedneedle` account under a hardened systemd unit, with umask 027. `systemctl status droppedneedle` shows whether it is running; after changing the settings file, run `sudo systemctl restart droppedneedle`.
+
+The account needs to reach your music. Either give the library folder to a group and add the account to it (`sudo usermod -aG music droppedneedle`), or add the group to the service with `sudo systemctl edit droppedneedle`:
+
+```ini
+[Service]
+SupplementaryGroups=music
+```
+
+Restart the service after either. Folders under `/usr`, `/boot` and `/etc` stay read-only to it.
+
+To upgrade, install the newer package the same way; a running server restarts on the new version, and the database backup before a schema change happens as usual. Removing the package (even a purge) keeps `/var/lib/droppedneedle` and the account; delete them by hand if you no longer need them.
+
+`droppedneedle-tool` runs as the service's account with its settings: for example `sudo droppedneedle-tool recovery-code <user>` (stop the server first, as [Forgotten passwords and recovery](accounts-and-sign-in.md#forgotten-passwords-and-recovery) says).
+
+Coming from a v2 install without Docker: stop v2, set `ROOT_APP_DIR` in the settings file to the folder that holds v2's `config` and `cache`, run `sudo chown -R droppedneedle: <that folder>`, restart the service and open the upgrade page ([Upgrading from v2](upgrading-from-v2.md)).
+
+### Other systems: the release archives
+
+Each release on GitHub also carries Linux builds, for a machine or container without Docker:
 
 | File | What it is |
 |-|-|
 | `droppedneedle-<version>-x86_64-linux.tar.gz` | The server (`droppedneedle`) and `droppedneedle-tool`, for 64-bit Intel and AMD |
 | `droppedneedle-<version>-aarch64-linux.tar.gz` | The same, for 64-bit ARM |
 | `droppedneedle-frontend-<version>.tar.gz` | The web UI, in `static/` |
-| `SHA256SUMS` | Checksums of the three |
+| `SHA256SUMS` | Checksums of these and of the packages |
 
 The files are attached once the image is published, up to an hour after the release appears. `SHA256SUMS` goes up last, so once it is there the set is complete.
 
