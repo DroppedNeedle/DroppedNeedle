@@ -178,7 +178,7 @@ fn gtin14(raw: &str) -> Option<String> {
             digit * weight
         })
         .sum();
-    ((sum + check) % 10 == 0).then_some(gtin)
+    (sum + check).is_multiple_of(10).then_some(gtin)
 }
 
 // ---------------------------------------------------------------------------

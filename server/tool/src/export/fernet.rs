@@ -160,7 +160,7 @@ impl FernetKey {
         let (msg, signature) = bytes.split_at(bytes.len() - HMAC_LEN);
         // Ciphertext must hold at least one AES block.
         if msg.len() < 1 + TIMESTAMP_LEN + IV_LEN + 16
-            || (msg.len() - (1 + TIMESTAMP_LEN + IV_LEN)) % 16 != 0
+            || !(msg.len() - (1 + TIMESTAMP_LEN + IV_LEN)).is_multiple_of(16)
         {
             return Err(FernetError::InvalidToken);
         }

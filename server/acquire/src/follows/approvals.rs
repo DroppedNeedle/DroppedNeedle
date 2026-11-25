@@ -193,7 +193,7 @@ impl Follows {
                 requested_at,
             });
         }
-        batches.sort_by(|a, b| a.requested_at.cmp(&b.requested_at));
+        batches.sort_by_key(|a| a.requested_at);
         Ok(batches)
     }
 

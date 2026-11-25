@@ -8,8 +8,6 @@
 use droppedneedle_kernel::db::statement::ListLen;
 use droppedneedle_kernel::db::time::Millis;
 
-use crate::listed_user;
-
 droppedneedle_kernel::sql! {
     /// Columns read for every user row, in [`super::users`]' mapping order.
     pub(super) fragment USER_COLUMNS = "id, display_name, email, avatar_url, role, created_at, \

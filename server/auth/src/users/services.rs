@@ -521,7 +521,7 @@ pub async fn list_sessions(
         .list_for_user(caller.user_id())
         .await
         .map_err(store_internal)?;
-    rows.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    rows.sort_by_key(|a| std::cmp::Reverse(a.created_at));
     let mut views: Vec<SessionView> = rows
         .iter()
         .map(|row| SessionView {
@@ -534,7 +534,7 @@ pub async fn list_sessions(
             current: row.id == caller.session_id(),
         })
         .collect();
-    views.sort_by(|a, b| b.current.cmp(&a.current));
+    views.sort_by_key(|a| std::cmp::Reverse(a.current));
     Ok(SessionListResponse { sessions: views })
 }
 
