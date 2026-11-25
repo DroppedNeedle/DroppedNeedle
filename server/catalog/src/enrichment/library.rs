@@ -11,7 +11,7 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 use tokio::time::Instant;
 
-use crate::artwork::ArtworkService;
+use crate::artwork::{ArtworkService, CoverPending};
 use crate::lyrics::{LyricsError, OnlineLyrics};
 use crate::metadata::upstream::Upstream;
 use droppedneedle_library::management::enrich::{
@@ -253,7 +253,7 @@ impl EnrichmentPort for LiveEnrichment {
                     bytes: cover.bytes,
                     mime: cover.content_type,
                 })),
-                Err(()) => Err("the cover is still being fetched".to_owned()),
+                Err(CoverPending) => Err("the cover is still being fetched".to_owned()),
             }
         })
     }
@@ -280,7 +280,7 @@ impl EnrichmentPort for LiveEnrichment {
                     bytes: cover.bytes,
                     mime: cover.content_type,
                 })),
-                Err(()) => Err("the cover is still being fetched".to_owned()),
+                Err(CoverPending) => Err("the cover is still being fetched".to_owned()),
             }
         })
     }

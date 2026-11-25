@@ -260,6 +260,11 @@ pub struct ArtworkService {
     artist_permits: Arc<tokio::sync::Semaphore>,
 }
 
+/// A cover that cannot be answered yet: an archive fetch for it is still
+/// running, or the archive could not be asked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CoverPending;
+
 /// What one fetch or resolve learned.
 #[derive(Debug, Clone)]
 enum Fetched {
@@ -441,7 +446,7 @@ impl ArtworkService {
         release_group_mbid: &str,
         size: Option<&str>,
         priority: RequestPriority,
-    ) -> Result<Option<CoverBytes>, ()> {
+    ) -> Result<Option<CoverBytes>, CoverPending> {
         let mut warming = false;
         for (entity, mbid) in [
             (EntityKind::Release, release_mbid),
@@ -456,7 +461,7 @@ impl ArtworkService {
                 CoverLookup::Missing => {}
             }
         }
-        if warming { Err(()) } else { Ok(None) }
+        if warming { Err(CoverPending) } else { Ok(None) }
     }
 
     /// The archive's front cover for exactly this release, at full size,
@@ -469,7 +474,7 @@ impl ArtworkService {
         &self,
         release_mbid: &str,
         priority: RequestPriority,
-    ) -> Result<Option<CoverBytes>, ()> {
+    ) -> Result<Option<CoverBytes>, CoverPending> {
         let mbid = release_mbid.trim().to_ascii_lowercase();
         if !is_valid_mbid(&mbid) {
             return Ok(None);
@@ -480,7 +485,7 @@ impl ArtworkService {
         {
             CoverLookup::Found(cover) => Ok(Some(cover)),
             CoverLookup::Missing => Ok(None),
-            CoverLookup::Warming => Err(()),
+            CoverLookup::Warming => Err(CoverPending),
         }
     }
 

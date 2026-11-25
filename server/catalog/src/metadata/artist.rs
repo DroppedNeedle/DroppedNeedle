@@ -71,7 +71,7 @@ pub struct ArtistDetail {
 impl ArtistDetail {
     fn from_wire(artist: MbArtist) -> Self {
         let mut tags: Vec<_> = artist.tags.iter().collect();
-        tags.sort_by(|left, right| right.count.unwrap_or(0).cmp(&left.count.unwrap_or(0)));
+        tags.sort_by_key(|left| std::cmp::Reverse(left.count.unwrap_or(0)));
         let mut seen = HashSet::new();
         let tags = tags
             .into_iter()

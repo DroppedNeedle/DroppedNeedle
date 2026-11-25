@@ -123,7 +123,7 @@ macro_rules! owned_artist {
 }
 
 pub(crate) use droppedneedle_library::owned_album;
-pub(crate) use {live_album, live_track, musicbrainz, owned_artist, track_codec};
+pub(crate) use {live_album, musicbrainz, owned_artist, track_codec};
 
 /// A track an album's track count counts, over a track alias and the
 /// album's id column: an indexed track on that album, whoever is credited
@@ -239,10 +239,7 @@ macro_rules! rated_within {
     };
 }
 
-pub(crate) use {
-    album_min_tracks, album_primary_bitrate, album_primary_format, album_track,
-    artist_min_appearances, artist_min_led_tracks, rated_within,
-};
+pub(crate) use album_track;
 
 droppedneedle_kernel::sql! {
     /// One album's aggregate columns over [`ALBUM_JOINS`].

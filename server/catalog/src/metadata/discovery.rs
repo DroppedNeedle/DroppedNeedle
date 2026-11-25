@@ -1505,7 +1505,7 @@ async fn albums_from_recordings(
         .into_iter()
         .filter_map(|key| totals.remove(&key))
         .collect();
-    albums.sort_by(|left, right| right.listen_count.cmp(&left.listen_count));
+    albums.sort_by_key(|left| std::cmp::Reverse(left.listen_count));
     albums.truncate(count);
     Ok(albums)
 }

@@ -242,7 +242,7 @@ impl WrappedData for ListenBrainzWrapped {
                     listen_count: payload.total_listens_estimated,
                 })
                 .collect();
-            leaderboard.sort_by(|a, b| b.listen_count.cmp(&a.listen_count));
+            leaderboard.sort_by_key(|a| std::cmp::Reverse(a.listen_count));
             // Two rows, so a first row without an MBID still leaves a top artist.
             let (artists, groups) = tokio::join!(
                 self.client.sitewide_top_artists(RANGE, 2, 0, PRIORITY),
