@@ -1,13 +1,13 @@
 <script lang="ts">
-	import { tick, untrack } from 'svelte';
+	import { untrack } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { toastStore } from '$lib/stores/toast';
 	import { Disc3, Heart, Search, X } from 'lucide-svelte';
 	import {
+		getLibraryAlbumBlocksQuery,
 		getLibraryAlbumFormatsQuery,
-		getLibraryAlbumsInfiniteQuery
+		getLibraryAlbumLettersQuery
 	} from '$lib/features/library/queries/LibraryQueries.svelte';
 	import LibraryFilterMenu, {
 		type FormatMode,
@@ -20,14 +20,21 @@
 		rememberFilters
 	} from '$lib/features/library/state/rememberedFilters.svelte';
 	import type { LibraryV3AlbumsParams } from '$lib/features/library/queries/LibraryQueryKeyFactory';
+	import MediaTileSkeleton from '$lib/media/MediaTileSkeleton.svelte';
 	import LibraryAlbumCard from '$lib/features/library/components/LibraryAlbumCard.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import ListPageHeader from '$lib/ui/ListPageHeader.svelte';
 	import Input from '$lib/ui/Input.svelte';
+	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
+	import ScrollRail from '$lib/ui/ScrollRail.svelte';
+	import VirtualRows, { type VirtualRange } from '$lib/ui/VirtualRows.svelte';
 	import type { AlbumView } from '$lib/features/library/queries/types';
+	import type { Snapshot } from './$types';
 
-	const PAGE_SIZE = 50;
+	// Albums are read in blocks by their position in the list.
+	const BLOCK = 60;
+	const LINE_PITCH = 290;
 	const SEARCH_DEBOUNCE_MS = 300;
 	// `hearted` is the favourites' own order: the newest heart first.
 	type Sort = 'recent' | 'title' | 'artist' | 'hearted';
@@ -75,8 +82,8 @@
 		hearted: {}
 	};
 
-	const albumsQuery = getLibraryAlbumsInfiniteQuery(() => ({
-		limit: PAGE_SIZE,
+	const albumParams = $derived<LibraryV3AlbumsParams>({
+		limit: BLOCK,
 		...SORT_MAP[params.sort],
 		...(params.q ? { q: params.q } : {}),
 		...(params.formats.length ? { formats: params.formats, formatMode: params.formatMode } : {}),
@@ -90,7 +97,29 @@
 				}
 			: {}),
 		...(params.favorites ? { favorites: true } : {})
-	}));
+	});
+	const named = $derived(params.sort === 'title' || params.sort === 'artist');
+
+	let range = $state<VirtualRange>({ start: 0, end: 0, top: 0 });
+	// The blocks the mounted tiles fall in, and always the first, which
+	// carries the total.
+	const offsets = $derived.by(() => {
+		const out = [0];
+		const last = Math.max(0, range.end - 1);
+		for (let at = Math.floor(range.start / BLOCK) * BLOCK; at <= last; at += BLOCK) {
+			if (at > 0) out.push(at);
+		}
+		return out;
+	});
+	const blocks = getLibraryAlbumBlocksQuery(
+		() => albumParams,
+		() => offsets
+	);
+	const firstBlock = $derived(blocks[0]);
+	const lettersQuery = getLibraryAlbumLettersQuery(
+		() => albumParams,
+		() => named
+	);
 	const formatsQuery = getLibraryAlbumFormatsQuery();
 	rememberFilters('albums', [
 		'formats',
@@ -101,21 +130,38 @@
 		'rating_mode'
 	]);
 	const filtered = $derived(params.formats.length > 0 || params.minTracks > 1 || params.rating > 0);
-	// An album can move between pages while they load (a scan renames it):
-	// keep its first appearance.
-	const albums = $derived.by(() => {
-		const seen: Record<string, true> = Object.create(null);
-		const out: AlbumView[] = [];
-		for (const response of albumsQuery.data?.pages ?? []) {
-			for (const album of response.items) {
-				if (seen[album.id]) continue;
-				seen[album.id] = true;
-				out.push(album);
-			}
+	const total = $derived(firstBlock?.data?.total ?? 0);
+
+	function albumAt(index: number): AlbumView | undefined {
+		const at = Math.floor(index / BLOCK) * BLOCK;
+		return blocks[offsets.indexOf(at)]?.data?.items[index - at];
+	}
+
+	let list = $state<VirtualRows>();
+
+	// A new search, order or filter starts the list at the top.
+	let shownList = '';
+	$effect(() => {
+		const key = JSON.stringify(albumParams);
+		if (shownList && key !== shownList) {
+			untrack(() => {
+				if (range.top > 0) list?.scrollToIndex(0);
+			});
 		}
-		return out;
+		shownList = key;
 	});
-	const total = $derived(albumsQuery.data?.pages[0]?.total ?? 0);
+
+	// Back to the list lands on the album that was at the top.
+	let restoreTop = $state<number | null>(null);
+	export const snapshot: Snapshot<number> = {
+		capture: () => range.top,
+		restore: (top) => (restoreTop = top)
+	};
+	$effect(() => {
+		if (restoreTop === null || total === 0 || !list) return;
+		if (Math.abs(range.top - restoreTop) > 1) list.scrollToIndex(restoreTop);
+		restoreTop = null;
+	});
 
 	// local edits win over the url term until back/forward navigation re-syncs the input
 	let searchInput = $derived(params.q);
@@ -155,151 +201,13 @@
 			keepFilter('album-sort', 'sort', value);
 		}
 	}
-
-	// The A-Z jump. The grid is flat and read a page at a time, so a letter is
-	// reached by loading on until it shows. It follows the list's order: the
-	// title, or the artist on Artist A-Z; any other order switches to Title A-Z.
-	const LETTERS = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
-	// A jump stops once the list holds this many pages (2,000 albums).
-	const JUMP_PAGE_LIMIT = 40;
-
-	interface Jump {
-		letter: string;
-		/** The order it runs in, and the one the list was in when it was picked. */
-		sort: Sort;
-		from: Sort;
-		/** The list it was picked on: a change of search, filter or favourites ends it. */
-		list: string;
-		stop: AbortController;
-		started: boolean;
-	}
-
-	const listKey = $derived.by(() => {
-		const { sort: _sort, ...rest } = params;
-		return JSON.stringify(rest);
-	});
-
-	let jumpLetter = $state('');
-	let jump = $state.raw<Jump | null>(null);
-
-	/**
-	 * The letter an album is filed under in the list's order, folded the way the
-	 * server sorts (accents and case off), so "Élan" is under E.
-	 */
-	function albumInitial(album: AlbumView, sort: Sort): string {
-		const name = sort === 'artist' ? album.artist_name : album.title;
-		const first = name.normalize('NFKD').replace(/\p{M}/gu, '').trim().toUpperCase().charAt(0);
-		return first >= 'A' && first <= 'Z' ? first : '#';
-	}
-
-	type Reach = 'found' | 'none' | 'far' | 'stopped';
-
-	/** Resolves once the list is not fetching (a refetch of kept pages), or the jump stops. */
-	async function whenIdle(stop: AbortSignal): Promise<void> {
-		let end = () => {};
-		try {
-			await new Promise<void>((resolve) => {
-				stop.addEventListener('abort', () => resolve(), { once: true });
-				end = $effect.root(() => {
-					$effect(() => {
-						if (!albumsQuery.isFetching) resolve();
-					});
-				});
-			});
-		} finally {
-			end();
-		}
-	}
-
-	async function loadUntil({ letter, sort, stop }: Jump): Promise<Reach> {
-		for (;;) {
-			// A failed page resolves rather than throws; the page shows the query's error.
-			if (stop.signal.aborted || albumsQuery.isError) return 'stopped';
-			const initials = albums.map((album) => albumInitial(album, sort));
-			if (initials.includes(letter)) return 'found';
-			// Titles are sorted by their folded initial, so once a later letter shows this
-			// one has no albums. Artist A-Z sorts on the tags' name, which a card may not show.
-			if (
-				sort === 'title' &&
-				letter !== '#' &&
-				initials.some((initial) => initial !== '#' && initial > letter)
-			) {
-				return 'none';
-			}
-			if (!albumsQuery.hasNextPage) return 'none';
-			if ((albumsQuery.data?.pages.length ?? 0) >= JUMP_PAGE_LIMIT) return 'far';
-			// A next page fetched now would cancel a refetch in flight.
-			await whenIdle(stop.signal);
-			if (stop.signal.aborted) return 'stopped';
-			await albumsQuery.fetchNextPage();
-		}
-	}
-
-	async function runJump(current: Jump): Promise<void> {
-		try {
-			const reach = await loadUntil(current);
-			if (reach === 'none') toastStore.notify(`No albums under ${current.letter}`);
-			if (reach === 'far') toastStore.notify('Too far down to jump; scroll or search instead');
-			if (reach !== 'found') return;
-			await tick();
-			if (current.stop.signal.aborted) return;
-			const target = albums.find((album) => albumInitial(album, current.sort) === current.letter);
-			if (!target) return;
-			// Instant: a smooth scroll passes every card on the way and loads all their covers.
-			document
-				.querySelector(`[data-album-id="${CSS.escape(target.id)}"]`)
-				?.scrollIntoView({ behavior: 'instant', block: 'start' });
-		} finally {
-			endJump(current);
-		}
-	}
-
-	function endJump(current: Jump): void {
-		current.stop.abort();
-		if (jump !== current) return;
-		jump = null;
-		// Back to "Jump to...", so the same letter can be picked again.
-		jumpLetter = '';
-	}
-
-	function jumpToLetter(letter: string): void {
-		if (!letter || jump) return;
-		const sort: Sort = params.sort === 'artist' ? 'artist' : 'title';
-		const from = params.sort;
-		jump = { letter, sort, from, list: listKey, stop: new AbortController(), started: false };
-		// Not kept as the default: the jump only puts the list in the order it needs.
-		if (from !== sort) setParams({ sort });
-	}
-
-	// Runs the jump once the list is loaded in its order, and ends it when the search,
-	// a filter, favourites or the order change under it.
-	$effect(() => {
-		const current = jump;
-		if (!current) return;
-		const sort = params.sort;
-		const list = listKey;
-		const ready = !albumsQuery.isLoading && !albumsQuery.isPlaceholderData;
-		untrack(() => {
-			const switching = !current.started && sort === current.from;
-			if (list !== current.list || (sort !== current.sort && !switching)) {
-				endJump(current);
-				return;
-			}
-			if (current.started || sort !== current.sort || !ready) return;
-			current.started = true;
-			void runJump(current);
-		});
-	});
-
-	// Leaving the page stops a jump between pages.
-	$effect(() => () => jump?.stop.abort());
 </script>
 
 <svelte:head><title>Albums - DroppedNeedle</title></svelte:head>
 
 <ListPageHeader
 	title={params.favorites ? 'Favourite Albums' : 'All Albums'}
-	count={albumsQuery.data ? `${total.toLocaleString()} ${total === 1 ? 'album' : 'albums'}` : null}
+	count={firstBlock?.data ? `${total.toLocaleString()} ${total === 1 ? 'album' : 'albums'}` : null}
 	ticket="DN / CC 3.2 - ALB"
 	backHref={withBasePath('/library')}
 	backLabel="Back to library"
@@ -343,17 +251,6 @@
 			<option value="title">Title A-Z</option>
 			<option value="artist">Artist A-Z</option>
 		</select>
-		<select
-			class="select dn-toolbar__select dn-toolbar__select--letters"
-			bind:value={jumpLetter}
-			onchange={(e) => jumpToLetter((e.target as HTMLSelectElement).value)}
-			disabled={jump !== null}
-			aria-label="Jump to a letter"
-			title="Jump to a letter in the list's order"
-		>
-			<option value="">Jump to...</option>
-			{#each LETTERS as letter (letter)}<option value={letter}>{letter}</option>{/each}
-		</select>
 		<LibraryFilterMenu
 			minTracks={params.minTracks}
 			tracksMode={params.tracksMode}
@@ -381,56 +278,58 @@
 		/>
 	</div>
 
-	{#if albumsQuery.isError}
-		<div class="alert alert-error mb-6">
-			<span>Couldn't load albums</span>
-			<Button variant="ghost" size="sm" onclick={() => albumsQuery.refetch()}>Retry</Button>
-		</div>
-	{:else if albumsQuery.isLoading}
-		<div class="dn-list-grid">
-			{#each Array(14) as _, i (`skeleton-${i}`)}
-				<div class="skeleton aspect-square w-full rounded-lg"></div>
-			{/each}
-		</div>
-	{:else if albums.length === 0}
-		<div class="flex flex-col items-center justify-center min-h-100 text-center">
-			<Disc3 class="h-12 w-12 text-muted mb-4" strokeWidth={1.5} />
-			<h2 class="text-2xl font-semibold mb-2">
-				{params.favorites && !params.q && !filtered ? 'No favourites yet' : 'No albums found'}
-			</h2>
-			<p class="text-muted mb-4">
-				{params.q || filtered
-					? 'Try a different search or filter.'
-					: params.favorites
-						? 'Tap the heart on an album to add it here.'
-						: "Your library doesn't contain any albums yet."}
-			</p>
-		</div>
-	{:else}
-		<div class="dn-list-grid">
-			{#each albums as album (album.id)}
-				<div data-album-id={album.id}><LibraryAlbumCard {album} /></div>
-			{/each}
-		</div>
-
-		{#if albumsQuery.hasNextPage}
-			<div class="mt-8 flex justify-center">
-				<Button
-					variant="outline"
-					class="min-w-60"
-					loading={albumsQuery.isFetchingNextPage}
-					onclick={() => albumsQuery.fetchNextPage()}
-				>
-					Load more ({albums.length} / {total})
-				</Button>
+	<QueryBoundary query={firstBlock} what="your albums" isEmpty={(data) => data.items.length === 0}>
+		{#snippet loading()}
+			<div class="dn-list-grid">
+				{#each Array(14) as _, i (`skeleton-${i}`)}
+					<div class="skeleton aspect-square w-full rounded-lg"></div>
+				{/each}
 			</div>
-		{/if}
-	{/if}
+		{/snippet}
+		{#snippet empty()}
+			<div class="flex flex-col items-center justify-center min-h-100 text-center">
+				<Disc3 class="h-12 w-12 text-muted mb-4" strokeWidth={1.5} />
+				<h2 class="text-2xl font-semibold mb-2">
+					{params.favorites && !params.q && !filtered ? 'No favourites yet' : 'No albums found'}
+				</h2>
+				<p class="text-muted mb-4">
+					{params.q || filtered
+						? 'Try a different search or filter.'
+						: params.favorites
+							? 'Tap the heart on an album to add it here.'
+							: "Your library doesn't contain any albums yet."}
+				</p>
+			</div>
+		{/snippet}
+		<div class="flex items-start gap-2">
+			<div class="min-w-0 flex-1">
+				<VirtualRows
+					bind:this={list}
+					count={total}
+					pitch={LINE_PITCH}
+					layout="grid"
+					label={params.favorites ? 'Favourite albums' : 'All albums'}
+					class="dn-list-grid"
+					onrange={(next) => (range = next)}
+				>
+					{#snippet item(index)}
+						{@const album = albumAt(index)}
+						{#if album}
+							<LibraryAlbumCard {album} />
+						{:else}
+							<div data-placeholder tabindex="-1" aria-busy="true" aria-label="Loading">
+								<MediaTileSkeleton />
+							</div>
+						{/if}
+					{/snippet}
+				</VirtualRows>
+			</div>
+			<ScrollRail
+				letters={named ? lettersQuery.data?.letters : null}
+				{total}
+				top={range.top}
+				onjump={(position) => list?.scrollToIndex(position)}
+			/>
+		</div>
+	</QueryBoundary>
 </div>
-
-<style>
-	/* The A-Z jump lands a card clear of the sticky top bar and its safe area. */
-	.dn-list-grid > :global(*) {
-		scroll-margin-top: calc(4rem + var(--ms-safe-top) + 0.75rem);
-	}
-</style>

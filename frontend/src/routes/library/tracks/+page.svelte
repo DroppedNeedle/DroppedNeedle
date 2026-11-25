@@ -1,6 +1,10 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { getLibraryTracksInfiniteQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
+	import {
+		getLibraryTrackBlocksQuery,
+		getLibraryTrackLettersQuery
+	} from '$lib/features/library/queries/LibraryQueries.svelte';
 	import {
 		libraryTrackParams,
 		type LibraryTrackFilters,
@@ -18,13 +22,15 @@
 	import ContextMenu from '$lib/ui/ContextMenu.svelte';
 	import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
 	import { formatDurationSec } from '$lib/utils/formatting';
-	import { reveal } from '$lib/actions/reveal';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import ListPageHeader from '$lib/ui/ListPageHeader.svelte';
 	import LibraryFormatBadge from '$lib/features/library/components/LibraryFormatBadge.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
+	import ScrollRail from '$lib/ui/ScrollRail.svelte';
+	import VirtualRows, { type VirtualRange } from '$lib/ui/VirtualRows.svelte';
+	import type { Snapshot } from './$types';
 	import {
 		Play,
 		Shuffle,
@@ -46,7 +52,9 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 
-	const PAGE_SIZE = 48;
+	// Rows are read in blocks by their position in the list.
+	const BLOCK = 100;
+	const ROW_PITCH = 65;
 	const SEARCH_DEBOUNCE_MS = 300;
 
 	const SORTS: LibraryTrackSort[] = ['recent', 'title', 'artist', 'album'];
@@ -109,25 +117,64 @@
 		void goto(url, { replaceState: true, keepFocus: true, noScroll: true });
 	}
 
-	const tracksQuery = getLibraryTracksInfiniteQuery(() =>
-		libraryTrackParams(PAGE_SIZE, browse.sort, browse.q, browse.favorites, filters)
+	const params = $derived(
+		libraryTrackParams(BLOCK, browse.sort, browse.q, browse.favorites, filters)
 	);
-	const pages = $derived(tracksQuery.data?.pages ?? []);
-	// A track can move between pages while they load (a scan renames it):
-	// keep its first appearance.
-	const tracks = $derived.by(() => {
-		const seen: Record<string, true> = Object.create(null);
-		const out: TrackView[] = [];
-		for (const response of pages) {
-			for (const track of response.items) {
-				if (seen[track.id]) continue;
-				seen[track.id] = true;
-				out.push(track);
-			}
+	// The orders by a name have a letter index.
+	const named = $derived(['title', 'artist', 'album'].includes(browse.sort));
+
+	let range = $state<VirtualRange>({ start: 0, end: 0, top: 0 });
+	// The blocks the mounted rows fall in, and always the first, which
+	// carries the total.
+	const offsets = $derived.by(() => {
+		const out = [0];
+		const last = Math.max(0, range.end - 1);
+		for (let at = Math.floor(range.start / BLOCK) * BLOCK; at <= last; at += BLOCK) {
+			if (at > 0) out.push(at);
 		}
 		return out;
 	});
-	const total = $derived(pages[0]?.total ?? 0);
+	const blocks = getLibraryTrackBlocksQuery(
+		() => params,
+		() => offsets
+	);
+	const firstBlock = $derived(blocks[0]);
+	const lettersQuery = getLibraryTrackLettersQuery(
+		() => params,
+		() => named
+	);
+	const total = $derived(firstBlock?.data?.total ?? 0);
+
+	function trackAt(index: number): TrackView | undefined {
+		const at = Math.floor(index / BLOCK) * BLOCK;
+		return blocks[offsets.indexOf(at)]?.data?.items[index - at];
+	}
+
+	let list = $state<VirtualRows>();
+
+	// A new search, order or filter starts the list at the top.
+	let shownList = '';
+	$effect(() => {
+		const key = JSON.stringify(params);
+		if (shownList && key !== shownList) {
+			untrack(() => {
+				if (range.top > 0) list?.scrollToIndex(0);
+			});
+		}
+		shownList = key;
+	});
+
+	// Back to the list lands on the row that was at the top.
+	let restoreTop = $state<number | null>(null);
+	export const snapshot: Snapshot<number> = {
+		capture: () => range.top,
+		restore: (top) => (restoreTop = top)
+	};
+	$effect(() => {
+		if (restoreTop === null || total === 0 || !list) return;
+		if (Math.abs(range.top - restoreTop) > 1) list.scrollToIndex(restoreTop);
+		restoreTop = null;
+	});
 
 	const fromLibrary = (items: TrackView[]) =>
 		withPlayedFrom(buildDiscoveryQueueFromLocal(items), { kind: 'library' });
@@ -164,26 +211,14 @@
 		setParams({ favorites: browse.favorites ? null : '1', sort: null });
 	}
 
+	// Plays from the row's position in the list to the end.
 	function playTrack(index: number) {
-		queue.abort();
-		const items = fromLibrary(tracks);
-		if (items.length === 0) return;
-		playerStore.playQueue(items, index, false);
+		void queue.playFrom(index, browse.sort, browse.q, browse.favorites, filters);
 	}
 
-	// Plays what is loaded, then the rest of the list after the last page.
 	function playAll() {
-		void queue.playAll(
-			browse.sort,
-			browse.q,
-			{
-				items: tracks,
-				total,
-				next: pages.at(-1)?.next ?? null
-			},
-			browse.favorites,
-			filters
-		);
+		const first = firstBlock?.data;
+		void queue.playAll(browse.sort, browse.q, first ?? null, browse.favorites, filters);
 	}
 
 	function shuffleAll() {
@@ -255,13 +290,92 @@
 	{/if}
 {/snippet}
 
+{#snippet row(track: TrackView, index: number)}
+	{@const playing = isTrackPlaying(track)}
+	<div
+		role="cell"
+		class="group flex items-center gap-1 pr-3 transition-colors {playing
+			? 'bg-selected'
+			: 'hover:bg-neutral'}"
+	>
+		<button
+			type="button"
+			class="flex min-w-0 flex-1 cursor-pointer items-center gap-3 py-2 pl-3 text-left focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus"
+			onclick={() => playTrack(index)}
+			aria-label="Play {track.title}"
+		>
+			<span class="relative h-12 w-12 shrink-0">
+				<AlbumImage
+					albumId={track.album_id}
+					mbid={track.release_group_mbid ?? ''}
+					available={track.cover_available}
+					artMissing={track.art_missing}
+					alt={track.album_title}
+					size="full"
+					requestSize={250}
+					rounded="md"
+					className="h-12 w-12 ring-1 ring-base-content/10"
+				/>
+				<span
+					class="absolute inset-0 flex items-center justify-center rounded-md bg-black/45 opacity-0 transition-opacity {playing
+						? 'opacity-100'
+						: 'group-hover:opacity-100'}"
+				>
+					{#if playing}
+						<NowPlayingIndicator />
+					{:else}
+						<Play class="h-5 w-5 fill-current text-white" />
+					{/if}
+				</span>
+			</span>
+
+			<span class="min-w-0 flex-1">
+				<span class="flex min-w-0 items-center gap-2">
+					<span class="truncate text-sm font-semibold {playing ? 'text-title' : ''}"
+						>{track.title}</span
+					>
+					{#if playing}
+						<span
+							class="shrink-0 font-mono text-[0.6875rem] font-semibold tracking-widest text-title uppercase"
+							>Playing</span
+						>
+					{/if}
+				</span>
+				<span class="block truncate font-mono text-xs text-muted">
+					{track.artist_name}{#if track.album_title}<span class="ml-1 text-muted"
+							>· {track.album_title}</span
+						>{/if}
+				</span>
+			</span>
+
+			<span class="flex shrink-0 items-center gap-2">
+				{#if track.format}
+					<span class="hidden sm:inline-flex">
+						<LibraryFormatBadge format={track.format} bitrate={track.bit_rate} size="badge-xs" />
+					</span>
+				{/if}
+				{#if track.duration_seconds != null}
+					<span class="w-11 text-right font-mono text-xs tabular-nums text-muted">
+						{formatDurationSec(track.duration_seconds)}
+					</span>
+				{/if}
+			</span>
+		</button>
+		<div
+			class="shrink-0 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100"
+		>
+			<ContextMenu items={getTrackMenuItems(track)} position="end" size="xs" />
+		</div>
+	</div>
+{/snippet}
+
 <ListPageHeader
 	title={browse.favorites ? 'Favourite Tracks' : 'All Tracks'}
-	count={tracksQuery.data ? `${total.toLocaleString()} ${total === 1 ? 'track' : 'tracks'}` : null}
+	count={firstBlock?.data ? `${total.toLocaleString()} ${total === 1 ? 'track' : 'tracks'}` : null}
 	ticket="DN / CC 3.2 - TRK"
 	backHref={withBasePath('/library')}
 	backLabel="Back to library"
-	actions={tracks.length > 0 ? playButtons : undefined}
+	actions={total > 0 ? playButtons : undefined}
 />
 
 <div class="px-4 pb-10 sm:px-6 lg:px-8">
@@ -323,11 +437,7 @@
 		/>
 	</div>
 
-	<QueryBoundary
-		query={tracksQuery}
-		what="your tracks"
-		isEmpty={(data) => !data.pages[0]?.items.length}
-	>
+	<QueryBoundary query={firstBlock} what="your tracks" isEmpty={(data) => data.items.length === 0}>
 		{#snippet loading()}
 			<div class="overflow-hidden rounded-xl border border-line bg-base-200">
 				{#each Array(12) as _, i (i)}
@@ -361,105 +471,45 @@
 				</p>
 			</div>
 		{/snippet}
-		<div
-			class="divide-y divide-line/60 overflow-hidden rounded-xl border border-line bg-base-200"
-			use:reveal
-		>
-			{#each tracks as track, i (track.id)}
-				{@const playing = isTrackPlaying(track)}
-				<div
-					class="group flex cursor-pointer items-center gap-3 px-3 py-2 transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus {playing
-						? 'bg-selected'
-						: 'hover:bg-neutral'}"
-					onclick={() => playTrack(i)}
-					onkeydown={(e) =>
-						e.target === e.currentTarget &&
-						(e.key === 'Enter' || e.key === ' ') &&
-						(e.preventDefault(), playTrack(i))}
-					tabindex="0"
-					role="button"
-					aria-label="Play {track.title}"
+		<div class="flex items-start gap-2">
+			<div class="min-w-0 flex-1">
+				<VirtualRows
+					bind:this={list}
+					count={total}
+					pitch={ROW_PITCH}
+					label={browse.favorites ? 'Favourite tracks' : 'All tracks'}
+					class="divide-y divide-line/60 overflow-hidden rounded-xl border border-line bg-base-200"
+					onrange={(next) => (range = next)}
 				>
-					<div class="relative h-12 w-12 shrink-0">
-						<AlbumImage
-							albumId={track.album_id}
-							mbid={track.release_group_mbid ?? ''}
-							available={track.cover_available}
-							artMissing={track.art_missing}
-							alt={track.album_title}
-							size="full"
-							requestSize={250}
-							rounded="md"
-							className="h-12 w-12 ring-1 ring-base-content/10"
-						/>
-						<div
-							class="absolute inset-0 flex items-center justify-center rounded-md bg-black/45 opacity-0 transition-opacity {playing
-								? 'opacity-100'
-								: 'group-hover:opacity-100'}"
-						>
-							{#if playing}
-								<NowPlayingIndicator />
-							{:else}
-								<Play class="h-5 w-5 fill-current text-white" />
-							{/if}
-						</div>
-					</div>
-
-					<div class="min-w-0 flex-1">
-						<div class="flex min-w-0 items-center gap-2">
-							<span class="truncate text-sm font-semibold {playing ? 'text-title' : ''}"
-								>{track.title}</span
+					{#snippet item(index)}
+						{@const track = trackAt(index)}
+						{#if track}
+							{@render row(track, index)}
+						{:else}
+							<div
+								role="cell"
+								class="flex items-center gap-3 px-3 py-2"
+								data-placeholder
+								tabindex="-1"
+								aria-busy="true"
+								aria-label="Loading"
 							>
-							{#if playing}
-								<span
-									class="shrink-0 font-mono text-[0.6875rem] font-semibold tracking-widest text-title uppercase"
-									>Playing</span
-								>
-							{/if}
-						</div>
-						<div class="truncate font-mono text-xs text-muted">
-							{track.artist_name}{#if track.album_title}<span class="ml-1 text-muted"
-									>· {track.album_title}</span
-								>{/if}
-						</div>
-					</div>
-
-					<div class="flex shrink-0 items-center gap-2">
-						{#if track.format}
-							<span class="hidden sm:inline-flex">
-								<LibraryFormatBadge
-									format={track.format}
-									bitrate={track.bit_rate}
-									size="badge-xs"
-								/>
-							</span>
+								<div class="skeleton h-12 w-12 shrink-0 rounded-md"></div>
+								<div class="flex-1 space-y-2">
+									<div class="skeleton h-3.5 w-48 max-w-full"></div>
+									<div class="skeleton h-3 w-32 max-w-full"></div>
+								</div>
+							</div>
 						{/if}
-						{#if track.duration_seconds != null}
-							<span class="w-11 text-right font-mono text-xs tabular-nums text-muted">
-								{formatDurationSec(track.duration_seconds)}
-							</span>
-						{/if}
-						<div
-							class="opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100"
-						>
-							<ContextMenu items={getTrackMenuItems(track)} position="end" size="xs" />
-						</div>
-					</div>
-				</div>
-			{/each}
-		</div>
-
-		{#if tracksQuery.hasNextPage}
-			<div class="mt-8 flex justify-center">
-				<Button
-					variant="outline"
-					class="min-w-60"
-					loading={tracksQuery.isFetchingNextPage}
-					onclick={() => tracksQuery.fetchNextPage()}
-				>
-					Load more ({tracks.length.toLocaleString()} / {total.toLocaleString()})
-				</Button>
+					{/snippet}
+				</VirtualRows>
 			</div>
-		{/if}
+			<ScrollRail
+				letters={named ? lettersQuery.data?.letters : null}
+				{total}
+				top={range.top}
+				onjump={(position) => list?.scrollToIndex(position)}
+			/>
+		</div>
 	</QueryBoundary>
 </div>

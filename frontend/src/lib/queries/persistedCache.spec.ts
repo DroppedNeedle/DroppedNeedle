@@ -85,7 +85,7 @@ describe('the browser copy of query answers', () => {
 	it('keeps only the first page of a long list', async () => {
 		const { rows, client } = setup();
 		const result = await client.infiniteQuery({
-			queryKey: LibraryQueryKeyFactory.catalog.albumPages('a', { limit: 50 }),
+			queryKey: LibraryQueryKeyFactory.catalog.albums('a', { limit: 50 }),
 			meta: PERSIST,
 			initialPageParam: 0,
 			pages: 3,
@@ -144,7 +144,7 @@ describe('the browser copy of query answers', () => {
 
 	it('restores a saved long list as its first page', async () => {
 		const { rows, client } = setup();
-		const queryKey = LibraryQueryKeyFactory.catalog.albumPages('a', { limit: 50 });
+		const queryKey = LibraryQueryKeyFactory.catalog.albums('a', { limit: 50 });
 		const row = storedRow(
 			queryKey,
 			{

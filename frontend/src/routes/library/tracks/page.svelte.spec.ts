@@ -79,12 +79,14 @@ beforeEach(() => {
 });
 
 describe('library tracks page', () => {
-	it('sorts by artist and loads more after the last page by its cursor', async () => {
+	it('sorts by artist, reading the list from its first position', async () => {
 		const api = fakeApi({
-			'GET /api/v3/library/tracks': ({ query }): TrackPage =>
-				query.get('after') === 'page-2'
-					? { items: [track('t2', 'Second Song', 'Boreal')], total: 2, next: null }
-					: { items: [track('t1', 'First Song', 'Aurora')], total: 2, next: 'page-2' },
+			'GET /api/v3/library/tracks': {
+				items: [track('t1', 'First Song', 'Aurora')],
+				total: 1,
+				next: null
+			},
+			'GET /api/v3/library/tracks/letters': { letters: [{ key: 'A', position: 0, count: 1 }] },
 			'GET /api/v3/library/stats': stats
 		});
 		await renderWithQuery(TracksPage, {});
@@ -96,14 +98,85 @@ describe('library tracks page', () => {
 			.toBe('artist');
 		const sorted = api.calls('GET /api/v3/library/tracks').at(-1);
 		expect(sorted?.query.get('order')).toBe('asc');
+		expect(sorted?.query.get('offset')).toBe('0');
 		expect(sorted?.query.has('after')).toBe(false);
+		await expect
+			.poll(() => api.calls('GET /api/v3/library/tracks/letters').at(-1)?.query.get('sort'))
+			.toBe('artist');
+	});
 
-		await page.getByRole('button', { name: 'Load more (1 / 2)' }).click();
-		await expect.element(page.getByText('Second Song')).toBeVisible();
-		const more = api.calls('GET /api/v3/library/tracks').at(-1);
-		expect(more?.query.get('after')).toBe('page-2');
-		expect(more?.query.get('sort')).toBe('artist');
-		await expect.element(page.getByRole('button', { name: /Load more/ })).not.toBeInTheDocument();
+	it('draws 50,000 tracks as one list, mounting only the rows near the screen', async () => {
+		fakeApi({
+			'GET /api/v3/library/tracks': ({ query }): TrackPage => {
+				const offset = Number(query.get('offset') ?? 0);
+				const count = Math.max(0, Math.min(Number(query.get('limit')), 50000 - offset));
+				return {
+					items: Array.from({ length: count }, (_, i) =>
+						track(`t${offset + i}`, `Track ${offset + i}`, 'Aurora')
+					),
+					total: 50000,
+					next: null
+				};
+			},
+			'GET /api/v3/library/stats': stats
+		});
+		await renderWithQuery(TracksPage, {});
+		const list = page.getByRole('table', { name: 'All tracks' });
+		await expect.element(list).toHaveAttribute('aria-rowcount', '50000');
+
+		const box = list.element().parentElement as HTMLElement;
+		window.scrollTo(0, box.getBoundingClientRect().top + window.scrollY + box.offsetHeight * 0.6);
+		// The rows there load and paint on a later frame.
+		await expect
+			.poll(() => document.querySelector('[aria-label="Play Track 30000"]'), {
+				timeout: 5000,
+				interval: 100
+			})
+			.not.toBeNull();
+
+		const rows = [...list.element().querySelectorAll('[role="row"]')];
+		// Two screens of rows: the one in view and half a screen either side.
+		expect(rows.length).toBeLessThanOrEqual(Math.ceil((window.innerHeight * 2) / 64) + 2);
+		expect(list.element().querySelectorAll('*').length).toBeLessThan(5000);
+		const onScreen = rows.filter((row) => {
+			const rect = row.getBoundingClientRect();
+			return rect.top >= 0 && rect.bottom <= window.innerHeight;
+		});
+		expect(onScreen.length).toBeGreaterThan(0);
+		for (const row of onScreen) {
+			const position = Number(row.getAttribute('aria-rowindex')) - 1;
+			expect(Math.abs(position - 30000)).toBeLessThan(window.innerHeight / 32);
+			expect(row.textContent).toContain(`Track ${position}`);
+		}
+		window.scrollTo(0, 0);
+	});
+
+	it('plays from the pressed row by its position in the list', async () => {
+		const api = fakeApi({
+			'GET /api/v3/library/tracks': ({ query }): TrackPage => {
+				const offset = Number(query.get('offset') ?? 0);
+				return {
+					items: Array.from({ length: 3 }, (_, i) =>
+						track(`t${offset + i}`, `Track ${offset + i}`, 'Aurora')
+					),
+					total: 3,
+					next: null
+				};
+			},
+			'GET /api/v3/library/stats': stats
+		});
+		await renderWithQuery(TracksPage, {});
+
+		await page.getByRole('button', { name: 'Play Track 2' }).click();
+		await expect
+			.poll(() =>
+				api.calls('GET /api/v3/library/tracks').some((call) => call.query.get('offset') === '2')
+			)
+			.toBe(true);
+		const started = api
+			.calls('GET /api/v3/library/tracks')
+			.find((call) => call.query.get('offset') === '2');
+		expect(started?.query.get('limit')).toBe('500');
 	});
 
 	it('sorts by album, A to Z', async () => {
@@ -113,6 +186,7 @@ describe('library tracks page', () => {
 				total: 1,
 				next: null
 			},
+			'GET /api/v3/library/tracks/letters': { letters: [] },
 			'GET /api/v3/library/stats': stats
 		});
 		await renderWithQuery(TracksPage, {});

@@ -6,6 +6,7 @@ import { albumsQuery } from '$lib/features/library/queries/listQueries';
 import { v3 } from '$lib/api/v3/endpoint';
 import {
 	createInfiniteQuery,
+	createQueries,
 	createQuery,
 	keepPreviousData,
 	queryOptions
@@ -22,7 +23,7 @@ import {
 	type LibraryV3UserId
 } from './LibraryQueryKeyFactory';
 import { toMusicBrainzAlbums } from '$lib/features/search/queries/SearchV3Adapters';
-import { fetchLibraryTracks, fetchLibraryTracksAt, type LibraryTrackPage } from './libraryTracks';
+import { fetchLibraryTracksAt } from './libraryTracks';
 import type { components } from '$lib/api/v3/openapi';
 import type { Album } from '$lib/features/album/queries/types';
 import type {
@@ -99,7 +100,6 @@ const getLibraryAlbumsQueryOptions = (forUser: LibraryV3UserId, params: LibraryV
 export const getLibraryAlbumsQuery = (getParams: Getter<LibraryV3AlbumsParams>) =>
 	createQuery(() => getLibraryAlbumsQueryOptions(userId(), getParams()));
 
-type AlbumPage = components['schemas']['AlbumPage'];
 type ArtistPage = components['schemas']['ArtistPage'];
 
 /** How many albums each primary format has, for the album list's format filter. */
@@ -110,27 +110,6 @@ export const getLibraryAlbumFormatsQuery = () =>
 		queryFn: async ({ signal }) =>
 			(await api.v3.GET(v3('/api/v3/library/albums/formats'), { signal })).items
 	}));
-
-// The album list a page at a time: each page reads on from the last one's
-// cursor, so a deep page costs what the first does.
-export const getLibraryAlbumsInfiniteQuery = (getParams: Getter<LibraryV3AlbumsParams>) =>
-	createInfiniteQuery(() => {
-		const params = getParams();
-		return {
-			placeholderData: keepPreviousData,
-			meta: PERSIST,
-			queryKey: LibraryQueryKeyFactory.catalog.albumPages(userId(), params),
-			initialPageParam: null as string | null,
-			queryFn: ({ pageParam, signal }) =>
-				api.v3.GET(
-					v3('/api/v3/library/albums', {
-						query: albumsQuery(params, pageParam)
-					}),
-					{ signal }
-				),
-			getNextPageParam: (lastPage: AlbumPage) => lastPage.next ?? undefined
-		};
-	});
 
 export interface LibraryArtistsParams {
 	/** `hearted` is the favourites' own order: the newest heart first. */
@@ -148,12 +127,10 @@ export interface LibraryArtistsParams {
 	favorites?: boolean;
 }
 
-const ARTISTS_PAGE_SIZE = 48;
-
 /** The artist list's server params for the page's `params`, `limit` rows a page. */
 export function libraryArtistParams(
 	params: LibraryArtistsParams,
-	limit = ARTISTS_PAGE_SIZE
+	limit: number
 ): LibraryV3ArtistsParams {
 	return {
 		limit,
@@ -185,32 +162,6 @@ function fetchArtists(
 		{ signal }
 	);
 }
-
-export const getLibraryArtistsInfiniteQuery = (getParams: Getter<LibraryArtistsParams>) =>
-	createInfiniteQuery(() => {
-		const params = libraryArtistParams(getParams());
-		return {
-			meta: PERSIST,
-			queryKey: LibraryQueryKeyFactory.catalog.artists(userId(), params),
-			initialPageParam: null as string | null,
-			queryFn: ({ pageParam, signal }) => fetchArtists(params, pageParam, signal),
-			getNextPageParam: (lastPage: ArtistPage) => lastPage.next ?? undefined
-		};
-	});
-
-// The track list a page at a time, read on by cursor.
-export const getLibraryTracksInfiniteQuery = (getParams: Getter<LibraryV3TracksParams>) =>
-	createInfiniteQuery(() => {
-		const params = getParams();
-		return {
-			placeholderData: keepPreviousData,
-			meta: PERSIST,
-			queryKey: LibraryQueryKeyFactory.catalog.tracks(userId(), params),
-			initialPageParam: null as string | null,
-			queryFn: ({ pageParam, signal }) => fetchLibraryTracks(params, pageParam, signal),
-			getNextPageParam: (lastPage: LibraryTrackPage) => lastPage.next ?? undefined
-		};
-	});
 
 // The long lists by position, for a list drawn whole: one block of rows from
 // an offset, read on by the block's `next` like any page, and each list's
@@ -246,10 +197,20 @@ export const libraryAlbumBlockQueryOptions = (
 			)
 	});
 
-export const getLibraryAlbumBlockQuery = (
+/**
+ * The album list's blocks at `getOffsets()`. Only the top one is saved
+ * to the browser, and it stays on screen while another search or order loads.
+ */
+export const getLibraryAlbumBlocksQuery = (
 	getParams: Getter<LibraryV3AlbumsParams>,
-	getOffset: Getter<number>
-) => createQuery(() => libraryAlbumBlockQueryOptions(userId(), getParams(), getOffset()));
+	getOffsets: Getter<number[]>
+) =>
+	createQueries(() => ({
+		queries: getOffsets().map((offset) => ({
+			...libraryAlbumBlockQueryOptions(userId(), getParams(), offset),
+			...(offset === 0 ? { meta: PERSIST, placeholderData: keepPreviousData } : {})
+		}))
+	}));
 
 /** The rows of the artist list from `offset`; build `params` with `libraryArtistParams`. */
 export const libraryArtistBlockQueryOptions = (
@@ -268,10 +229,20 @@ export const libraryArtistBlockQueryOptions = (
 			)
 	});
 
-export const getLibraryArtistBlockQuery = (
+/**
+ * The artist list's blocks at `getOffsets()`. Only the top one is saved
+ * to the browser, and it stays on screen while another search or order loads.
+ */
+export const getLibraryArtistBlocksQuery = (
 	getParams: Getter<LibraryV3ArtistsParams>,
-	getOffset: Getter<number>
-) => createQuery(() => libraryArtistBlockQueryOptions(userId(), getParams(), getOffset()));
+	getOffsets: Getter<number[]>
+) =>
+	createQueries(() => ({
+		queries: getOffsets().map((offset) => ({
+			...libraryArtistBlockQueryOptions(userId(), getParams(), offset),
+			...(offset === 0 ? { meta: PERSIST, placeholderData: keepPreviousData } : {})
+		}))
+	}));
 
 /** The rows of the track list from `offset`, `params.limit` of them. */
 export const libraryTrackBlockQueryOptions = (
@@ -284,16 +255,30 @@ export const libraryTrackBlockQueryOptions = (
 		queryFn: ({ signal }) => fetchLibraryTracksAt(params, offset, signal)
 	});
 
-export const getLibraryTrackBlockQuery = (
+/**
+ * The track list's blocks at `getOffsets()`. Only the top one is saved
+ * to the browser, and it stays on screen while another search or order loads.
+ */
+export const getLibraryTrackBlocksQuery = (
 	getParams: Getter<LibraryV3TracksParams>,
-	getOffset: Getter<number>
-) => createQuery(() => libraryTrackBlockQueryOptions(userId(), getParams(), getOffset()));
+	getOffsets: Getter<number[]>
+) =>
+	createQueries(() => ({
+		queries: getOffsets().map((offset) => ({
+			...libraryTrackBlockQueryOptions(userId(), getParams(), offset),
+			...(offset === 0 ? { meta: PERSIST, placeholderData: keepPreviousData } : {})
+		}))
+	}));
 
 /** The album list's letter index for `params`' filters and order. */
-export const getLibraryAlbumLettersQuery = (getParams: Getter<LibraryV3AlbumsParams>) =>
+export const getLibraryAlbumLettersQuery = (
+	getParams: Getter<LibraryV3AlbumsParams>,
+	getEnabled: Getter<boolean> = () => true
+) =>
 	createQuery(() => {
 		const params = lettersParams(getParams());
 		return queryOptions({
+			enabled: getEnabled(),
 			meta: PERSIST,
 			queryKey: LibraryQueryKeyFactory.catalog.albumLetters(userId(), params),
 			queryFn: ({ signal }): Promise<LetterIndex> => {
@@ -304,10 +289,14 @@ export const getLibraryAlbumLettersQuery = (getParams: Getter<LibraryV3AlbumsPar
 	});
 
 /** The artist list's letter index for `params`' scope, filters and order. */
-export const getLibraryArtistLettersQuery = (getParams: Getter<LibraryV3ArtistsParams>) =>
+export const getLibraryArtistLettersQuery = (
+	getParams: Getter<LibraryV3ArtistsParams>,
+	getEnabled: Getter<boolean> = () => true
+) =>
 	createQuery(() => {
 		const params = lettersParams(getParams());
 		return queryOptions({
+			enabled: getEnabled(),
 			meta: PERSIST,
 			queryKey: LibraryQueryKeyFactory.catalog.artistLetters(userId(), params),
 			queryFn: ({ signal }): Promise<LetterIndex> => {
@@ -318,10 +307,14 @@ export const getLibraryArtistLettersQuery = (getParams: Getter<LibraryV3ArtistsP
 	});
 
 /** The track list's letter index for `params`' filters and order. */
-export const getLibraryTrackLettersQuery = (getParams: Getter<LibraryV3TracksParams>) =>
+export const getLibraryTrackLettersQuery = (
+	getParams: Getter<LibraryV3TracksParams>,
+	getEnabled: Getter<boolean> = () => true
+) =>
 	createQuery(() => {
 		const params = lettersParams(getParams());
 		return queryOptions({
+			enabled: getEnabled(),
 			meta: PERSIST,
 			queryKey: LibraryQueryKeyFactory.catalog.trackLetters(userId(), params),
 			queryFn: ({ signal }): Promise<LetterIndex> => {

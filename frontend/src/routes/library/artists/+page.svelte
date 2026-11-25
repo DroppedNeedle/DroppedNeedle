@@ -1,8 +1,10 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
 	import ArtistCardSkeleton from '$lib/features/artist/components/ArtistCardSkeleton.svelte';
+	import MediaTileSkeleton from '$lib/media/MediaTileSkeleton.svelte';
 	import ArtistImage from '$lib/media/ArtistImage.svelte';
 	import LocalIdentityBadge from '$lib/features/library/components/LocalIdentityBadge.svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -10,8 +12,15 @@
 	import MediaTile from '$lib/media/MediaTile.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
+	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
+	import ScrollRail from '$lib/ui/ScrollRail.svelte';
+	import VirtualRows, { type VirtualRange } from '$lib/ui/VirtualRows.svelte';
 	import Tabs, { type TabItem } from '$lib/ui/Tabs.svelte';
-	import { getLibraryArtistsInfiniteQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
+	import {
+		getLibraryArtistBlocksQuery,
+		getLibraryArtistLettersQuery,
+		libraryArtistParams
+	} from '$lib/features/library/queries/LibraryQueries.svelte';
 	import type {
 		ArtistSort,
 		LibraryArtistScope,
@@ -24,8 +33,12 @@
 		type TracksMode
 	} from '$lib/features/library/components/LibraryFilterMenu.svelte';
 	import { rememberFilters } from '$lib/features/library/state/rememberedFilters.svelte';
+	import type { Snapshot } from './$types';
 
 	const SEARCH_DEBOUNCE_MS = 300;
+	// Artists are read in blocks by their position in the list.
+	const BLOCK = 60;
+	const LINE_PITCH = 230;
 
 	// `hearted` is the favourites' own order: the newest heart first.
 	type Sort = ArtistSort | 'hearted';
@@ -72,23 +85,65 @@
 		ratingMode: browse.ratingMode === 'atMost' ? ('at_most' as const) : ('at_least' as const),
 		favorites: browse.favorites
 	});
-	const artistsQuery = getLibraryArtistsInfiniteQuery(() => params);
 	rememberFilters('artists', ['min_tracks', 'tracks_mode', 'rating', 'rating_mode']);
 
-	const artists = $derived.by(() => {
-		const seen: Record<string, true> = Object.create(null);
-		const out: ArtistView[] = [];
-		for (const response of artistsQuery.data?.pages ?? []) {
-			for (const item of response.items) {
-				if (seen[item.id]) continue;
-				seen[item.id] = true;
-				out.push(item);
-			}
+	const artistParams = $derived(libraryArtistParams(params, BLOCK));
+	const named = $derived(browse.sortBy === 'name');
+
+	let range = $state<VirtualRange>({ start: 0, end: 0, top: 0 });
+	// The blocks the mounted tiles fall in, and always the first, which
+	// carries the totals.
+	const offsets = $derived.by(() => {
+		const out = [0];
+		const last = Math.max(0, range.end - 1);
+		for (let at = Math.floor(range.start / BLOCK) * BLOCK; at <= last; at += BLOCK) {
+			if (at > 0) out.push(at);
 		}
 		return out;
 	});
-	const response = $derived(artistsQuery.data?.pages[0]);
+	const blocks = getLibraryArtistBlocksQuery(
+		() => artistParams,
+		() => offsets
+	);
+	const firstBlock = $derived(blocks[0]);
+	const lettersQuery = getLibraryArtistLettersQuery(
+		() => artistParams,
+		() => named
+	);
+
+	function artistAt(index: number): ArtistView | undefined {
+		const at = Math.floor(index / BLOCK) * BLOCK;
+		return blocks[offsets.indexOf(at)]?.data?.items[index - at];
+	}
+
+	const response = $derived(firstBlock?.data);
 	const total = $derived(response?.total ?? 0);
+
+	let list = $state<VirtualRows>();
+
+	// A new view, search, order or filter starts the list at the top.
+	let shownList = '';
+	$effect(() => {
+		const key = JSON.stringify(artistParams);
+		if (shownList && key !== shownList) {
+			untrack(() => {
+				if (range.top > 0) list?.scrollToIndex(0);
+			});
+		}
+		shownList = key;
+	});
+
+	// Back to the list lands on the artist that was at the top.
+	let restoreTop = $state<number | null>(null);
+	export const snapshot: Snapshot<number> = {
+		capture: () => range.top,
+		restore: (top) => (restoreTop = top)
+	};
+	$effect(() => {
+		if (restoreTop === null || total === 0 || !list) return;
+		if (Math.abs(range.top - restoreTop) > 1) list.scrollToIndex(restoreTop);
+		restoreTop = null;
+	});
 	const albumArtistTotal = $derived(response?.album_artist_total ?? 0);
 	const contributorTotal = $derived(response?.contributor_total ?? 0);
 	const viewTabs = $derived<TabItem<'albums' | 'contributors'>[]>([
@@ -235,95 +290,109 @@
 				: 'Guests, featured artists and track-level credits'}
 		</p>
 
-		{#if artistsQuery.isError}
-			<div class="alert alert-error mb-6">
-				<span>Couldn't load artists.</span>
-				<Button variant="ghost" size="sm" onclick={() => artistsQuery.refetch()}>Retry</Button>
-			</div>
-		{:else if artistsQuery.isLoading}
-			<div class="dn-list-grid">
-				{#each Array(14) as _, index (`skeleton-${index}`)}<ArtistCardSkeleton />{/each}
-			</div>
-		{:else if artists.length === 0}
-			<div class="flex min-h-100 flex-col items-center justify-center text-center">
-				<Mic class="mb-4 h-12 w-12 text-base-content/35" strokeWidth={1.5} />
-				<h2 class="mb-2 text-2xl font-semibold">
-					{browse.q
-						? 'No matching artists'
-						: browse.favorites
-							? 'No favourites here yet'
-							: 'Nothing in this view yet'}
-				</h2>
-				<p class="max-w-md text-muted">
-					{browse.q
-						? 'Try a different search term.'
-						: browse.favorites
-							? 'Tap the heart on an artist to add them here.'
-							: browse.scope === 'album_artists'
-								? 'Album artists appear here as releases are added to your library.'
-								: 'Track-level guests and featured artists will appear here.'}
-				</p>
-			</div>
-		{:else}
-			<div class="dn-list-grid">
-				{#each artists as artist (artist.id)}
-					<MediaTile
-						kind="artist"
-						title={artist.name}
-						titleAs="h2"
-						href={artistHref(artist.artist_mbid ?? artist.id)}
-						label={`Open ${artist.name}`}
-					>
-						{#snippet art()}
-							<ArtistImage
-								mbid={artist.artist_mbid ?? ''}
-								localId={artist.id}
-								artMissing={artist.art_missing}
-								alt={artist.name}
-								size="full"
-								requestSize={250}
-								className="h-full w-full"
-							/>
-						{/snippet}
-						{#snippet meta()}
-							{#if artist.disambiguation}{artist.disambiguation} ·{/if}
-							{#if browse.scope === 'album_artists'}
-								{artist.album_count}
-								{artist.album_count === 1 ? 'release' : 'releases'} ·
-								{artist.led_track_count}
-								{artist.led_track_count === 1 ? 'track' : 'tracks'}
-							{:else}
-								{artist.appearance_album_count}
-								{artist.appearance_album_count === 1 ? 'release' : 'releases'} ·
-								{artist.appearance_track_count}
-								{artist.appearance_track_count === 1 ? 'appearance' : 'appearances'}
-							{/if}
-						{/snippet}
-						{#snippet overlay()}
-							{#if artist.identity_state === 'local_only'}
-								<LocalIdentityBadge
-									state={artist.identity_state}
-									subject="artist"
-									compact
-									className="absolute left-1 top-1 z-10"
-								/>
-							{/if}
-						{/snippet}
-					</MediaTile>
-				{/each}
-			</div>
-			{#if artistsQuery.hasNextPage}
-				<div class="mt-8 flex justify-center">
-					<Button
-						variant="outline"
-						class="min-w-60"
-						loading={artistsQuery.isFetchingNextPage}
-						onclick={() => artistsQuery.fetchNextPage()}
-					>
-						Load more ({artists.length} / {total})
-					</Button>
+		<QueryBoundary
+			query={firstBlock}
+			what="your artists"
+			isEmpty={(data) => data.items.length === 0}
+		>
+			{#snippet loading()}
+				<div class="dn-list-grid">
+					{#each Array(14) as _, index (`skeleton-${index}`)}<ArtistCardSkeleton />{/each}
 				</div>
-			{/if}
-		{/if}
+			{/snippet}
+			{#snippet empty()}
+				<div class="flex min-h-100 flex-col items-center justify-center text-center">
+					<Mic class="mb-4 h-12 w-12 text-base-content/35" strokeWidth={1.5} />
+					<h2 class="mb-2 text-2xl font-semibold">
+						{browse.q
+							? 'No matching artists'
+							: browse.favorites
+								? 'No favourites here yet'
+								: 'Nothing in this view yet'}
+					</h2>
+					<p class="max-w-md text-muted">
+						{browse.q
+							? 'Try a different search term.'
+							: browse.favorites
+								? 'Tap the heart on an artist to add them here.'
+								: browse.scope === 'album_artists'
+									? 'Album artists appear here as releases are added to your library.'
+									: 'Track-level guests and featured artists will appear here.'}
+					</p>
+				</div>
+			{/snippet}
+			<div class="flex items-start gap-2">
+				<div class="min-w-0 flex-1">
+					<VirtualRows
+						bind:this={list}
+						count={total}
+						pitch={LINE_PITCH}
+						layout="grid"
+						label={browse.scope === 'album_artists' ? 'Album artists' : 'Contributors'}
+						class="dn-list-grid"
+						onrange={(next) => (range = next)}
+					>
+						{#snippet item(index)}
+							{@const artist = artistAt(index)}
+							{#if artist}
+								<MediaTile
+									kind="artist"
+									title={artist.name}
+									titleAs="h2"
+									href={artistHref(artist.artist_mbid ?? artist.id)}
+									label={`Open ${artist.name}`}
+								>
+									{#snippet art()}
+										<ArtistImage
+											mbid={artist.artist_mbid ?? ''}
+											localId={artist.id}
+											artMissing={artist.art_missing}
+											alt={artist.name}
+											size="full"
+											requestSize={250}
+											className="h-full w-full"
+										/>
+									{/snippet}
+									{#snippet meta()}
+										{#if artist.disambiguation}{artist.disambiguation} ·{/if}
+										{#if browse.scope === 'album_artists'}
+											{artist.album_count}
+											{artist.album_count === 1 ? 'release' : 'releases'} ·
+											{artist.led_track_count}
+											{artist.led_track_count === 1 ? 'track' : 'tracks'}
+										{:else}
+											{artist.appearance_album_count}
+											{artist.appearance_album_count === 1 ? 'release' : 'releases'} ·
+											{artist.appearance_track_count}
+											{artist.appearance_track_count === 1 ? 'appearance' : 'appearances'}
+										{/if}
+									{/snippet}
+									{#snippet overlay()}
+										{#if artist.identity_state === 'local_only'}
+											<LocalIdentityBadge
+												state={artist.identity_state}
+												subject="artist"
+												compact
+												className="absolute left-1 top-1 z-10"
+											/>
+										{/if}
+									{/snippet}
+								</MediaTile>
+							{:else}
+								<div data-placeholder tabindex="-1" aria-busy="true" aria-label="Loading">
+									<MediaTileSkeleton kind="artist" />
+								</div>
+							{/if}
+						{/snippet}
+					</VirtualRows>
+				</div>
+				<ScrollRail
+					letters={named ? lettersQuery.data?.letters : null}
+					{total}
+					top={range.top}
+					onjump={(position) => list?.scrollToIndex(position)}
+				/>
+			</div>
+		</QueryBoundary>
 	</Tabs>
 </main>

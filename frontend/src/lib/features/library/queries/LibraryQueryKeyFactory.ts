@@ -118,9 +118,6 @@ export const LibraryQueryKeyFactory = {
 		root: (userId: LibraryV3UserId) => key(userScope(userId), 'library', 'catalog'),
 		albums: (userId: LibraryV3UserId, params: LibraryV3AlbumsParams) =>
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'albums', params] as const,
-		// The album list's pages, read on by cursor: apart from one page's key.
-		albumPages: (userId: LibraryV3UserId, params: LibraryV3AlbumsParams) =>
-			[...LibraryQueryKeyFactory.catalog.root(userId), 'album-pages', params] as const,
 		// The rows of a long list from one position, for a list drawn by position.
 		albumBlock: (userId: LibraryV3UserId, params: LibraryV3AlbumsParams, offset: number) =>
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'album-block', params, offset] as const,
@@ -143,8 +140,6 @@ export const LibraryQueryKeyFactory = {
 		) => [...LibraryQueryKeyFactory.catalog.root(userId), 'track-letters', params] as const,
 		albumFormats: (userId: LibraryV3UserId) =>
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'album-formats'] as const,
-		artists: (userId: LibraryV3UserId, params: LibraryV3ArtistsParams) =>
-			[...LibraryQueryKeyFactory.catalog.root(userId), 'artists', params] as const,
 		tracks: (userId: LibraryV3UserId, params: LibraryV3TracksParams) =>
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'tracks', params] as const,
 		artistThumbs: (userId: LibraryV3UserId) =>

@@ -127,7 +127,6 @@ vi.mock('$lib/features/library/queries/LibraryQueries.svelte', () => ({
 	getLibraryAlbumDetailQuery: () => ({ data: undefined, isLoading: false, isError: false }),
 	getLibraryMembershipQuery: () => ({ data: undefined, isLoading: false, isError: false }),
 	getLibraryAlbumsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
-	getLibraryArtistsInfiniteQuery: () => ({ data: undefined, isLoading: false, isError: false }),
 	getLibraryArtistThumbsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
 	getLibraryStatsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
 	getLibraryRecentlyAddedQuery: () => ({ data: undefined, isLoading: false, isError: false }),
