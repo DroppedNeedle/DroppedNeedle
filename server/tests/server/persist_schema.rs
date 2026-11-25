@@ -72,7 +72,7 @@ fn schema_rows(connection: &Connection) -> Vec<(String, String, String, Option<S
 fn fresh_migrate_marks_version_and_seeds() {
     let connection = migrated();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), latest_version());
-    assert_eq!(table_names(&connection).len(), 205);
+    assert_eq!(table_names(&connection).len(), 206);
     assert_eq!(
         scalar(
             &connection,
@@ -461,6 +461,10 @@ const SHIPPED: &[(&str, &str)] = &[
         "0172_weekly_sets.sql",
         "2e0175f71ab051a9d139be0c8d4250d091179552c786a738496b524071f68f86",
     ),
+    (
+        "0173_smart_playlists.sql",
+        "9e470ffa89e8cedecc7cd74e06ce0d87d12bccbda7984b9ab77b78bd08e6d42b",
+    ),
 ];
 
 /// Upgrading an instance keeps existing sessions valid and outside the
@@ -492,6 +496,47 @@ fn app_connect_upgrade_preserves_existing_sessions() {
             []
         ),
         ["browser-hash", "phone-hash"]
+    );
+}
+
+/// Saved rules start empty on upgrade and leave with their owner.
+#[test]
+fn smart_playlist_upgrade_preserves_ratings_and_cascades_rules() {
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 173)
+        .unwrap();
+    let conn = migrate(
+        Connection::open_in_memory().unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    conn.execute_batch(
+        "INSERT INTO auth_users (id, display_name, created_at) VALUES ('u', 'Listener', 1);
+         INSERT INTO catalog_user_ratings (user_id, item_kind, item_id, rating, rated_at)
+         VALUES ('u', 'track', 'track-one', 5, 1);",
+    )
+    .unwrap();
+    let conn = migrate(conn, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    assert_eq!(
+        scalar(&conn, "SELECT COUNT(*) FROM catalog_smart_playlists"),
+        0
+    );
+    assert_eq!(
+        scalar(
+            &conn,
+            "SELECT rating FROM catalog_user_ratings WHERE item_id='track-one'"
+        ),
+        5
+    );
+    conn.execute_batch(
+        "PRAGMA foreign_keys=ON;
+         INSERT INTO catalog_smart_playlists (id,user_id,name,min_rating) VALUES ('p','u','Stars',5);
+         DELETE FROM auth_users WHERE id='u';",
+    ).unwrap();
+    assert_eq!(
+        scalar(&conn, "SELECT COUNT(*) FROM catalog_smart_playlists"),
+        0
     );
 }
 

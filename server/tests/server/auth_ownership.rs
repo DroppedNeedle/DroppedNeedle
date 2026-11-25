@@ -90,6 +90,7 @@ async fn trusted(app: &TestApp, admin: &Who, username: &str) -> Who {
 /// A resource one user owns, as the path-id rows name it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Owned {
+    SmartPlaylist,
     Playlist,
     PublicPlaylist,
     Batch,
@@ -120,6 +121,34 @@ const ADMITTED: u16 = 0;
 /// resource, destructive operations come last, since the owner pass runs
 /// them in order on one resource.
 const PATH_ID_ROWS: &[(Owned, &str, &str, u16, u16)] = &[
+    (
+        Owned::SmartPlaylist,
+        "GET",
+        "/api/v3/smart-playlists/{playlist_id}",
+        404,
+        404,
+    ),
+    (
+        Owned::SmartPlaylist,
+        "GET",
+        "/api/v3/smart-playlists/{playlist_id}/tracks",
+        404,
+        404,
+    ),
+    (
+        Owned::SmartPlaylist,
+        "PUT",
+        "/api/v3/smart-playlists/{playlist_id}",
+        404,
+        404,
+    ),
+    (
+        Owned::SmartPlaylist,
+        "DELETE",
+        "/api/v3/smart-playlists/{playlist_id}",
+        404,
+        404,
+    ),
     // Playlists: opening a private one answers its stub to everyone else,
     // admins included, and every other route treats it as not there.
     (
@@ -1006,6 +1035,9 @@ fn track() -> Value {
 fn body(method: &str, template: &str, ids: &Ids) -> Option<Value> {
     let id = |name: &str| ids.get(name).cloned().unwrap_or_default();
     match (method, template) {
+        ("PUT", "/api/v3/smart-playlists/{playlist_id}") => {
+            Some(json!({"name":"Changed", "min_rating": 3}))
+        }
         ("PUT", "/api/v3/playlists/{playlist_id}") => Some(json!({"name": "Renamed"})),
         ("POST", "/api/v3/playlists/{playlist_id}/cover") => {
             Some(json!({"content_type": "image/png", "image_base64": OTHER_PNG}))
@@ -1053,6 +1085,18 @@ fn body(method: &str, template: &str, ids: &Ids) -> Option<Value> {
 async fn seed(app: &TestApp, kind: Owned, owner: &Who, n: u32) -> Ids {
     let mut ids = Ids::new();
     match kind {
+        Owned::SmartPlaylist => {
+            let (status, playlist) = call(
+                app,
+                owner,
+                "POST",
+                "/api/v3/smart-playlists",
+                Some(json!({"name":format!("Stars {n}"),"min_rating":5})),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CREATED, "{playlist}");
+            ids.insert("playlist_id", playlist["id"].as_str().unwrap().to_owned());
+        }
         Owned::Playlist | Owned::PublicPlaylist => {
             let (status, playlist) = call(
                 app,
@@ -1436,6 +1480,7 @@ async fn look(app: &TestApp, kind: Owned, owner: &Who, ids: &Ids) -> Value {
         body
     };
     match kind {
+        Owned::SmartPlaylist => read(fill("/api/v3/smart-playlists/{playlist_id}", ids)).await,
         Owned::Playlist | Owned::PublicPlaylist => {
             let playlist = read(fill("/api/v3/playlists/{playlist_id}", ids)).await;
             let (status, _, cover) = app
@@ -1604,6 +1649,7 @@ async fn another_users_resources_stay_out_of_reach() {
     std::fs::create_dir_all(&music).expect("music folder");
     app.add_library_folder("music", &music).await;
     let families = [
+        Owned::SmartPlaylist,
         Owned::Playlist,
         Owned::PublicPlaylist,
         Owned::Batch,

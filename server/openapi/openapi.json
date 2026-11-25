@@ -37076,6 +37076,377 @@
         ]
       }
     },
+    "/api/v3/smart-playlists": {
+      "get": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "List the caller's private rules, ordered by name.",
+        "operationId": "list_smart_playlists",
+        "responses": {
+          "200": {
+            "description": "Owned smart playlists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SmartPlaylist"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Save a new private rule.",
+        "operationId": "create_smart_playlist",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SmartPlaylistInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created playlist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmartPlaylist"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid definition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/smart-playlists/{playlist_id}": {
+      "get": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Get one saved rule.",
+        "operationId": "get_smart_playlist",
+        "parameters": [
+          {
+            "name": "playlist_id",
+            "in": "path",
+            "description": "Playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Owned smart playlist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmartPlaylist"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such owned playlist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Replace a saved rule without changing its id.",
+        "operationId": "update_smart_playlist",
+        "parameters": [
+          {
+            "name": "playlist_id",
+            "in": "path",
+            "description": "Playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SmartPlaylistInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated smart playlist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmartPlaylist"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid definition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such owned playlist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Delete a saved rule.",
+        "operationId": "delete_smart_playlist",
+        "parameters": [
+          {
+            "name": "playlist_id",
+            "in": "path",
+            "description": "Playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such owned playlist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/smart-playlists/{playlist_id}/tracks": {
+      "get": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Page through the current matching library tracks in title order.",
+        "operationId": "smart_playlist_tracks",
+        "parameters": [
+          {
+            "name": "playlist_id",
+            "in": "path",
+            "description": "Playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Tracks per page, 1–500. Defaults to 50.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "The previous page's opaque next cursor.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matching tracks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackListPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such owned playlist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/stream/{source}/{*key}": {
       "get": {
         "tags": [
@@ -71312,6 +71683,54 @@
             "description": "slskd version, when the probe reached it."
           }
         }
+      },
+      "SmartPlaylist": {
+        "type": "object",
+        "description": "A saved rule. Track membership is evaluated when a client requests a page.",
+        "required": [
+          "id",
+          "name",
+          "min_rating"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable playlist id."
+          },
+          "min_rating": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Include tracks this listener rated at least this many stars.",
+            "maximum": 5,
+            "minimum": 1
+          },
+          "name": {
+            "type": "string",
+            "description": "Listener-chosen display name."
+          }
+        }
+      },
+      "SmartPlaylistInput": {
+        "type": "object",
+        "description": "Create or replace a private rule.",
+        "required": [
+          "name",
+          "min_rating"
+        ],
+        "properties": {
+          "min_rating": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Minimum rating, inclusive. Unrated tracks are excluded.",
+            "maximum": 5,
+            "minimum": 1
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name, up to 200 UTF-8 bytes after trimming."
+          }
+        },
+        "additionalProperties": false
       },
       "SourceFailing": {
         "type": "object",

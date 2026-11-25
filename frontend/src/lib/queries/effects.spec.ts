@@ -23,6 +23,7 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 		every('lyrics'),
 		every('local'),
 		every('ratings'),
+		every('playlists', 'smart-matches'),
 		every('downloads'),
 		every('drop-import'),
 		key(U, 'search'),
@@ -163,11 +164,20 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 	anyFollowChanged: [every('following')],
 	homeChanged: [every('home')],
 	playlistListChanged: [key(U, 'playlists', 'list')],
+	smartPlaylistChanged: [
+		key(U, 'playlists', 'smart-list'),
+		key(U, 'playlists', 'smart-detail', 'job'),
+		key(U, 'playlists', 'smart-matches', 'job')
+	],
 	playlistChanged: [key(U, 'playlists', 'detail', 'job'), key(U, 'playlists', 'members', 'job')],
 	pluginsChanged: [every('plugins')],
 	pluginFilesChanged: [key('admin', 'plugins', 'files', 'u')],
 	profileChanged: [key(U, 'profile')],
-	ratingsChanged: [key(U, 'ratings'), { key: [U, 'library', 'catalog'], mark: true }],
+	ratingsChanged: [
+		key(U, 'ratings'),
+		key(U, 'playlists', 'smart-matches'),
+		{ key: [U, 'library', 'catalog'], mark: true }
+	],
 	albumMatchesChanged: [key(U, 'album-match')],
 	remoteSourceChanged: [key(U, 'remotes', 'job')],
 	anyLibraryChanged: [every('library')],

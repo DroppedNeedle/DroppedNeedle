@@ -79,7 +79,7 @@ pub struct PlaylistExport {
 }
 
 /// Trimmed non-empty name or 400.
-fn clean_name(raw: &str) -> Result<String, CollectionsError> {
+pub(in crate::collections) fn clean_name(raw: &str) -> Result<String, CollectionsError> {
     let name = raw.trim();
     if name.is_empty() {
         return Err(CollectionsError::invalid("Playlist name must not be blank"));

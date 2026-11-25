@@ -92,6 +92,7 @@ export const EFFECTS = {
 		{ everyScope: [LyricsQueryKeyFactory.feature] },
 		{ everyScope: [LOCAL_KEYS.feature] },
 		{ everyScope: [RatingQueryKeyFactory.feature] },
+		{ everyScope: [PlaylistQueryKeyFactory.feature, 'smart-matches'] },
 		{ everyScope: [DownloadQueryKeyFactory.feature] },
 		{ everyScope: [DropImportQueryKeyFactory.feature] },
 		{ key: SearchQueryKeyFactory.v3.root(userId) },
@@ -448,6 +449,11 @@ export const EFFECTS = {
 	homeChanged: (): Sweep[] => [{ everyScope: [HomeQueryKeyFactory.feature] }],
 	/** The caller's playlist list. */
 	playlistListChanged: (userId: UserId): Sweep[] => [{ key: PlaylistQueryKeyFactory.list(userId) }],
+	smartPlaylistChanged: (userId: UserId, id: string): Sweep[] => [
+		{ key: PlaylistQueryKeyFactory.smartList(userId) },
+		{ key: PlaylistQueryKeyFactory.smartDetail(userId, id) },
+		{ key: PlaylistQueryKeyFactory.smartTracks(userId, id) }
+	],
 	/** One playlist, and whom it is shared with. */
 	playlistChanged: (userId: UserId, playlistId: string): Sweep[] => [
 		{ key: PlaylistQueryKeyFactory.detail(userId, playlistId) },
@@ -462,6 +468,7 @@ export const EFFECTS = {
 	/** The caller's ratings, and the library lists a rating filter narrows. */
 	ratingsChanged: (userId: UserId): Sweep[] => [
 		{ key: RatingQueryKeyFactory.user(userId) },
+		{ key: PlaylistQueryKeyFactory.smartMatches(userId) },
 		{ key: LibraryQueryKeyFactory.catalog.root(userId), mark: true }
 	],
 	/** Which copies the caller's media servers hold of each album. */
@@ -665,6 +672,7 @@ export const lidarrCandidatesChanged = fact('lidarrCandidatesChanged');
 export const anyFollowChanged = fact('anyFollowChanged');
 export const homeChanged = fact('homeChanged');
 export const playlistListChanged = fact('playlistListChanged');
+export const smartPlaylistChanged = fact('smartPlaylistChanged');
 export const playlistChanged = fact('playlistChanged');
 export const playlistRequestStatesChanged = fact('playlistRequestStatesChanged');
 export const pluginsChanged = fact('pluginsChanged');
