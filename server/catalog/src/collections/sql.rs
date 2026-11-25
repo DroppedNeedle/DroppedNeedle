@@ -140,6 +140,19 @@ droppedneedle_kernel::sql! {
     /// Entry ids in position order.
     pub(super) ENTRY_ORDER = "SELECT id FROM catalog_playlist_tracks WHERE playlist_id = ?1 \
          ORDER BY position";
+    /// The entries of playlist `?1` in position order, with their library
+    /// file and whether a source song row names them: what a rewrite
+    /// matches the new list against.
+    pub(super) ENTRY_FILES = "SELECT t.id AS id, t.library_file_id AS library_file_id, \
+         EXISTS (SELECT 1 FROM catalog_playlist_source_songs s WHERE s.entry_id = t.id) \
+         AS has_source FROM catalog_playlist_tracks t WHERE t.playlist_id = ?1 \
+         ORDER BY t.position";
+    /// One entry as a rewrite reads it.
+    pub(super) row EntryFile for [ENTRY_FILES] {
+        id: String,
+        library_file_id: Option<String>,
+        has_source: bool,
+    }
     /// Place one entry.
     pub(super) SET_POSITION = "UPDATE catalog_playlist_tracks SET position = ?1 WHERE id = ?2";
     /// One entry with its length `?16` and made time `?17`, milliseconds.

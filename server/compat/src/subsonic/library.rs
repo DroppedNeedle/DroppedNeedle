@@ -10,7 +10,7 @@ use super::models::{
 };
 use super::params::SubsonicParameters;
 use super::picture::{INFO_SIZES, PictureKind};
-use super::records::{PlaylistDetail, PlaylistRecord};
+use super::records::{PlaylistDetail, PlaylistEntry, PlaylistRecord};
 use super::views::{ViewTrack, iso};
 use super::{Ctx, Outcome};
 use crate::library::CompatError;
@@ -32,15 +32,11 @@ pub async fn playlist_detail(
     ctx: &Ctx<'_>,
     detail: &PlaylistDetail,
 ) -> Result<SPlaylist, SubsonicError> {
-    let mut tracks = Vec::new();
-    for entry in &detail.tracks {
-        let Some(file_id) = entry.library_file_id.as_deref() else {
-            continue;
-        };
-        if let Some(track) = ctx.store.get_track(file_id).await.map_err(Ctx::store_err)? {
-            tracks.push(track);
-        }
-    }
+    let tracks: Vec<ViewTrack> = served_entries(ctx, &detail.tracks)
+        .await?
+        .into_iter()
+        .map(|(_, track)| track)
+        .collect();
     let owner = if detail.is_owner {
         ctx.user()?.username().to_owned()
     } else {
@@ -53,6 +49,26 @@ pub async fn playlist_detail(
         owner,
         detail.can_edit,
     ))
+}
+
+/// The entries of `entries` an app is served, in order, with their
+/// tracks: those with a library file whose track is live. An app's
+/// indexes and its rewrites count these alone, so the songs it never sees
+/// (waiting for a download, or a file that is gone) are never touched.
+async fn served_entries(
+    ctx: &Ctx<'_>,
+    entries: &[PlaylistEntry],
+) -> Result<Vec<(String, ViewTrack)>, SubsonicError> {
+    let mut served = Vec::new();
+    for entry in entries {
+        let Some(file_id) = entry.library_file_id.as_deref() else {
+            continue;
+        };
+        if let Some(track) = ctx.store.get_track(file_id).await.map_err(Ctx::store_err)? {
+            served.push((entry.id.clone(), track));
+        }
+    }
+    Ok(served)
 }
 
 /// A playlist with the tracks it serves.
@@ -135,8 +151,9 @@ pub async fn playlist(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     Outcome::keyed("playlist", playlist_detail(ctx, &detail).await?)
 }
 
-/// Create a playlist, or replace its contents when `playlistId` is given.
-/// Every read comes first and the change is one write with nothing read
+/// Create a playlist, or rewrite the songs it serves when `playlistId` is
+/// given: songs the app is not shown stay where they are. Every read comes
+/// first and the change is one write with nothing read
 /// back, so a busy answer means nothing was written and asking again is
 /// safe. The answer lists the songs as read before the write.
 pub async fn create_playlist(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
@@ -163,8 +180,20 @@ pub async fn create_playlist(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
                 .other_owner_name(&pid, &user_id)
                 .await
                 .map_err(Ctx::store_err)?;
+            // Only the songs the app was shown are rewritten; on a playlist
+            // the caller may not read, the write refuses as it always has.
+            let shown = match ctx
+                .store
+                .get_playlist_with_tracks(&pid, &user_id)
+                .await
+                .map_err(Ctx::store_err)?
+            {
+                Some(detail) => served_entries(ctx, &detail.tracks).await?,
+                None => Vec::new(),
+            };
+            let served = shown.into_iter().map(|(id, _)| id).collect();
             ctx.store
-                .replace_playlist(&pid, &user_id, name.as_deref(), &song_file_ids)
+                .replace_playlist(&pid, &user_id, name.as_deref(), served, &song_file_ids)
                 .await
                 .map_err(Ctx::store_err)?
         }
@@ -232,14 +261,17 @@ pub async fn update_playlist(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
             .await
             .map_err(Ctx::store_err)?
         {
-            Some(entries) => (
-                remove_indices
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|index| entries.get(index as usize).map(|entry| entry.id.clone()))
-                    .collect::<Vec<_>>(),
-                false,
-            ),
+            Some(entries) => {
+                let served = served_entries(ctx, &entries).await?;
+                (
+                    remove_indices
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|index| served.get(index as usize).map(|(id, _)| id.clone()))
+                        .collect::<Vec<_>>(),
+                    false,
+                )
+            }
             None => (Vec::new(), true),
         }
     };

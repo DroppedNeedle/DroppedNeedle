@@ -694,19 +694,22 @@ impl CompatLibrary {
             .await?)
     }
 
-    /// Replace the entries of a playlist the user owns with the library
-    /// files `file_ids` and, when `name` is given, rename it, as one write.
+    /// Rewrite the `served` entries (those the app was shown) of a playlist
+    /// the user may edit as the library files `file_ids` and, when `name`
+    /// is given, rename it, as one write. Entries the app was not shown
+    /// stay where they are.
     pub async fn replace_playlist(
         &self,
         user_id: &str,
         playlist_id: &str,
         name: Option<&str>,
+        served: Vec<String>,
         file_ids: &[String],
     ) -> Result<SavedPlaylist, CompatError> {
         let entries = self.file_entries(file_ids).await?;
         Ok(self
             .service()
-            .replace_with_entries(user_id, playlist_id, name, entries)
+            .rewrite_served(user_id, playlist_id, name, served, entries)
             .await?)
     }
 

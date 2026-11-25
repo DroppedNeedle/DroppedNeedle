@@ -30,8 +30,8 @@
 //! | getTranscodeDecision | transcodeDecision | yes | POST-only, JSON-only |
 //! | getTranscodeStream | bytes | yes | signed params |
 //! | getPlaylists/getPlaylist | playlists/playlist | yes | streamable-only counts (#181) |
-//! | createPlaylist | playlist | yes | with playlistId = replace |
-//! | updatePlaylist/deletePlaylist | ok | yes | rename/public/add/remove-by-index |
+//! | createPlaylist | playlist | yes | with playlistId = rewrite the served songs, hidden ones kept |
+//! | updatePlaylist/deletePlaylist | ok | yes | rename/public/add/remove-by-index (served songs) |
 //! | star/unstar | ok | yes | prefix-routed, deduped; empty -> 10 |
 //! | getStarred2/getStarred | starred2/starred | yes | ID3 vs file shapes |
 //! | setRating | ok | yes | per user, 1-5; 0 clears; unknown target 70 |

@@ -741,20 +741,28 @@ impl CollectionsService<'_> {
         })
     }
 
-    /// Replace a playlist's entries with `entries` and, when `name` is
-    /// given, rename it, as one write.
-    pub async fn replace_with_entries(
+    /// Rewrite the `served` entries of a playlist (the ones a player app
+    /// was shown) as `entries` and, when `name` is given, rename it, as one
+    /// write. Entries the app was not shown stay where they are, and a
+    /// served entry of a file still listed keeps its id.
+    pub async fn rewrite_served(
         &self,
         user_id: &str,
         playlist_id: &str,
         name: Option<&str>,
+        served: Vec<String>,
         entries: Vec<NewEntry>,
     ) -> Result<SavedPlaylist, CollectionsError> {
         let name = name.map(clean_name).transpose()?;
         let written = self
             .playlists()
             .owned_by(user_id)
-            .replace_named(playlist_id, name.as_deref(), entries.clone())
+            .rewrite_served_named(
+                playlist_id,
+                name.as_deref(),
+                served.clone(),
+                entries.clone(),
+            )
             .await?;
         if let Written::Missing = written
             && let Some(row) = self.editor_row(user_id, playlist_id).await?
@@ -763,7 +771,7 @@ impl CollectionsService<'_> {
             let written = self
                 .playlists()
                 .editable_by(user_id)
-                .replace_entries(playlist_id, entries)
+                .rewrite_served(playlist_id, served, entries)
                 .await?;
             self.found_edit(user_id, playlist_id, written).await?;
             let row = self.readable_playlist(user_id, playlist_id).await?;

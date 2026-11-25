@@ -594,6 +594,160 @@ async fn synced_lyrics_with_an_untimed_line_go_out_unsynced() {
     rig.stop().await;
 }
 
+/// A playlist an app sees as two songs, S1 and S2, holding four entries
+/// `[H1, S1, H2, S2]`: H1 waits for a download (no library file) and H2's
+/// file is gone. A Spotify source row names S1. Returns its Subsonic id
+/// and the entry ids in that order.
+async fn hidden_songs_playlist(rig: &CompatApp, ids: &Ids, name: &str) -> (String, [String; 4]) {
+    let client = Client::player(rig);
+    let songs = ["Airbag", "One", "Teardrop", "Paranoid Android"].map(|title| ids.song(title));
+    let mut pairs = vec![("name", name)];
+    pairs.extend(songs.iter().map(|song| ("songId", song.as_str())));
+    let made = client.ok("createPlaylist", &pairs).await;
+    let playlist = id_of(&made["playlist"]);
+    let pid = playlist.trim_start_matches("pl-").to_owned();
+    let entries = entry_order(rig, &pid);
+    let [h1, s1, h2, s2]: [String; 4] = entries.try_into().expect("four entries");
+    rig.app
+        .seed(format!(
+            "UPDATE catalog_playlist_tracks SET library_file_id = NULL, album_id = NULL, \
+             source_type = 'youtube' WHERE id = '{h1}'; \
+             UPDATE catalog_playlist_tracks SET library_file_id = 'gone-file' WHERE id = '{h2}'; \
+             INSERT INTO catalog_playlist_source_songs (playlist_id, source_song_id, entry_id, \
+             seen_at) VALUES ('{pid}', 'spotify-song-1', '{s1}', 1)"
+        ))
+        .await;
+    let shown = client.ok("getPlaylist", &[("id", &playlist)]).await;
+    let titles: Vec<&str> = shown["playlist"]["entry"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .map(|entry| entry["title"].as_str().expect("title"))
+        .collect();
+    assert_eq!(
+        titles,
+        ["One", "Paranoid Android"],
+        "the app sees S1 and S2"
+    );
+    (playlist, [h1, s1, h2, s2])
+}
+
+/// The entry ids of playlist `pid`, in order.
+fn entry_order(rig: &CompatApp, pid: &str) -> Vec<String> {
+    let db = rig.app.db();
+    let mut stmt = db
+        .prepare("SELECT id FROM catalog_playlist_tracks WHERE playlist_id = ?1 ORDER BY position")
+        .expect("prepares");
+    stmt.query_map([pid], |row| row.get(0))
+        .expect("reads")
+        .collect::<Result<_, _>>()
+        .expect("rows")
+}
+
+/// The entry playlist `pid`'s Spotify source row points at.
+fn source_entry(rig: &CompatApp, pid: &str) -> Option<String> {
+    rig.app
+        .db()
+        .query_row(
+            "SELECT entry_id FROM catalog_playlist_source_songs WHERE playlist_id = ?1",
+            [pid],
+            |row| row.get(0),
+        )
+        .expect("source row reads")
+}
+
+/// A Subsonic app's playlist edits count only the songs it is shown, so
+/// songs waiting for a download and entries whose file is gone are never
+/// removed or moved by them. Removing index 0 removes S1, and an index
+/// past the shown list removes nothing. A rewrite keeps the hidden entries
+/// at their places and the kept songs' entry ids (and so their source
+/// rows), by the owner or by an editor, and dropping a song deletes only
+/// its entry.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn playlist_edits_change_only_the_songs_an_app_sees() {
+    let rig = CompatApp::start("compat-sub-hidden-songs").await;
+    let owner = Client::player(&rig);
+    let ids = Ids::read(&owner).await;
+    let (one, paranoid) = (ids.song("One"), ids.song("Paranoid Android"));
+    let pid = |playlist: &str| playlist.trim_start_matches("pl-").to_owned();
+
+    let (playlist, [h1, _, h2, s2]) = hidden_songs_playlist(&rig, &ids, "Remove first").await;
+    owner
+        .ok(
+            "updatePlaylist",
+            &[("playlistId", &playlist), ("songIndexToRemove", "0")],
+        )
+        .await;
+    assert_eq!(
+        entry_order(&rig, &pid(&playlist)),
+        [h1.as_str(), h2.as_str(), s2.as_str()]
+    );
+
+    let (playlist, entries) = hidden_songs_playlist(&rig, &ids, "Remove past").await;
+    owner
+        .ok(
+            "updatePlaylist",
+            &[("playlistId", &playlist), ("songIndexToRemove", "2")],
+        )
+        .await;
+    assert_eq!(entry_order(&rig, &pid(&playlist)), entries);
+
+    let (playlist, [h1, s1, h2, s2]) = hidden_songs_playlist(&rig, &ids, "Reversed").await;
+    owner
+        .ok(
+            "createPlaylist",
+            &[
+                ("playlistId", &playlist),
+                ("songId", &paranoid),
+                ("songId", &one),
+            ],
+        )
+        .await;
+    assert_eq!(
+        entry_order(&rig, &pid(&playlist)),
+        [h1.as_str(), s2.as_str(), h2.as_str(), s1.as_str()]
+    );
+    assert_eq!(source_entry(&rig, &pid(&playlist)).as_ref(), Some(&s1));
+
+    let (playlist, [h1, s1, h2, _]) = hidden_songs_playlist(&rig, &ids, "Dropped").await;
+    owner
+        .ok(
+            "createPlaylist",
+            &[("playlistId", &playlist), ("songId", &one)],
+        )
+        .await;
+    assert_eq!(
+        entry_order(&rig, &pid(&playlist)),
+        [h1.as_str(), s1.as_str(), h2.as_str()]
+    );
+
+    let (playlist, [h1, s1, h2, s2]) = hidden_songs_playlist(&rig, &ids, "Edited").await;
+    let editor = Client::admin(&rig).await;
+    rig.app
+        .seed(format!(
+            "INSERT INTO catalog_playlist_members (playlist_id, user_id, can_edit, added_at) \
+             SELECT '{}', id, 1, 1 FROM auth_users WHERE username = 'admin'",
+            pid(&playlist)
+        ))
+        .await;
+    editor
+        .ok(
+            "createPlaylist",
+            &[
+                ("playlistId", &playlist),
+                ("songId", &paranoid),
+                ("songId", &one),
+            ],
+        )
+        .await;
+    assert_eq!(
+        entry_order(&rig, &pid(&playlist)),
+        [h1.as_str(), s2.as_str(), h2.as_str(), s1.as_str()]
+    );
+    assert_eq!(source_entry(&rig, &pid(&playlist)).as_ref(), Some(&s1));
+    rig.stop().await;
+}
+
 /// Syncing clients page search3 through its counts. Artist and album counts of
 /// 1000 and a song count of 2000 answer ok at offsets 0 and 1000; one past the
 /// cap is the parameter error, never a shorter page.

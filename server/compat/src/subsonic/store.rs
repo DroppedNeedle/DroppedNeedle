@@ -960,18 +960,20 @@ impl SubsonicStore {
         Ok(saved_record(saved))
     }
 
-    /// Replace a playlist's entries with the library files `file_ids` and,
-    /// when `name` is given, rename it, as one write. Nothing is read back.
+    /// Rewrite a playlist's `served` entries (those the app was shown) as
+    /// the library files `file_ids` and, when `name` is given, rename it,
+    /// as one write. Nothing is read back.
     pub async fn replace_playlist(
         &self,
         playlist_id: &str,
         user_id: &str,
         name: Option<&str>,
+        served: Vec<String>,
         file_ids: &[String],
     ) -> Result<PlaylistRecord, CompatError> {
         let saved = self
             .library
-            .replace_playlist(user_id, playlist_id, name, file_ids)
+            .replace_playlist(user_id, playlist_id, name, served, file_ids)
             .await?;
         Ok(saved_record(saved))
     }

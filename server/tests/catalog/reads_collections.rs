@@ -812,7 +812,7 @@ async fn cross_user_writes_are_refused_by_the_store() {
     );
     assert!(matches!(
         bob_songs
-            .replace_entries(&id, vec![entry("Four")])
+            .rewrite_served(&id, Vec::new(), vec![entry("Four")])
             .await
             .unwrap(),
         Written::Missing

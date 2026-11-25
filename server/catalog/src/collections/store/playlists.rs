@@ -20,6 +20,8 @@
 //! is checked row by row during an UPDATE, so every reorder writes the new
 //! order in two passes: first to negative slots, then to the final ones.
 
+use std::collections::HashSet;
+
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 
 use super::super::db::{CollectionsDb, StoreError};
@@ -773,7 +775,22 @@ fn insert_entries(
 ) -> rusqlite::Result<Vec<String>> {
     let mut order = entry_order(tx, playlist_id)?;
     let at = position.unwrap_or(order.len()).min(order.len());
-    let tail = order.len() as i64;
+    let added = insert_parked(tx, playlist_id, order.len(), entries, now)?;
+    order.splice(at..at, added.iter().cloned());
+    write_order(tx, &order)?;
+    Ok(added)
+}
+
+/// Insert `entries` parked past the `tail` dense positions, without
+/// renumbering; the caller writes the order. Returns the new ids.
+fn insert_parked(
+    tx: &Transaction,
+    playlist_id: &str,
+    tail: usize,
+    entries: &[NewEntry],
+    now: i64,
+) -> rusqlite::Result<Vec<String>> {
+    let tail = tail as i64;
     let mut stmt = tx.prepare(sql::INSERT_ENTRY.text())?;
     let mut added = Vec::with_capacity(entries.len());
     for (offset, entry) in entries.iter().enumerate() {
@@ -806,10 +823,121 @@ fn insert_entries(
         ])?;
         added.push(id);
     }
-    drop(stmt);
-    order.splice(at..at, added.iter().cloned());
-    write_order(tx, &order)?;
     Ok(added)
+}
+
+/// One place in a rewritten playlist: an entry kept as it is, or the new
+/// entry at this index of the new list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Place {
+    Kept(String),
+    New(usize),
+}
+
+/// Where a rewrite puts each entry, and which entries it deletes. The
+/// entries of `current` not in `served` (hidden from the app, or added
+/// since it read the list) stay at their places. The served places, in
+/// order, take `files`, the new list's library files: a served entry of
+/// the same file is reused for its first place, one a source song names
+/// first, then the earliest; any other file is a new entry. New songs past
+/// the last served place follow it, or go at the end when there is none.
+/// Served entries left unused are deleted.
+fn merge_rewrite(
+    current: &[sql::EntryFile],
+    served: &HashSet<String>,
+    files: &[Option<String>],
+) -> (Vec<Place>, Vec<String>) {
+    let served_entries: Vec<&sql::EntryFile> = current
+        .iter()
+        .filter(|entry| served.contains(&entry.id))
+        .collect();
+    let mut used = HashSet::new();
+    let assigned: Vec<Place> = files
+        .iter()
+        .enumerate()
+        .map(|(index, file)| {
+            let reuse = file.as_ref().and_then(|file| {
+                served_entries
+                    .iter()
+                    .filter(|entry| {
+                        entry.library_file_id.as_ref() == Some(file) && !used.contains(&entry.id)
+                    })
+                    .min_by_key(|entry| !entry.has_source)
+            });
+            match reuse {
+                Some(entry) => {
+                    used.insert(entry.id.clone());
+                    Place::Kept(entry.id.clone())
+                }
+                None => Place::New(index),
+            }
+        })
+        .collect();
+    let mut assigned = assigned.into_iter();
+    let mut order = Vec::with_capacity(current.len() + files.len());
+    let mut places_left = served_entries.len();
+    for entry in current {
+        if !served.contains(&entry.id) {
+            order.push(Place::Kept(entry.id.clone()));
+            continue;
+        }
+        places_left -= 1;
+        if let Some(place) = assigned.next() {
+            order.push(place);
+        }
+        if places_left == 0 {
+            order.extend(assigned.by_ref());
+        }
+    }
+    order.extend(assigned);
+    let deleted = served_entries
+        .iter()
+        .filter(|entry| !used.contains(&entry.id))
+        .map(|entry| entry.id.clone())
+        .collect();
+    (order, deleted)
+}
+
+/// Rewrite the served entries of `playlist_id` as `entries` (see
+/// [`merge_rewrite`]), inside the caller's transaction.
+fn rewrite_entries(
+    tx: &Transaction,
+    playlist_id: &str,
+    served: &HashSet<String>,
+    entries: &[NewEntry],
+    now: i64,
+) -> rusqlite::Result<()> {
+    let current = tx
+        .prepare(sql::ENTRY_FILES.text())?
+        .query_map(params![playlist_id], sql::EntryFile::read)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let files: Vec<Option<String>> = entries
+        .iter()
+        .map(|entry| entry.library_file_id.clone())
+        .collect();
+    let (places, deleted) = merge_rewrite(&current, served, &files);
+    let fresh: Vec<NewEntry> = places
+        .iter()
+        .filter_map(|place| match place {
+            Place::New(index) => entries.get(*index).cloned(),
+            Place::Kept(_) => None,
+        })
+        .collect();
+    let mut added = insert_parked(tx, playlist_id, current.len(), &fresh, now)?.into_iter();
+    {
+        let mut stmt = tx.prepare(sql::REMOVE_ENTRY.text())?;
+        for id in &deleted {
+            stmt.execute(params![playlist_id, id])?;
+        }
+    }
+    let order: Vec<String> = places
+        .into_iter()
+        .filter_map(|place| match place {
+            Place::Kept(id) => Some(id),
+            Place::New(_) => added.next(),
+        })
+        .collect();
+    write_order(tx, &order)
 }
 
 impl PlaylistStore {
@@ -1334,23 +1462,26 @@ impl EditablePlaylists<'_> {
             .await
     }
 
-    /// Replace every entry with `entries`, in order, in one transaction: a
-    /// write that fails leaves the old entries in place.
-    pub async fn replace_entries(
+    /// Rewrite the `served` entries (the ones an app was shown) as
+    /// `entries`, in one transaction, keeping every other entry where it
+    /// is and reusing a served entry of the same file (see
+    /// [`merge_rewrite`]). A write that fails leaves the old entries.
+    pub async fn rewrite_served(
         &self,
         playlist_id: &str,
+        served: Vec<String>,
         entries: Vec<NewEntry>,
     ) -> Result<Written<()>, StoreError> {
         let (user_id, playlist_id) = (self.user_id.to_owned(), playlist_id.to_owned());
         let (now, owner_only) = (self.store.db.now_ms(), self.owner_only);
+        let served: HashSet<String> = served.into_iter().collect();
         self.store
             .db
-            .write("playlists.replace_entries", move |tx| {
+            .write("playlists.rewrite_served", move |tx| {
                 if !touch_editable(tx, &playlist_id, &user_id, owner_only, now)? {
                     return Ok(Written::Missing);
                 }
-                tx.execute(sql::CLEAR_ENTRIES.text(), params![playlist_id])?;
-                insert_entries(tx, &playlist_id, None, &entries, now)?;
+                rewrite_entries(tx, &playlist_id, &served, &entries, now)?;
                 Ok(Written::Done(()))
             })
             .await
@@ -1962,13 +2093,14 @@ impl OwnedPlaylists<'_> {
             .await
     }
 
-    /// Replace every entry with `entries` and, when `name` is given, rename
-    /// the playlist, in one transaction. Returns the playlist as the write
-    /// left it.
-    pub async fn replace_named(
+    /// [`EditablePlaylists::rewrite_served`] on one of the user's own
+    /// playlists and, when `name` is given, a rename, in one transaction.
+    /// Returns the playlist as the write left it.
+    pub async fn rewrite_served_named(
         &self,
         playlist_id: &str,
         name: Option<&str>,
+        served: Vec<String>,
         entries: Vec<NewEntry>,
     ) -> Result<Written<SavedPlaylist>, StoreError> {
         let (user_id, playlist_id, name) = (
@@ -1977,17 +2109,17 @@ impl OwnedPlaylists<'_> {
             name.map(str::to_owned),
         );
         let now = self.store.db.now_ms();
+        let served: HashSet<String> = served.into_iter().collect();
         self.store
             .db
-            .write("playlists.replace_entries", move |tx| {
+            .write("playlists.rewrite_served", move |tx| {
                 if !touch(tx, &playlist_id, &user_id, now)? {
                     return Ok(Written::Missing);
                 }
                 if let Some(name) = &name {
                     tx.execute(sql::RENAME.text(), params![name, playlist_id, user_id])?;
                 }
-                tx.execute(sql::CLEAR_ENTRIES.text(), params![playlist_id])?;
-                insert_entries(tx, &playlist_id, None, &entries, now)?;
+                rewrite_entries(tx, &playlist_id, &served, &entries, now)?;
                 let (name, is_public, created_at) =
                     tx.query_row(sql::SAVED.text(), params![playlist_id], |row| {
                         Ok((
