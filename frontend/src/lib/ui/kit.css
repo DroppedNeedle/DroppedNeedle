@@ -139,6 +139,43 @@
 		border-width: 2px;
 		box-shadow: var(--btn-shadow);
 	}
+	/* a hardware key on a metal panel: raised, and down while active */
+	.btn.dn-btn-key {
+		--btn-color: var(--panel-metal-hi, var(--color-base-300));
+		--btn-fg: var(--color-base-content);
+		--btn-border: rgb(0 0 0 / 0.6);
+		--btn-shadow: 0 0 0 transparent;
+		background-image: linear-gradient(
+			var(--panel-metal-hi, var(--color-base-300)),
+			var(--panel-metal, var(--color-base-200))
+		);
+		box-shadow:
+			inset 0 1px 0 rgb(255 255 255 / 0.12),
+			0 2px 0 rgb(0 0 0 / 0.55),
+			0 3px 6px rgb(0 0 0 / 0.4);
+	}
+	[data-theme='light'] .btn.dn-btn-key {
+		--btn-border: var(--dn-edge);
+		box-shadow:
+			inset 0 1px 0 #fff,
+			0 2px 0 rgb(0 0 0 / 0.18);
+	}
+	.btn.dn-btn-key.btn-active {
+		translate: 0 2px;
+		box-shadow: inset 0 2px 4px rgb(0 0 0 / 0.5);
+	}
+	.dn-btn-lamp {
+		flex: none;
+		width: 8px;
+		height: 8px;
+		border-radius: 9999px;
+		background: color-mix(in oklab, var(--color-base-content) 22%, transparent);
+		box-shadow: inset 0 1px 1px rgb(0 0 0 / 0.6);
+	}
+	.dn-btn-lamp.is-lit {
+		background: var(--dn-action);
+		box-shadow: 0 0 6px color-mix(in oklab, var(--dn-action) 60%, transparent);
+	}
 	.dn-btn-spotify {
 		--btn-color: var(--dn-spotify);
 		--btn-fg: var(--dn-spotify-content);

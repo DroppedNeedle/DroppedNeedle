@@ -1,26 +1,101 @@
+<!--
+	The sample playing anywhere in the app but the Discover page, where the
+	listening post shows it: the album or pick, the clip and what it is to its
+	album, where it is from, and its controls. A Discover pick also offers
+	Keep and Later, as plain requests, until it is answered here.
+-->
 <script lang="ts">
 	import { LoaderCircle, Pause, Play, SkipForward, Volume2, X } from 'lucide-svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
-	import { deckSampler } from '$lib/features/discover/state/deckSampler.svelte';
+	import { SvelteSet } from 'svelte/reactivity';
+	import { deckSampler, type SampleEntry } from '$lib/features/discover/state/deckSampler.svelte';
+	import { pickAnswers } from '$lib/features/discover/state/pickAnswers.svelte';
+	import { createKeepPickMutation, quotaRefusal } from '$lib/features/discover/queries/week.svelte';
+	import { createMarkLaterMutation } from '$lib/features/discover/queries/later.svelte';
+	import { toastStore } from '$lib/stores/toast';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { albumHrefOrNull, artistHrefOrNull } from '$lib/utils/entityRoutes';
 
 	const visible = $derived(
-		deckSampler.status === 'loading' ||
-			deckSampler.status === 'playing' ||
-			deckSampler.status === 'paused'
+		!pickAnswers.current &&
+			(deckSampler.status === 'loading' ||
+				deckSampler.status === 'playing' ||
+				deckSampler.status === 'paused')
 	);
 	const entry = $derived(deckSampler.currentEntry);
 	const albumHref = $derived(albumHrefOrNull(entry?.albumMbid));
 	const artistHref = $derived(artistHrefOrNull(entry?.artistMbid));
-	const providerLabel = $derived(
-		deckSampler.provider === 'deezer'
-			? 'Deezer'
-			: deckSampler.provider === 'itunes'
-				? 'iTunes'
-				: null
-	);
+	const SOURCES = { deezer: 'Deezer', itunes: 'iTunes' } as const;
+	const ROLES = { opener: 'Opener', best_known: 'Best known', deep_cut: 'Deep cut' } as const;
+	const providerLabel = $derived.by(() => {
+		const from = deckSampler.currentTrack?.source ?? deckSampler.provider;
+		return from === 'deezer' || from === 'itunes' ? SOURCES[from] : null;
+	});
+	const role = $derived.by(() => {
+		const of = deckSampler.currentTrack?.role;
+		return of ? ROLES[of] : null;
+	});
+
+	// Keep and Later off the Discover page: plain requests, with their own toasts
+	const keep = createKeepPickMutation();
+	const markLater = createMarkLaterMutation();
+	const answeredHere = new SvelteSet<string>();
+	const answerable = $derived.by(() => {
+		if (!entry?.pick || !entry.albumMbid) return false;
+		return !answeredHere.has(entry.key);
+	});
+
+	/** Moves past a pick answered here: the station's next album, or the end. */
+	function answered(key: string) {
+		answeredHere.add(key);
+		if (deckSampler.activeKey !== key) return;
+		if (deckSampler.hasNext) deckSampler.next();
+		else deckSampler.stop();
+	}
+
+	async function onkeep(sample: SampleEntry) {
+		if (!sample.pick || !sample.albumMbid) return;
+		try {
+			await keep.mutateAsync({
+				release_group_mbid: sample.albumMbid,
+				artist_name: sample.artist || null,
+				album_title: sample.title,
+				artist_mbid: sample.artistMbid ?? null,
+				made_from: sample.pick
+			});
+		} catch (error) {
+			const refusal = quotaRefusal(error);
+			if (refusal) {
+				toastStore.show({
+					message:
+						refusal.limit !== null && refusal.window_days !== null
+							? `Request limit reached: ${refusal.limit} albums every ${refusal.window_days} days, all used.`
+							: 'Request limit reached.',
+					type: 'warning'
+				});
+			}
+			return;
+		}
+		answered(sample.key);
+	}
+
+	async function onlater(sample: SampleEntry) {
+		if (!sample.albumMbid) return;
+		try {
+			await markLater.mutateAsync({
+				mbid: sample.albumMbid,
+				title: sample.title,
+				artist_name: sample.artist,
+				artist_mbid: sample.artistMbid ?? null
+			});
+		} catch {
+			return;
+		}
+		answered(sample.key);
+	}
 
 	// One-sound rule, enforced from an always-mounted surface: when the real player
 	// STARTS (rising edge of isPlaying), the preview yields. Edge-triggered, not
@@ -35,7 +110,6 @@
 		}
 		wasPlaying = playing;
 	});
-	import IconButton from '$lib/ui/IconButton.svelte';
 </script>
 
 {#if visible && entry}
@@ -48,8 +122,8 @@
 		<!-- progress: thin bar across the top -->
 		<div class="h-0.5 w-full bg-base-300">
 			<div
-				class="h-full bg-action transition-[width] duration-100 ease-linear motion-reduce:transition-none"
-				style="width: {Math.round(deckSampler.progress * 100)}%"
+				class="h-full w-full origin-left bg-action transition-[scale] duration-100 ease-linear motion-reduce:transition-none"
+				style:scale="{deckSampler.progress} 1"
 			></div>
 		</div>
 
@@ -81,11 +155,13 @@
 			<!-- meta -->
 			<div class="min-w-0 flex-1">
 				<div class="flex items-center gap-1.5">
-					<span class="font-mono text-xs font-semibold uppercase tracking-wider text-muted">
-						{deckSampler.isStation ? 'Preview station' : 'Now sampling'}
+					<span
+						class="truncate font-mono text-xs font-semibold uppercase tracking-wider text-muted"
+					>
+						{role ?? (deckSampler.isStation ? 'Preview station' : 'Now sampling')}
 					</span>
 					{#if deckSampler.isStation}
-						<span class="font-mono text-xs text-muted">
+						<span class="shrink-0 font-mono text-xs text-muted">
 							{deckSampler.stationPosition.index + 1}/{deckSampler.stationPosition.total}
 						</span>
 					{/if}
@@ -136,6 +212,17 @@
 				<IconButton size="sm" icon={X} label="Close preview" onclick={() => deckSampler.stop()} />
 			</div>
 		</div>
+
+		{#if answerable && entry}
+			<div class="flex gap-2 px-3 pb-2">
+				<Button variant="primary" size="xs" class="flex-1" onclick={() => void onkeep(entry)}>
+					Keep
+				</Button>
+				<Button variant="outline" size="xs" class="flex-1" onclick={() => void onlater(entry)}>
+					Later
+				</Button>
+			</div>
+		{/if}
 
 		<!-- volume -->
 		<div class="flex items-center gap-2 px-3 pb-2.5">

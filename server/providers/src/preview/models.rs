@@ -34,9 +34,14 @@ pub struct Track {
     /// Short title, shown in preference to `title` when it is set.
     #[serde(default)]
     pub title_short: String,
-    /// Position within the album.
+    /// Position within its disc.
     #[serde(default)]
     pub track_position: Option<i64>,
+    /// The disc it is on, counting from 1. The album track list carries it
+    /// (tests/fixtures/deezer/album_tracks.json, 2026-10-20); a row without
+    /// it reads as none.
+    #[serde(default)]
+    pub disk_number: Option<i64>,
     /// 30-second MP3 URL. It is signed and expires, so it is resolved just in
     /// time. Anything but an http or https address reads as none.
     #[serde(default, deserialize_with = "web_address::or_none")]
@@ -44,6 +49,11 @@ pub struct Track {
     /// The track's artist.
     #[serde(default)]
     pub artist: Option<Artist>,
+    /// Deezer's popularity score for the track, higher is better known. The
+    /// album track list carries it (tests/fixtures/deezer/album_tracks.json,
+    /// 2026-10-20); a row without it reads as none.
+    #[serde(default)]
+    pub rank: Option<i64>,
 }
 
 /// One track by id, `GET /track/{id}`, which a song link is read through.

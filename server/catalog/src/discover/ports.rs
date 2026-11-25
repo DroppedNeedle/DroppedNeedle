@@ -8,7 +8,7 @@ pub use futures_util::future::BoxFuture;
 
 use droppedneedle_providers::ProviderError;
 
-use crate::discover::models::PreviewTrackItem;
+use crate::discover::models::{PreviewSource, PreviewTrackItem};
 
 /// Why a discover service could not answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,7 +50,7 @@ impl std::fmt::Display for ProviderFailure {
 }
 
 /// Ordered album samples plus the provider that served them.
-pub type AlbumSamples = (Vec<PreviewTrackItem>, Option<String>);
+pub type AlbumSamples = (Vec<PreviewTrackItem>, Option<PreviewSource>);
 
 /// Why a radio station or playlist suggestion could not be built.
 #[derive(Debug, Clone, PartialEq)]

@@ -35,6 +35,9 @@
 		fresh?: boolean;
 		/** A quiet line under the buttons. */
 		note?: string;
+		/** Printed on the record's label: "WK 47 / NO 3". */
+		recordLabel: string;
+		/** A sample of it is playing: the record is out and turning. */
 		sampling: boolean;
 		hasPrevious: boolean;
 		hasNext: boolean;
@@ -61,6 +64,7 @@
 		look,
 		fresh = false,
 		note,
+		recordLabel,
 		sampling,
 		hasPrevious,
 		hasNext,
@@ -148,7 +152,7 @@
 
 			<div class="dn-pick__body">
 				<div class="dn-pick__media">
-					<VinylSleeve class="dn-pick__sleeve">
+					<VinylSleeve class="dn-pick__sleeve" playing={sampling} label={recordLabel}>
 						<a href={albumHref} aria-label="Open {album.title}" onclick={onopened}>
 							<AlbumImage
 								{mbid}
@@ -360,8 +364,9 @@
 
 	/* a narrower counter: a smaller sleeve beside the words */
 	@container (max-width: 54rem) {
+		/* the sleeve, and room beside it for the record to slide out while it plays */
 		.dn-pick__body {
-			grid-template-columns: 22rem minmax(0, 1fr);
+			grid-template-columns: 24.25rem minmax(0, 1fr);
 		}
 		.dn-pick__media :global(.dn-pick__sleeve) {
 			width: 22rem;

@@ -1254,6 +1254,41 @@ pub struct PlaylistSuggestionsResponse {
 // Previews (30-second, keyless)
 // ---------------------------------------------------------------------------
 
+/// Which of an album's tracks an album preview answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AlbumPreviewMode {
+    /// The first tracks with a preview, in album order.
+    #[default]
+    First,
+    /// Up to three clips that show the album: its opener, its best-known
+    /// track and a deep cut, in that order.
+    Audition,
+}
+
+/// What an audition clip is to its album.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PreviewRole {
+    /// The first track that has a preview.
+    Opener,
+    /// The track Deezer ranks highest, past the opener; the second track
+    /// with a preview where the source has no ranking.
+    BestKnown,
+    /// The track nearest two thirds of the way through the album.
+    DeepCut,
+}
+
+/// The service a preview clip comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PreviewSource {
+    /// Deezer.
+    Deezer,
+    /// iTunes.
+    Itunes,
+}
+
 /// One previewed track.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PreviewTrackItem {
@@ -1269,6 +1304,11 @@ pub struct PreviewTrackItem {
     /// Album position, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<i64>,
+    /// The service the clip comes from.
+    pub source: PreviewSource,
+    /// What the clip is to its album, in the audition mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<PreviewRole>,
 }
 
 /// A 30-second track preview. Empty (no URL) means no provider had one.
@@ -1288,15 +1328,15 @@ pub struct TrackPreviewResponse {
     pub provider: Option<String>,
 }
 
-/// Ordered 30-second samples of an album's first tracks.
+/// Ordered 30-second samples of an album.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AlbumPreviewResponse {
-    /// Sampled tracks in album order.
+    /// Sampled tracks: in album order, or in the audition's play order.
     #[serde(default)]
     pub tracks: Vec<PreviewTrackItem>,
     /// Provider that served the previews, when found.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider: Option<String>,
+    pub provider: Option<PreviewSource>,
 }
 
 // ---------------------------------------------------------------------------

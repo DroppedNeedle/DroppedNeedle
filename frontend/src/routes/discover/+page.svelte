@@ -66,7 +66,8 @@
 		type PickState
 	} from '$lib/features/discover/state/weekDeck.svelte';
 	import { passOn, pickSlip } from '$lib/features/discover/state/passLine.svelte';
-	import { deckSampler } from '$lib/features/discover/state/deckSampler.svelte';
+	import { pickAnswers } from '$lib/features/discover/state/pickAnswers.svelte';
+	import { deckSampler, type SampleEntry } from '$lib/features/discover/state/deckSampler.svelte';
 	import { audioFocus } from '$lib/features/player/state/audioFocus.svelte';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { dayDate, longDayDate } from '$lib/features/discover/state/weekWords';
@@ -204,14 +205,46 @@
 
 	// ---------- sound ----------
 
-	const sampling = $derived(
-		!!current && deckSampler.activeKey === current.key && deckSampler.status !== 'idle'
-	);
+	const sounding = $derived(deckSampler.status !== 'idle' && deckSampler.status !== 'error');
+	const sampling = $derived(!!current && deckSampler.activeKey === current.key && sounding);
+	/** The station "Play the week" starts, by its tag. */
+	const WEEK = 'week';
+	const weekPlaying = $derived(sounding && deckSampler.stationTag === WEEK);
 
 	// one-sound rule: the player starting stops the sampler
 	$effect(() => {
 		if (playerStore.isPlaying) audioFocus.interrupt();
 	});
+
+	/** The entry `key` as the week now reads it. */
+	const entryAt = (key: string) => deck.entries.find((entry) => entry.key === key) ?? null;
+
+	/** A pick as the sampler plays it: its audition, reported once its first clip starts. */
+	function sampleOf(entry: DeckEntry): SampleEntry {
+		const album = albumOf(entry);
+		return {
+			key: entry.key,
+			kind: 'album',
+			artist: album.artist_name ?? '',
+			title: album.title,
+			albumMbid: album.musicbrainz_id ?? null,
+			artistMbid: album.artist_id ?? null,
+			mode: 'audition',
+			onFirstClip: () => report(entry, 'sampled'),
+			pick: entry.kind === 'pick' ? 'weekly_set' : 'dig_further'
+		};
+	}
+
+	// While this page is here: the week passes over picks answered on this
+	// counter, and the floating sample player stays hidden (the post shows it)
+	$effect(() =>
+		pickAnswers.register({
+			open: (key) => {
+				const entry = entryAt(key);
+				return !!entry && deck.stateOf(entry) === 'open';
+			}
+		})
+	);
 
 	function toggleSample() {
 		const entry = current;
@@ -220,9 +253,48 @@
 			deckSampler.stop();
 			return;
 		}
-		const album = albumOf(entry);
-		report(entry, 'sampled');
-		void deckSampler.start(entry.key, album.artist_name ?? '', album.title);
+		const { key, artist, title, ...ctx } = sampleOf(entry);
+		deckSampler.start(key, artist, title, ctx);
+	}
+
+	// "Play the week": the week's picks in set order, three clips each, past
+	// the ones answered No or known already.
+	const PASSED_OVER: PickState[] = ['no', 'not_now', 'not_artist', 'known'];
+	const weekToPlay = $derived(
+		deck.entries.filter(
+			(entry) => entry.kind === 'pick' && !PASSED_OVER.includes(deck.stateOf(entry))
+		)
+	);
+
+	function playTheWeek() {
+		if (weekPlaying) {
+			deckSampler.stop();
+			return;
+		}
+		if (weekToPlay.length === 0) return;
+		deckSampler.startStation(`Week ${set?.week_number ?? ''}`, weekToPlay.map(sampleOf), WEEK);
+	}
+
+	const weekPosition = $derived.by(() => {
+		if (!weekPlaying || !set) return null;
+		const playing = entryAt(deckSampler.activeKey);
+		return playing?.kind === 'pick' ? `${playing.pick.pick_no} of ${set.picks.length}` : null;
+	});
+
+	// the counter follows the week as it plays
+	$effect(() => {
+		const key = deckSampler.activeKey;
+		if (!key || deckSampler.stationTag !== WEEK) return;
+		untrack(() => {
+			if (current?.key !== key) go(() => deck.jumpTo(key));
+		});
+	});
+
+	function recordLabel(entry: DeckEntry): string {
+		const week = `WK ${set?.week_number ?? ''}`;
+		return entry.kind === 'pick'
+			? `${week} / NO ${entry.pick.pick_no}`
+			: `${week} / EXTRA ${entry.n}`;
 	}
 
 	// ---------- answers ----------
@@ -243,7 +315,11 @@
 	};
 
 	function moveOut(key: string, state: PickState, look: 'kept' | 'later' | 'passed') {
-		if (deckSampler.activeKey === key) deckSampler.stop();
+		// an answer acts on what is playing: the week moves on, a lone sample stops
+		if (deckSampler.activeKey === key) {
+			if (weekPlaying && deckSampler.hasNext) deckSampler.next();
+			else deckSampler.stop();
+		}
 		exit = { ...EXITS[look], duration: 240 };
 		deck.answer(key, state);
 	}
@@ -276,9 +352,13 @@
 		};
 	}
 
-	async function handleKeep() {
-		const entry = current;
-		if (!entry || answersOff) return;
+	/** Whether `entry` can take an answer now. */
+	function answerable(entry: DeckEntry): boolean {
+		return !busy && deck.stateOf(entry) === 'open';
+	}
+
+	async function handleKeep(entry: DeckEntry | null = current) {
+		if (!entry || !answerable(entry)) return;
 		const album = albumOf(entry);
 		if (!album.musicbrainz_id) return;
 		keeping = true;
@@ -333,9 +413,8 @@
 		});
 	}
 
-	async function handleLater() {
-		const entry = current;
-		if (!entry || answersOff) return;
+	async function handleLater(entry: DeckEntry | null = current) {
+		if (!entry || !answerable(entry)) return;
 		try {
 			await markLater.mutateAsync(laterInput(entry));
 		} catch {
@@ -689,6 +768,7 @@
 								{set}
 								{looks}
 								current={current?.kind === 'pick' ? current.key : null}
+								playing={sounding ? deckSampler.activeKey : null}
 								answered={deck.answered}
 								label={binLabel}
 								found={status === 'being_set_out' ? (week?.found_so_far ?? 0) : null}
@@ -698,7 +778,12 @@
 						</div>
 					{/snippet}
 					{#snippet post()}
-						<ListeningPost />
+						<ListeningPost
+							{weekPlaying}
+							{weekPosition}
+							weekOff={weekToPlay.length === 0}
+							onweek={playTheWeek}
+						/>
 					{/snippet}
 					{#snippet receipt()}
 						<WeekReceipt {set} printing={arriving} />
@@ -811,6 +896,7 @@
 						note={linked
 							? undefined
 							: 'Made from your shelves alone. Link ListenBrainz to add what you play elsewhere.'}
+						recordLabel={recordLabel(current)}
 						{sampling}
 						hasPrevious={deck.index > 0}
 						hasNext={deck.index < deck.entries.length - 1 || deck.extraLeft}

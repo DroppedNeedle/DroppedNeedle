@@ -1,6 +1,7 @@
 <!--
 	This week's picks in a bin, filed behind a divider tab for each of the
-	person's tastes, with what became of each and whether they heard it.
+	person's tastes, with what became of each and whether they heard it. The
+	pick a sample is playing from shows three moving bars.
 	The pick on the counter is pulled forward as a paper slip. While the set
 	is being put out the bin shows its eight places, filled as they are
 	found.
@@ -26,6 +27,8 @@
 		looks: Map<string, StateLook | undefined>;
 		/** The key of the pick on the counter; none once every pick is answered. */
 		current: string | null;
+		/** The key of the pick a sample is playing from. */
+		playing?: string | null;
 		answered: number;
 		label: string;
 		/** While the set is put out: how many of eight are found. */
@@ -38,6 +41,7 @@
 		set,
 		looks,
 		current,
+		playing = null,
 		answered,
 		label,
 		found = null,
@@ -124,6 +128,10 @@
 		{/if}
 	{/snippet}
 	{#snippet state(row, isCurrent)}
+		{#if row.key === playing}
+			<span class="dn-week-bin__bars" aria-hidden="true"><i></i><i></i><i></i></span>
+			<span class="sr-only">Playing</span>
+		{/if}
 		{#if isCurrent}
 			<span class="dn-week-bin__here">On the counter</span>
 		{:else}
@@ -171,6 +179,44 @@
 		letter-spacing: 0.14em;
 		text-transform: uppercase;
 		color: var(--dn-muted);
+	}
+	.dn-week-bin__bars {
+		display: inline-flex;
+		align-items: flex-end;
+		gap: 2px;
+		height: 14px;
+		margin-right: 0.375rem;
+	}
+	.dn-week-bin__bars i {
+		width: 3px;
+		height: 8px;
+		border-radius: 1px;
+		background: currentColor;
+		animation: dn-week-bin-bar 0.8s ease-in-out infinite;
+	}
+	.dn-week-bin__bars i:nth-child(2) {
+		height: 14px;
+		animation-duration: 0.6s;
+		animation-delay: -0.2s;
+	}
+	.dn-week-bin__bars i:nth-child(3) {
+		height: 5px;
+		animation-duration: 0.7s;
+		animation-delay: -0.4s;
+	}
+	@keyframes dn-week-bin-bar {
+		0%,
+		100% {
+			height: 4px;
+		}
+		50% {
+			height: 14px;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.dn-week-bin__bars i {
+			animation: none;
+		}
 	}
 	.dn-week-bin__short {
 		margin: 0.75rem 0.375rem;

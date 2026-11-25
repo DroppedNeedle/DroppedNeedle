@@ -1,4 +1,4 @@
-import type { ListenSource } from './types';
+import type { AlbumPreviewMode, ListenSource } from './types';
 import { key, userScope } from '$lib/queries/keys';
 
 // Every Discover key is the caller's.
@@ -56,8 +56,12 @@ export const DiscoverQueryKeyFactory = {
 			[...root(userId), 'radio-plan', fingerprint] as const,
 		playlistSuggestions: (userId: DiscoverV3UserId, playlistId: string, count: number) =>
 			[...root(userId), 'playlist-suggestions', playlistId, count] as const,
-		albumPreview: (userId: DiscoverV3UserId, artist: string, album: string, count: number | null) =>
-			[...root(userId), 'album-preview', artist, album, count] as const,
+		albumPreview: (
+			userId: DiscoverV3UserId,
+			artist: string,
+			album: string,
+			mode: AlbumPreviewMode
+		) => [...root(userId), 'album-preview', artist, album, mode] as const,
 		trackPreview: (userId: DiscoverV3UserId, artist: string, track: string) =>
 			[...root(userId), 'track-preview', artist, track] as const,
 		youtubeTrackSearch: (userId: DiscoverV3UserId, artist: string, track: string) =>

@@ -20,8 +20,8 @@ use super::{
     engine::weekly,
     later,
     models::{
-        AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection, DigFurtherPick,
-        DiscoverActivityRequest, DiscoverActivityResponse, DiscoverFeedbackEntry,
+        AlbumPreviewMode, AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection,
+        DigFurtherPick, DiscoverActivityRequest, DiscoverActivityResponse, DiscoverFeedbackEntry,
         DiscoverFeedbackRequest, DiscoverFeedbackResponse, DiscoverHealthResponse,
         DiscoverPickEventRequest, DiscoverPrefs, DiscoverQueueStatusResponse, DiscoverResponse,
         DiscoverTuningEntry, DiscoverTuningRequest, DiscoverTuningsResponse, FeedbackTarget,
@@ -106,8 +106,11 @@ pub struct AlbumPreviewQuery {
     pub artist: String,
     /// Album name.
     pub album: String,
-    /// Wanted sample count (1-8, default 4).
+    /// Wanted sample count (1-8, default 4), in the `first` mode.
     pub count: Option<i64>,
+    /// Which tracks to answer, `first` by default.
+    #[serde(default)]
+    pub mode: AlbumPreviewMode,
 }
 
 // ---------------------------------------------------------------------------
@@ -772,7 +775,8 @@ pub async fn track_preview(
         .map_err(ApiError::from)
 }
 
-/// Ordered 30-second samples of an album's first tracks.
+/// 30-second samples of an album: its first tracks in album order, or in the
+/// audition mode its opener, best-known track and a deep cut.
 #[utoipa::path(
     get,
     tag = "discover",
@@ -780,7 +784,8 @@ pub async fn track_preview(
     params(
         ("artist" = String, Query, description = "Artist name"),
         ("album" = String, Query, description = "Album name"),
-        ("count" = Option<i64>, Query, description = "Wanted samples, 1-8"),
+        ("count" = Option<i64>, Query, description = "Wanted samples in the first mode, 1-8"),
+        ("mode" = Option<AlbumPreviewMode>, Query, description = "first (default) or audition"),
     ),
     responses(
         (status = 200, description = "Album samples", body = AlbumPreviewResponse),
@@ -795,7 +800,7 @@ pub async fn album_preview(
     _user: User,
     ValidQuery(query): ValidQuery<AlbumPreviewQuery>,
 ) -> Result<Json<AlbumPreviewResponse>, ApiError> {
-    services::album_preview(&deps, &query.artist, &query.album, query.count)
+    services::album_preview(&deps, &query.artist, &query.album, query.count, query.mode)
         .await
         .map(Json)
         .map_err(ApiError::from)

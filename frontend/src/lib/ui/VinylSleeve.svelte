@@ -7,7 +7,10 @@
 	from screen readers, still, gone under high contrast). `class` sizes the
 	whole piece: the sleeve takes 72% of its width and the record the rest.
 	On a phone the record is smaller, and under 480px it goes so the cover
-	keeps the room.
+	keeps the room. `playing` slides the record a tenth of the width further
+	out (leave that room beside the piece), so its label
+	(`label`, printed on it) shows and turns at 33 a minute; under reduced
+	motion it stays home and still.
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
@@ -15,14 +18,20 @@
 	interface Props {
 		/** Layout only: the width of cover and record together. */
 		class?: string;
+		/** The record is out and turning: something on it is playing. */
+		playing?: boolean;
+		/** Short text printed on the record's label, e.g. "WK 47 / NO 3". */
+		label?: string;
 		children: Snippet;
 	}
 
-	let { class: className = '', children }: Props = $props();
+	let { class: className = '', playing = false, label, children }: Props = $props();
 </script>
 
-<div class="dn-sleeve {className}">
-	<div class="dn-decor dn-sleeve__record" aria-hidden="true"></div>
+<div class="dn-sleeve {className}" class:is-playing={playing}>
+	<div class="dn-decor dn-sleeve__record" aria-hidden="true">
+		{#if label}<span class="dn-sleeve__mark">{label}</span>{/if}
+	</div>
 	<div class="dn-sleeve__cover">
 		<div class="dn-sleeve__art">
 			{@render children()}
@@ -110,11 +119,51 @@
 		box-shadow:
 			inset 0 0 0 1.5px rgb(255 255 255 / 0.16),
 			0 12px 30px -10px rgb(0 0 0 / 0.6);
+		transition: translate 700ms var(--ease-spring);
+	}
+	/* a tenth of the piece's width further out: the caller leaves that room beside it */
+	.is-playing .dn-sleeve__record {
+		translate: 10cqw -50%;
+	}
+
+	/* The label's print, in the label's middle; it turns with the record. */
+	.dn-sleeve__mark {
+		position: absolute;
+		inset: 0;
+		display: grid;
+		place-items: center;
+		padding: 0 38%;
+		font-family: var(--font-mono);
+		font-size: max(7px, 2.1cqw);
+		font-weight: 700;
+		line-height: 1.15;
+		letter-spacing: 0.06em;
+		text-align: center;
+		text-transform: uppercase;
+		color: var(--dn-vinyl);
+		rotate: -24deg;
+	}
+	.is-playing .dn-sleeve__mark {
+		animation: dn-sleeve-turn 1.8s linear infinite;
+	}
+	@keyframes dn-sleeve-turn {
+		from {
+			rotate: -24deg;
+		}
+		to {
+			rotate: 336deg;
+		}
 	}
 
 	@media (prefers-reduced-motion: reduce) {
 		.dn-sleeve__cover {
 			rotate: none;
+		}
+		.is-playing .dn-sleeve__record {
+			translate: 0 -50%;
+		}
+		.is-playing .dn-sleeve__mark {
+			animation: none;
 		}
 	}
 

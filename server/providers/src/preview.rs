@@ -116,8 +116,24 @@ pub struct PreviewTrack {
     pub preview_url: String,
     /// Preview length in seconds (always 30 from these legs).
     pub duration_s: Option<u32>,
-    /// Position within the album, when known.
+    /// Position within its disc, when known.
     pub position: Option<i64>,
+    /// The disc it is on, when known; none reads as disc 1.
+    #[serde(default)]
+    pub disc: Option<i64>,
+    /// Deezer's popularity score, higher is better known. None from iTunes,
+    /// which publishes no such number.
+    #[serde(default)]
+    pub rank: Option<i64>,
+}
+
+/// The service an album's previews came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreviewProvider {
+    /// Deezer, asked first.
+    Deezer,
+    /// iTunes, asked when Deezer has nothing.
+    Itunes,
 }
 
 // ---------------------------------------------------------------------------
@@ -428,6 +444,8 @@ impl PreviewClient {
                 preview_url: preview_url.to_owned(),
                 duration_s: Some(PREVIEW_DURATION_S),
                 position: hit.track_position,
+                disc: hit.disk_number,
+                rank: hit.rank,
             })
         }))
     }
@@ -502,6 +520,8 @@ impl PreviewClient {
                 preview_url: preview_url.to_owned(),
                 duration_s: Some(PREVIEW_DURATION_S),
                 position,
+                disc: hit.disk_number,
+                rank: hit.rank,
             });
             if results.len() >= limit {
                 break;
@@ -560,6 +580,8 @@ impl PreviewClient {
                 preview_url: preview_url.to_string(),
                 duration_s: Some(PREVIEW_DURATION_S),
                 position: None,
+                disc: hit.disc_number,
+                rank: None,
             }))
     }
 
@@ -599,6 +621,8 @@ impl PreviewClient {
                 preview_url: preview_url.to_string(),
                 duration_s: Some(PREVIEW_DURATION_S),
                 position,
+                disc: hit.disc_number,
+                rank: None,
             });
             if results.len() >= limit {
                 break;
@@ -658,6 +682,8 @@ impl PreviewClient {
                 preview_url: web_address::or_empty(hit.preview.clone()),
                 duration_s: Some(PREVIEW_DURATION_S),
                 position: None,
+                disc: hit.disk_number,
+                rank: hit.rank,
             });
             if results.len() >= limit {
                 break;
@@ -685,27 +711,27 @@ impl PreviewClient {
         }
     }
 
-    /// Ordered 30s samples of an album's first tracks with Deezer-to-iTunes
-    /// fallback.
+    /// Ordered 30s samples of an album's first `limit` tracks with
+    /// Deezer-to-iTunes fallback, and the service that had them.
     pub async fn get_album_preview_tracks(
         &self,
         artist: &str,
         album: &str,
         limit: usize,
         priority: RequestPriority,
-    ) -> (Vec<PreviewTrack>, Option<&'static str>) {
+    ) -> (Vec<PreviewTrack>, Option<PreviewProvider>) {
         match self
             .deezer_album_tracks(artist, album, limit, priority)
             .await
         {
-            Ok(tracks) if !tracks.is_empty() => return (tracks, Some("deezer")),
+            Ok(tracks) if !tracks.is_empty() => return (tracks, Some(PreviewProvider::Deezer)),
             _ => {}
         }
         match self
             .itunes_album_tracks(artist, album, limit, priority)
             .await
         {
-            Ok(tracks) if !tracks.is_empty() => (tracks, Some("itunes")),
+            Ok(tracks) if !tracks.is_empty() => (tracks, Some(PreviewProvider::Itunes)),
             _ => (Vec::new(), None),
         }
     }

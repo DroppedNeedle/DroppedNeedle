@@ -1771,7 +1771,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Ordered 30-second samples of an album's first tracks. */
+        /**
+         * 30-second samples of an album: its first tracks in album order, or in the
+         *     audition mode its opener, best-known track and a deep cut.
+         */
         get: operations["album_preview"];
         put?: never;
         post?: never;
@@ -11301,11 +11304,16 @@ export interface components {
              */
             total: number;
         };
-        /** @description Ordered 30-second samples of an album's first tracks. */
+        /**
+         * @description Which of an album's tracks an album preview answers.
+         * @enum {string}
+         */
+        AlbumPreviewMode: "first" | "audition";
+        /** @description Ordered 30-second samples of an album. */
         AlbumPreviewResponse: {
             /** @description Provider that served the previews, when found. */
-            provider?: string | null;
-            /** @description Sampled tracks in album order. */
+            provider?: null | components["schemas"]["PreviewSource"];
+            /** @description Sampled tracks: in album order, or in the audition's play order. */
             tracks?: components["schemas"]["PreviewTrackItem"][];
         };
         /**
@@ -22538,6 +22546,16 @@ export interface components {
             ready_album_count: number;
             selected_root_count: number;
         };
+        /**
+         * @description What an audition clip is to its album.
+         * @enum {string}
+         */
+        PreviewRole: "opener" | "best_known" | "deep_cut";
+        /**
+         * @description The service a preview clip comes from.
+         * @enum {string}
+         */
+        PreviewSource: "deezer" | "itunes";
         /** @description One previewed track. */
         PreviewTrackItem: {
             /** @description Artist name. */
@@ -22554,6 +22572,10 @@ export interface components {
             position?: number | null;
             /** @description Preview audio URL (short-lived, never long-cached). */
             preview_url: string;
+            /** @description What the clip is to its album, in the audition mode. */
+            role?: null | components["schemas"]["PreviewRole"];
+            /** @description The service the clip comes from. */
+            source: components["schemas"]["PreviewSource"];
             /** @description Track title. */
             title: string;
         };
@@ -32093,8 +32115,10 @@ export interface operations {
                 artist: string;
                 /** @description Album name */
                 album: string;
-                /** @description Wanted samples, 1-8 */
+                /** @description Wanted samples in the first mode, 1-8 */
                 count?: number;
+                /** @description first (default) or audition */
+                mode?: components["schemas"]["AlbumPreviewMode"];
             };
             header?: never;
             path?: never;

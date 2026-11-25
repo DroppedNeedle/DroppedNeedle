@@ -577,3 +577,191 @@ async fn playlist_artists_resolve_media_server_ids_to_musicbrainz() {
     assert_eq!(artists, [BY_RECORDING, BY_NAME, NATIVE, BY_TAG]);
     assert_eq!(count, 6);
 }
+
+// ---------------------------------------------------------------------------
+// Album previews: the first tracks, and the audition's three clips
+// ---------------------------------------------------------------------------
+
+/// Deezer's and iTunes' recorded answers on a local stub. Deezer knows
+/// "A Night At The Opera" (twelve ranked tracks), "Two Songs" (its first
+/// two rows) and "Two Discs" (its first six rows as two discs of three,
+/// the fifth ranked highest) and has nothing else, so "Nevermind" falls to
+/// iTunes. Answers
+/// the origin and every Deezer track-list query string asked.
+async fn preview_stub() -> (String, Arc<Mutex<Vec<String>>>) {
+    let queries: Arc<Mutex<Vec<String>>> = Arc::default();
+    let seen = queries.clone();
+    let tracks: Value =
+        serde_json::from_str(include_str!("../fixtures/deezer/album_tracks.json")).unwrap();
+    let rows = tracks["data"].as_array().unwrap();
+    let two_rows = json!({"data": rows[..2], "total": 2});
+    let two_discs: Vec<Value> = rows[..6]
+        .iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let mut row = row.clone();
+            row["disk_number"] = json!(i / 3 + 1);
+            row["track_position"] = json!(i % 3 + 1);
+            row["rank"] = json!(if i == 4 { 999_999 } else { 1_000 });
+            row
+        })
+        .collect();
+    let two_discs = json!({"data": two_discs, "total": 6});
+    let stub = Router::new()
+        .route(
+            "/deezer/search/album",
+            get(|Query(query): Query<HashMap<String, String>>| async move {
+                let q = query.get("q").cloned().unwrap_or_default();
+                if q.contains(r#"album:"A Night At The Opera""#) {
+                    include_str!("../fixtures/deezer/search_album.json").to_owned()
+                } else if q.contains(r#"album:"Two Songs""#) {
+                    json!({"data": [{"id": 42, "artist": {"name": "Queen"}}]}).to_string()
+                } else if q.contains(r#"album:"Two Discs""#) {
+                    json!({"data": [{"id": 43, "artist": {"name": "Queen"}}]}).to_string()
+                } else {
+                    include_str!("../fixtures/deezer/search_track_no_hits.json").to_owned()
+                }
+            }),
+        )
+        .route(
+            "/deezer/album/{id}/tracks",
+            get(
+                move |axum::extract::Path(id): axum::extract::Path<String>,
+                      uri: axum::http::Uri| {
+                    let seen = seen.clone();
+                    let tracks = tracks.clone();
+                    let two_rows = two_rows.clone();
+                    let two_discs = two_discs.clone();
+                    async move {
+                        seen.lock()
+                            .unwrap()
+                            .push(uri.query().unwrap_or_default().to_owned());
+                        Json(match id.as_str() {
+                            "42" => two_rows,
+                            "43" => two_discs,
+                            _ => tracks,
+                        })
+                    }
+                },
+            ),
+        )
+        .route(
+            "/itunes/search",
+            get(|| async { include_str!("../fixtures/itunes/search_album_tracks.json") }),
+        );
+    (serve(stub).await, queries)
+}
+
+/// The titles, roles and sources an album preview answers.
+async fn previewed(app: &TestApp, auth: &str, query: &str) -> Vec<(String, Value, Value)> {
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("/api/v3/discover/album-preview?{query}"),
+            &[("authorization", auth)],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body["tracks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|track| {
+            (
+                track["title"].as_str().unwrap().to_owned(),
+                track.get("role").cloned().unwrap_or(Value::Null),
+                track["source"].clone(),
+            )
+        })
+        .collect()
+}
+
+/// The audition reads the whole track list in its one tracks call and
+/// answers the opener, the highest-ranked other track and the track nearest
+/// two thirds through. Without a rank (iTunes) the second track stands in
+/// for the best known; an album with two previews answers two. Positions
+/// start again on each disc, and the clips come from the whole album.
+#[tokio::test]
+async fn album_preview_audition_picks_opener_best_known_and_deep_cut() {
+    let (origin, queries) = preview_stub().await;
+    let app = TestApp::start_with(
+        "album-preview-audition",
+        crate::common::outbound_at(&origin),
+    )
+    .await;
+    let user = app.login_user("audition").await;
+    let auth = user.authorization.as_str();
+    let row =
+        |title: &str, role: &str, source: &str| (title.to_owned(), json!(role), json!(source));
+
+    assert_eq!(
+        previewed(
+            &app,
+            auth,
+            "artist=Queen&album=A%20Night%20At%20The%20Opera&mode=audition"
+        )
+        .await,
+        [
+            row("Death On Two Legs (Dedicated To...)", "opener", "deezer"),
+            row("Bohemian Rhapsody", "best_known", "deezer"),
+            row("The Prophet's Song", "deep_cut", "deezer"),
+        ]
+    );
+    assert_eq!(*queries.lock().unwrap(), ["limit=100"]);
+
+    assert_eq!(
+        previewed(&app, auth, "artist=Nirvana&album=Nevermind&mode=audition").await,
+        [
+            row("Smells Like Teen Spirit", "opener", "itunes"),
+            row("In Bloom", "best_known", "itunes"),
+            row("Drain You", "deep_cut", "itunes"),
+        ]
+    );
+
+    assert_eq!(
+        previewed(&app, auth, "artist=Queen&album=Two%20Songs&mode=audition").await,
+        [
+            row("Death On Two Legs (Dedicated To...)", "opener", "deezer"),
+            row("Lazing On A Sunday Afternoon", "best_known", "deezer"),
+        ]
+    );
+
+    assert_eq!(
+        previewed(&app, auth, "artist=Queen&album=Two%20Discs&mode=audition").await,
+        [
+            row("Death On Two Legs (Dedicated To...)", "opener", "deezer"),
+            row("'39", "best_known", "deezer"),
+            row("You're My Best Friend", "deep_cut", "deezer"),
+        ]
+    );
+
+    app.stop().await;
+}
+
+/// With no mode, or `first`, the preview is the album's first tracks in
+/// album order, read as before, with no role.
+#[tokio::test]
+async fn album_preview_first_mode_answers_as_before() {
+    let (origin, queries) = preview_stub().await;
+    let app = TestApp::start_with("album-preview-first", crate::common::outbound_at(&origin)).await;
+    let user = app.login_user("first").await;
+    let auth = user.authorization.as_str();
+    let first = |title: &str| (title.to_owned(), Value::Null, json!("deezer"));
+    let expected = [
+        first("Death On Two Legs (Dedicated To...)"),
+        first("Lazing On A Sunday Afternoon"),
+        first("I'm In Love With My Car"),
+        first("You're My Best Friend"),
+    ];
+
+    for query in [
+        "artist=Queen&album=A%20Night%20At%20The%20Opera",
+        "artist=Queen&album=A%20Night%20At%20The%20Opera&mode=first",
+    ] {
+        assert_eq!(previewed(&app, auth, query).await, expected);
+    }
+    assert_eq!(*queries.lock().unwrap(), ["limit=4", "limit=4"]);
+
+    app.stop().await;
+}

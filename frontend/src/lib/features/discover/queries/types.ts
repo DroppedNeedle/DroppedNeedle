@@ -36,6 +36,9 @@ export type RadioPlanRequest = Schemas['RadioPlanRequest'];
 export type RadioPlanTrack = Schemas['RadioPlanTrack'];
 export type RadioPlanResponse = Schemas['RadioPlanResponse'];
 export type PreviewTrackItem = Schemas['PreviewTrackItem'];
+export type PreviewRole = Schemas['PreviewRole'];
+export type PreviewSource = Schemas['PreviewSource'];
+export type AlbumPreviewMode = Schemas['AlbumPreviewMode'];
 
 /** A section row of one kind. */
 export type SectionRow<K extends SectionItem['kind']> = Extract<SectionItem, { kind: K }>;

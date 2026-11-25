@@ -8,7 +8,8 @@
 	mouse wheel turns it one arrow-key step per notch. `label` is its
 	accessible name and is printed under it with the value, which `format`
 	writes for the readout and for screen readers; `caption="beside"` prints
-	them to its right, for a knob in a short rail. `xs` (58px) sits on a
+	them to its right, for a knob in a short rail, and `caption="none"` leaves
+	them to screen readers, for a knob on a crowded plate. `xs` (58px) sits on a
 	small plate; `lit="sound"` turns the tick and the lit dots plum, for the
 	controls of what was found by sound.
 -->
@@ -32,8 +33,8 @@
 		/** Numbers printed beside the scale, at a value each. */
 		marks?: { at: number; text: string }[];
 		size?: 'xs' | 'sm' | 'lg';
-		/** Where the label and value print: under the dial, or to its right. */
-		caption?: 'below' | 'beside';
+		/** Where the label and value print: under the dial, to its right, or not at all. */
+		caption?: 'below' | 'beside' | 'none';
 		/** The colour of the tick and the lit dots. */
 		lit?: 'action' | 'sound';
 		format?: (value: number) => string;
@@ -249,10 +250,12 @@
 			</div>
 		</div>
 	</div>
-	<div class="dn-knob__caption" aria-hidden="true">
-		<span class="dn-knob__label">{label}</span>
-		<span class="dn-knob__value">{text}</span>
-	</div>
+	{#if caption !== 'none'}
+		<div class="dn-knob__caption" aria-hidden="true">
+			<span class="dn-knob__label">{label}</span>
+			<span class="dn-knob__value">{text}</span>
+		</div>
+	{/if}
 </div>
 
 <style>

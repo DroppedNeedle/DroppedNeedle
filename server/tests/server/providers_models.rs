@@ -2482,3 +2482,40 @@ fn listenbrainz_export_lines_decode_and_need_their_identity() {
         "a blank artist"
     );
 }
+
+/// Each row of Deezer's recorded album track list carries its rank, which
+/// the album leg reads; a row without one still decodes, as unranked.
+#[tokio::test]
+async fn a_deezer_album_track_reads_its_rank_and_decodes_without_one() {
+    let tracks = deezer(&[
+        ("/search/album", DEEZER_ALBUM_SEARCH_BODY),
+        (DEEZER_ALBUM_PATH, DEEZER_ALBUM_TRACKS_BODY),
+    ])
+    .previews
+    .deezer_album_tracks("Queen", "A Night At The Opera", 12, PRIORITY)
+    .await
+    .expect("decodes");
+    let bohemian = tracks
+        .iter()
+        .find(|track| track.title == "Bohemian Rhapsody")
+        .expect("on the album");
+    assert_eq!(bohemian.rank, Some(958_949));
+    assert!(tracks.iter().all(|track| track.rank.is_some()));
+
+    let mut answer: serde_json::Value =
+        serde_json::from_str(DEEZER_ALBUM_TRACKS_BODY).expect("json");
+    for row in answer["data"].as_array_mut().expect("rows") {
+        row.as_object_mut().expect("row").remove("rank");
+    }
+    let unranked = answer.to_string();
+    let tracks = deezer(&[
+        ("/search/album", DEEZER_ALBUM_SEARCH_BODY),
+        (DEEZER_ALBUM_PATH, unranked.as_str()),
+    ])
+    .previews
+    .deezer_album_tracks("Queen", "A Night At The Opera", 12, PRIORITY)
+    .await
+    .expect("decodes without a rank");
+    assert_eq!(tracks.len(), 12);
+    assert!(tracks.iter().all(|track| track.rank.is_none()));
+}

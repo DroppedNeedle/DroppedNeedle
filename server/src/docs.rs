@@ -44,6 +44,9 @@ use droppedneedle_kernel::{
         // The playlist export's format: a query parameter names it, but
         // the path macro does not collect it.
         droppedneedle_catalog::collections::models::ExportFormat,
+        // The album preview's mode: a query parameter names it, but the
+        // path macro does not collect it.
+        droppedneedle_catalog::discover::models::AlbumPreviewMode,
         // The `details` of a refused custom CSS sheet.
         crate::appearance::models::CssRefusal,
         crate::appearance::check::CssProblem,

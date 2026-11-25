@@ -536,6 +536,16 @@ async fn discover_week_counts_open_picks_and_stamps_what_was_seen() {
         [&card],
     );
     assert_eq!(seen, (2, first, next, next, next));
+    // A sample is taste, never a play: no play row, no album play and no
+    // playback event.
+    for table in [
+        "library_play_history",
+        "library_user_album_plays",
+        "media_playback_events",
+    ] {
+        let rows: i64 = db.one(&format!("SELECT COUNT(*) FROM {table}"), []);
+        assert_eq!(rows, 0, "a sample wrote to {table}");
+    }
 
     let offered: i64 = db.one("SELECT COUNT(*) FROM catalog_discover_picks", []);
     let (status, _) = call(&app, "POST", events, event(&album(9), "shown")).await;

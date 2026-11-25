@@ -15,8 +15,8 @@ use crate::discover::{
     genre::WithGenrePages,
     later::{LaterError, LaterKey, LaterPile},
     models::{
-        AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection, DigFurtherPick,
-        DiscoverActivityResponse, DiscoverFeedbackEntry, DiscoverFeedbackRequest,
+        AlbumPreviewMode, AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection,
+        DigFurtherPick, DiscoverActivityResponse, DiscoverFeedbackEntry, DiscoverFeedbackRequest,
         DiscoverFeedbackResponse, DiscoverHealthResponse, DiscoverPickEventRequest, DiscoverPrefs,
         DiscoverQueueStatusResponse, DiscoverResponse, DiscoverTuningEntry, DiscoverTuningRequest,
         DiscoverTuningsResponse, GenreDetailResponse, HomeResponse, IntegrationStatus, LaterAlbum,
@@ -616,19 +616,23 @@ pub async fn track_preview(
     Ok(deps.previews.track_preview(&artist, &track).await?)
 }
 
-/// Ordered 30-second album samples.
+/// 30-second album samples: the first tracks, or an audition's three clips.
 pub async fn album_preview(
     deps: &DiscoverDeps,
     artist: &str,
     album: &str,
     count: Option<i64>,
+    mode: AlbumPreviewMode,
 ) -> Result<AlbumPreviewResponse, ServiceError> {
     check_name(artist, "artist")?;
     check_name(album, "album")?;
     let artist: String = artist.chars().take(NAME_MAX_LEN).collect();
     let album: String = album.chars().take(NAME_MAX_LEN).collect();
     let count = clamp_limit(count, 4, ALBUM_PREVIEW_MAX);
-    let (tracks, provider) = deps.previews.album_preview(&artist, &album, count).await?;
+    let (tracks, provider) = deps
+        .previews
+        .album_preview(&artist, &album, count, mode)
+        .await?;
     Ok(AlbumPreviewResponse { tracks, provider })
 }
 

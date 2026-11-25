@@ -84,9 +84,12 @@ pub struct SongHit {
         deserialize_with = "web_address::or_none"
     )]
     pub preview_url: Option<WebAddress>,
-    /// Position within the album.
+    /// Position within its disc.
     #[serde(default, rename = "trackNumber")]
     pub track_number: Option<i64>,
+    /// The disc it is on, counting from 1; a hit without one reads as none.
+    #[serde(default, rename = "discNumber")]
+    pub disc_number: Option<i64>,
     /// Length in milliseconds.
     #[serde(default, rename = "trackTimeMillis")]
     pub track_time_millis: Option<i64>,

@@ -22,6 +22,7 @@
 		| 'caps'
 		| 'caps-link'
 		| 'disc'
+		| 'key'
 		| 'danger'
 		| 'danger-ghost'
 		| 'danger-outline'
@@ -41,8 +42,10 @@
 	// action that sits beside outline buttons), caps a quiet mono
 	// uppercase link-like button (Back to top), caps-link the same
 	// underlined (a card's "Why this?"), disc a round paper face with an ink
-	// edge that sits over a cover (a sample's play button), and the service
-	// variants (lastfm, listenbrainz, spotify) that service's own colour.
+	// edge that sits over a cover (a sample's play button), key a hardware key
+	// on a metal panel that stays down while `active` (the listening post's
+	// Play the week), and the service variants (lastfm, listenbrainz, spotify)
+	// that service's own colour.
 	const buttonVariants: Record<ButtonVariant, string> = {
 		neutral: 'btn dn-btn-neutral',
 		primary: 'btn dn-btn-action',
@@ -53,6 +56,7 @@
 		caps: 'btn btn-ghost dn-btn-ghost dn-btn-caps',
 		'caps-link': 'btn btn-ghost dn-btn-ghost dn-btn-caps dn-btn-caps-link',
 		disc: 'btn dn-btn-disc',
+		key: 'btn dn-btn-key',
 		danger: 'btn btn-error',
 		'danger-ghost': 'btn btn-ghost dn-btn-ghost text-error',
 		'danger-outline': 'btn dn-btn-danger-outline',
@@ -94,6 +98,8 @@
 		pill?: boolean;
 		/** The pressed or current state of a toggle-like button. */
 		active?: boolean;
+		/** A lamp before the label, lit or not; none when unset. For a `key`. */
+		lamp?: boolean;
 		/** The label may wrap onto more lines and the button never grows
 		 * wider than its row, for a chip with a long label. */
 		wrap?: boolean;
@@ -117,6 +123,7 @@
 		size = 'md',
 		pill = false,
 		active = false,
+		lamp,
 		wrap = false,
 		loading = false,
 		loadingLabel,
@@ -189,6 +196,9 @@
 		</span>
 		<span class="contents text-transparent">{@render children?.()}</span>
 	{:else}
+		{#if lamp !== undefined}
+			<span class="dn-btn-lamp" class:is-lit={lamp} aria-hidden="true"></span>
+		{/if}
 		{#if loading && (iconPosition === 'start' || !Icon)}
 			<span class={spinnerSizes[size]} aria-hidden="true"></span>
 		{:else if Icon && iconPosition === 'start'}
