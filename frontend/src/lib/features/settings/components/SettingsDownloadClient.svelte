@@ -20,11 +20,15 @@
 	import { outsideLink } from '$lib/ui/outsideLink';
 	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
+	import { fillConnection, useSuggestion } from './setup/suggest.svelte';
 
 	import DownloadClientCard from './DownloadClientCard.svelte';
 
 	const statusQuery = getDownloadClientStatusQuery();
 	const test = createTestDownloadClientMutation();
+
+	// An address the setup guide found, filled in while none is set.
+	let { suggested }: { suggested?: string } = $props();
 
 	const section = createSettingsSection(
 		getDownloadClientConfigQuery(),
@@ -41,6 +45,11 @@
 				};
 			}
 		}
+	);
+	useSuggestion(
+		section,
+		() => suggested,
+		(draft, url) => fillConnection(draft, url, true)
 	);
 
 	const status = $derived(statusQuery.data);
@@ -108,6 +117,7 @@
 	{/snippet}
 	{#snippet children(draft)}
 		<DownloadClientCard
+			open={suggested !== undefined}
 			title="slskd"
 			sourceLabel="Soulseek"
 			icon={HardDriveDownload}

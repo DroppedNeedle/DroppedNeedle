@@ -13,8 +13,12 @@
 	import TextField from '$lib/ui/TextField.svelte';
 	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
+	import { fillConnection, useSuggestion } from './setup/suggest.svelte';
 
 	const test = createTestProwlarrMutation();
+
+	// An address the setup guide found, filled in while none is set.
+	let { suggested }: { suggested?: string } = $props();
 
 	const section = createSettingsSection(
 		getProwlarrConfigQuery(),
@@ -25,6 +29,11 @@
 				return { passed: result.valid, message: result.message };
 			}
 		}
+	);
+	useSuggestion(
+		section,
+		() => suggested,
+		(draft, url) => fillConnection(draft, url, true)
 	);
 </script>
 
@@ -57,7 +66,7 @@
 					<TextField
 						label="URL"
 						mono
-						placeholder="http://localhost:9696"
+						placeholder="http://prowlarr:9696"
 						help="Your Prowlarr address. A plain http:// LAN URL is fine."
 						bind:value={draft.url}
 						error={section.fieldError('url', 'URL')}

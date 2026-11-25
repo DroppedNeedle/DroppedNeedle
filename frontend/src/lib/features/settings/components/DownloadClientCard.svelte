@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { ChevronDown } from 'lucide-svelte';
-	import type { Snippet } from 'svelte';
+	import { untrack, type Snippet } from 'svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import StatusChip from '$lib/ui/StatusChip.svelte';
@@ -14,6 +14,8 @@
 		enabled: boolean;
 		enableAriaLabel: string;
 		onToggle?: () => void;
+		/** Starts expanded, as the setup guide opens it. */
+		open?: boolean;
 		children: Snippet;
 	}
 
@@ -26,10 +28,12 @@
 		enabled = $bindable(),
 		enableAriaLabel,
 		onToggle,
+		open: startOpen = false,
 		children
 	}: Props = $props();
 
-	let open = $state(false);
+	// The card's own toggle takes over after the first draw.
+	let open = $state(untrack(() => startOpen));
 </script>
 
 <Card variant="bordered" padding="none" class="client-card {enabled ? 'is-active' : ''}">

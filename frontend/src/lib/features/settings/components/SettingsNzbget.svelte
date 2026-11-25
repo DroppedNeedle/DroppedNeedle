@@ -24,6 +24,7 @@
 	import TextField from '$lib/ui/TextField.svelte';
 	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
+	import { fillConnection, useSuggestion } from './setup/suggest.svelte';
 
 	import DownloadClientCard from './DownloadClientCard.svelte';
 
@@ -39,6 +40,9 @@
 	);
 
 	let testResult = $state<UsenetClientTestResult | null>(null);
+
+	// An address the setup guide found, filled in while none is set.
+	let { suggested }: { suggested?: string } = $props();
 
 	const section = createSettingsSection(getNzbgetConfigQuery(), createSaveNzbgetConfigMutation(), {
 		normalize: (draft) => ({
@@ -57,6 +61,11 @@
 			};
 		}
 	});
+	useSuggestion(
+		section,
+		() => suggested,
+		(draft, url) => fillConnection(draft, url, true)
+	);
 
 	function statusText(enabled: boolean, url: string): string {
 		const live = testResult ?? statusQuery.data;
@@ -98,6 +107,7 @@
 	{/snippet}
 	{#snippet children(draft)}
 		<DownloadClientCard
+			open={suggested !== undefined}
 			title="NZBGet"
 			sourceLabel="Usenet"
 			icon={Rss}

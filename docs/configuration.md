@@ -141,6 +141,8 @@ services:
 | Theme and your own CSS (kept on your account) | Profile > Appearance |
 | Site CSS for every signed-in page, and whether people may add their own (admin) | Settings > Appearance |
 
+The setup guide (Settings > Download Client > Open setup guide, and once by itself after the first account is made) only suggests. It asks nine fixed names on the container network, each at its usual port: `slskd:5030`, `sabnzbd:8080`, `nzbget:6789`, `prowlarr:9696`, `lidarr:8686`, `jellyfin:8096`, `navidrome:4533`, `plex:32400` and `deemix:6595`. The names are looked up through the container's own DNS, so a service shows only when it is on a network the DroppedNeedle container shares. Each gets one request with no key or password, and only to a private or local address. It also looks at the folders mounted into the container and one level inside them, reading folder listings only. Its "Set up" fills in the same form Settings shows, and only that form's Save changes anything. If SABnzbd answers but refuses the name, add `sabnzbd` to its host whitelist (Config > Special in SABnzbd).
+
 A redirect from a Jellyfin, Navidrome or Plex server is followed only on the same host and port, never from https to http, so its token or password never goes anywhere else. A redirect anywhere else fails, and Test says so: use the address the server answers on.
 
 ### Deemix

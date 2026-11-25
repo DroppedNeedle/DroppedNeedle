@@ -118,9 +118,9 @@ Then open [http://localhost:8688](http://localhost:8688).
 
 **3. First run.**
 
-1. Create the first admin account. This happens once.
-2. Add your library path under Settings > Library, using the in-container path (e.g. `/data/music`).
-3. Add your download client under Settings > Download Client, then Test and Save.
+1. Create the first admin account. This happens once, and opens the setup guide.
+2. The guide shows the music folders and download clients it found, such as `/data/music` or slskd at `http://slskd:5030`. Each "Set up" opens the usual settings form with that filled in: add the API key, Test and Save. Nothing changes until you save. You can reopen it from the setup checklist under Settings > Download Client.
+3. Anything it didn't find: add your library path under Settings > Library, using the in-container path (e.g. `/data/music`), and your download client under Settings > Download Client, then Test and Save.
 4. Press Scan for changes on Settings > Library. The scan reads and identifies files without renaming or retagging anything.
 5. Search the catalog, open an album, and Request it. Watch it land live on the Downloads page.
 

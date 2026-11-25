@@ -20,6 +20,7 @@
 	import SaveBar from '$lib/ui/SaveBar.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
 	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
+	import { fillConnection, useSuggestion } from './setup/suggest.svelte';
 
 	import DownloadClientCard from './DownloadClientCard.svelte';
 
@@ -46,6 +47,9 @@
 
 	let testResult = $state<DeemixStatus | null>(null);
 
+	// An address the setup guide found, filled in while none is set.
+	let { suggested }: { suggested?: string } = $props();
+
 	const section = createSettingsSection(configQuery, createSaveDeemixConfigMutation(), {
 		normalize: (draft) => ({
 			...draft,
@@ -67,6 +71,11 @@
 			};
 		}
 	});
+	useSuggestion(
+		section,
+		() => suggested,
+		(draft, url) => fillConnection(draft, url, true)
+	);
 
 	function summary(live: DeemixStatus): string {
 		if (!live.reachable || !live.deezer_reachable || !live.signed_in) return live.message;
@@ -124,6 +133,7 @@
 	{/snippet}
 	{#snippet children(draft)}
 		<DownloadClientCard
+			open={suggested !== undefined}
 			title="Deemix"
 			sourceLabel="Deezer"
 			icon={AudioLines}

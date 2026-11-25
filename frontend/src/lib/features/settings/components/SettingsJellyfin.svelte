@@ -15,9 +15,13 @@
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
+	import { useSuggestion } from './setup/suggest.svelte';
 
 	const verify = createVerifyJellyfinMutation();
 	let users = $state<JellyfinVerifyResult['users']>([]);
+
+	// An address the setup guide found, filled in while none is set.
+	let { suggested }: { suggested?: string } = $props();
 
 	const section = createSettingsSection(
 		getJellyfinSettingsQuery(),
@@ -34,6 +38,14 @@
 				if (result.success && !draft.user_id && users.length > 0) draft.user_id = users[0].id;
 				return { passed: result.success, message: result.message };
 			}
+		}
+	);
+	useSuggestion(
+		section,
+		() => suggested,
+		// Switching it on waits for a passed Test, so only the address is filled.
+		(draft, url) => {
+			if (!draft.jellyfin_url.trim()) draft.jellyfin_url = url;
 		}
 	);
 
@@ -55,7 +67,7 @@
 						label="Jellyfin URL"
 						type="url"
 						mono
-						placeholder="http://localhost:8096"
+						placeholder="http://jellyfin:8096"
 						bind:value={draft.jellyfin_url}
 						error={section.fieldError('jellyfin_url', 'Jellyfin URL')}
 					/>

@@ -47,7 +47,7 @@
 			});
 			authStore.setUser(toAuthUser(data.user));
 			authStore.setSetupRequired(false);
-			goto(withBasePath('/'));
+			goto(withBasePath('/settings/setup'));
 		} catch (e) {
 			error =
 				e instanceof ApiError ? e.message : 'Could not reach the server. Is DroppedNeedle running?';

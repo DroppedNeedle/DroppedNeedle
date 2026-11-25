@@ -5,6 +5,7 @@
 	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
 	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
+	import { useSuggestion } from './setup/suggest.svelte';
 	import {
 		createSaveImportFolderSettingsMutation,
 		getImportFolderSettingsQuery,
@@ -12,13 +13,25 @@
 	} from '$lib/features/settings/queries/SectionSettingsQueries.svelte';
 	import { IMPORT_FOLDER_ANCHOR, describeImportFolder } from './importFolderStatus';
 
-	// Whether the settings drawn above this card have loaded: until then a
-	// scroll to the card lands short of it.
-	let { aboveReady = true }: { aboveReady?: boolean } = $props();
+	interface Props {
+		// Whether the settings drawn above this card have loaded: until then a
+		// scroll to the card lands short of it.
+		aboveReady?: boolean;
+		// A folder the setup guide found, filled in while none is set.
+		suggested?: string;
+	}
+	let { aboveReady = true, suggested }: Props = $props();
 
 	const section = createSettingsSection(
 		getImportFolderSettingsQuery(),
 		createSaveImportFolderSettingsMutation()
+	);
+	useSuggestion(
+		section,
+		() => suggested,
+		(draft, path) => {
+			if (!draft.path.trim()) draft.path = path;
+		}
 	);
 	const statusQuery = getImportFolderStatusQuery();
 

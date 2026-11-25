@@ -14,9 +14,13 @@
 	import TextField from '$lib/ui/TextField.svelte';
 	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
+	import { fillConnection, useSuggestion } from './setup/suggest.svelte';
 	import LidarrImportSyncCard from './LidarrImportSyncCard.svelte';
 
 	const test = createTestLidarrMutation();
+
+	// An address the setup guide found, filled in while none is set.
+	let { suggested }: { suggested?: string } = $props();
 
 	const section = createSettingsSection(
 		getLidarrImportConfigQuery(),
@@ -27,6 +31,11 @@
 				return { passed: result.valid, message: result.message };
 			}
 		}
+	);
+	useSuggestion(
+		section,
+		() => suggested,
+		(draft, url) => fillConnection(draft, url, false)
 	);
 
 	// Locked until a connection is saved. The masked config returns an empty
@@ -62,7 +71,7 @@
 						<TextField
 							label="URL"
 							mono
-							placeholder="http://localhost:8686"
+							placeholder="http://lidarr:8686"
 							help="Your Lidarr address. A plain http:// LAN URL is fine."
 							bind:value={draft.url}
 							error={section.fieldError('url', 'URL')}

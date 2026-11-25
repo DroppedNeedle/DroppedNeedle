@@ -48,6 +48,9 @@
 	];
 	const NEW = '__new__';
 
+	// A Prowlarr address the setup guide found: its section opens with it filled in.
+	let { prowlarrSuggested }: { prowlarrSuggested?: string } = $props();
+
 	const indexersQuery = getIndexersQuery();
 	const backendQuery = getSearchBackendQuery();
 	const prowlarrQuery = getProwlarrConfigQuery();
@@ -72,7 +75,7 @@
 		const selected = backendQuery.data?.backend;
 		if (selected && !seededOpen) {
 			indexersOpen = selected === 'indexers';
-			prowlarrOpen = selected === 'prowlarr';
+			prowlarrOpen = selected === 'prowlarr' || prowlarrSuggested !== undefined;
 			seededOpen = true;
 		}
 	});
@@ -469,7 +472,7 @@
 		name="usenet-backend-sections"
 	>
 		{#if prowlarrOpen}
-			<SettingsProwlarr />
+			<SettingsProwlarr suggested={prowlarrSuggested} />
 		{/if}
 	</SettingsSectionCollapse>
 </section>

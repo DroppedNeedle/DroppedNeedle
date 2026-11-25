@@ -14,7 +14,7 @@ test('a fresh server is set up and its admin signs in again', async ({ page }) =
 	await page.getByRole('button', { name: 'Create Admin Account' }).click();
 
 	const logOut = page.getByRole('button', { name: 'Log out' });
-	await expect(page).toHaveURL(/\/$/);
+	await expect(page).toHaveURL(/\/settings\/setup$/);
 	await expect(logOut).toBeVisible();
 
 	await logOut.click();

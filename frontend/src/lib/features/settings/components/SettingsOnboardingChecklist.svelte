@@ -12,8 +12,10 @@
 	} from '$lib/features/downloads/queries/DownloadClientsQueries.svelte';
 	import { getLibraryRunHistoryQuery } from '$lib/features/library-management/queries/LibraryOperationQueries.svelte';
 	import { getTargetLibrarySettingsQuery } from '$lib/features/library-management/queries/LibraryPolicyQueries.svelte';
-	import { getUsenetIndexerState } from '$lib/features/settings/queries/usenetIndexer.svelte';
+	import { useIntegrationStatus } from '$lib/features/home/queries/home.svelte';
+	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import { withBasePath } from '$lib/utils/basePath';
 
 	const libQuery = getTargetLibrarySettingsQuery();
 	const runHistoryQuery = getLibraryRunHistoryQuery();
@@ -22,7 +24,7 @@
 	const sabQuery = getSabnzbdConfigQuery();
 	const nzbgetQuery = getNzbgetConfigQuery();
 	const deemixQuery = getDeemixConfigQuery();
-	const indexer = getUsenetIndexerState();
+	const integration = useIntegrationStatus();
 
 	const hasLibraryPath = $derived((libQuery.data?.library_roots.length ?? 0) > 0);
 	const slskdConfigured = $derived(Boolean(dcQuery.data?.url && dcQuery.data?.api_key));
@@ -33,10 +35,6 @@
 	const deemixEnabled = $derived(
 		deemixQuery.data?.enabled === true && Boolean(deemixQuery.data?.url)
 	);
-	const usenetClient = $derived(sabnzbdEnabled ? 'SABnzbd' : nzbgetEnabled ? 'NZBGet' : null);
-	// The selected backend counts, as in is_usenet_ready: a Prowlarr-only install
-	// with backend=indexers still shows the item (readiness is false there).
-	const hasIndexer = $derived(indexer.hasIndexer);
 	const mountOk = $derived(statusQuery.data?.mount?.ok === true);
 	const hasAcoustid = $derived(Boolean(libQuery.data?.acoustid_api_key));
 	// Done once ANY scan run has terminalized (completed, cancelled,
@@ -55,11 +53,12 @@
 		)
 	);
 
-	// Source-agnostic: "configured" if ANY acquisition path can act, so a Usenet-only
-	// (or Soulseek-only, or Deemix-only) install isn't nagged about the others. Deemix is
-	// its own source and client. The slskd mount item only appears once Soulseek is set up.
-	const aSourceConfigured = $derived(slskdConfigured || hasIndexer || deemixEnabled);
-	const aClientConfigured = $derived(slskdConfigured || usenetClient !== null || deemixEnabled);
+	// The server's one readiness answer: any source that can fetch, a plugin's
+	// included. The slskd mount item only appears once Soulseek is set up.
+	const aSourceConfigured = $derived(integration.current.download_client);
+	const aClientConfigured = $derived(
+		slskdConfigured || sabnzbdEnabled || nzbgetEnabled || deemixEnabled
+	);
 
 	const items = $derived([
 		{ label: 'Add a library path', done: hasLibraryPath, required: true, optional: false },
@@ -82,16 +81,6 @@
 						done: mountOk,
 						required: true,
 						optional: false
-					}
-				]
-			: []),
-		...(usenetClient
-			? [
-					{
-						label: `Mount ${usenetClient}'s downloads folder`,
-						done: true,
-						required: false,
-						optional: true
 					}
 				]
 			: []),
@@ -134,5 +123,10 @@
 				</li>
 			{/each}
 		</ul>
+		<div class="px-6 pb-5">
+			<Button variant="outline" size="sm" href={withBasePath('/settings/setup')}
+				>Open setup guide</Button
+			>
+		</div>
 	{/if}
 </Card>

@@ -18,10 +18,14 @@
 	import TextField from '$lib/ui/TextField.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
+	import { useSuggestion } from './setup/suggest.svelte';
 
 	type NavidromePlaylistSyncResult = components['schemas']['PlaylistSyncResult'];
 
 	const verify = createVerifyNavidromeMutation();
+
+	// An address the setup guide found, filled in while none is set.
+	let { suggested }: { suggested?: string } = $props();
 
 	const section = createSettingsSection(
 		getNavidromeSettingsQuery(),
@@ -35,6 +39,14 @@
 				const result = await verify.mutateAsync(draft);
 				return { passed: result.valid, message: result.message };
 			}
+		}
+	);
+	useSuggestion(
+		section,
+		() => suggested,
+		// Switching it on waits for a passed Test, so only the address is filled.
+		(draft, url) => {
+			if (!draft.navidrome_url.trim()) draft.navidrome_url = url;
 		}
 	);
 

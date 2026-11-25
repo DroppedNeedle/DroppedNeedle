@@ -1,20 +1,15 @@
 <script lang="ts">
 	import SettingsPaneHeader from './SettingsPaneHeader.svelte';
-	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import '$lib/features/library-management/components/library-management.css';
-	import { TriangleAlert, ArrowRight, CircleCheckBig, FolderCog, ScanSearch } from 'lucide-svelte';
-	import { ApiError } from '$lib/api/errors';
+	import { TriangleAlert, ArrowRight, FolderCog, ScanSearch } from 'lucide-svelte';
 	import {
 		getLibraryRestorableRootsQuery,
-		getRemovedLibraryRootsQuery,
-		getTargetLibrarySettingsQuery
+		getRemovedLibraryRootsQuery
 	} from '$lib/features/library-management/queries/LibraryPolicyQueries.svelte';
 	import {
 		createDropRemovedRootTracksMutation,
 		createPreviewLibraryPolicyApplyMutation,
-		createPreviewLibraryPolicyImpactMutation,
-		createRestoreLibraryRootsMutation,
-		createSaveTargetLibrarySettingsMutation
+		createRestoreLibraryRootsMutation
 	} from '$lib/features/library-management/queries/LibraryPolicyMutations.svelte';
 	import { createRequestLibraryRunMutation } from '$lib/features/library-management/queries/LibraryOperationMutations.svelte';
 	import {
@@ -26,10 +21,10 @@
 		getDownloadPolicyQuery,
 		createSaveDownloadPolicyMutation
 	} from '$lib/features/downloads/queries/DownloadClientsQueries.svelte';
-	import LibraryRootPolicyEditor from '$lib/features/library-management/components/LibraryRootPolicyEditor.svelte';
-	import ScriptWorkbench from '$lib/features/library-management/components/ScriptWorkbench.svelte';
 	import LibraryScanScheduleControl from '$lib/features/library-management/components/LibraryScanScheduleControl.svelte';
 	import SettingsImportFolder from './SettingsImportFolder.svelte';
+	import SettingsLibraryCard from './SettingsLibraryCard.svelte';
+	import { createLibraryCard } from './libraryCard.svelte';
 	import SettingsLyrics from './SettingsLyrics.svelte';
 	import SettingsCovers from './SettingsCovers.svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -40,22 +35,15 @@
 	import NumberField from '$lib/ui/NumberField.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import SaveBar from '$lib/ui/SaveBar.svelte';
-	import SecretField from '$lib/ui/SecretField.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { toastStore } from '$lib/stores/toast';
 	import { withBasePath } from '$lib/utils/basePath';
-	import type {
-		TargetLibrarySettingsResponse,
-		TypedLibrarySettings
-	} from '$lib/features/library-management/queries/LibraryOperationsTypes';
 
-	const settingsQuery = getTargetLibrarySettingsQuery(() => authStore.isAdmin);
+	const library = createLibraryCard();
+	const { settingsQuery, section } = library;
 	const restorableQuery = getLibraryRestorableRootsQuery(() => authStore.isAdmin);
 	const removedRootsQuery = getRemovedLibraryRootsQuery(() => authStore.isAdmin);
-	const impact = createPreviewLibraryPolicyImpactMutation();
-	const save = createSaveTargetLibrarySettingsMutation();
 	const restore = createRestoreLibraryRootsMutation();
 	const dropRemovedTracks = createDropRemovedRootTracksMutation();
 	const applyPreview = createPreviewLibraryPolicyApplyMutation();
@@ -69,11 +57,6 @@
 		createSaveLibraryWatcherSettingsMutation()
 	);
 
-	let savedSettings = $state<TargetLibrarySettingsResponse | null>(null);
-	let impactOpen = $state(false);
-	// The save button is busy while the preview loads, so focus is gone by the
-	// time the dialog opens.
-	let impactOpener: HTMLElement | null = null;
 	let applyOpen = $state(false);
 	let restoreOpen = $state(false);
 	let restorePaths = $state<Record<string, string>>({});
@@ -87,51 +70,6 @@
 		restorable: boolean;
 		overlapping_root_label: string | null;
 	}
-
-	function toForm(data: TargetLibrarySettingsResponse): TypedLibrarySettings {
-		return {
-			library_roots: data.library_roots.map((root) => ({
-				...root,
-				rules: root.rules.map((rule) => ({ ...rule }))
-			})),
-			staging_path: data.staging_path,
-			naming_script: data.naming_script,
-			acoustid_api_key: data.acoustid_api_key,
-			enabled: data.enabled ?? true
-		};
-	}
-
-	// Saving goes through a preview first; the save itself sends the revision
-	// the preview was made against.
-	const section = createSettingsSection<TypedLibrarySettings>(
-		{
-			get data() {
-				return settingsQuery.data ? toForm(settingsQuery.data) : undefined;
-			},
-			get isPending() {
-				return settingsQuery.isPending;
-			},
-			get isError() {
-				return settingsQuery.isError;
-			},
-			get error() {
-				return settingsQuery.error;
-			},
-			refetch: () => settingsQuery.refetch()
-		},
-		{
-			mutateAsync: async (form) => {
-				savedSettings = await save.mutateAsync({
-					settings: form,
-					expected_policy_revision: impact.data?.current_policy_revision ?? ''
-				});
-				return toForm(savedSettings);
-			},
-			get isPending() {
-				return save.isPending;
-			}
-		}
-	);
 
 	// The storage cap is one field of the download policy.
 	const cap = createSettingsSection<{ max_library_size_gb: number | null }>(
@@ -170,7 +108,7 @@
 
 	const restorableRoots = $derived(restorableQuery.data?.restorable_roots ?? []);
 	const removedRoots = $derived(removedRootsQuery.data?.removed_roots ?? []);
-	const currentSettings = $derived(savedSettings ?? settingsQuery.data);
+	const currentSettings = $derived(library.currentSettings);
 	const removedRootsRevision = $derived(
 		removedRootsQuery.data?.policy_revision || currentSettings?.policy_revision || ''
 	);
@@ -207,43 +145,6 @@
 	const usedGb = $derived((statsQuery.data?.total_size_bytes ?? 0) / 1024 ** 3);
 	const maxLibraryGb = $derived(cap.draft?.max_library_size_gb ?? 0);
 	const capPercent = $derived(maxLibraryGb > 0 ? Math.min(100, (usedGb / maxLibraryGb) * 100) : 0);
-	const impactErrorMessage = $derived.by((): string | null => {
-		if (!impact.isError) return null;
-		const error = impact.error;
-		if (error instanceof ApiError && error.status > 0 && error.status < 500) {
-			return error.message;
-		}
-		return 'Could not reach the server to preview these settings. Check your connection and try again. Nothing has been saved.';
-	});
-
-	async function previewSave(): Promise<void> {
-		const draft = section.draft;
-		if (!draft) return;
-		impactOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-		let result;
-		try {
-			result = await impact.mutateAsync({
-				settings: $state.snapshot(draft) as TypedLibrarySettings,
-				expected_policy_revision: currentSettings?.policy_revision ?? null
-			});
-		} catch {
-			return;
-		}
-		if (result.stale) {
-			toastStore.show({
-				message: 'Library settings changed. Reload this page before saving.',
-				type: 'error'
-			});
-			return;
-		}
-		impactOpen = true;
-	}
-
-	async function confirmSave(): Promise<void> {
-		if (!impact.data?.current_policy_revision) return;
-		await section.save();
-		if (save.error) throw save.error;
-	}
 
 	function openRestore(): void {
 		restorePaths = Object.fromEntries(restorableRoots.map((entry) => [entry.root_id, entry.path]));
@@ -441,71 +342,7 @@
 		</section>
 	{/if}
 
-	<Card as="section" variant="bordered">
-		{#if authStore.isAdmin}
-			<QueryBoundary query={section} what="the library settings">
-				{#snippet loading()}
-					<div class="space-y-3">
-						<div class="skeleton h-48 rounded-box"></div>
-						<div class="skeleton h-28 rounded-box"></div>
-					</div>
-				{/snippet}
-				{#snippet children(draft)}
-					<div class="flex flex-col gap-6">
-						<ToggleRow
-							label="Local library"
-							description="Scanning, identification, and file organization run while this is on. Turn it off to pause the library without removing your roots. Existing catalog data and playback keep working."
-							bind:checked={draft.enabled}
-						/>
-
-						<div class="divider my-0"></div>
-
-						<LibraryRootPolicyEditor
-							roots={draft.library_roots}
-							onchange={(value) => (draft.library_roots = value)}
-						/>
-
-						<div class="divider my-0"></div>
-
-						<section class="space-y-2">
-							<ScriptWorkbench
-								kind="import_naming"
-								label="Import naming script"
-								help="Where downloads and dropped files are filed."
-								bind:value={draft.naming_script}
-								error={section.fieldError('naming_script', 'Import naming script')}
-							/>
-						</section>
-
-						<div class="divider my-0"></div>
-
-						<SecretField
-							label="AcoustID API key"
-							mask={SECRET_MASK}
-							placeholder="Enter AcoustID API key"
-							help="Identifies untagged music by its audio and checks downloads."
-							bind:value={draft.acoustid_api_key}
-							error={section.fieldError('acoustid_api_key', 'AcoustID API key')}
-						/>
-
-						<div class="space-y-2 border-t border-base-content/10 pt-5">
-							{#if impactErrorMessage}
-								<p class="text-sm text-error">{impactErrorMessage}</p>
-							{/if}
-							<SaveBar
-								{...section.bar}
-								onsave={previewSave}
-								saving={impact.isPending || section.saving}
-								saveLabel="Preview and save settings"
-							/>
-						</div>
-					</div>
-				{/snippet}
-			</QueryBoundary>
-		{:else}
-			<p class="text-sm text-warning">Sign in as an administrator to change library settings.</p>
-		{/if}
-	</Card>
+	<SettingsLibraryCard card={library} />
 
 	{#if authStore.isAdmin}
 		<SettingsImportFolder aboveReady={!settingsQuery.isPending} />
@@ -622,39 +459,6 @@
 		</section>
 	{/if}
 </div>
-
-<ConfirmDialog
-	bind:open={impactOpen}
-	title="Save library policy changes?"
-	confirmLabel="Save policies"
-	focusTitle
-	pending={save.isPending}
-	onconfirm={confirmSave}
-	onclose={() => impactOpener?.focus()}
->
-	{#if impact.data}<div class="space-y-3 text-sm">
-			<p>
-				<strong
-					>{impact.data.indexed_file_count?.toLocaleString() ?? 'An unknown number of'} indexed files</strong
-				>
-				and {impact.data.on_disk_file_count?.toLocaleString() ?? 'an unknown number of'} files on disk
-				are in the affected scopes.
-			</p>
-			{#if impact.data.content_will_become_unavailable}<div class="alert alert-warning">
-					<TriangleAlert class="h-4 w-4" /> Some music will become unavailable after you explicitly apply
-					reconciliation.
-				</div>{/if}{#if impact.data.queued_work_will_be_cancelled}<p class="text-warning">
-					Queued work in these scopes will be cancelled when the policy is saved.
-				</p>{/if}{#each impact.data.warnings as warning, index (`${index}:${warning}`)}<p
-					class="text-muted"
-				>
-					{warning}
-				</p>{/each}
-			<p class="flex items-center gap-2 text-success">
-				<CircleCheckBig class="h-4 w-4" /> Saving does not start a scan.
-			</p>
-		</div>{/if}
-</ConfirmDialog>
 
 <ConfirmDialog
 	bind:open={applyOpen}
