@@ -9,11 +9,15 @@
 //! to a running scan and skips library folders that are not there. A row
 //! counts only while its stat revision is its track's, so a changed file
 //! is never served an old number and is measured again; a move keeps the
-//! track and its revision, so nothing is measured twice.
+//! track and its revision, so nothing is measured twice. The same pass
+//! finds where each song's sound starts, fades out and ends; a row
+//! measured before [`MEASURE_VERSION`] is measured again, after the files
+//! with no measurement, and serves its levelling numbers meanwhile.
 //!
 //! [`Loudness::levels`] answers the web player's levelling numbers:
-//! measured first, the file's ReplayGain tags second. An album's loudness
-//! is worked out from its tracks' rows when asked, never stored.
+//! measured first, the file's ReplayGain tags second, and the sound edges
+//! of a measurement at the current version. An album's loudness is worked
+//! out from its tracks' rows when asked, never stored.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -25,10 +29,14 @@ use droppedneedle_kernel::db::{CancelFlag, Db, DbError, Lane};
 
 use crate::scan::{legacy_mtime_eps_seconds, mtime_ns_from_metadata};
 use crate::tags::TrackFile;
-use crate::tags::loudness::{self, BlockSummary, Unanalysed};
+use crate::tags::loudness::{self, BlockSummary, SoundEdges, Unanalysed};
 use crate::wiring::{LibraryCore, ScanCoordinator};
 
 pub(crate) mod sql;
+
+/// The measurement every new row is written at. A measured row below it is
+/// measured again: version 2 added the sound edges.
+pub const MEASURE_VERSION: i64 = 2;
 
 /// The wakeup the loudness loop listens on: a scan run that changed the
 /// catalog, or a publish that rewrote files.
@@ -76,13 +84,16 @@ impl From<rusqlite::Error> for LoudnessError {
 }
 
 /// One track's levelling numbers, as ReplayGain 2.0 gives them: a gain in
-/// dB to the -18 LUFS reference and a linear sample peak.
+/// dB to the -18 LUFS reference and a linear sample peak. With them, where
+/// the track's sound starts, fades out and ends, when its current bytes
+/// were measured at [`MEASURE_VERSION`] and those could be told.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct TrackLevels {
     pub track_gain_db: Option<f64>,
     pub track_peak: Option<f64>,
     pub album_gain_db: Option<f64>,
     pub album_peak: Option<f64>,
+    pub edges: Option<SoundEdges>,
 }
 
 /// How hard the loop works: after each file it rests `rest_per_spent`
@@ -122,6 +133,7 @@ struct Found {
     outcome: LoudnessOutcome,
     peak: Option<f64>,
     blocks: Option<Vec<u8>>,
+    edges: Option<SoundEdges>,
     at_ms: i64,
 }
 
@@ -356,6 +368,7 @@ impl Loudness {
                         outcome,
                         peak: measured.as_ref().map(|m| m.peak),
                         blocks: measured.as_ref().map(|m| m.summary().encode()),
+                        edges: measured.as_ref().and_then(loudness::TrackLoudness::edges),
                         at_ms: self.clock.now_ms(),
                     });
                 }
@@ -397,7 +410,7 @@ impl Loudness {
         self.db
             .read_long("library.loudness_due", &CancelFlag::never(), |conn| {
                 conn.prepare_cached(sql::DUE.text())?
-                    .query_map(rusqlite::params![roots, limit], |row| {
+                    .query_map(rusqlite::params![roots, limit, MEASURE_VERSION], |row| {
                         sql::DueTrack::read(row)
                     })?
                     .collect::<Result<Vec<_>, _>>()
@@ -420,6 +433,7 @@ impl Loudness {
                 let mut keep = tx.prepare_cached(sql::KEEP.text())?;
                 let mut kept = 0;
                 for found in held {
+                    let edges = found.edges;
                     kept += keep.execute(rusqlite::params![
                         found.track_id,
                         found.stat_revision,
@@ -427,6 +441,10 @@ impl Loudness {
                         found.peak,
                         found.blocks,
                         found.at_ms,
+                        edges.map(|edges| edges.sound_start_ms),
+                        edges.map(|edges| edges.fade_start_ms),
+                        edges.map(|edges| edges.sound_end_ms),
+                        MEASURE_VERSION,
                     ])?;
                 }
                 Ok::<_, LoudnessError>(kept)
@@ -441,8 +459,9 @@ impl Loudness {
     /// ones where its current bytes were measured, else its ReplayGain
     /// tags. The album's are worked out from every indexed track of the
     /// album once each has a row for its current bytes (unmeasurable ones
-    /// left out), else they are the track's album tags. `None` when the
-    /// track is not indexed. Blocking.
+    /// left out), else they are the track's album tags. The sound edges come
+    /// only from a measurement of its current bytes at [`MEASURE_VERSION`].
+    /// `None` when the track is not indexed. Blocking.
     pub fn levels(&self, track_id: &str) -> Result<Option<TrackLevels>, LoudnessError> {
         let rows = self.db.read_blocking("library.loudness_levels", |conn| {
             conn.prepare_cached(sql::ALBUM_LEVELS.text())?
@@ -472,6 +491,21 @@ fn measured_of(row: &sql::AlbumLevel) -> Option<Result<(f64, BlockSummary), ()>>
             }
         }
     }
+}
+
+/// A row's sound edges, when it is a measurement at the current version
+/// that found them.
+fn edges_of(row: &sql::AlbumLevel) -> Option<SoundEdges> {
+    if row.outcome != Some(LoudnessOutcome::Measured)
+        || row.measure_version != Some(MEASURE_VERSION)
+    {
+        return None;
+    }
+    Some(SoundEdges {
+        sound_start_ms: row.sound_start_ms?,
+        fade_start_ms: row.fade_start_ms?,
+        sound_end_ms: row.sound_end_ms?,
+    })
 }
 
 fn levels_of(track_id: &str, rows: &[sql::AlbumLevel]) -> Option<TrackLevels> {
@@ -518,6 +552,7 @@ fn levels_of(track_id: &str, rows: &[sql::AlbumLevel]) -> Option<TrackLevels> {
             levels.album_peak = asked.tag_album_peak;
         }
     }
+    levels.edges = edges_of(asked);
     Some(levels)
 }
 
@@ -613,6 +648,10 @@ mod tests {
             outcome,
             peak: measured.then_some(peak),
             blocks: measured.then(|| blocks_at(lufs, 100)),
+            sound_start_ms: None,
+            fade_start_ms: None,
+            sound_end_ms: None,
+            measure_version: outcome.map(|_| MEASURE_VERSION),
         }
     }
 
@@ -630,6 +669,7 @@ mod tests {
                 track_peak: Some(0.5),
                 album_gain_db: Some(-6.0),
                 album_peak: Some(0.95),
+                edges: None,
             })
         );
         assert_eq!(
@@ -639,6 +679,7 @@ mod tests {
                 track_peak: Some(0.9),
                 album_gain_db: Some(-6.0),
                 album_peak: Some(0.95),
+                edges: None,
             })
         );
 

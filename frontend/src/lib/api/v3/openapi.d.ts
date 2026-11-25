@@ -6013,8 +6013,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * A track's gains and peaks for evening out volume: measured first, the
-         *     file's tags second.
+         * A track's gains and peaks for evening out volume, measured first and
+         *     the file's tags second, and where its sound starts, fades out and ends.
          */
         get: operations["get_track_loudness"];
         put?: never;
@@ -26174,7 +26174,10 @@ export interface components {
         TrackListSort: "title" | "date_added" | "artist" | "album" | "random";
         /**
          * @description A track's levelling numbers, as ReplayGain 2.0 gives them. Each is null
-         *     when neither a measurement nor the file's tags give it.
+         *     when neither a measurement nor the file's tags give it. The three sound
+         *     edges, in milliseconds from the start of the file, are all set or all
+         *     null: null until the server has measured the file's current bytes, and
+         *     for a song too short or too quiet to tell.
          */
         TrackLoudnessView: {
             /**
@@ -26187,6 +26190,22 @@ export interface components {
              * @description The album's largest sample.
              */
             album_peak?: number | null;
+            /**
+             * Format: int64
+             * @description Where the song starts to fade out; the same as `sound_end_ms` for a
+             *     song that stops hard.
+             */
+            fade_start_ms?: number | null;
+            /**
+             * Format: int64
+             * @description Where the song's sound ends.
+             */
+            sound_end_ms?: number | null;
+            /**
+             * Format: int64
+             * @description Where the song's sound starts.
+             */
+            sound_start_ms?: number | null;
             /**
              * Format: double
              * @description Gain in dB that brings the track to the -18 LUFS reference.

@@ -470,6 +470,10 @@ const SHIPPED: &[(&str, &str)] = &[
         "0174_album_primary_format.sql",
         "63e2a6a2d00f042e46f40e2a999c5f875b4e003add30e654caf11717a7733feb",
     ),
+    (
+        "0175_loudness_edges.sql",
+        "e378e687719d946eb8fb84c7565ce818754b56e4aeb2d484b9c3113e5e6abdde",
+    ),
 ];
 
 /// Upgrading an instance keeps existing sessions valid and outside the
@@ -4046,6 +4050,95 @@ fn album_primary_format_upgrade_backfills_every_album() {
             named("empty", None),
         ]
     );
+}
+
+/// 0175 gives loudness rows where the sound starts, fades out and ends,
+/// and the measurement version: every row measured before keeps each of
+/// its values, reads no edges and is version 1, and nothing else changes.
+/// Edges are all set or none, in order, and only on a measured row.
+#[test]
+fn loudness_edges_upgrade_reads_old_rows_as_version_one() {
+    let dir = ScratchDir::new("loudness-edges-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 175)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    assert_eq!(
+        scalar(&connection, "PRAGMA user_version"),
+        MIGRATIONS[at - 1].version
+    );
+    connection
+        .execute_batch(
+            "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
+                 album_artist_id, grouping_source, created_at, updated_at)
+             VALUES ('a', 'r', 'k', 'A', 'a', '00000000-0000-4000-8000-000000000002',
+                 'automatic', 1, 1);
+             INSERT INTO local_tracks (id, local_album_id, root_id, file_path,
+                 relative_path, path_hash, file_size_bytes, file_mtime_ns,
+                 stat_revision, title, title_folded, album_title, album_title_folded,
+                 file_format, ingest_source, imported_at, membership_source)
+             VALUES ('t1', 'a', 'r', '/m/1', '1', '1', 1, 1, '1:1', 'T', 't', 'A', 'a',
+                     'flac', 'scan', 1, 'automatic'),
+                 ('t2', 'a', 'r', '/m/2', '2', '2', 1, 1, '2:2', 'T', 't', 'A', 'a',
+                     'flac', 'scan', 1, 'automatic');
+             INSERT INTO library_loudness_measurements
+                 (local_track_id, stat_revision, outcome, peak, blocks, measured_at)
+             VALUES ('t1', '1:1', 'measured', 0.5, x'01', 1),
+                 ('t2', '2:2', 'unmeasurable', NULL, NULL, 2);",
+        )
+        .unwrap();
+    let before_schema = schema_rows(&connection);
+    let before = table_rows(&connection, "library_loudness_measurements", "rowid, *");
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 175);
+    let rows = table_rows(&connection, "library_loudness_measurements", "rowid, *");
+    let old: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            row.strip_suffix("|Null|Null|Null|Integer(1)")
+                .unwrap_or_else(|| panic!("an old row reads no edges at version 1: {row}"))
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(old, before, "the old rows keep every value");
+    let mut after_schema = schema_rows(&connection);
+    after_schema.retain(|(_, name, _, _)| name != "library_loudness_measurements");
+    let mut unchanged = before_schema.clone();
+    unchanged.retain(|(_, name, _, _)| name != "library_loudness_measurements");
+    assert_eq!(after_schema, unchanged, "nothing else changes");
+
+    connection
+        .execute_batch(
+            "UPDATE library_loudness_measurements SET sound_start_ms = 0,
+                 fade_start_ms = 180000, sound_end_ms = 190000, measure_version = 2
+             WHERE local_track_id = 't1'",
+        )
+        .expect("a measured row keeps its edges");
+    for refused in [
+        "UPDATE library_loudness_measurements SET sound_start_ms = 0, fade_start_ms = 1,
+             sound_end_ms = 2 WHERE local_track_id = 't2'",
+        "UPDATE library_loudness_measurements SET fade_start_ms = NULL
+             WHERE local_track_id = 't1'",
+        "UPDATE library_loudness_measurements SET sound_start_ms = 185000
+             WHERE local_track_id = 't1'",
+        "UPDATE library_loudness_measurements SET fade_start_ms = 195000
+             WHERE local_track_id = 't1'",
+        "UPDATE library_loudness_measurements SET sound_start_ms = -1
+             WHERE local_track_id = 't1'",
+        "UPDATE library_loudness_measurements SET measure_version = 0
+             WHERE local_track_id = 't1'",
+    ] {
+        assert!(connection.execute_batch(refused).is_err(), "{refused}");
+    }
 }
 
 /// 0146 adds the table of recycle bin paths v2 used, empty, and changes

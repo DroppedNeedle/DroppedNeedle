@@ -60,6 +60,7 @@ pub static MIGRATIONS: &[Migration<'static>] = &[
     migration!(172, "0172_weekly_sets.sql"),
     migration!(173, "0173_drop_durable_loops.sql"),
     migration!(174, "0174_album_primary_format.sql"),
+    migration!(175, "0175_loudness_edges.sql"),
 ];
 
 /// The stamp of a database made by the migration chain the baseline

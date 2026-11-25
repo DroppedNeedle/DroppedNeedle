@@ -23418,7 +23418,7 @@
         "tags": [
           "library"
         ],
-        "summary": "A track's gains and peaks for evening out volume: measured first, the\nfile's tags second.",
+        "summary": "A track's gains and peaks for evening out volume, measured first and\nthe file's tags second, and where its sound starts, fades out and ends.",
         "operationId": "get_track_loudness",
         "parameters": [
           {
@@ -73048,7 +73048,7 @@
       },
       "TrackLoudnessView": {
         "type": "object",
-        "description": "A track's levelling numbers, as ReplayGain 2.0 gives them. Each is null\nwhen neither a measurement nor the file's tags give it.",
+        "description": "A track's levelling numbers, as ReplayGain 2.0 gives them. Each is null\nwhen neither a measurement nor the file's tags give it. The three sound\nedges, in milliseconds from the start of the file, are all set or all\nnull: null until the server has measured the file's current bytes, and\nfor a song too short or too quiet to tell.",
         "properties": {
           "album_gain_db": {
             "type": [
@@ -73065,6 +73065,30 @@
             ],
             "format": "double",
             "description": "The album's largest sample."
+          },
+          "fade_start_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Where the song starts to fade out; the same as `sound_end_ms` for a\nsong that stops hard."
+          },
+          "sound_end_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Where the song's sound ends."
+          },
+          "sound_start_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Where the song's sound starts."
           },
           "track_gain_db": {
             "type": [

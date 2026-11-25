@@ -3414,6 +3414,7 @@ async fn each_track_is_measured_once_until_its_file_changes() {
         track_peak: Some(0.0),
         album_gain_db: None,
         album_peak: Some(0.0),
+        edges: None,
     };
 
     assert_eq!(
@@ -3508,6 +3509,195 @@ async fn each_track_is_measured_once_until_its_file_changes() {
         1,
         "a file cut short for good is kept as unmeasurable"
     );
+}
+
+/// A 20-second mono WAV at 8 kHz: a second of silence, a 440 Hz tone at
+/// -12 dBFS for 14 seconds, a 4-second fade down 60 dB, then a second of
+/// silence.
+fn fading_tone_wav() -> Vec<u8> {
+    let rate = 8_000u32;
+    let samples: Vec<i16> = (0..rate * 20)
+        .map(|at| {
+            let seconds = f64::from(at) / f64::from(rate);
+            let dbfs = match seconds {
+                s if !(1.0..19.0).contains(&s) => return 0,
+                s if s < 15.0 => -12.0,
+                s => -12.0 - 15.0 * (s - 15.0),
+            };
+            let tone = (2.0 * std::f64::consts::PI * 440.0 * seconds).sin();
+            (tone * 10f64.powf(dbfs / 20.0) * f64::from(i16::MAX)) as i16
+        })
+        .collect();
+    let data_len = u32::try_from(samples.len() * 2).expect("small");
+    let mut wav = Vec::new();
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    // PCM, one channel, the rate, bytes a second, bytes a frame, bits.
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&rate.to_le_bytes());
+    wav.extend_from_slice(&(rate * 2).to_le_bytes());
+    wav.extend_from_slice(&2u16.to_le_bytes());
+    wav.extend_from_slice(&16u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&data_len.to_le_bytes());
+    for sample in samples {
+        wav.extend_from_slice(&sample.to_le_bytes());
+    }
+    wav
+}
+
+/// The loudness pass also finds where a song's sound starts, fades out and
+/// ends, and the levelling read serves them. A row measured before the
+/// current version keeps serving its levelling numbers but no edges, and
+/// is measured again; an unmeasurable one is not tried again for it.
+#[tokio::test]
+async fn sound_edges_are_served_and_old_measurements_are_measured_again() {
+    use droppedneedle_library::loudness::{Pace, Sweep, TrackLevels};
+
+    let (_scratch, library, music) = bare_library("lib-loudness-edges").await;
+    std::fs::create_dir_all(music.join("Tone")).expect("mkdir");
+    std::fs::write(music.join("Tone/01.wav"), fading_tone_wav()).expect("tone written");
+    let whole = std::fs::read(fixtures_dir().join("management_full.flac")).expect("fixture");
+    let cut_at = (0..whole.len() - 1)
+        .rev()
+        .filter(|&at| whole[at] == 0xFF && whole[at + 1] == 0xF8)
+        .nth(1)
+        .expect("the fixture has two frames or more");
+    std::fs::create_dir_all(music.join("Cut")).expect("mkdir");
+    std::fs::write(music.join("Cut/01.flac"), &whole[..cut_at]).expect("cut copy");
+    add_music_root(&library, &music).await;
+    let track = library
+        .scan_store
+        .track_at("music", "Tone/01.wav")
+        .unwrap()
+        .expect("tone indexed");
+    let loudness = library.loudness.clone();
+    let mut sweep = Sweep::default();
+    let unpaced = Pace {
+        min_rest: std::time::Duration::ZERO,
+        rest_per_spent: 0.0,
+    };
+    let mut pass = || {
+        loudness
+            .pass(&mut sweep, &unpaced, &|| false, &|_| true)
+            .expect("pass runs")
+    };
+    let levels = || {
+        library
+            .loudness
+            .levels(&track)
+            .expect("levels read")
+            .expect("indexed")
+    };
+
+    assert_eq!(levels().edges, None, "nothing measured yet");
+    assert_eq!(pass().decoded, 2);
+    let measured = levels();
+    let edges = measured.edges.expect("the tone's edges are served");
+    assert!(edges.sound_start_ms <= 1_000, "{edges:?}");
+    assert!((15_000..16_500).contains(&edges.fade_start_ms), "{edges:?}");
+    assert!((17_500..19_000).contains(&edges.sound_end_ms), "{edges:?}");
+
+    let db = library.scan_store.db();
+    db.run_sql(
+        "UPDATE library_loudness_measurements SET measure_version = 1, \
+         sound_start_ms = NULL, fade_start_ms = NULL, sound_end_ms = NULL",
+    )
+    .expect("rows read as version 1");
+    assert_eq!(
+        levels(),
+        TrackLevels {
+            edges: None,
+            ..measured
+        },
+        "an old measurement keeps its levelling numbers and serves no edges"
+    );
+    let again = pass();
+    assert_eq!(
+        (again.decoded, again.kept),
+        (1, 1),
+        "only the measured file"
+    );
+    assert_eq!(levels(), measured, "measured again at this version");
+    assert_eq!(
+        db.query_i64(
+            "SELECT COUNT(*) FROM library_loudness_measurements \
+             WHERE measure_version = 1 AND outcome = 'unmeasurable'"
+        )
+        .expect("count reads"),
+        1,
+        "the unmeasurable file keeps its old row"
+    );
+}
+
+/// A measured row that fails to measure again for a new version, with its
+/// file unchanged, keeps its levelling numbers and edges and takes the new
+/// version, so it is not picked again on every pass.
+#[tokio::test]
+async fn a_failed_measure_again_keeps_the_old_measurement() {
+    use droppedneedle_library::loudness::{Pace, Sweep};
+
+    let (_scratch, library, music) = bare_library("lib-loudness-keep").await;
+    std::fs::create_dir_all(music.join("Tone")).expect("mkdir");
+    let path = music.join("Tone/01.wav");
+    std::fs::write(&path, fading_tone_wav()).expect("tone written");
+    add_music_root(&library, &music).await;
+    let track = library
+        .scan_store
+        .track_at("music", "Tone/01.wav")
+        .unwrap()
+        .expect("tone indexed");
+    let loudness = library.loudness.clone();
+    let mut sweep = Sweep::default();
+    let unpaced = Pace {
+        min_rest: std::time::Duration::ZERO,
+        rest_per_spent: 0.0,
+    };
+    let mut pass = || {
+        loudness
+            .pass(&mut sweep, &unpaced, &|| false, &|_| true)
+            .expect("pass runs")
+    };
+    let levels = || {
+        library
+            .loudness
+            .levels(&track)
+            .expect("levels read")
+            .expect("indexed")
+    };
+    assert_eq!(pass().decoded, 1);
+    let measured = levels();
+    assert!(measured.edges.is_some(), "{measured:?}");
+
+    let db = library.scan_store.db();
+    db.run_sql("UPDATE library_loudness_measurements SET measure_version = 1")
+        .expect("row reads as version 1");
+    let modified = std::fs::metadata(&path)
+        .and_then(|meta| meta.modified())
+        .expect("mtime");
+    let size = fading_tone_wav().len();
+    std::fs::write(&path, vec![0x5Au8; size]).expect("same size, no audio");
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .and_then(|file| file.set_modified(modified))
+        .expect("mtime put back");
+
+    assert_eq!(pass().decoded, 1, "measured again for the version");
+    assert_eq!(levels(), measured, "the old numbers stay");
+    assert_eq!(
+        db.query_i64(
+            "SELECT COUNT(*) FROM library_loudness_measurements \
+             WHERE measure_version = 2 AND outcome = 'measured'"
+        )
+        .expect("count reads"),
+        1,
+        "the row takes the new version"
+    );
+    assert_eq!(pass().decoded, 0, "not picked again");
 }
 
 /// A publish is checked against its own rows, not the catalog counter: a

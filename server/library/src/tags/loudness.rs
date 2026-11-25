@@ -48,7 +48,83 @@ impl TrackLoudness {
         }
         summary
     }
+
+    /// Where the sound starts, fades out and ends, worked out from the
+    /// blocks in order against the track's own loudness, the way
+    /// Liquidsoap's autocue does. `None` for a track under 10 seconds, one
+    /// with nothing above the floor, or one whose sound would end before
+    /// it starts.
+    pub fn edges(&self) -> Option<SoundEdges> {
+        let length_ms = (self.seconds() * 1000.0).round() as i64;
+        if length_ms < SHORTEST_MS {
+            return None;
+        }
+        let loudness = self.loudness()?;
+        let floor = (loudness + EDGE_FLOOR_LU).max(ABSOLUTE_GATE_LUFS);
+        let first = self
+            .blocks
+            .iter()
+            .position(|energy| lufs(*energy) > floor)?;
+        let last = self
+            .blocks
+            .iter()
+            .rposition(|energy| lufs(*energy) > floor)?;
+        let block_end = |index: usize| index as i64 * BLOCK_STEP_MS + BLOCK_MS;
+        let sound_start_ms = first as i64 * BLOCK_STEP_MS;
+        let sound_end_ms = block_end(last).min(length_ms);
+        if sound_start_ms >= sound_end_ms {
+            return None;
+        }
+        let last_above = |lu: f64| {
+            self.blocks[..=last]
+                .iter()
+                .rposition(|energy| lufs(*energy) > loudness + lu)
+                .map_or(sound_start_ms, |index| block_end(index).min(sound_end_ms))
+        };
+        let mut fade_start_ms = last_above(FADE_LU);
+        if sound_end_ms - fade_start_ms > LONG_FADE_MS {
+            fade_start_ms = last_above(LONG_FADE_LU);
+        }
+        fade_start_ms = fade_start_ms.max(sound_end_ms - MOST_FADE_MS);
+        if sound_end_ms - fade_start_ms < LEAST_FADE_MS {
+            fade_start_ms = sound_end_ms;
+        }
+        Some(SoundEdges {
+            sound_start_ms,
+            fade_start_ms,
+            sound_end_ms,
+        })
+    }
 }
+
+/// Where a track's sound starts, where its fade-out starts and where its
+/// sound ends, in milliseconds from the start of the file. A track that
+/// stops hard has its fade start where its sound ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SoundEdges {
+    pub sound_start_ms: i64,
+    pub fade_start_ms: i64,
+    pub sound_end_ms: i64,
+}
+
+/// A track shorter than this has no edges.
+const SHORTEST_MS: i64 = 10_000;
+/// A block's length and the step between blocks.
+const BLOCK_MS: i64 = 400;
+const BLOCK_STEP_MS: i64 = 100;
+/// Sound is anything above the track's loudness less this, and above the
+/// absolute gate.
+const EDGE_FLOOR_LU: f64 = -42.0;
+/// The fade-out starts after the last block above the track's loudness
+/// less this; when that leaves a fade longer than [`LONG_FADE_MS`], after
+/// the last block above it less [`LONG_FADE_LU`].
+const FADE_LU: f64 = -8.0;
+const LONG_FADE_LU: f64 = -20.0;
+const LONG_FADE_MS: i64 = 15_000;
+/// A fade-out is never longer than this, and one shorter than
+/// [`LEAST_FADE_MS`] is a hard stop.
+const MOST_FADE_MS: i64 = 12_000;
+const LEAST_FADE_MS: i64 = 1_000;
 
 /// The ReplayGain gain in dB for a loudness in LUFS.
 pub fn gain(loudness: f64) -> f64 {
@@ -570,6 +646,68 @@ mod tests {
         ] {
             assert_eq!(BlockSummary::decode(&bad), Err(BadSummary), "{bad:?}");
         }
+    }
+
+    /// Where a track's sound starts, fades out and ends: a fade-out tail
+    /// starts its fade where the level drops 8 LU under the track's and
+    /// ends where it drops 42 under; a hard stop has no fade; leading
+    /// silence is not sound; a long quiet tail fades for 12 seconds at
+    /// most; a track under 10 seconds, or silent, has no edges.
+    #[test]
+    fn sound_edges_follow_the_level_against_the_tracks_loudness() {
+        // Each part: seconds, then the level in LUFS it starts and ends at.
+        let shaped = |parts: &[(f64, f64, f64)]| {
+            let mut meter = Meter::new(48_000, 2);
+            for (seconds, from, to) in parts {
+                let steps = (seconds * 10.0).round() as usize;
+                for step in 0..steps {
+                    let level = from + (to - from) * step as f64 / steps as f64;
+                    meter.sub_blocks.push(10f64.powf((level + 0.691) / 10.0));
+                }
+            }
+            meter.finish().edges()
+        };
+        let near = |found: i64, expected: i64| (found - expected).abs() <= 500;
+        let silence = -120.0;
+
+        let fade_out = shaped(&[
+            (2.0, silence, silence),
+            (60.0, -14.0, -14.0),
+            (12.0, -14.0, -62.0),
+            (3.0, silence, silence),
+        ])
+        .expect("edges");
+        assert!(near(fade_out.sound_start_ms, 2_000), "{fade_out:?}");
+        assert!(near(fade_out.fade_start_ms, 64_400), "{fade_out:?}");
+        assert!(near(fade_out.sound_end_ms, 72_900), "{fade_out:?}");
+
+        let hard_stop = shaped(&[
+            (1.0, silence, silence),
+            (30.0, -12.0, -12.0),
+            (2.0, silence, silence),
+        ])
+        .expect("edges");
+        assert!(near(hard_stop.sound_end_ms, 31_000), "{hard_stop:?}");
+        assert_eq!(hard_stop.fade_start_ms, hard_stop.sound_end_ms);
+
+        let late_start = shaped(&[(8.0, silence, silence), (20.0, -14.0, -14.0)]).expect("edges");
+        assert!(near(late_start.sound_start_ms, 8_000), "{late_start:?}");
+
+        let quiet_tail = shaped(&[
+            (40.0, -10.0, -10.0),
+            (30.0, -20.0, -50.0),
+            (2.0, silence, silence),
+        ])
+        .expect("edges");
+        assert!(near(quiet_tail.sound_end_ms, 70_000), "{quiet_tail:?}");
+        assert_eq!(
+            quiet_tail.sound_end_ms - quiet_tail.fade_start_ms,
+            12_000,
+            "{quiet_tail:?}"
+        );
+
+        assert_eq!(shaped(&[(9.0, -14.0, -14.0)]), None, "under 10 seconds");
+        assert_eq!(shaped(&[(30.0, silence, silence)]), None, "silence");
     }
 
     /// Bytes after a FLAC file's last frame, an ID3v1 tag or a stale copy

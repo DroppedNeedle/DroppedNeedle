@@ -2,8 +2,9 @@
 //!
 //! - `GET /library/tracks/{id}/loudness`: the gains and peaks the player
 //!   evens out volume with, measured by the server first and from the
-//!   file's ReplayGain tags second. Open to every signed-in user, as the
-//!   track is catalog data.
+//!   file's ReplayGain tags second, and where the song's sound starts,
+//!   fades out and ends, which the player times a crossfade by. Open to
+//!   every signed-in user, as the track is catalog data.
 
 use axum::{
     Json,
@@ -25,7 +26,10 @@ pub fn routes() -> Routes<LibraryServices> {
 }
 
 /// A track's levelling numbers, as ReplayGain 2.0 gives them. Each is null
-/// when neither a measurement nor the file's tags give it.
+/// when neither a measurement nor the file's tags give it. The three sound
+/// edges, in milliseconds from the start of the file, are all set or all
+/// null: null until the server has measured the file's current bytes, and
+/// for a song too short or too quiet to tell.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct TrackLoudnessView {
     /// Gain in dB that brings the track to the -18 LUFS reference.
@@ -36,6 +40,13 @@ pub struct TrackLoudnessView {
     pub album_gain_db: Option<f64>,
     /// The album's largest sample.
     pub album_peak: Option<f64>,
+    /// Where the song's sound starts.
+    pub sound_start_ms: Option<i64>,
+    /// Where the song starts to fade out; the same as `sound_end_ms` for a
+    /// song that stops hard.
+    pub fade_start_ms: Option<i64>,
+    /// Where the song's sound ends.
+    pub sound_end_ms: Option<i64>,
 }
 
 impl From<TrackLevels> for TrackLoudnessView {
@@ -45,6 +56,9 @@ impl From<TrackLevels> for TrackLoudnessView {
             track_peak: levels.track_peak,
             album_gain_db: levels.album_gain_db,
             album_peak: levels.album_peak,
+            sound_start_ms: levels.edges.map(|edges| edges.sound_start_ms),
+            fade_start_ms: levels.edges.map(|edges| edges.fade_start_ms),
+            sound_end_ms: levels.edges.map(|edges| edges.sound_end_ms),
         }
     }
 }
@@ -58,8 +72,8 @@ impl From<LoudnessError> for ApiError {
     }
 }
 
-/// A track's gains and peaks for evening out volume: measured first, the
-/// file's tags second.
+/// A track's gains and peaks for evening out volume, measured first and
+/// the file's tags second, and where its sound starts, fades out and ends.
 #[utoipa::path(
     get,
     tag = "library",
