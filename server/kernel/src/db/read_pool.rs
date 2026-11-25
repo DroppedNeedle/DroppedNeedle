@@ -266,6 +266,37 @@ impl Pool {
         }
     }
 
+    /// [`Pool::acquire`] that waits at most `within` for its turn and then
+    /// answers `Busy`, whatever the pool's own limit.
+    async fn acquire_within(
+        self: &Arc<Self>,
+        name: &'static str,
+        within: Duration,
+    ) -> Result<Checkout, DbError> {
+        let (id, mut granted) = match self.admit(name, || {
+            let (waiting, granted) = oneshot::channel();
+            (Grantee::Async(waiting), granted)
+        })? {
+            Admitted::Now(checkout) => return Ok(checkout),
+            Admitted::Queued(id, granted) => (id, granted),
+        };
+        let answer = match tokio::time::timeout(within, &mut granted).await {
+            Ok(answer) => answer,
+            Err(_) if self.forget(id) => {
+                return Err(DbError::Busy {
+                    operation: name.to_owned(),
+                });
+            }
+            // Out of the queue already: its answer is on its way.
+            Err(_) => granted.await,
+        };
+        match answer {
+            Ok(Ok(checkout)) => Ok(checkout),
+            Ok(Err(refused)) => Err(refused.into_error(name)),
+            Err(_) => Err(DbError::LaneClosed),
+        }
+    }
+
     /// A connection for a parked thread. A request waiter times itself and
     /// hears `Busy` at the limit; a waiter with a cancel flag looks at it
     /// between waits and hears `ReadCancelled`.
@@ -720,6 +751,33 @@ impl ReadPools {
         // down and drops the closure unrun, the checkout inside it passes
         // its connection on. A closure that has started is the runtime's to
         // wait for: dropping a runtime joins its blocking threads.
+        match tokio::task::spawn_blocking(move || checkout.run(op)).await {
+            Ok(result) => result,
+            Err(stopped) if stopped.is_panic() => {
+                tracing::error!(operation = name, "read closure panicked");
+                Err(DbError::ReadPanicked {
+                    operation: name.to_owned(),
+                }
+                .into())
+            }
+            Err(_) => Err(DbError::LaneClosed.into()),
+        }
+    }
+
+    /// [`ReadPools::read`] whose wait for a connection ends with `Busy`
+    /// after `within`. The closure, once it runs, is not bounded.
+    pub(crate) async fn read_within<R, E, F>(
+        &self,
+        name: &'static str,
+        within: Duration,
+        op: F,
+    ) -> Result<R, E>
+    where
+        F: FnOnce(&Connection) -> Result<R, E> + Send + 'static,
+        R: Send + 'static,
+        E: From<DbError> + Send + 'static,
+    {
+        let checkout = self.requests.acquire_within(name, within).await?;
         match tokio::task::spawn_blocking(move || checkout.run(op)).await {
             Ok(result) => result,
             Err(stopped) if stopped.is_panic() => {

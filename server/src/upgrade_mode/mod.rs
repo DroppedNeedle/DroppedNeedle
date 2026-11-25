@@ -70,7 +70,7 @@ use crate::{
             CheckResult, Code, Event, FailedLine, Finished, FoundLayout, StepId, V2Files,
         },
     },
-    handlers::{self, HealthStatus},
+    handlers::{self, HealthState},
     middleware::{Boundary, request_scope},
     security_headers::{ContentSecurity, content_security},
     web::{WebError, WebUi},
@@ -265,7 +265,7 @@ impl UpgradeMode {
             ));
         let health = Routes::new()
             .public(route!(handlers::health))
-            .with_state::<()>(HealthStatus::Upgrade)
+            .with_state::<()>(HealthState::Upgrade)
             .into_postures()
             .public;
         let app = api

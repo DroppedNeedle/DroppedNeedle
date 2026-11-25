@@ -1,5 +1,6 @@
-//! The statements of the database runtime: the planner statistics, and the
-//! checks run on a database file before it is opened or after it is copied.
+//! The statements of the database runtime: the planner statistics, the
+//! health check's read, and the checks run on a database file before it is
+//! opened or after it is copied.
 
 use super::time::Millis;
 
@@ -37,6 +38,8 @@ crate::sql! {
     pub(super) UNDO_NAMED_IN_FOLDER = "SELECT DISTINCT r.sha256 FROM library_publish_blob_refs r \
              WHERE NOT EXISTS (SELECT 1 FROM library_publish_blobs b WHERE b.sha256 = r.sha256) \
              ORDER BY r.sha256";
+    /// The health check's one read: it reads the file's first page.
+    pub(super) HEALTH_PROBE = "SELECT EXISTS(SELECT 1 FROM sqlite_schema)";
     /// Foreign-key violations in a database copy.
     pub(super) FOREIGN_KEY_VIOLATIONS = "SELECT COUNT(*) FROM pragma_foreign_key_check";
     /// What the last planner statistics run recorded.

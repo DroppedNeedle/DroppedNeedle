@@ -39160,7 +39160,7 @@
         "tags": [
           "health"
         ],
-        "summary": "Liveness probe. Public, unauthenticated, cheap.",
+        "summary": "Liveness probe. Public, unauthenticated, cheap: one read, never a write.\nIt fails only on a fault a restart can clear (the database stopped\nanswering, or one write has held the writer for minutes), with the busy\nanswer and the cause in the log. An outside service being down never\nfails it.",
         "operationId": "health",
         "responses": {
           "200": {
@@ -39169,6 +39169,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database stopped answering (SERVER_BUSY)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }

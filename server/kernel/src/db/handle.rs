@@ -9,15 +9,40 @@
 //! [`super::DbRuntime`] calls its `shutdown` after the last use of its
 //! handles, or exits.
 
-use std::{path::Path, sync::Arc};
+use std::{path::Path, sync::Arc, time::Duration};
 
 use rusqlite::{Connection, Transaction};
 
 use super::{
     error::{ChunkedError, DbError},
     read_pool::ReadPools,
+    sql,
     writer::{CancelFlag, Durable, DurableLane, Lane, WriteLane},
 };
+
+/// How long the health check's read waits for a request connection before
+/// it counts as busy, which is healthy.
+pub const HEALTH_WAIT: Duration = Duration::from_secs(1);
+
+/// A fault the health check found inside the process, one a restart can
+/// clear. The text is for the log, never for a response.
+#[derive(Debug, thiserror::Error)]
+pub enum HealthFault {
+    /// The writer lane takes no more writes.
+    #[error("the writer lane is closed")]
+    LaneClosed,
+    /// One write has held the lane past [`super::LaneLimits::stuck_after`].
+    #[error("write {operation} has held the lane for {} s", held.as_secs())]
+    Stuck {
+        /// The write's operation name.
+        operation: &'static str,
+        /// How long it has held the lane.
+        held: Duration,
+    },
+    /// The health read failed with something other than busy.
+    #[error("the health read failed: {0}")]
+    Unreadable(DbError),
+}
 
 /// The database, for reads and writes. Cloneable; every clone shares the one
 /// writer lane and the same read pools.
@@ -189,6 +214,35 @@ impl Db {
     {
         self.lane
             .write_chunked_blocking(name, items, chunk_rows, cancel, chunk)
+    }
+
+    /// Whether the database still answers: the writer lane is open, no
+    /// write has held it past its `stuck_after`, and one read through a
+    /// request connection works. The read waits at most [`HEALTH_WAIT`] for
+    /// a connection, so a busy server answers well inside a health check's
+    /// own limit; a busy read is not a fault. Writes nothing.
+    pub async fn health(&self) -> Result<(), HealthFault> {
+        let lane = self.lane.health();
+        if lane.closed {
+            return Err(HealthFault::LaneClosed);
+        }
+        if let Some((operation, held)) = lane.holder
+            && held >= lane.stuck_after
+        {
+            return Err(HealthFault::Stuck { operation, held });
+        }
+        let probe = self
+            .reads
+            .read_within("db.health", HEALTH_WAIT, |connection| {
+                connection
+                    .query_row(sql::HEALTH_PROBE.text(), [], |row| row.get::<_, bool>(0))
+                    .map_err(DbError::from)
+            })
+            .await;
+        match probe {
+            Ok(_) | Err(DbError::Busy { .. }) => Ok(()),
+            Err(error) => Err(HealthFault::Unreadable(error)),
+        }
     }
 
     /// Moves after each write that committed a changed row, so a listener

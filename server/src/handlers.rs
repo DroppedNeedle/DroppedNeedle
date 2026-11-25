@@ -5,8 +5,11 @@ use axum::{Json, extract::State};
 use serde::Serialize;
 use utoipa::{OpenApi as _, ToSchema};
 
-use crate::docs::ApiDoc;
-use droppedneedle_kernel::error::ApiError;
+use crate::{docs::ApiDoc, state::AppState};
+use droppedneedle_kernel::{
+    db::Db,
+    error::{ApiError, Unavailable},
+};
 
 /// What the server is doing, as the health check reports it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
@@ -29,22 +32,54 @@ pub struct HealthResponse {
     pub message: String,
 }
 
-/// Liveness probe. Public, unauthenticated, cheap.
+/// What the health check reads: the database while the app is served,
+/// nothing while the server waits for its upgrade.
+#[derive(Debug, Clone)]
+pub enum HealthState {
+    /// Serving the app over this database.
+    Serving(Db),
+    /// Serving only the upgrade page.
+    Upgrade,
+}
+
+impl HealthState {
+    /// The health check of the app `state` serves: it reads that database.
+    pub fn serving(state: &AppState) -> Self {
+        Self::Serving(state.admin.db.db.clone())
+    }
+}
+
+/// Liveness probe. Public, unauthenticated, cheap: one read, never a write.
+/// It fails only on a fault a restart can clear (the database stopped
+/// answering, or one write has held the writer for minutes), with the busy
+/// answer and the cause in the log. An outside service being down never
+/// fails it.
 #[utoipa::path(
     get,
     tag = "health",
     path = "/health",
-    responses((status = 200, description = "Server is running", body = HealthResponse))
+    responses(
+        (status = 200, description = "Server is running", body = HealthResponse),
+        (status = 503, description = "The database stopped answering (SERVER_BUSY)")
+    )
 )]
-pub async fn health(State(status): State<HealthStatus>) -> Json<HealthResponse> {
-    let message = match status {
-        HealthStatus::Ok => "DroppedNeedle backend running",
-        HealthStatus::Upgrade => "DroppedNeedle is waiting for its upgrade from v2",
+pub async fn health(State(state): State<HealthState>) -> Result<Json<HealthResponse>, ApiError> {
+    let (status, message) = match state {
+        HealthState::Serving(db) => {
+            db.health()
+                .await
+                .map_err(|fault| ApiError::unavailable(Unavailable::ServerBusy, fault))?;
+            (HealthStatus::Ok, "DroppedNeedle backend running")
+        }
+        HealthState::Upgrade => (
+            HealthStatus::Upgrade,
+            "DroppedNeedle is waiting for its upgrade from v2",
+        ),
     };
-    Json(HealthResponse {
+    Ok(Json(HealthResponse {
         status,
         message: message.to_owned(),
-    })
+    }))
 }
 
 /// The generated OpenAPI document feeding the TypeScript pipeline.

@@ -16,8 +16,8 @@ use super::factory::DbConfig;
 use super::handle::Db;
 use super::read_pool::ReadPools;
 use super::writer::{
-    BACKGROUND_SOFT_BUDGET, Budget, FOREGROUND_SOFT_BUDGET, LaneLimits, WATCH_TICK, WalHold,
-    WriteLane,
+    BACKGROUND_SOFT_BUDGET, Budget, FOREGROUND_SOFT_BUDGET, LaneLimits, STUCK_AFTER, WATCH_TICK,
+    WalHold, WriteLane,
 };
 use crate::test_support::ScratchDir;
 
@@ -44,6 +44,7 @@ impl LaneLimits {
             },
             foreground_wait: TEST_PATIENCE,
             watch_tick: WATCH_TICK,
+            stuck_after: STUCK_AFTER,
         }
     }
 }

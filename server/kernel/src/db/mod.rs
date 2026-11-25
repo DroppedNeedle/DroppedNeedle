@@ -120,7 +120,7 @@ pub use factory::{
 };
 pub use fold::fold_text;
 pub use fs::{filesystem_is_local, reject_remote_filesystem, reject_symlink, same_filesystem};
-pub use handle::Db;
+pub use handle::{Db, HealthFault};
 pub use migrate::{Chain, Migration, Plan, SchemaError, Stamp, migrate, migrate_file};
 pub use read_pool::{LONG_READERS, OldestRead, ReadActivity};
 pub use savepoint::savepoint;

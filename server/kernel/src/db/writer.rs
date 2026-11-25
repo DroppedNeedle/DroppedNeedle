@@ -125,6 +125,10 @@ pub const FOREGROUND_WAIT_LIMIT: Duration = Duration::from_secs(5);
 pub const WATCH_TICK: Duration = Duration::from_secs(1);
 /// How often a write that still holds the lane is named in the log again.
 pub const HOLDER_LOG_EVERY: Duration = Duration::from_secs(30);
+/// A write holding the lane this long is stuck, and the health check fails.
+/// Writes abort within seconds and bulk work is chunked, so only a commit
+/// on a disk that stopped answering holds the lane this long.
+pub const STUCK_AFTER: Duration = Duration::from_secs(120);
 /// Progress-handler granularity: the abort check runs every 10k VM ops.
 const PROGRESS_OPS: std::os::raw::c_int = 10_000;
 /// Largest chunk a bulk write commits at once.
@@ -282,6 +286,8 @@ pub struct LaneLimits {
     pub foreground_wait: Duration,
     /// How often the watch thread wakes.
     pub watch_tick: Duration,
+    /// How long one write may hold the lane before the health check fails.
+    pub stuck_after: Duration,
 }
 
 impl Default for LaneLimits {
@@ -297,6 +303,7 @@ impl Default for LaneLimits {
             },
             foreground_wait: FOREGROUND_WAIT_LIMIT,
             watch_tick: WATCH_TICK,
+            stuck_after: STUCK_AFTER,
         }
     }
 }
@@ -531,6 +538,18 @@ struct Holder {
     since: Instant,
     /// When the watch thread last named it in the log.
     logged_at: Option<Instant>,
+}
+
+/// The lane as the health check reads it.
+#[derive(Debug, Clone, Copy)]
+pub(in crate::db) struct LaneHealth {
+    /// The lane takes no more writes: it shut down, or the thread that runs
+    /// async writes has ended.
+    pub closed: bool,
+    /// The write holding the turn and how long it has held it.
+    pub holder: Option<(&'static str, Duration)>,
+    /// How long a write may hold the turn before it counts as stuck.
+    pub stuck_after: Duration,
 }
 
 /// An async write and the turn it was granted, on its way to the lane's
@@ -1182,6 +1201,24 @@ impl WriteLane {
     /// set.
     pub fn wal_hold(&self) -> Arc<WalHold> {
         Arc::clone(&self.shared.hold)
+    }
+
+    /// Whether the lane is closed and which write holds the turn, read
+    /// under the lane's lock for an instant.
+    pub(in crate::db) fn health(&self) -> LaneHealth {
+        let state = self.shared.state();
+        LaneHealth {
+            closed: state.closed
+                || state
+                    .runner_thread
+                    .as_ref()
+                    .is_some_and(JoinHandle::is_finished),
+            holder: state
+                .holder
+                .as_ref()
+                .map(|holder| (holder.name, holder.since.elapsed())),
+            stuck_after: self.shared.limits.stuck_after,
+        }
     }
 
     /// Moves after each write that committed a changed row; closed once

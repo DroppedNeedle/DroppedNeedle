@@ -10717,7 +10717,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Liveness probe. Public, unauthenticated, cheap. */
+        /**
+         * Liveness probe. Public, unauthenticated, cheap: one read, never a write.
+         *     It fails only on a fault a restart can clear (the database stopped
+         *     answering, or one write has held the writer for minutes), with the busy
+         *     answer and the cause in the log. An outside service being down never
+         *     fails it.
+         */
         get: operations["health"];
         put?: never;
         post?: never;
@@ -54786,6 +54792,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+            /** @description The database stopped answering (SERVER_BUSY) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

@@ -197,7 +197,7 @@ fn answer(
 /// Every area mounted through [`Routes`], listed once. Serving and the API
 /// document both read this list.
 fn mount(m: Mount<'_>) -> Mount<'_> {
-    m.area(server_routes(), |_| handlers::HealthStatus::Ok)
+    m.area(server_routes(), handlers::HealthState::serving)
         .area(crate::admin::routes(), |state| state.admin.clone())
         .area(crate::settings::wiring::routes(), |state| {
             state.settings.clone()
@@ -292,7 +292,7 @@ fn mount(m: Mount<'_>) -> Mount<'_> {
 }
 
 /// The server crate's own routes.
-fn server_routes() -> Routes<handlers::HealthStatus> {
+fn server_routes() -> Routes<handlers::HealthState> {
     Routes::new()
         .public(routes!(handlers::health))
         .public(routes!(handlers::openapi_json))

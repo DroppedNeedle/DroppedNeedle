@@ -19,6 +19,7 @@ mod contract;
 mod envelope;
 mod events_stream;
 mod health;
+mod health_db;
 mod jobs_events;
 mod jobs_loops;
 mod jobs_plugin_ticks;
