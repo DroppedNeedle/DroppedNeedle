@@ -17,11 +17,12 @@ import {
 	LibraryQueryKeyFactory,
 	type LibraryV3AlbumsParams,
 	type LibraryV3ArtistsParams,
+	type LibraryV3LettersParams,
 	type LibraryV3TracksParams,
 	type LibraryV3UserId
 } from './LibraryQueryKeyFactory';
 import { toMusicBrainzAlbums } from '$lib/features/search/queries/SearchV3Adapters';
-import { fetchLibraryTracks, type LibraryTrackPage } from './libraryTracks';
+import { fetchLibraryTracks, fetchLibraryTracksAt, type LibraryTrackPage } from './libraryTracks';
 import type { components } from '$lib/api/v3/openapi';
 import type { Album } from '$lib/features/album/queries/types';
 import type {
@@ -149,9 +150,13 @@ export interface LibraryArtistsParams {
 
 const ARTISTS_PAGE_SIZE = 48;
 
-function artistParams(params: LibraryArtistsParams): LibraryV3ArtistsParams {
+/** The artist list's server params for the page's `params`, `limit` rows a page. */
+export function libraryArtistParams(
+	params: LibraryArtistsParams,
+	limit = ARTISTS_PAGE_SIZE
+): LibraryV3ArtistsParams {
 	return {
-		limit: ARTISTS_PAGE_SIZE,
+		limit,
 		...(params.sortBy === 'hearted' ? {} : { sort: params.sortBy, order: params.sortOrder }),
 		q: params.q || undefined,
 		scope: params.scope,
@@ -183,7 +188,7 @@ function fetchArtists(
 
 export const getLibraryArtistsInfiniteQuery = (getParams: Getter<LibraryArtistsParams>) =>
 	createInfiniteQuery(() => {
-		const params = artistParams(getParams());
+		const params = libraryArtistParams(getParams());
 		return {
 			meta: PERSIST,
 			queryKey: LibraryQueryKeyFactory.catalog.artists(userId(), params),
@@ -205,6 +210,125 @@ export const getLibraryTracksInfiniteQuery = (getParams: Getter<LibraryV3TracksP
 			queryFn: ({ pageParam, signal }) => fetchLibraryTracks(params, pageParam, signal),
 			getNextPageParam: (lastPage: LibraryTrackPage) => lastPage.next ?? undefined
 		};
+	});
+
+// The long lists by position, for a list drawn whole: one block of rows from
+// an offset, read on by the block's `next` like any page, and each list's
+// letter index (the first position and count of each letter, in the list's
+// order). A random order keeps one shuffle across blocks through `seed`.
+
+type LetterIndex = components['schemas']['LetterIndex'];
+
+const seedQuery = (params: { seed?: number }) =>
+	params.seed !== undefined ? { seed: params.seed } : {};
+
+function lettersParams<P extends { limit: number; seed?: number }>(
+	params: P
+): LibraryV3LettersParams<P> {
+	const { limit: _limit, seed: _seed, ...rest } = params;
+	return rest;
+}
+
+/** The rows of the album list from `offset`, `params.limit` of them. */
+export const libraryAlbumBlockQueryOptions = (
+	forUser: LibraryV3UserId,
+	params: LibraryV3AlbumsParams,
+	offset: number
+) =>
+	queryOptions({
+		queryKey: LibraryQueryKeyFactory.catalog.albumBlock(forUser, params, offset),
+		queryFn: ({ signal }) =>
+			api.v3.GET(
+				v3('/api/v3/library/albums', {
+					query: { ...albumsQuery(params, null), offset, ...seedQuery(params) }
+				}),
+				{ signal }
+			)
+	});
+
+export const getLibraryAlbumBlockQuery = (
+	getParams: Getter<LibraryV3AlbumsParams>,
+	getOffset: Getter<number>
+) => createQuery(() => libraryAlbumBlockQueryOptions(userId(), getParams(), getOffset()));
+
+/** The rows of the artist list from `offset`; build `params` with `libraryArtistParams`. */
+export const libraryArtistBlockQueryOptions = (
+	forUser: LibraryV3UserId,
+	params: LibraryV3ArtistsParams,
+	offset: number
+) =>
+	queryOptions({
+		queryKey: LibraryQueryKeyFactory.catalog.artistBlock(forUser, params, offset),
+		queryFn: ({ signal }) =>
+			api.v3.GET(
+				v3('/api/v3/library/artists', {
+					query: { ...artistsQuery(params, null), offset }
+				}),
+				{ signal }
+			)
+	});
+
+export const getLibraryArtistBlockQuery = (
+	getParams: Getter<LibraryV3ArtistsParams>,
+	getOffset: Getter<number>
+) => createQuery(() => libraryArtistBlockQueryOptions(userId(), getParams(), getOffset()));
+
+/** The rows of the track list from `offset`, `params.limit` of them. */
+export const libraryTrackBlockQueryOptions = (
+	forUser: LibraryV3UserId,
+	params: LibraryV3TracksParams,
+	offset: number
+) =>
+	queryOptions({
+		queryKey: LibraryQueryKeyFactory.catalog.trackBlock(forUser, params, offset),
+		queryFn: ({ signal }) => fetchLibraryTracksAt(params, offset, signal)
+	});
+
+export const getLibraryTrackBlockQuery = (
+	getParams: Getter<LibraryV3TracksParams>,
+	getOffset: Getter<number>
+) => createQuery(() => libraryTrackBlockQueryOptions(userId(), getParams(), getOffset()));
+
+/** The album list's letter index for `params`' filters and order. */
+export const getLibraryAlbumLettersQuery = (getParams: Getter<LibraryV3AlbumsParams>) =>
+	createQuery(() => {
+		const params = lettersParams(getParams());
+		return queryOptions({
+			meta: PERSIST,
+			queryKey: LibraryQueryKeyFactory.catalog.albumLetters(userId(), params),
+			queryFn: ({ signal }): Promise<LetterIndex> => {
+				const { limit: _limit, ...query } = albumsQuery({ ...params, limit: 0 }, null);
+				return api.v3.GET(v3('/api/v3/library/albums/letters', { query }), { signal });
+			}
+		});
+	});
+
+/** The artist list's letter index for `params`' scope, filters and order. */
+export const getLibraryArtistLettersQuery = (getParams: Getter<LibraryV3ArtistsParams>) =>
+	createQuery(() => {
+		const params = lettersParams(getParams());
+		return queryOptions({
+			meta: PERSIST,
+			queryKey: LibraryQueryKeyFactory.catalog.artistLetters(userId(), params),
+			queryFn: ({ signal }): Promise<LetterIndex> => {
+				const { limit: _limit, ...query } = artistsQuery({ ...params, limit: 0 }, null);
+				return api.v3.GET(v3('/api/v3/library/artists/letters', { query }), { signal });
+			}
+		});
+	});
+
+/** The track list's letter index for `params`' filters and order. */
+export const getLibraryTrackLettersQuery = (getParams: Getter<LibraryV3TracksParams>) =>
+	createQuery(() => {
+		const params = lettersParams(getParams());
+		return queryOptions({
+			meta: PERSIST,
+			queryKey: LibraryQueryKeyFactory.catalog.trackLetters(userId(), params),
+			queryFn: ({ signal }): Promise<LetterIndex> => {
+				const { limit: _limit, ...query } = tracksQuery({ ...params, limit: 0 }, null);
+				return api.v3.GET(v3('/api/v3/library/tracks/letters', { query }), { signal });
+			}
+		});
 	});
 
 // separate from the paginated browse query so the hub avoids pulling a full 48-item page for a few thumbnails

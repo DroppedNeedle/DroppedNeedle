@@ -14,19 +14,20 @@ use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use super::LibraryDeps;
 use super::models::{
     AlbumDetailView, AlbumFormatCounts, AlbumPage, AlbumQuery, ArtistPage, ArtistQuery, ArtistView,
-    CursorQuery, DecadesResponse, LibraryAlbumStatus, LibraryMembershipRequest,
-    LibraryMembershipResponse, LyricsView, PageQuery, RecentQuery, ResolveTracksRequest,
-    ResolveTracksResponse, StatsView, SuggestionsQuery, SuggestionsResponse, TrackListPage,
-    TrackPage, TrackQuery, UnlinkedCopies, UnlinkedCopiesQuery,
+    CursorQuery, DecadesResponse, LetterIndex, LibraryAlbumStatus, LibraryMembershipRequest,
+    LibraryMembershipResponse, ListPageQuery, LyricsView, PageQuery, RecentQuery,
+    ResolveTracksRequest, ResolveTracksResponse, StatsView, SuggestionsQuery, SuggestionsResponse,
+    TrackListPage, TrackPage, TrackQuery, UnlinkedCopies, UnlinkedCopiesQuery,
 };
 use super::services;
 
-/// One page of catalog albums.
+/// One page of catalog albums: the first, the one after a cursor, or the
+/// one at a position.
 #[utoipa::path(
     get,
     tag = "library",
     path = "/api/v3/library/albums",
-    params(AlbumQuery),
+    params(ListPageQuery, AlbumQuery),
     responses(
         (status = 200, description = "Album page", body = AlbumPage),
         (status = 400, description = "Bad query string"),
@@ -36,9 +37,38 @@ use super::services;
 pub async fn list_albums(
     State(deps): State<LibraryDeps>,
     User(caller): User,
+    ValidQuery(paging): ValidQuery<ListPageQuery>,
     ValidQuery(query): ValidQuery<AlbumQuery>,
 ) -> Result<Json<AlbumPage>, ApiError> {
-    services::list_albums(&deps, caller.user_id(), &query)
+    services::list_albums(&deps, caller.user_id(), &paging, &query)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+/// The album list's letter index: where each first letter's rows start.
+///
+/// Takes the list's filters, sort and order. Sorted by title (`name`) or
+/// album artist (`artist`), it answers each letter's first position and
+/// count in the list's own order, the letter read from the folded text the
+/// list sorts on; any other sort has no letters.
+#[utoipa::path(
+    get,
+    tag = "library",
+    path = "/api/v3/library/albums/letters",
+    params(AlbumQuery),
+    responses(
+        (status = 200, description = "Letter index", body = LetterIndex),
+        (status = 400, description = "Bad query string"),
+        (status = 401, description = "Not authenticated"),
+    )
+)]
+pub async fn album_letters(
+    State(deps): State<LibraryDeps>,
+    User(caller): User,
+    ValidQuery(query): ValidQuery<AlbumQuery>,
+) -> Result<Json<LetterIndex>, ApiError> {
+    services::album_letters(&deps, caller.user_id(), &query)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -163,12 +193,13 @@ pub async fn list_album_copies(
         .map_err(ApiError::from)
 }
 
-/// One page of catalog artists.
+/// One page of catalog artists: the first, the one after a cursor, or the
+/// one at a position.
 #[utoipa::path(
     get,
     tag = "library",
     path = "/api/v3/library/artists",
-    params(ArtistQuery),
+    params(ListPageQuery, ArtistQuery),
     responses(
         (status = 200, description = "Artist page", body = ArtistPage),
         (status = 400, description = "Bad query string"),
@@ -178,9 +209,38 @@ pub async fn list_album_copies(
 pub async fn list_artists(
     State(deps): State<LibraryDeps>,
     User(caller): User,
+    ValidQuery(paging): ValidQuery<ListPageQuery>,
     ValidQuery(query): ValidQuery<ArtistQuery>,
 ) -> Result<Json<ArtistPage>, ApiError> {
-    services::list_artists(&deps, caller.user_id(), &query)
+    services::list_artists(&deps, caller.user_id(), &paging, &query)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+/// The artist list's letter index: where each first letter's rows start.
+///
+/// Takes the list's filters, sort and order. Sorted by name, it answers
+/// each letter's first position and count in the list's own order, the
+/// letter read from the folded text the list sorts on; any other sort has
+/// no letters.
+#[utoipa::path(
+    get,
+    tag = "library",
+    path = "/api/v3/library/artists/letters",
+    params(ArtistQuery),
+    responses(
+        (status = 200, description = "Letter index", body = LetterIndex),
+        (status = 400, description = "Bad query string"),
+        (status = 401, description = "Not authenticated"),
+    )
+)]
+pub async fn artist_letters(
+    State(deps): State<LibraryDeps>,
+    User(caller): User,
+    ValidQuery(query): ValidQuery<ArtistQuery>,
+) -> Result<Json<LetterIndex>, ApiError> {
+    services::artist_letters(&deps, caller.user_id(), &query)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -259,12 +319,13 @@ pub async fn list_artist_appearances(
         .map_err(ApiError::from)
 }
 
-/// One page of streamable tracks.
+/// One page of streamable tracks: the first, the one after a cursor, or
+/// the one at a position.
 #[utoipa::path(
     get,
     tag = "library",
     path = "/api/v3/library/tracks",
-    params(TrackQuery),
+    params(ListPageQuery, TrackQuery),
     responses(
         (status = 200, description = "Track page", body = TrackListPage),
         (status = 400, description = "Bad query string"),
@@ -274,9 +335,38 @@ pub async fn list_artist_appearances(
 pub async fn list_tracks(
     State(deps): State<LibraryDeps>,
     User(caller): User,
+    ValidQuery(paging): ValidQuery<ListPageQuery>,
     ValidQuery(query): ValidQuery<TrackQuery>,
 ) -> Result<Json<TrackListPage>, ApiError> {
-    services::list_tracks(&deps, caller.user_id(), &query)
+    services::list_tracks(&deps, caller.user_id(), &paging, &query)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+/// The track list's letter index: where each first letter's rows start.
+///
+/// Takes the list's filters, sort and order. Sorted by title, artist or
+/// album, it answers each letter's first position and count in the list's
+/// own order, the letter read from the folded text the list sorts on; any
+/// other sort has no letters.
+#[utoipa::path(
+    get,
+    tag = "library",
+    path = "/api/v3/library/tracks/letters",
+    params(TrackQuery),
+    responses(
+        (status = 200, description = "Letter index", body = LetterIndex),
+        (status = 400, description = "Bad query string"),
+        (status = 401, description = "Not authenticated"),
+    )
+)]
+pub async fn track_letters(
+    State(deps): State<LibraryDeps>,
+    User(caller): User,
+    ValidQuery(query): ValidQuery<TrackQuery>,
+) -> Result<Json<LetterIndex>, ApiError> {
+    services::track_letters(&deps, caller.user_id(), &query)
         .await
         .map(Json)
         .map_err(ApiError::from)

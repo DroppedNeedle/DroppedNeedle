@@ -3,6 +3,7 @@ import type { TrackView } from '$lib/features/library/queries/types';
 import type { LibraryV3TracksParams } from './LibraryQueryKeyFactory';
 import {
 	fetchLibraryTracks,
+	fetchLibraryTracksAt,
 	libraryTrackParams,
 	type LibraryTrackFilters,
 	type LibraryTrackPage,
@@ -22,9 +23,9 @@ export interface LibraryTrackQueueHooks {
 /** How a start went: playing, nothing to play, or the first page failed (already said). */
 export type LibraryTrackQueueStart = 'playing' | 'empty' | 'failed';
 
-// Plays the whole local track list: the first page at once, the rest
-// appended in the background as the cursor walks on. Shuffle walks the
-// list's own shuffle, so every track comes once.
+// Plays the local track list from a position (the top unless asked): the
+// first page at once, the rest appended in the background as the cursor
+// walks on. Shuffle walks the list's own shuffle, so every track comes once.
 export function createLibraryTrackQueue(hooks: LibraryTrackQueueHooks) {
 	let controller: AbortController | null = null;
 	let loading = $state(false);
@@ -75,14 +76,15 @@ export function createLibraryTrackQueue(hooks: LibraryTrackQueueHooks) {
 		}
 	}
 
-	// Plays from `first` (or the list's first page), then walks the rest.
+	// Plays from `first` (or the list's page at `offset`), then walks the rest.
 	async function play(
 		sort: LibraryTrackSort,
 		q: string,
 		favorites: boolean,
 		shuffle: boolean,
 		first: LibraryTrackPage | null,
-		filters: LibraryTrackFilters
+		filters: LibraryTrackFilters,
+		offset = 0
 	): Promise<LibraryTrackQueueStart> {
 		abort();
 		const ac = new AbortController();
@@ -90,7 +92,11 @@ export function createLibraryTrackQueue(hooks: LibraryTrackQueueHooks) {
 		const params = libraryTrackParams(BATCH_SIZE, sort, q, favorites, filters);
 		let page: LibraryTrackPage;
 		try {
-			page = first ?? (await fetchLibraryTracks(params, null, ac.signal));
+			page =
+				first ??
+				(offset > 0
+					? await fetchLibraryTracksAt(params, offset, ac.signal)
+					: await fetchLibraryTracks(params, null, ac.signal));
 		} catch {
 			release(ac);
 			if (ac.signal.aborted) return 'empty';
@@ -104,7 +110,7 @@ export function createLibraryTrackQueue(hooks: LibraryTrackQueueHooks) {
 		}
 		hooks.playQueue(queue, 0, shuffle);
 		loaded = page.items.length;
-		total = page.total;
+		total = Math.max(page.total - offset, loaded);
 		if (page.next) {
 			loading = true;
 			void walk(ac, params, page.next, shuffle);
@@ -132,6 +138,18 @@ export function createLibraryTrackQueue(hooks: LibraryTrackQueueHooks) {
 			favorites = false,
 			filters: LibraryTrackFilters = {}
 		) => play(sort, q, favorites, false, first, filters),
+		/**
+		 * Plays the list in `sort` order from the row at `offset` (its
+		 * position in the list) to the end, only the favourites and what
+		 * `filters` keep when asked.
+		 */
+		playFrom: (
+			offset: number,
+			sort: LibraryTrackSort,
+			q: string,
+			favorites = false,
+			filters: LibraryTrackFilters = {}
+		) => play(sort, q, favorites, false, null, filters, offset),
 		/** Plays the list shuffled, only the favourites and what `filters` keep when asked. */
 		shuffleAll: (q: string, favorites = false, filters: LibraryTrackFilters = {}) =>
 			play('random', q, favorites, true, null, filters),

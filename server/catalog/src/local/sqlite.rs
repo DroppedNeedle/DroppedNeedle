@@ -35,6 +35,7 @@ use rusqlite::Row;
 use rusqlite::types::Value;
 
 use super::sql;
+use super::sql::ArtistWalk;
 use super::store::{
     Credits, LocalCatalog, album_row, artist_row, count, first, int, rows, scalar, text, texts,
     track_row, unsigned,
@@ -42,7 +43,7 @@ use super::store::{
 use super::stores::{
     After, AlbumFilter, AlbumPageState, AlbumRecord, AlbumSort, ArtistBounds, ArtistKeyedListing,
     ArtistListing, ArtistRecord, ArtistScope, ArtistSort, DecadeRecord, GenreRecord, KeyedPage,
-    ManagementHoldRecord, RatingBound, StatsRecord, StoreError, TrackFilter, TrackRecord,
+    LETTERS, ManagementHoldRecord, RatingBound, StatsRecord, StoreError, TrackFilter, TrackRecord,
     TrackSort,
 };
 
@@ -284,6 +285,31 @@ fn split_page<T>(mut rows: Vec<(T, Vec<Value>)>, limit: u64) -> (Vec<T>, Option<
     (rows.into_iter().map(|(item, _)| item).collect(), next)
 }
 
+/// Where a page's rows start once its position is read.
+enum Start {
+    /// The first row of the list.
+    Top,
+    /// The row after this key.
+    After(Vec<Value>),
+    /// The position is at or past the list's end: the page is empty.
+    PastEnd,
+}
+
+/// The rows each letter files, [`LETTERS`] counts in the list's ascending
+/// order, from a letters statement's rows; a letter with no rows counts 0.
+fn letter_counts(rows: Vec<sql::LetterCount>) -> Vec<u64> {
+    let mut counts = vec![0; LETTERS];
+    for row in rows {
+        if let Some(slot) = usize::try_from(row.letter)
+            .ok()
+            .and_then(|index| counts.get_mut(index))
+        {
+            *slot += unsigned(row.counted);
+        }
+    }
+    counts
+}
+
 /// The first remembered total, zero when none.
 fn first_total(totals: &[u64]) -> u64 {
     totals.first().copied().unwrap_or(0)
@@ -315,6 +341,77 @@ impl LocalCatalog {
         }
     }
 
+    /// Where a page starting at `after` begins: after its cursor's key, at
+    /// the top, or for a position the key of the row before it, read by
+    /// `key_at` (the first page's walk as a key at a position) over `walk`,
+    /// the first page's binds before its cursor and limit. Past the list's
+    /// end when no row is there.
+    async fn page_start(
+        &self,
+        name: &'static str,
+        after: &After,
+        width: usize,
+        walk: Vec<Value>,
+        key_at: impl FnOnce() -> String,
+    ) -> Result<Start, StoreError> {
+        if let Some(key) = &after.key {
+            return Ok(Start::After(key.clone()));
+        }
+        if after.offset == 0 {
+            return Ok(Start::Top);
+        }
+        let text = key_at();
+        let mut values = walk;
+        values.extend([count(1), count(after.offset - 1)]);
+        let keys = self
+            .read(name, move |conn| {
+                rows(conn, &text, &values, |row| key_of(row, width))
+            })
+            .await?;
+        Ok(keys.into_iter().next().map_or(Start::PastEnd, Start::After))
+    }
+
+    /// How many rows each letter files ([`LETTERS`] counts) for the letters
+    /// statement `text` over `values`, remembered per catalog revision
+    /// under `key` unless the list is one person's.
+    async fn letters(
+        &self,
+        key: String,
+        personal: bool,
+        name: &'static str,
+        text: String,
+        values: Vec<Value>,
+    ) -> Result<Vec<u64>, StoreError> {
+        self.list_totals(key, personal, name, move |conn| {
+            rows(conn, &text, &values, sql::LetterCount::read).map(letter_counts)
+        })
+        .await
+    }
+
+    /// How many of the album list each letter files in `sort` order, the
+    /// name sorts' index; per catalog revision unless one person's
+    /// favourites or stars narrow it.
+    pub async fn album_letters(
+        &self,
+        filter: &AlbumFilter,
+        sort: AlbumSort,
+    ) -> Result<Vec<u64>, StoreError> {
+        let favorites = filter.favorites_of.is_some();
+        let mut values: Vec<Value> = favorites_value(filter.favorites_of.as_deref(), false)
+            .into_iter()
+            .collect();
+        values.extend(album_filter_values(filter));
+        values.push(Value::Integer(-1));
+        self.letters(
+            format!("album letters {sort:?} {filter:?}"),
+            favorites || filter.rating.is_some(),
+            "library.albums.letters",
+            sql::album_letters(sort, favorites),
+            values,
+        )
+        .await
+    }
+
     /// One page of albums plus the match total, remembered per catalog
     /// revision.
     pub async fn list_albums(
@@ -327,31 +424,47 @@ impl LocalCatalog {
     ) -> Result<KeyedPage<AlbumRecord>, StoreError> {
         let keys = sql::album_keys(sort, descending);
         let favorites_of = filter.favorites_of.clone();
+        let favorites = favorites_of.is_some();
         let filter_values = album_filter_values(filter);
-        let mut values = Vec::new();
-        values.extend(favorites_value(
+        let mut walk = Vec::new();
+        walk.extend(favorites_value(
             favorites_of.as_deref(),
             sort == AlbumSort::Favorited,
         ));
         if sort == AlbumSort::Random {
-            values.extend(sql::shuffle_values(after.seed));
+            walk.extend(sql::shuffle_values(after.seed));
         }
-        values.extend(filter_values.iter().cloned());
-        if let Some(key) = &after.key {
-            values.extend(sql::after_values(&keys, key));
-        }
-        values.push(count(limit.saturating_add(1)));
-        let text = if favorites_of.is_some() {
-            sql::favorite_album_page(sort, descending, after.key.is_some())
-        } else {
-            sql::album_page(sort, descending, after.key.is_some())
-        };
-        // Page the keys first: filtering and ordering touch albums only,
-        // so the track aggregation below runs over the page, never the
-        // catalog.
-        let (items, next) = self
-            .album_key_page("library.albums.list", text, values, keys.len(), limit)
+        walk.extend(filter_values.iter().cloned());
+        let start = self
+            .page_start(
+                "library.albums.list",
+                after,
+                keys.len(),
+                walk.clone(),
+                || sql::album_key_at(sort, descending, favorites),
+            )
             .await?;
+        let (items, next) = match start {
+            Start::PastEnd => (Vec::new(), None),
+            Start::Top | Start::After(_) => {
+                let mut values = walk;
+                if let Start::After(key) = &start {
+                    values.extend(sql::after_values(&keys, key));
+                }
+                values.push(count(limit.saturating_add(1)));
+                let after_cursor = matches!(start, Start::After(_));
+                let text = if favorites {
+                    sql::favorite_album_page(sort, descending, after_cursor)
+                } else {
+                    sql::album_page(sort, descending, after_cursor)
+                };
+                // Page the keys first: filtering and ordering touch albums
+                // only, so the track aggregation below runs over the page,
+                // never the catalog.
+                self.album_key_page("library.albums.list", text, values, keys.len(), limit)
+                    .await?
+            }
+        };
         let total = self
             .list_totals(
                 format!("albums {filter:?}"),
@@ -578,42 +691,90 @@ impl LocalCatalog {
             sql::artist_keys(scope, sort, descending)
         };
         let width = keys.len();
-        let mut values: Vec<Value> = favorites_value(favorites_of, sort == ArtistSort::Favorited)
+        let mut names: Vec<Value> = favorites_value(favorites_of, sort == ArtistSort::Favorited)
             .into_iter()
             .collect();
-        values.extend(name_filter(q));
-        if let Some(key) = &after.key {
-            values.extend(sql::after_values(&keys, key));
-        }
+        names.extend(name_filter(q));
         // The page names the bounds only when they filter, after its walk.
-        values.extend(artist_bound_values(bounds, scope));
-        values.push(count(limit.saturating_add(1)));
-        let shape = sql::ArtistPageShape {
-            after_cursor: after.key.is_some(),
+        let bound_values = artist_bound_values(bounds, scope);
+        let walk = ArtistWalk {
+            favorites: favorites_of.is_some(),
             min_tracks: bounds.min_tracks.is_some(),
             rated: bounds.rating.is_some(),
         };
-        let text = if favorites_of.is_some() {
-            sql::favorite_artist_page_shapes(scope, sort, descending, shape)
-        } else {
-            sql::artist_page_shapes(scope, sort, descending, shape)
-        };
-        // Page the ids first; counts aggregate over the page below.
-        let keyed = self
-            .read("library.artists.list", move |conn| {
-                rows(conn, &text, &values, |row| {
-                    let key = key_of(row, width)?;
-                    let id: String = row.get(width - 1)?;
-                    Ok((id, key))
-                })
+        let mut walk_values = names.clone();
+        walk_values.extend(bound_values.iter().cloned());
+        let start = self
+            .page_start("library.artists.list", after, width, walk_values, || {
+                sql::artist_key_at(scope, sort, descending, walk)
             })
             .await?;
-        let (ids, next) = split_page(keyed, limit);
+        let (ids, next) = match start {
+            Start::PastEnd => (Vec::new(), None),
+            Start::Top | Start::After(_) => {
+                let mut values = names;
+                if let Start::After(key) = &start {
+                    values.extend(sql::after_values(&keys, key));
+                }
+                values.extend(bound_values);
+                values.push(count(limit.saturating_add(1)));
+                let shape = sql::ArtistPageShape {
+                    after_cursor: matches!(start, Start::After(_)),
+                    min_tracks: walk.min_tracks,
+                    rated: walk.rated,
+                };
+                let text = if walk.favorites {
+                    sql::favorite_artist_page_shapes(scope, sort, descending, shape)
+                } else {
+                    sql::artist_page_shapes(scope, sort, descending, shape)
+                };
+                // Page the ids first; counts aggregate over the page below.
+                let keyed = self
+                    .read("library.artists.list", move |conn| {
+                        rows(conn, &text, &values, |row| {
+                            let key = key_of(row, width)?;
+                            let id: String = row.get(width - 1)?;
+                            Ok((id, key))
+                        })
+                    })
+                    .await?;
+                split_page(keyed, limit)
+            }
+        };
         let items = self.hydrate_artists(&ids).await?;
         let (total, led, contributors) = self
             .artist_totals(scope, q, favorites_of, bounds.clone())
             .await?;
         Ok((KeyedPage { items, total, next }, led, contributors))
+    }
+
+    /// How many artists of a scope each letter files by name, the artist
+    /// list's index; per catalog revision unless one person's favourites
+    /// or stars narrow it.
+    pub async fn artist_letters(
+        &self,
+        scope: ArtistScope,
+        q: Option<&str>,
+        favorites_of: Option<&str>,
+        bounds: &ArtistBounds,
+    ) -> Result<Vec<u64>, StoreError> {
+        let mut values: Vec<Value> = favorites_value(favorites_of, false).into_iter().collect();
+        values.extend(name_filter(q));
+        values.extend(artist_bound_values(bounds, scope));
+        values.push(Value::Integer(-1));
+        let walk = ArtistWalk {
+            favorites: favorites_of.is_some(),
+            min_tracks: bounds.min_tracks.is_some(),
+            rated: bounds.rating.is_some(),
+        };
+        self.letters(
+            format!("artist letters {scope:?} {q:?} {bounds:?}"),
+            walk.favorites || walk.rated,
+            "library.artists.letters",
+            sql::artist_letters(scope, walk),
+            values,
+        )
+        .await
     }
 
     /// Artists in scope, album artists and contributors matching `q`, among
@@ -864,21 +1025,16 @@ impl LocalCatalog {
         })
     }
 
-    /// One page of streamable tracks plus the match total: the maintained
-    /// count when unfiltered, else remembered per catalog revision.
-    pub async fn list_tracks(
+    /// The track list's filter binds and its short words on the FTS index
+    /// (none on the substring match), or none when no track text matches,
+    /// whatever the other filters say (they only narrow).
+    async fn track_filter(
         &self,
         filter: &TrackFilter,
-        sort: TrackSort,
-        descending: bool,
-        limit: u64,
-        after: &After,
-    ) -> Result<KeyedPage<TrackRecord>, StoreError> {
+    ) -> Result<Option<(Option<ListLen>, Vec<Value>)>, StoreError> {
         // Words of 3+ characters search the FTS index; anything else
         // keeps the LIKE substring match.
         let search = filter.q.as_deref().and_then(TextSearch::parse);
-        // Miss oracle: when no track text matches, the page and total
-        // are empty whatever the other filters say (they only narrow).
         if let Some(search) = &search {
             let fts = vec![Value::Text(search.fts.clone())];
             let hit: bool = self
@@ -887,11 +1043,7 @@ impl LocalCatalog {
                 })
                 .await?;
             if !hit {
-                return Ok(KeyedPage {
-                    items: Vec::new(),
-                    total: 0,
-                    next: None,
-                });
+                return Ok(None);
             }
         }
         let pattern = match search {
@@ -911,39 +1063,111 @@ impl LocalCatalog {
         let short = search
             .as_ref()
             .map(|search| ListLen::new(search.short_words.len()));
+        Ok(Some((short, filter_values)))
+    }
+
+    /// How many of the track list each letter files in `sort` order, the
+    /// name sorts' index; per catalog revision unless one person's
+    /// favourites or stars narrow it.
+    pub async fn track_letters(
+        &self,
+        filter: &TrackFilter,
+        sort: TrackSort,
+    ) -> Result<Vec<u64>, StoreError> {
+        let Some((short, filter_values)) = self.track_filter(filter).await? else {
+            return Ok(vec![0; LETTERS]);
+        };
+        let favorites = filter.favorites_of.is_some();
+        let mut values: Vec<Value> = favorites_value(filter.favorites_of.as_deref(), false)
+            .into_iter()
+            .collect();
+        values.extend(filter_values);
+        values.push(Value::Integer(-1));
+        let text = match short {
+            Some(short) => sql::track_letters_words(short, sort, favorites),
+            None => sql::track_letters_like(sort, favorites),
+        };
+        self.letters(
+            format!("track letters {sort:?} {filter:?}"),
+            favorites || filter.rating.is_some(),
+            "library.tracks.letters",
+            text,
+            values,
+        )
+        .await
+    }
+
+    /// One page of streamable tracks plus the match total: the maintained
+    /// count when unfiltered, else remembered per catalog revision.
+    pub async fn list_tracks(
+        &self,
+        filter: &TrackFilter,
+        sort: TrackSort,
+        descending: bool,
+        limit: u64,
+        after: &After,
+    ) -> Result<KeyedPage<TrackRecord>, StoreError> {
+        let Some((short, filter_values)) = self.track_filter(filter).await? else {
+            return Ok(KeyedPage {
+                items: Vec::new(),
+                total: 0,
+                next: None,
+            });
+        };
         let keys = sql::track_keys(sort, descending);
         let width = keys.len();
         let favorites_of = filter.favorites_of.clone();
-        let mut values = Vec::new();
-        values.extend(favorites_value(
+        let favorites = favorites_of.is_some();
+        let mut walk = Vec::new();
+        walk.extend(favorites_value(
             favorites_of.as_deref(),
             sort == TrackSort::Favorited,
         ));
         if sort == TrackSort::Random {
-            values.extend(sql::shuffle_values(after.seed));
+            walk.extend(sql::shuffle_values(after.seed));
         }
-        values.extend(filter_values.iter().cloned());
-        if let Some(key) = &after.key {
-            values.extend(sql::after_values(&keys, key));
-        }
-        values.push(count(limit.saturating_add(1)));
-        let after_cursor = after.key.is_some();
-        let text = match (short, favorites_of.is_some()) {
-            (Some(short), false) => sql::track_page_words(short, sort, descending, after_cursor),
-            (Some(short), true) => {
-                sql::favorite_track_page_words(short, sort, descending, after_cursor)
-            }
-            (None, false) => sql::track_page_like(sort, descending, after_cursor),
-            (None, true) => sql::favorite_track_page_like(sort, descending, after_cursor),
-        };
-        let keyed = self
-            .read("library.tracks.list", move |conn| {
-                rows(conn, &text, &values, |row| {
-                    Ok((track_row(row)?, key_of(row, width)?))
-                })
-            })
+        walk.extend(filter_values.iter().cloned());
+        let start = self
+            .page_start(
+                "library.tracks.list",
+                after,
+                width,
+                walk.clone(),
+                || match short {
+                    Some(short) => sql::track_key_at_words(short, sort, descending, favorites),
+                    None => sql::track_key_at_like(sort, descending, favorites),
+                },
+            )
             .await?;
-        let (items, next) = split_page(keyed, limit);
+        let (items, next) = match start {
+            Start::PastEnd => (Vec::new(), None),
+            Start::Top | Start::After(_) => {
+                let mut values = walk;
+                if let Start::After(key) = &start {
+                    values.extend(sql::after_values(&keys, key));
+                }
+                values.push(count(limit.saturating_add(1)));
+                let after_cursor = matches!(start, Start::After(_));
+                let text = match (short, favorites) {
+                    (Some(short), false) => {
+                        sql::track_page_words(short, sort, descending, after_cursor)
+                    }
+                    (Some(short), true) => {
+                        sql::favorite_track_page_words(short, sort, descending, after_cursor)
+                    }
+                    (None, false) => sql::track_page_like(sort, descending, after_cursor),
+                    (None, true) => sql::favorite_track_page_like(sort, descending, after_cursor),
+                };
+                let keyed = self
+                    .read("library.tracks.list", move |conn| {
+                        rows(conn, &text, &values, |row| {
+                            Ok((track_row(row)?, key_of(row, width)?))
+                        })
+                    })
+                    .await?;
+                split_page(keyed, limit)
+            }
+        };
         let unfiltered = filter.q.is_none()
             && filter.album_id.is_none()
             && filter.artist_id.is_none()

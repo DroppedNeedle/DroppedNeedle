@@ -27,6 +27,8 @@ export interface LibraryV3AlbumsParams {
 	ratingMode?: Schemas['RatingMode'];
 	/** Only the caller's favourites; without a sort, the newest first. */
 	favorites?: boolean;
+	/** The shuffle `sort: 'random'` reads by position; read only by the block reads. */
+	seed?: number;
 }
 
 export interface LibraryV3ArtistsParams {
@@ -64,7 +66,12 @@ export interface LibraryV3TracksParams {
 	ratingMode?: Schemas['RatingMode'];
 	/** Only the caller's favourites; without a sort, the newest first. */
 	favorites?: boolean;
+	/** The shuffle `sort: 'random'` reads by position; read only by the block reads. */
+	seed?: number;
 }
+
+/** A long list's params for its letter index: the filters and order, no page size. */
+export type LibraryV3LettersParams<P> = Omit<P, 'limit' | 'seed'>;
 
 /** A stored review state, `resolved` (approved or dismissed) or `all`. */
 export type LibraryReviewState =
@@ -114,6 +121,26 @@ export const LibraryQueryKeyFactory = {
 		// The album list's pages, read on by cursor: apart from one page's key.
 		albumPages: (userId: LibraryV3UserId, params: LibraryV3AlbumsParams) =>
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'album-pages', params] as const,
+		// The rows of a long list from one position, for a list drawn by position.
+		albumBlock: (userId: LibraryV3UserId, params: LibraryV3AlbumsParams, offset: number) =>
+			[...LibraryQueryKeyFactory.catalog.root(userId), 'album-block', params, offset] as const,
+		artistBlock: (userId: LibraryV3UserId, params: LibraryV3ArtistsParams, offset: number) =>
+			[...LibraryQueryKeyFactory.catalog.root(userId), 'artist-block', params, offset] as const,
+		trackBlock: (userId: LibraryV3UserId, params: LibraryV3TracksParams, offset: number) =>
+			[...LibraryQueryKeyFactory.catalog.root(userId), 'track-block', params, offset] as const,
+		// A long list's letter index for its filters and order.
+		albumLetters: (
+			userId: LibraryV3UserId,
+			params: LibraryV3LettersParams<LibraryV3AlbumsParams>
+		) => [...LibraryQueryKeyFactory.catalog.root(userId), 'album-letters', params] as const,
+		artistLetters: (
+			userId: LibraryV3UserId,
+			params: LibraryV3LettersParams<LibraryV3ArtistsParams>
+		) => [...LibraryQueryKeyFactory.catalog.root(userId), 'artist-letters', params] as const,
+		trackLetters: (
+			userId: LibraryV3UserId,
+			params: LibraryV3LettersParams<LibraryV3TracksParams>
+		) => [...LibraryQueryKeyFactory.catalog.root(userId), 'track-letters', params] as const,
 		albumFormats: (userId: LibraryV3UserId) =>
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'album-formats'] as const,
 		artists: (userId: LibraryV3UserId, params: LibraryV3ArtistsParams) =>

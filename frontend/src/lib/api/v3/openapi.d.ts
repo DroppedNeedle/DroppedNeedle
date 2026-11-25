@@ -3247,7 +3247,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** One page of catalog albums. */
+        /**
+         * One page of catalog albums: the first, the one after a cursor, or the
+         *     one at a position.
+         */
         get: operations["list_albums"];
         put?: never;
         post?: never;
@@ -3266,6 +3269,29 @@ export interface paths {
         };
         /** How many albums each primary format has, for the format filter. */
         get: operations["album_format_counts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/letters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The album list's letter index: where each first letter's rows start.
+         * @description Takes the list's filters, sort and order. Sorted by title (`name`) or
+         *     album artist (`artist`), it answers each letter's first position and
+         *     count in the list's own order, the letter read from the folded text the
+         *     list sorts on; any other sort has no letters.
+         */
+        get: operations["album_letters"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4004,7 +4030,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** One page of catalog artists. */
+        /**
+         * One page of catalog artists: the first, the one after a cursor, or the
+         *     one at a position.
+         */
         get: operations["list_artists"];
         put?: never;
         post?: never;
@@ -4083,6 +4112,29 @@ export interface paths {
          *     changed since, and the records are marked as different artists.
          */
         post: operations["undo_artist_duplicate_group"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/artists/letters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The artist list's letter index: where each first letter's rows start.
+         * @description Takes the list's filters, sort and order. Sorted by name, it answers
+         *     each letter's first position and count in the list's own order, the
+         *     letter read from the folded text the list sorts on; any other sort has
+         *     no letters.
+         */
+        get: operations["artist_letters"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -5941,8 +5993,34 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** One page of streamable tracks. */
+        /**
+         * One page of streamable tracks: the first, the one after a cursor, or
+         *     the one at a position.
+         */
         get: operations["list_tracks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/tracks/letters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The track list's letter index: where each first letter's rows start.
+         * @description Takes the list's filters, sort and order. Sorted by title, artist or
+         *     album, it answers each letter's first position and count in the list's
+         *     own order, the letter read from the folded text the list sorts on; any
+         *     other sort has no letters.
+         */
+        get: operations["track_letters"];
         put?: never;
         post?: never;
         delete?: never;
@@ -17230,6 +17308,41 @@ export interface components {
              */
             expected_identity_revision: number;
         };
+        /**
+         * @description One letter of a list's index: where its rows start and how many there
+         *     are.
+         */
+        LetterBucket: {
+            /**
+             * Format: int64
+             * @description The letter's rows, which follow one another from `position`.
+             */
+            count: number;
+            /** @description The letter. */
+            key: components["schemas"]["LetterKey"];
+            /**
+             * Format: int64
+             * @description The position of the letter's first row in the list, from 0: the
+             *     `offset` that reads it.
+             */
+            position: number;
+        };
+        /**
+         * @description The letter index of a list sorted by a name, in the list's own order:
+         *     `#`, A to Z, then `other` ascending, the other way round descending.
+         *     Letters with no rows are left out, and a list sorted by anything else
+         *     has none.
+         */
+        LetterIndex: {
+            /** @description The letters holding rows, in the list's order. */
+            letters: components["schemas"]["LetterBucket"][];
+        };
+        /**
+         * @description The first letter a name-sorted list files a row under, by the folded
+         *     text the list sorts on.
+         * @enum {string}
+         */
+        LetterKey: "#" | "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K" | "L" | "M" | "N" | "O" | "P" | "Q" | "R" | "S" | "T" | "U" | "V" | "W" | "X" | "Y" | "Z" | "other";
         /** @description The whole feed. */
         LibraryActivity: {
             items: components["schemas"]["ActivityItem"][];
@@ -34684,13 +34797,25 @@ export interface operations {
     list_albums: {
         parameters: {
             query?: {
-                /** @description Page size, 1-200. Default 50. */
+                /** @description Page size, default 50: 1-200 albums or artists, 1-500 tracks. */
                 limit?: number;
                 /**
-                 * @description The `next` of the page before, with the same sort and order.
-                 *     Absent for the first page.
+                 * @description The `next` of the page before, with the same filters, sort and
+                 *     order. Absent for the first page. Not with `offset` or `seed`.
                  */
                 after?: string;
+                /**
+                 * @description The position of the page's first row in the list, from 0, with the
+                 *     same filters, sort and order. At or past the end the page is empty.
+                 *     The page's `next` reads on from it. Not with `after`.
+                 */
+                offset?: number;
+                /**
+                 * @description The shuffle `sort=random` reads. Without one, a first page draws its
+                 *     own and its `next` carries it on; pass the same seed with every
+                 *     `offset` to read one shuffle by position. Not with `after`.
+                 */
+                seed?: number;
                 /** @description Default `name`. */
                 sort?: components["schemas"]["AlbumListSort"];
                 /** @description Default `asc`. */
@@ -34785,6 +34910,87 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AlbumFormatCounts"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    album_letters: {
+        parameters: {
+            query?: {
+                /** @description Default `name`. */
+                sort?: components["schemas"]["AlbumListSort"];
+                /** @description Default `asc`. */
+                order?: components["schemas"]["ListOrder"];
+                /** @description Title/artist substring filter, case folded. */
+                q?: string;
+                /** @description Restrict to one album artist. */
+                artist_id?: string;
+                /** @description Restrict to one decade start year, e.g. 1990. */
+                decade?: number;
+                /**
+                 * @description Restrict to one primary track format, e.g. `flac`. Blank reads as
+                 *     absent; matching is case-insensitive. `formats` wins when both are
+                 *     given.
+                 */
+                format?: string;
+                /**
+                 * @description Primary track formats, comma-separated, e.g. `flac,mp3`; matching is
+                 *     case-insensitive. See `format_mode`.
+                 */
+                formats?: string;
+                /** @description Default `with`. */
+                format_mode?: components["schemas"]["FormatMode"];
+                /**
+                 * @description Only albums with at least this many indexed tracks, 1-10000. See
+                 *     `tracks_mode`.
+                 */
+                min_tracks?: number;
+                /** @description Default `at_least`. */
+                tracks_mode?: components["schemas"]["TracksMode"];
+                /**
+                 * @description Only albums the caller rated, 1-5 stars. See `rating_mode`; albums
+                 *     they did not rate are left out.
+                 */
+                rating?: number;
+                /** @description Default `at_least`. */
+                rating_mode?: components["schemas"]["RatingMode"];
+                /**
+                 * @description Only the caller's favourites. Without `sort`, the newest favourite
+                 *     comes first, and `order=asc` puts the oldest first.
+                 */
+                favorites?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Letter index */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LetterIndex"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not authenticated */
@@ -37435,13 +37641,25 @@ export interface operations {
     list_artists: {
         parameters: {
             query?: {
-                /** @description Page size, 1-200. Default 50. */
+                /** @description Page size, default 50: 1-200 albums or artists, 1-500 tracks. */
                 limit?: number;
                 /**
-                 * @description The `next` of the page before, with the same scope, sort and
-                 *     order. Absent for the first page.
+                 * @description The `next` of the page before, with the same filters, sort and
+                 *     order. Absent for the first page. Not with `offset` or `seed`.
                  */
                 after?: string;
+                /**
+                 * @description The position of the page's first row in the list, from 0, with the
+                 *     same filters, sort and order. At or past the end the page is empty.
+                 *     The page's `next` reads on from it. Not with `after`.
+                 */
+                offset?: number;
+                /**
+                 * @description The shuffle `sort=random` reads. Without one, a first page draws its
+                 *     own and its `next` carries it on; pass the same seed with every
+                 *     `offset` to read one shuffle by position. Not with `after`.
+                 */
+                seed?: number;
                 /** @description Default `name`. */
                 sort?: components["schemas"]["ArtistListSort"];
                 /** @description Default `asc`. */
@@ -37734,6 +37952,74 @@ export interface operations {
             };
             /** @description Not a join that can be undone, or undone already */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    artist_letters: {
+        parameters: {
+            query?: {
+                /** @description Default `name`. */
+                sort?: components["schemas"]["ArtistListSort"];
+                /** @description Default `asc`. */
+                order?: components["schemas"]["ListOrder"];
+                /** @description Name substring filter, case folded. */
+                q?: string;
+                /** @description Default `all`. */
+                scope?: components["schemas"]["ArtistListScope"];
+                /**
+                 * @description Only artists with at least this many indexed tracks in the library,
+                 *     1-10000: the tracks credited to them and the tracks on the albums
+                 *     they lead, each once. The scope totals count the same artists. See
+                 *     `tracks_mode`.
+                 */
+                min_tracks?: number;
+                /** @description Default `at_least`. */
+                tracks_mode?: components["schemas"]["TracksMode"];
+                /**
+                 * @description Only artists the caller rated, 1-5 stars. See `rating_mode`;
+                 *     artists they did not rate are left out.
+                 */
+                rating?: number;
+                /** @description Default `at_least`. */
+                rating_mode?: components["schemas"]["RatingMode"];
+                /**
+                 * @description Only the caller's favourites. Without `sort`, the newest favourite
+                 *     comes first, and `order=asc` puts the oldest first.
+                 */
+                favorites?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Letter index */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LetterIndex"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -43873,13 +44159,25 @@ export interface operations {
     list_tracks: {
         parameters: {
             query?: {
-                /** @description Page size, 1-500. Default 50. */
+                /** @description Page size, default 50: 1-200 albums or artists, 1-500 tracks. */
                 limit?: number;
                 /**
-                 * @description The `next` of the page before, with the same sort and order.
-                 *     Absent for the first page.
+                 * @description The `next` of the page before, with the same filters, sort and
+                 *     order. Absent for the first page. Not with `offset` or `seed`.
                  */
                 after?: string;
+                /**
+                 * @description The position of the page's first row in the list, from 0, with the
+                 *     same filters, sort and order. At or past the end the page is empty.
+                 *     The page's `next` reads on from it. Not with `after`.
+                 */
+                offset?: number;
+                /**
+                 * @description The shuffle `sort=random` reads. Without one, a first page draws its
+                 *     own and its `next` carries it on; pass the same seed with every
+                 *     `offset` to read one shuffle by position. Not with `after`.
+                 */
+                seed?: number;
                 /** @description Default `title`. */
                 sort?: components["schemas"]["TrackListSort"];
                 /** @description Default `asc`. */
@@ -43925,6 +44223,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TrackListPage"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    track_letters: {
+        parameters: {
+            query?: {
+                /** @description Default `title`. */
+                sort?: components["schemas"]["TrackListSort"];
+                /** @description Default `asc`. */
+                order?: components["schemas"]["ListOrder"];
+                /** @description Title/artist/album substring filter, case folded. */
+                q?: string;
+                /** @description Restrict to one album. */
+                album_id?: string;
+                /** @description Restrict to one credited artist. */
+                artist_id?: string;
+                /** @description Restrict to one genre tag, case folded. */
+                genre?: string;
+                /**
+                 * @description Track formats, comma-separated, e.g. `flac,mp3`; matching is
+                 *     case-insensitive. See `format_mode`.
+                 */
+                formats?: string;
+                /** @description Default `with`. */
+                format_mode?: components["schemas"]["FormatMode"];
+                /**
+                 * @description Only tracks the caller rated, 1-5 stars. See `rating_mode`; tracks
+                 *     they did not rate are left out.
+                 */
+                rating?: number;
+                /** @description Default `at_least`. */
+                rating_mode?: components["schemas"]["RatingMode"];
+                /**
+                 * @description Only the caller's favourites. Without `sort`, the newest favourite
+                 *     comes first, and `order=asc` puts the oldest first.
+                 */
+                favorites?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Letter index */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LetterIndex"];
                 };
             };
             /** @description Bad query string */

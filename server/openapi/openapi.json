@@ -9831,13 +9831,13 @@
         "tags": [
           "library"
         ],
-        "summary": "One page of catalog albums.",
+        "summary": "One page of catalog albums: the first, the one after a cursor, or the\none at a position.",
         "operationId": "list_albums",
         "parameters": [
           {
             "name": "limit",
             "in": "query",
-            "description": "Page size, 1-200. Default 50.",
+            "description": "Page size, default 50: 1-200 albums or artists, 1-500 tracks.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -9847,10 +9847,31 @@
           {
             "name": "after",
             "in": "query",
-            "description": "The `next` of the page before, with the same sort and order.\nAbsent for the first page.",
+            "description": "The `next` of the page before, with the same filters, sort and\norder. Absent for the first page. Not with `offset` or `seed`.",
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "The position of the page's first row in the list, from 0, with the\nsame filters, sort and order. At or past the end the page is empty.\nThe page's `next` reads on from it. Not with `after`.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "seed",
+            "in": "query",
+            "description": "The shuffle `sort=random` reads. Without one, a first page draws its\nown and its `next` carries it on; pass the same seed with every\n`offset` to read one shuffle by position. Not with `after`.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
             }
           },
           {
@@ -10031,6 +10052,179 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AlbumFormatCounts"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/library/albums/letters": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "The album list's letter index: where each first letter's rows start.",
+        "description": "Takes the list's filters, sort and order. Sorted by title (`name`) or\nalbum artist (`artist`), it answers each letter's first position and\ncount in the list's own order, the letter read from the folded text the\nlist sorts on; any other sort has no letters.",
+        "operationId": "album_letters",
+        "parameters": [
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Default `name`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/AlbumListSort"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "description": "Default `asc`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ListOrder"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Title/artist substring filter, case folded.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "artist_id",
+            "in": "query",
+            "description": "Restrict to one album artist.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "decade",
+            "in": "query",
+            "description": "Restrict to one decade start year, e.g. 1990.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "description": "Restrict to one primary track format, e.g. `flac`. Blank reads as\nabsent; matching is case-insensitive. `formats` wins when both are\ngiven.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "formats",
+            "in": "query",
+            "description": "Primary track formats, comma-separated, e.g. `flac,mp3`; matching is\ncase-insensitive. See `format_mode`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format_mode",
+            "in": "query",
+            "description": "Default `with`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/FormatMode"
+            }
+          },
+          {
+            "name": "min_tracks",
+            "in": "query",
+            "description": "Only albums with at least this many indexed tracks, 1-10000. See\n`tracks_mode`.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "tracks_mode",
+            "in": "query",
+            "description": "Default `at_least`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TracksMode"
+            }
+          },
+          {
+            "name": "rating",
+            "in": "query",
+            "description": "Only albums the caller rated, 1-5 stars. See `rating_mode`; albums\nthey did not rate are left out.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "rating_mode",
+            "in": "query",
+            "description": "Default `at_least`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/RatingMode"
+            }
+          },
+          {
+            "name": "favorites",
+            "in": "query",
+            "description": "Only the caller's favourites. Without `sort`, the newest favourite\ncomes first, and `order=asc` puts the oldest first.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Letter index",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LetterIndex"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad query string",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -13751,13 +13945,13 @@
         "tags": [
           "library"
         ],
-        "summary": "One page of catalog artists.",
+        "summary": "One page of catalog artists: the first, the one after a cursor, or the\none at a position.",
         "operationId": "list_artists",
         "parameters": [
           {
             "name": "limit",
             "in": "query",
-            "description": "Page size, 1-200. Default 50.",
+            "description": "Page size, default 50: 1-200 albums or artists, 1-500 tracks.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -13767,10 +13961,31 @@
           {
             "name": "after",
             "in": "query",
-            "description": "The `next` of the page before, with the same scope, sort and\norder. Absent for the first page.",
+            "description": "The `next` of the page before, with the same filters, sort and\norder. Absent for the first page. Not with `offset` or `seed`.",
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "The position of the page's first row in the list, from 0, with the\nsame filters, sort and order. At or past the end the page is empty.\nThe page's `next` reads on from it. Not with `after`.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "seed",
+            "in": "query",
+            "description": "The shuffle `sort=random` reads. Without one, a first page draws its\nown and its `next` carries it on; pass the same seed with every\n`offset` to read one shuffle by position. Not with `after`.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
             }
           },
           {
@@ -14239,6 +14454,142 @@
           {
             "session": [
               "admin"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/library/artists/letters": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "The artist list's letter index: where each first letter's rows start.",
+        "description": "Takes the list's filters, sort and order. Sorted by name, it answers\neach letter's first position and count in the list's own order, the\nletter read from the folded text the list sorts on; any other sort has\nno letters.",
+        "operationId": "artist_letters",
+        "parameters": [
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Default `name`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ArtistListSort"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "description": "Default `asc`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ListOrder"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Name substring filter, case folded.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "Default `all`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ArtistListScope"
+            }
+          },
+          {
+            "name": "min_tracks",
+            "in": "query",
+            "description": "Only artists with at least this many indexed tracks in the library,\n1-10000: the tracks credited to them and the tracks on the albums\nthey lead, each once. The scope totals count the same artists. See\n`tracks_mode`.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "tracks_mode",
+            "in": "query",
+            "description": "Default `at_least`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TracksMode"
+            }
+          },
+          {
+            "name": "rating",
+            "in": "query",
+            "description": "Only artists the caller rated, 1-5 stars. See `rating_mode`;\nartists they did not rate are left out.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "rating_mode",
+            "in": "query",
+            "description": "Default `at_least`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/RatingMode"
+            }
+          },
+          {
+            "name": "favorites",
+            "in": "query",
+            "description": "Only the caller's favourites. Without `sort`, the newest favourite\ncomes first, and `order=asc` puts the oldest first.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Letter index",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LetterIndex"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad query string",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
             ]
           }
         ]
@@ -22954,13 +23305,13 @@
         "tags": [
           "library"
         ],
-        "summary": "One page of streamable tracks.",
+        "summary": "One page of streamable tracks: the first, the one after a cursor, or\nthe one at a position.",
         "operationId": "list_tracks",
         "parameters": [
           {
             "name": "limit",
             "in": "query",
-            "description": "Page size, 1-500. Default 50.",
+            "description": "Page size, default 50: 1-200 albums or artists, 1-500 tracks.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -22970,10 +23321,31 @@
           {
             "name": "after",
             "in": "query",
-            "description": "The `next` of the page before, with the same sort and order.\nAbsent for the first page.",
+            "description": "The `next` of the page before, with the same filters, sort and\norder. Absent for the first page. Not with `offset` or `seed`.",
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "The position of the page's first row in the list, from 0, with the\nsame filters, sort and order. At or past the end the page is empty.\nThe page's `next` reads on from it. Not with `after`.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "seed",
+            "in": "query",
+            "description": "The shuffle `sort=random` reads. Without one, a first page draws its\nown and its `next` carries it on; pass the same seed with every\n`offset` to read one shuffle by position. Not with `after`.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
             }
           },
           {
@@ -23085,6 +23457,158 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/TrackListPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad query string",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/library/tracks/letters": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "The track list's letter index: where each first letter's rows start.",
+        "description": "Takes the list's filters, sort and order. Sorted by title, artist or\nalbum, it answers each letter's first position and count in the list's\nown order, the letter read from the folded text the list sorts on; any\nother sort has no letters.",
+        "operationId": "track_letters",
+        "parameters": [
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Default `title`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TrackListSort"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "description": "Default `asc`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ListOrder"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Title/artist/album substring filter, case folded.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "album_id",
+            "in": "query",
+            "description": "Restrict to one album.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "artist_id",
+            "in": "query",
+            "description": "Restrict to one credited artist.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "genre",
+            "in": "query",
+            "description": "Restrict to one genre tag, case folded.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "formats",
+            "in": "query",
+            "description": "Track formats, comma-separated, e.g. `flac,mp3`; matching is\ncase-insensitive. See `format_mode`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format_mode",
+            "in": "query",
+            "description": "Default `with`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/FormatMode"
+            }
+          },
+          {
+            "name": "rating",
+            "in": "query",
+            "description": "Only tracks the caller rated, 1-5 stars. See `rating_mode`; tracks\nthey did not rate are left out.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "rating_mode",
+            "in": "query",
+            "description": "Default `at_least`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/RatingMode"
+            }
+          },
+          {
+            "name": "favorites",
+            "in": "query",
+            "description": "Only the caller's favourites. Without `sort`, the newest favourite\ncomes first, and `order=asc` puts the oldest first.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Letter index",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LetterIndex"
                 }
               }
             }
@@ -53134,6 +53658,83 @@
             "description": "The `identity_revision` the edition status showed."
           }
         }
+      },
+      "LetterBucket": {
+        "type": "object",
+        "description": "One letter of a list's index: where its rows start and how many there\nare.",
+        "required": [
+          "key",
+          "position",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The letter's rows, which follow one another from `position`.",
+            "minimum": 0
+          },
+          "key": {
+            "$ref": "#/components/schemas/LetterKey",
+            "description": "The letter."
+          },
+          "position": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The position of the letter's first row in the list, from 0: the\n`offset` that reads it.",
+            "minimum": 0
+          }
+        }
+      },
+      "LetterIndex": {
+        "type": "object",
+        "description": "The letter index of a list sorted by a name, in the list's own order:\n`#`, A to Z, then `other` ascending, the other way round descending.\nLetters with no rows are left out, and a list sorted by anything else\nhas none.",
+        "required": [
+          "letters"
+        ],
+        "properties": {
+          "letters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LetterBucket"
+            },
+            "description": "The letters holding rows, in the list's order."
+          }
+        }
+      },
+      "LetterKey": {
+        "type": "string",
+        "description": "The first letter a name-sorted list files a row under, by the folded\ntext the list sorts on.",
+        "enum": [
+          "#",
+          "A",
+          "B",
+          "C",
+          "D",
+          "E",
+          "F",
+          "G",
+          "H",
+          "I",
+          "J",
+          "K",
+          "L",
+          "M",
+          "N",
+          "O",
+          "P",
+          "Q",
+          "R",
+          "S",
+          "T",
+          "U",
+          "V",
+          "W",
+          "X",
+          "Y",
+          "Z",
+          "other"
+        ]
       },
       "LibraryActivity": {
         "type": "object",

@@ -10,12 +10,13 @@ use super::edition_tracks::{self, AlbumTracks, group_tracks};
 use super::models::{
     AlbumDetailView, AlbumFormatCount, AlbumFormatCounts, AlbumListSort, AlbumPage, AlbumQuery,
     AlbumView, ArtistListScope, ArtistListSort, ArtistPage, ArtistQuery, ArtistView, CursorQuery,
-    DecadeShelf, DecadesResponse, FormatMode, HeldTracks, LibraryAlbumStatus,
-    LibraryMembershipRequest, LibraryMembershipResponse, LibraryStatusTrack, ListOrder, LyricLine,
-    LyricsView, ManagementHoldView, PageQuery, RatingMode, RecentQuery, ResolveTracksRequest,
-    ResolveTracksResponse, ResolvedTrack, StatsView, SuggestionReason, SuggestionTrack,
-    SuggestionsQuery, SuggestionsResponse, TrackListPage, TrackListSort, TrackPage, TrackQuery,
-    TrackView, TracksMode, UnlinkedCopies, UnlinkedCopiesQuery,
+    DecadeShelf, DecadesResponse, FormatMode, HeldTracks, LetterBucket, LetterIndex, LetterKey,
+    LibraryAlbumStatus, LibraryMembershipRequest, LibraryMembershipResponse, LibraryStatusTrack,
+    ListOrder, ListPageQuery, LyricLine, LyricsView, ManagementHoldView, PageQuery, RatingMode,
+    RecentQuery, ResolveTracksRequest, ResolveTracksResponse, ResolvedTrack, StatsView,
+    SuggestionReason, SuggestionTrack, SuggestionsQuery, SuggestionsResponse, TrackListPage,
+    TrackListSort, TrackPage, TrackQuery, TrackView, TracksMode, UnlinkedCopies,
+    UnlinkedCopiesQuery,
 };
 use super::sql;
 use super::stores::{
@@ -250,7 +251,7 @@ fn track_sort(sort: Option<TrackListSort>, favorites: bool) -> TrackSort {
 /// Where a page of the list taken in `order` starts: the first page, or
 /// after the cursor's row. A first page in random order draws its seed.
 /// A cursor from another list or order is bad input.
-fn start(
+fn start_after(
     after: Option<&str>,
     order: &str,
     width: usize,
@@ -260,6 +261,7 @@ fn start(
         return Ok(After {
             seed: if random { fresh_seed() } else { 0 },
             key: None,
+            offset: 0,
         });
     };
     let cursor = Cursor::decode(text, order, width).map_err(|_| {
@@ -270,7 +272,64 @@ fn start(
     Ok(After {
         seed: cursor.seed,
         key: Some(cursor.key),
+        offset: 0,
     })
+}
+
+/// Where a page of a long list taken in `order` starts: the first page,
+/// after the cursor's row, or at a position. A random order reads its
+/// shuffle from the cursor, else from `seed`, else draws one. A cursor
+/// sent with a position or a seed, or a negative position, is bad input.
+fn start(
+    page: &ListPageQuery,
+    order: &str,
+    width: usize,
+    random: bool,
+) -> Result<After, LibraryFailure> {
+    if page.after.is_some() && (page.offset.is_some() || page.seed.is_some()) {
+        return Err(LibraryFailure::InvalidInput(
+            "after reads on from its own place; send it without offset or seed".to_owned(),
+        ));
+    }
+    let offset = match page.offset {
+        None => 0,
+        Some(offset) => u64::try_from(offset)
+            .map_err(|_| LibraryFailure::InvalidInput("offset must be 0 or more".to_owned()))?,
+    };
+    let mut after = start_after(page.after.as_deref(), order, width, random)?;
+    if after.key.is_none() {
+        after.offset = offset;
+        if let (true, Some(seed)) = (random, page.seed) {
+            after.seed = seed;
+        }
+    }
+    Ok(after)
+}
+
+/// A list's letter index from its rows per letter, ascending, turned the
+/// way the list runs: each letter's first position and count, letters
+/// with no rows left out.
+fn letter_index(counts: Vec<u64>, descending: bool) -> LetterIndex {
+    let mut letters: Vec<(LetterKey, u64)> = LetterKey::ALL.into_iter().zip(counts).collect();
+    if descending {
+        letters.reverse();
+    }
+    let mut position = 0;
+    LetterIndex {
+        letters: letters
+            .into_iter()
+            .filter(|(_, count)| *count > 0)
+            .map(|(key, count)| {
+                let bucket = LetterBucket {
+                    key,
+                    position,
+                    count,
+                };
+                position += count;
+                bucket
+            })
+            .collect(),
+    }
 }
 
 /// The cursor of the page after one that started at `after`.
@@ -456,14 +515,9 @@ async fn artist_record(deps: &LibraryDeps, id: &str) -> Result<ArtistRecord, Lib
         .ok_or(LibraryFailure::NotFound)
 }
 
-/// One page of catalog albums.
-pub async fn list_albums(
-    deps: &LibraryDeps,
-    user_id: &str,
-    query: &AlbumQuery,
-) -> Result<AlbumPage, LibraryFailure> {
-    let (limit, _) = page(query.limit, None, 50, 200)?;
-    let filter = AlbumFilter {
+/// The album list's filter, checked.
+fn album_filter(query: &AlbumQuery, user_id: &str) -> Result<AlbumFilter, LibraryFailure> {
+    Ok(AlbumFilter {
         q: clean_q(query.q.as_deref()),
         artist_id: query.artist_id.clone(),
         decade: check_decade(query.decade)?,
@@ -473,13 +527,24 @@ pub async fn list_albums(
         tracks_below: query.tracks_mode == Some(TracksMode::Below),
         rating: rating_bound(query.rating, query.rating_mode, user_id)?,
         favorites_of: favorites_of(query.favorites, user_id),
-    };
+    })
+}
+
+/// One page of catalog albums.
+pub async fn list_albums(
+    deps: &LibraryDeps,
+    user_id: &str,
+    paging: &ListPageQuery,
+    query: &AlbumQuery,
+) -> Result<AlbumPage, LibraryFailure> {
+    let (limit, _) = page(paging.limit, None, 50, 200)?;
+    let filter = album_filter(query, user_id)?;
     let favorites = filter.favorites_of.is_some();
     let sort = album_sort(query.sort, favorites);
     let descending = descending(query.order, sort == AlbumSort::Favorited);
     let order = list_order(format!("albums/{sort:?}/{descending}"), favorites);
     let after = start(
-        query.after.as_deref(),
+        paging,
         &order,
         sql::album_keys(sort, descending).len(),
         sort == AlbumSort::Random,
@@ -489,6 +554,22 @@ pub async fn list_albums(
         .list_albums(&filter, sort, descending, limit, &after)
         .await?;
     album_page(deps, user_id, order, &after, page).await
+}
+
+/// The album list's letter index for its filters and sort: by title or by
+/// album artist, else no letters.
+pub async fn album_letters(
+    deps: &LibraryDeps,
+    user_id: &str,
+    query: &AlbumQuery,
+) -> Result<LetterIndex, LibraryFailure> {
+    let filter = album_filter(query, user_id)?;
+    let sort = album_sort(query.sort, filter.favorites_of.is_some());
+    if !matches!(sort, AlbumSort::Name | AlbumSort::Artist) {
+        return Ok(letter_index(Vec::new(), false));
+    }
+    let counts = deps.catalog.album_letters(&filter, sort).await?;
+    Ok(letter_index(counts, descending(query.order, false)))
 }
 
 /// One catalog album, answered for the album the id names now. Unknown ids
@@ -608,13 +689,47 @@ pub async fn unlinked_copies(
     Ok(UnlinkedCopies { copies })
 }
 
+/// The artist list's track and rating bounds, checked.
+fn artist_bounds(query: &ArtistQuery, user_id: &str) -> Result<ArtistBounds, LibraryFailure> {
+    Ok(ArtistBounds {
+        min_tracks: check_min_tracks(query.min_tracks)?,
+        below: query.tracks_mode == Some(TracksMode::Below),
+        rating: rating_bound(query.rating, query.rating_mode, user_id)?,
+    })
+}
+
+/// The artist list's letter index for its scope and filters: by name, else
+/// no letters.
+pub async fn artist_letters(
+    deps: &LibraryDeps,
+    user_id: &str,
+    query: &ArtistQuery,
+) -> Result<LetterIndex, LibraryFailure> {
+    let bounds = artist_bounds(query, user_id)?;
+    let favorites_of = favorites_of(query.favorites, user_id);
+    if artist_sort(query.sort, favorites_of.is_some()) != ArtistSort::Name {
+        return Ok(letter_index(Vec::new(), false));
+    }
+    let counts = deps
+        .catalog
+        .artist_letters(
+            artist_scope(query.scope),
+            clean_q(query.q.as_deref()).as_deref(),
+            favorites_of.as_deref(),
+            &bounds,
+        )
+        .await?;
+    Ok(letter_index(counts, descending(query.order, false)))
+}
+
 /// One page of catalog artists.
 pub async fn list_artists(
     deps: &LibraryDeps,
     user_id: &str,
+    paging: &ListPageQuery,
     query: &ArtistQuery,
 ) -> Result<ArtistPage, LibraryFailure> {
-    let (limit, _) = page(query.limit, None, 50, 200)?;
+    let (limit, _) = page(paging.limit, None, 50, 200)?;
     let q = clean_q(query.q.as_deref());
     let scope = artist_scope(query.scope);
     let favorites_of = favorites_of(query.favorites, user_id);
@@ -636,7 +751,7 @@ pub async fn list_artists(
     } else {
         sql::artist_keys(scope, sort, descending)
     };
-    let after = start(query.after.as_deref(), &order, keys.len(), false)?;
+    let after = start(paging, &order, keys.len(), false)?;
     let (page, album_artist_total, contributor_total) = deps
         .catalog
         .artist_list(
@@ -647,11 +762,7 @@ pub async fn list_artists(
             descending,
             limit,
             &after,
-            &ArtistBounds {
-                min_tracks: check_min_tracks(query.min_tracks)?,
-                below: query.tracks_mode == Some(TracksMode::Below),
-                rating: rating_bound(query.rating, query.rating_mode, user_id)?,
-            },
+            &artist_bounds(query, user_id)?,
         )
         .await?;
     let ids: Vec<String> = page.items.iter().map(|record| record.id.clone()).collect();
@@ -700,7 +811,7 @@ pub async fn artist_albums(
 ) -> Result<AlbumPage, LibraryFailure> {
     let (limit, _) = page(query.limit, None, 200, 1000)?;
     let order = "artist-albums".to_owned();
-    let after = start(
+    let after = start_after(
         query.after.as_deref(),
         &order,
         sql::title_keys().len(),
@@ -721,7 +832,7 @@ pub async fn artist_appearances(
 ) -> Result<AlbumPage, LibraryFailure> {
     let (limit, _) = page(query.limit, None, 200, 1000)?;
     let order = "appearances".to_owned();
-    let after = start(
+    let after = start_after(
         query.after.as_deref(),
         &order,
         sql::title_keys().len(),
@@ -735,14 +846,9 @@ pub async fn artist_appearances(
     album_page(deps, user_id, order, &after, page).await
 }
 
-/// One page of streamable tracks.
-pub async fn list_tracks(
-    deps: &LibraryDeps,
-    user_id: &str,
-    query: &TrackQuery,
-) -> Result<TrackListPage, LibraryFailure> {
-    let (limit, _) = page(query.limit, None, 50, 500)?;
-    let filter = TrackFilter {
+/// The track list's filter, checked.
+fn track_filter(query: &TrackQuery, user_id: &str) -> Result<TrackFilter, LibraryFailure> {
+    Ok(TrackFilter {
         q: clean_q(query.q.as_deref()),
         album_id: query.album_id.clone(),
         artist_id: query.artist_id.clone(),
@@ -751,13 +857,43 @@ pub async fn list_tracks(
         without_formats: query.format_mode == Some(FormatMode::Without),
         rating: rating_bound(query.rating, query.rating_mode, user_id)?,
         favorites_of: favorites_of(query.favorites, user_id),
-    };
+    })
+}
+
+/// The track list's letter index for its filters and sort: by title,
+/// artist or album, else no letters.
+pub async fn track_letters(
+    deps: &LibraryDeps,
+    user_id: &str,
+    query: &TrackQuery,
+) -> Result<LetterIndex, LibraryFailure> {
+    let filter = track_filter(query, user_id)?;
+    let sort = track_sort(query.sort, filter.favorites_of.is_some());
+    if !matches!(
+        sort,
+        TrackSort::Title | TrackSort::Artist | TrackSort::Album
+    ) {
+        return Ok(letter_index(Vec::new(), false));
+    }
+    let counts = deps.catalog.track_letters(&filter, sort).await?;
+    Ok(letter_index(counts, descending(query.order, false)))
+}
+
+/// One page of streamable tracks.
+pub async fn list_tracks(
+    deps: &LibraryDeps,
+    user_id: &str,
+    paging: &ListPageQuery,
+    query: &TrackQuery,
+) -> Result<TrackListPage, LibraryFailure> {
+    let (limit, _) = page(paging.limit, None, 50, 500)?;
+    let filter = track_filter(query, user_id)?;
     let favorites = filter.favorites_of.is_some();
     let sort = track_sort(query.sort, favorites);
     let descending = descending(query.order, sort == TrackSort::Favorited);
     let order = list_order(format!("tracks/{sort:?}/{descending}"), favorites);
     let after = start(
-        query.after.as_deref(),
+        paging,
         &order,
         sql::track_keys(sort, descending).len(),
         sort == TrackSort::Random,

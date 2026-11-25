@@ -455,14 +455,24 @@ pub struct DecadeRecord {
 pub type ArtistListing = (Vec<ArtistRecord>, u64, u64, u64);
 
 /// Where a page of a long list starts: the seed of a random order, and the
-/// sort key of the last row already sent (none on the first page).
+/// sort key of the last row already sent, or with no key the position of
+/// the page's first row (0 on the first page).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct After {
     /// The shuffle seed; read by random orders only.
     pub seed: u32,
     /// The last sent row's sort key.
     pub key: Option<Vec<rusqlite::types::Value>>,
+    /// The page's first row by position, read only without a key. The
+    /// store reads the key of the row before it on the order's index, then
+    /// pages on from that key as from a cursor.
+    pub offset: u64,
 }
+
+/// The letters a name order files its rows under, in ascending order: `#`
+/// (no text, or a first character before `a`), `a` to `z`, then everything
+/// after `z`. A letter index is one count per letter.
+pub const LETTERS: usize = 28;
 
 /// One page of a long list: its rows, the list's total, and the last row's
 /// sort key when more rows follow.

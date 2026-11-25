@@ -315,6 +315,17 @@ droppedneedle_kernel::sql! {
     /// One page of the album list's keys, one statement per sort and
     /// direction, from the start or after a cursor.
     family ALBUM_PAGE = album_page;
+    /// The key of the album at a position in the list: the first page's
+    /// walk, one row past that many.
+    family ALBUM_KEY_AT = album_key_at;
+    /// The letter a name order files a row under, from the row's first key
+    /// `k0`: 0 for no text or a first character before `a`, 1 to 26 for `a`
+    /// to `z`, 27 for one after `z`. Text sorts by its bytes, so each
+    /// letter's rows follow one another in the list.
+    pub(crate) fragment LETTER_BUCKET = "CASE WHEN k0 IS NULL OR k0 < 'a' THEN 0 \
+        WHEN k0 >= '{' THEN 27 ELSE unicode(k0) - 96 END";
+    /// How many albums each letter files, over the first page's walk.
+    family ALBUM_LETTERS = album_letters;
     /// The album projection for a page of ids.
     family ALBUM_ROWS = album_rows;
     /// The album list's total.
@@ -450,12 +461,26 @@ droppedneedle_kernel::sql! {
         AND (? IS NULL OR " + (rated_within!("track", "t.id")) + ")";
     /// A live track `t`: indexed, on a live album.
     pub(crate) fragment LIVE_TRACK = (live_track!("t"));
-    /// The track list's text filter as a substring match: the pattern four
-    /// times.
-    pub(crate) fragment TRACK_LIKE = LIVE_TRACK + " \
-        AND (? IS NULL OR t.title_folded LIKE ? ESCAPE '\\' \
+    /// [`LIVE_TRACK`] for a walk over many tracks' keys. An album is emptied
+    /// before it is retired, so a retired album almost never holds an
+    /// indexed track; while none does, the album probe is skipped and the
+    /// walk reads its index alone, never a track's row. `>= ''` is every
+    /// retired album (the column is text) and seeks its index, where
+    /// `IS NOT NULL` would scan the albums.
+    pub(crate) fragment LIVE_TRACK_WALK = (concat!(
+        "t.availability = 'indexed' AND (NOT EXISTS (SELECT 1 FROM local_albums ra \
+         CROSS JOIN local_tracks rt ON rt.local_album_id = ra.id \
+         AND rt.availability = 'indexed' WHERE ra.retired_into_album_id >= '') OR ",
+        live_track!("t"),
+        ")"
+    ));
+    /// The track list's text filter as a substring match, after the live
+    /// test: the pattern four times.
+    pub(crate) fragment TRACK_TEXT_LIKE = " AND (? IS NULL OR t.title_folded LIKE ? ESCAPE '\\' \
         OR t.artist_name_folded LIKE ? ESCAPE '\\' \
         OR t.album_title_folded LIKE ? ESCAPE '\\')";
+    /// The track list's text filter as a substring match on live tracks.
+    pub(crate) fragment TRACK_LIKE = LIVE_TRACK + TRACK_TEXT_LIKE;
     /// Tracks whose text matches an FTS expression. The FTS rowid is the
     /// track's `search_key`.
     pub(crate) fragment TRACK_TEXT_MATCH =
@@ -472,6 +497,15 @@ droppedneedle_kernel::sql! {
     family TRACK_PAGE_LIKE = track_page_like;
     /// A page of the track list on the FTS index, with its short words.
     family TRACK_PAGE_WORDS = track_page_words;
+    /// The key of the track at a position in the list on the substring
+    /// match: the first page's binds, then 1 and the position.
+    family TRACK_KEY_AT_LIKE = track_key_at_like;
+    /// The key of the track at a position in the list on the FTS index.
+    family TRACK_KEY_AT_WORDS = track_key_at_words;
+    /// How many tracks each letter files on the substring match.
+    family TRACK_LETTERS_LIKE = track_letters_like;
+    /// How many tracks each letter files on the FTS index.
+    family TRACK_LETTERS_WORDS = track_letters_words;
     /// The track list's total on the substring match.
     pub(crate) TRACK_COUNT_LIKE = "SELECT COUNT(*) FROM local_tracks t WHERE " + TRACK_LIKE
         + TRACK_SCOPE;
@@ -656,6 +690,21 @@ droppedneedle_kernel::sql! {
     family FAVORITE_ARTIST_SCOPE_COUNT = favorite_artist_scope_count;
     /// How many artists of one scope match the name filter.
     family ARTIST_SCOPE_COUNT = artist_scope_count;
+    /// The key of the artist at a position in a scope: the first page's
+    /// binds, then 1 and the position.
+    family ARTIST_KEY_AT = artist_key_at;
+    /// How many artists of a scope each letter files, by name.
+    family ARTIST_LETTERS = artist_letters;
+    /// One letter and the rows it files, from a letters statement.
+    pub(crate) row LetterCount for family [
+        album_letters,
+        track_letters_like,
+        track_letters_words,
+        artist_letters,
+    ] {
+        letter: i64,
+        counted: i64,
+    }
     /// One live artist by id.
     pub(crate) ARTIST_BY_ID = "SELECT " + ARTIST_COLUMNS + " " + ARTIST_JOINS
         + " WHERE r.id = ? AND r.retired_into_artist_id IS NULL";
@@ -1413,6 +1462,31 @@ fn album_list_page(
     )
 }
 
+/// A first page's walk made to answer the key of the row at a position: one
+/// row (bind 1 as the limit) past that many (bind the position).
+fn key_at(walk: String) -> String {
+    format!("{walk} OFFSET ?")
+}
+
+/// How many rows of a first page's walk each letter files
+/// ([`LETTER_BUCKET`]), with the walk's limit bound as -1.
+fn letters(walk: &str) -> String {
+    format!("SELECT {LETTER_BUCKET} AS letter, COUNT(*) AS counted FROM ({walk}) GROUP BY letter")
+}
+
+/// The key of the album at a position in [`album_page`]'s order, over one
+/// user's favourites when `favorites`: that page's binds from the top, then
+/// 1 and the position.
+pub(crate) fn album_key_at(sort: AlbumSort, descending: bool, favorites: bool) -> String {
+    key_at(album_list_page(sort, descending, false, favorites))
+}
+
+/// How many albums each letter files in `sort` order, over one user's
+/// favourites when `favorites`: the first page's binds, the limit -1.
+pub(crate) fn album_letters(sort: AlbumSort, favorites: bool) -> String {
+    letters(&album_list_page(sort, false, false, favorites))
+}
+
 /// The order of an artist's led albums and appearances: by title.
 pub(crate) fn title_keys() -> Vec<OrderKey> {
     vec![("a.title_folded", false), ("a.id", false)]
@@ -1497,10 +1571,87 @@ fn track_from(sort: TrackSort, favorites: bool) -> String {
 /// The track list's text filter on the FTS index: the FTS expression, then
 /// each of `short` words three times.
 fn track_words(short: ListLen) -> String {
+    live_track_words(LIVE_TRACK, short)
+}
+
+/// [`track_words`] after the live test `live`.
+fn live_track_words(live: &str, short: ListLen) -> String {
     format!(
-        "{LIVE_TRACK} AND {TRACK_TEXT_MATCH}{}",
+        "{live} AND {TRACK_TEXT_MATCH}{}",
         TRACK_WORD_LIKE.repeat(short.get())
     )
+}
+
+/// The track list's keys alone from the top, the rows `text` keeps: the
+/// user of the favourites order, the seed of a random order, the filter,
+/// the limit. The same rows in the same order as the first page, without
+/// its joins.
+fn track_walk(text: &str, sort: TrackSort, descending: bool, favorites: bool) -> String {
+    let keys = track_keys(sort, descending);
+    let seed = if sort == TrackSort::Random {
+        SHUFFLE_SEED
+    } else {
+        ""
+    };
+    let tracks = if favorites || sort == TrackSort::Favorited {
+        FAVORITE_TRACKS
+    } else {
+        "local_tracks t"
+    };
+    format!(
+        "SELECT {} FROM {tracks}{seed} WHERE {text}{TRACK_SCOPE} ORDER BY {} LIMIT ?",
+        key_columns(&keys),
+        order_by(&keys)
+    )
+}
+
+/// The key of the track at a position in [`track_page_like`]'s order, over
+/// one user's favourites when `favorites`: that page's binds from the top,
+/// then 1 and the position.
+pub(crate) fn track_key_at_like(sort: TrackSort, descending: bool, favorites: bool) -> String {
+    key_at(track_walk(
+        &format!("{LIVE_TRACK_WALK}{TRACK_TEXT_LIKE}"),
+        sort,
+        descending,
+        favorites,
+    ))
+}
+
+/// [`track_key_at_like`] on the FTS index with `short` short words.
+pub(crate) fn track_key_at_words(
+    short: ListLen,
+    sort: TrackSort,
+    descending: bool,
+    favorites: bool,
+) -> String {
+    key_at(track_walk(
+        &live_track_words(LIVE_TRACK_WALK, short),
+        sort,
+        descending,
+        favorites,
+    ))
+}
+
+/// How many tracks each letter files in `sort` order on the substring
+/// match, over one user's favourites when `favorites`: the first page's
+/// binds, the limit -1.
+pub(crate) fn track_letters_like(sort: TrackSort, favorites: bool) -> String {
+    letters(&track_walk(
+        &format!("{LIVE_TRACK_WALK}{TRACK_TEXT_LIKE}"),
+        sort,
+        false,
+        favorites,
+    ))
+}
+
+/// [`track_letters_like`] on the FTS index with `short` short words.
+pub(crate) fn track_letters_words(short: ListLen, sort: TrackSort, favorites: bool) -> String {
+    letters(&track_walk(
+        &live_track_words(LIVE_TRACK_WALK, short),
+        sort,
+        false,
+        favorites,
+    ))
 }
 
 /// A page of the track list on the substring match: the user of the
@@ -1889,6 +2040,44 @@ pub(crate) fn favorite_artist_page_shapes(
         shape.min_tracks,
         shape.rated,
     )
+}
+
+droppedneedle_kernel::sql_choice! {
+    /// What a first page of artists reads besides its scope and order: one
+    /// user's favourites, a track bound, the caller's rating.
+    pub(crate) struct ArtistWalk {
+        pub(crate) favorites: bool,
+        pub(crate) min_tracks: bool,
+        pub(crate) rated: bool,
+    }
+}
+
+/// The first page of artists [`artist_page`] or [`favorite_artist_page`]
+/// reads for `walk`.
+fn artist_walk(scope: ArtistScope, sort: ArtistSort, descending: bool, walk: ArtistWalk) -> String {
+    let (min_tracks, rated) = (walk.min_tracks, walk.rated);
+    if walk.favorites {
+        favorite_artist_page(scope, sort, descending, false, min_tracks, rated)
+    } else {
+        artist_page(scope, sort, descending, false, min_tracks, rated)
+    }
+}
+
+/// The key of the artist at a position in a scope's order: the first
+/// page's binds, then 1 and the position.
+pub(crate) fn artist_key_at(
+    scope: ArtistScope,
+    sort: ArtistSort,
+    descending: bool,
+    walk: ArtistWalk,
+) -> String {
+    key_at(artist_walk(scope, sort, descending, walk))
+}
+
+/// How many artists of a scope each letter files by name: the first page's
+/// binds, the limit -1.
+pub(crate) fn artist_letters(scope: ArtistScope, walk: ArtistWalk) -> String {
+    letters(&artist_walk(scope, ArtistSort::Name, false, walk))
 }
 
 /// The order of a user's favourite artists: [`artist_keys`] off the kept

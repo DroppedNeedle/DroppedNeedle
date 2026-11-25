@@ -261,15 +261,129 @@ pub enum RatingMode {
     AtMost,
 }
 
-/// Album list query. Unknown `sort` values fail with INVALID_INPUT.
+/// Where a page of the album, artist or track list starts, and how long it
+/// is. A page starts at the top, after a cursor, or at a position.
+#[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct ListPageQuery {
+    /// Page size, default 50: 1-200 albums or artists, 1-500 tracks.
+    pub limit: Option<i64>,
+    /// The `next` of the page before, with the same filters, sort and
+    /// order. Absent for the first page. Not with `offset` or `seed`.
+    pub after: Option<String>,
+    /// The position of the page's first row in the list, from 0, with the
+    /// same filters, sort and order. At or past the end the page is empty.
+    /// The page's `next` reads on from it. Not with `after`.
+    pub offset: Option<i64>,
+    /// The shuffle `sort=random` reads. Without one, a first page draws its
+    /// own and its `next` carries it on; pass the same seed with every
+    /// `offset` to read one shuffle by position. Not with `after`.
+    pub seed: Option<u32>,
+}
+
+/// The first letter a name-sorted list files a row under, by the folded
+/// text the list sorts on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub enum LetterKey {
+    /// No text, or a first character before `a`: digits, spaces and most
+    /// punctuation.
+    #[serde(rename = "#")]
+    Hash,
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+    G,
+    H,
+    I,
+    J,
+    K,
+    L,
+    M,
+    N,
+    O,
+    P,
+    Q,
+    R,
+    S,
+    T,
+    U,
+    V,
+    W,
+    X,
+    Y,
+    Z,
+    /// A first character after `z`: other scripts, curly quotes, `{`, `~`,
+    /// and letters folding keeps, such as `æ`.
+    #[serde(rename = "other")]
+    Other,
+}
+
+impl LetterKey {
+    /// Every letter in ascending list order. The store counts rows per
+    /// letter in this order.
+    pub const ALL: [LetterKey; 28] = [
+        Self::Hash,
+        Self::A,
+        Self::B,
+        Self::C,
+        Self::D,
+        Self::E,
+        Self::F,
+        Self::G,
+        Self::H,
+        Self::I,
+        Self::J,
+        Self::K,
+        Self::L,
+        Self::M,
+        Self::N,
+        Self::O,
+        Self::P,
+        Self::Q,
+        Self::R,
+        Self::S,
+        Self::T,
+        Self::U,
+        Self::V,
+        Self::W,
+        Self::X,
+        Self::Y,
+        Self::Z,
+        Self::Other,
+    ];
+}
+
+/// One letter of a list's index: where its rows start and how many there
+/// are.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct LetterBucket {
+    /// The letter.
+    pub key: LetterKey,
+    /// The position of the letter's first row in the list, from 0: the
+    /// `offset` that reads it.
+    pub position: u64,
+    /// The letter's rows, which follow one another from `position`.
+    pub count: u64,
+}
+
+/// The letter index of a list sorted by a name, in the list's own order:
+/// `#`, A to Z, then `other` ascending, the other way round descending.
+/// Letters with no rows are left out, and a list sorted by anything else
+/// has none.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct LetterIndex {
+    /// The letters holding rows, in the list's order.
+    pub letters: Vec<LetterBucket>,
+}
+
+/// Album list filters and order. Unknown `sort` values fail with
+/// INVALID_INPUT.
 #[derive(Debug, Clone, Default, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct AlbumQuery {
-    /// Page size, 1-200. Default 50.
-    pub limit: Option<i64>,
-    /// The `next` of the page before, with the same sort and order.
-    /// Absent for the first page.
-    pub after: Option<String>,
     /// Default `name`.
     pub sort: Option<AlbumListSort>,
     /// Default `asc`.
@@ -397,15 +511,10 @@ pub struct ArtistPage {
     pub next: Option<String>,
 }
 
-/// Artist list query.
+/// Artist list filters and order.
 #[derive(Debug, Clone, Default, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct ArtistQuery {
-    /// Page size, 1-200. Default 50.
-    pub limit: Option<i64>,
-    /// The `next` of the page before, with the same scope, sort and
-    /// order. Absent for the first page.
-    pub after: Option<String>,
     /// Default `name`.
     pub sort: Option<ArtistListSort>,
     /// Default `asc`.
@@ -557,15 +666,10 @@ pub struct TrackListPage {
     pub next: Option<String>,
 }
 
-/// Track list query.
+/// Track list filters and order.
 #[derive(Debug, Clone, Default, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct TrackQuery {
-    /// Page size, 1-500. Default 50.
-    pub limit: Option<i64>,
-    /// The `next` of the page before, with the same sort and order.
-    /// Absent for the first page.
-    pub after: Option<String>,
     /// Default `title`.
     pub sort: Option<TrackListSort>,
     /// Default `asc`.

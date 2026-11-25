@@ -120,15 +120,18 @@ async fn get(app: Router, path: &str) -> (StatusCode, Value) {
 /// walks this.
 const ROUTES: &[&str] = &[
     "/api/v3/library/albums",
+    "/api/v3/library/albums/letters",
     "/api/v3/library/albums/al1",
     "/api/v3/library/albums/al1/tracks",
     "/api/v3/library/albums/al1/copies",
     "/api/v3/library/albums/unlinked-copies?title=Second%20Dawn&artist=Aurora",
     "/api/v3/library/artists",
+    "/api/v3/library/artists/letters",
     "/api/v3/library/artists/a1",
     "/api/v3/library/artists/a1/albums",
     "/api/v3/library/artists/a1/appearances",
     "/api/v3/library/tracks",
+    "/api/v3/library/tracks/letters",
     "/api/v3/library/tracks/t1/lyrics",
     "/api/v3/library/stats",
     "/api/v3/library/recently-added",
@@ -1730,4 +1733,282 @@ async fn the_album_status_names_the_copy_playback_opens() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["album_id"], "al3", "{body}");
+}
+
+/// Names that fold the same, sort before `a` or after `z`: digits,
+/// punctuation, an accent folding away, curly quotes, braces, Hangul and a
+/// letter folding keeps. Each is an artist, an album of theirs and a track
+/// on it, by them, in FLAC every other row.
+const AWKWARD_NAMES: &[&str] = &[
+    "123 Go",
+    "'Quoted'",
+    "_Under",
+    "\u{201c}Curly\u{201d}",
+    "Ábaco",
+    "abaco",
+    "ABACO",
+    "Mañana",
+    "Zebra",
+    "zz Top",
+    "{Brace}",
+    "~Tilde",
+    "한국어",
+    "Æon",
+    "Beta",
+];
+
+/// The base fixture with [`AWKWARD_NAMES`] added, a track with no artist
+/// name, and some of them hearted by Ada.
+async fn awkward_fixture() -> SqliteFixture {
+    use droppedneedle_kernel::db::fold_text;
+    let fixture = sqlite_fixture().await;
+    let quoted = |text: &str| text.replace('\'', "''");
+    let mut sql = vec![
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('user-ada', 'Ada', 'user', 1)"
+            .to_owned(),
+    ];
+    for (index, name) in AWKWARD_NAMES.iter().enumerate() {
+        let (name, folded) = (quoted(name), quoted(&fold_text(name)));
+        let format = if index % 2 == 0 { "flac" } else { "mp3" };
+        sql.push(format!(
+            "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+             VALUES ('w{index:02}', '{name}', '{folded}', 'person', 3000, 3000)"
+        ));
+        sql.push(format!(
+            "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_name, album_artist_name_folded, album_artist_id, year, \
+             grouping_source, created_at, updated_at) VALUES \
+             ('wal{index:02}', 'r1', 'wg{index:02}', '{name}', '{folded}', '{name}', '{folded}', \
+             'w{index:02}', 2010, 'automatic', {at}, {at})",
+            at = 3000 + index
+        ));
+        sql.push(format!(
+            "INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role) \
+             VALUES ('wal{index:02}', 0, 'w{index:02}', 'main')"
+        ));
+        sql.push(format!(
+            "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             artist_name, artist_name_folded, album_title, album_title_folded, \
+             album_artist_name, album_artist_name_folded, disc_number, track_number, year, \
+             duration_seconds, file_format, availability, ingest_source, imported_at, \
+             membership_source) VALUES \
+             ('wt{index:02}', 'wal{index:02}', 'r1', '/m/wt{index:02}.{format}', \
+             'wt{index:02}.{format}', 'wh{index:02}', 1000, 1, 'ws{index:02}', '{name}', \
+             '{folded}', '{name}', '{folded}', '{name}', '{folded}', '{name}', '{folded}', \
+             1, 1, 2010, 100.0, '{format}', 'indexed', 'scan', 3000.0, 'automatic')"
+        ));
+        sql.push(format!(
+            "INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role) \
+             VALUES ('wt{index:02}', 0, 'w{index:02}', 'main')"
+        ));
+    }
+    sql.push(
+        "UPDATE local_tracks SET artist_name = NULL, artist_name_folded = NULL WHERE id = 'wt14'"
+            .to_owned(),
+    );
+    sql.push(
+        "INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) VALUES \
+         ('user-ada', 'album', 'wal00', 1), ('user-ada', 'album', 'wal04', 2), \
+         ('user-ada', 'album', 'wal09', 3), ('user-ada', 'album', 'wal12', 4), \
+         ('user-ada', 'artist', 'w03', 1), ('user-ada', 'artist', 'w05', 2), \
+         ('user-ada', 'artist', 'w13', 3), \
+         ('user-ada', 'track', 'wt01', 1), ('user-ada', 'track', 'wt06', 2), \
+         ('user-ada', 'track', 'wt10', 3), ('user-ada', 'track', 't1', 4)"
+            .to_owned(),
+    );
+    let batch = sql.join(";\n");
+    fixture
+        .runtime
+        .db()
+        .write(
+            droppedneedle_kernel::db::Lane::Foreground,
+            "awkward names",
+            move |tx| {
+                tx.execute_batch(&batch)
+                    .map_err(droppedneedle_kernel::db::DbError::from)
+            },
+        )
+        .await
+        .expect("awkward names seed");
+    fixture
+}
+
+/// A list's query without its seed, which a cursor carries itself.
+fn without_seed(query: &str) -> String {
+    query
+        .split('&')
+        .filter(|part| !part.starts_with("seed="))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+/// Every row of a list, walked page by page on its cursors from `query`.
+async fn walk_list(app: &dyn Fn() -> Router, list: &str, query: &str) -> Vec<Value> {
+    let mut rows = Vec::new();
+    let mut path = format!("/api/v3/library/{list}?{query}&limit=4");
+    let onward = without_seed(query);
+    loop {
+        let (status, page) = get(app(), &path).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {page}");
+        rows.extend(page["items"].as_array().expect("items").iter().cloned());
+        match page["next"].as_str() {
+            Some(next) => path = format!("/api/v3/library/{list}?{onward}&limit=4&after={next}"),
+            None => return rows,
+        }
+    }
+}
+
+/// The letter a row's sort name files it under, worked out here from the
+/// name the row shows: no text or a first folded character before `a` is
+/// `#`, `a` to `z` its capital, anything after `z` `other`.
+fn letter_of(name: &str) -> String {
+    let folded = droppedneedle_kernel::db::fold_text(name);
+    match folded.chars().next() {
+        Some(letter @ 'a'..='z') => letter.to_ascii_uppercase().to_string(),
+        Some(letter) if letter > 'z' => "other".to_owned(),
+        _ => "#".to_owned(),
+    }
+}
+
+/// A list's letters as its rows show them: runs of one letter, each with
+/// its first position and length. Each letter is one run.
+fn letters_of(rows: &[Value], name: &str) -> Vec<Value> {
+    let mut letters: Vec<(String, u64, u64)> = Vec::new();
+    for (position, row) in rows.iter().enumerate() {
+        let letter = letter_of(row[name].as_str().unwrap_or_default());
+        match letters.last_mut() {
+            Some((last, _, count)) if *last == letter => *count += 1,
+            _ => {
+                assert!(
+                    letters.iter().all(|(seen, ..)| *seen != letter),
+                    "{letter} comes in two runs: {rows:?}"
+                );
+                letters.push((letter, position as u64, 1));
+            }
+        }
+    }
+    letters
+        .into_iter()
+        .map(|(key, position, count)| {
+            serde_json::json!({"key": key, "position": position, "count": count})
+        })
+        .collect()
+}
+
+fn ids_of(rows: &[Value]) -> Vec<&str> {
+    rows.iter()
+        .map(|row| row["id"].as_str().expect("an id"))
+        .collect()
+}
+
+/// Each list sorted by a name answers a letter index whose positions and
+/// counts are where a walk of the list puts each letter, both ways round,
+/// with and without a filter and over one person's favourites; any other
+/// sort has no letters.
+#[tokio::test]
+async fn letter_indexes_match_a_walk_of_the_list() {
+    let fixture = awkward_fixture().await;
+    let beside = AuthRig::new("reads-library-letters").await;
+    let app = || app(deps(&beside, fixture.runtime.db(), None), Some(ADA));
+    for (list, query, name) in [
+        ("albums", "sort=name", "title"),
+        ("albums", "sort=name&order=desc", "title"),
+        ("albums", "sort=artist", "artist_name"),
+        ("albums", "sort=artist&order=desc", "artist_name"),
+        ("albums", "sort=name&formats=flac", "title"),
+        ("albums", "sort=name&order=desc&favorites=true", "title"),
+        ("artists", "sort=name", "name"),
+        ("artists", "sort=name&order=desc", "name"),
+        ("artists", "sort=name&scope=album_artists&q=a", "name"),
+        ("artists", "sort=name&favorites=true", "name"),
+        ("tracks", "sort=title", "title"),
+        ("tracks", "sort=title&order=desc", "title"),
+        ("tracks", "sort=artist", "artist_name"),
+        ("tracks", "sort=artist&order=desc", "artist_name"),
+        ("tracks", "sort=album&order=desc", "album_title"),
+        ("tracks", "sort=title&formats=flac", "title"),
+        ("tracks", "sort=title&q=abaco", "title"),
+        ("tracks", "sort=title&order=desc&favorites=true", "title"),
+    ] {
+        let rows = walk_list(&app, list, query).await;
+        assert!(rows.len() > 1, "{list}?{query} lists rows");
+        let (status, index) = get(app(), &format!("/api/v3/library/{list}/letters?{query}")).await;
+        assert_eq!(status, StatusCode::OK, "{list}?{query}: {index}");
+        assert_eq!(
+            index["letters"].as_array().expect("letters"),
+            &letters_of(&rows, name),
+            "{list}?{query}"
+        );
+    }
+    for path in [
+        "/api/v3/library/albums/letters?sort=date_added",
+        "/api/v3/library/albums/letters?favorites=true",
+        "/api/v3/library/artists/letters?sort=album_count",
+        "/api/v3/library/tracks/letters?sort=random",
+    ] {
+        let (status, index) = get(app(), path).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {index}");
+        assert_eq!(index, serde_json::json!({"letters": []}), "{path}");
+    }
+}
+
+/// A page read at a position holds the rows a walk of the list has there,
+/// and reading on from it walks the rest; at or past the end the page is
+/// empty. A random order keeps its shuffle by its seed. A cursor goes with
+/// neither a position nor a seed.
+#[tokio::test]
+async fn a_page_at_a_position_is_where_the_walk_puts_it() {
+    let fixture = awkward_fixture().await;
+    let beside = AuthRig::new("reads-library-offsets").await;
+    let app = || app(deps(&beside, fixture.runtime.db(), None), Some(ADA));
+    for (list, query) in [
+        ("albums", "sort=name"),
+        ("albums", "sort=artist&order=desc&formats=flac"),
+        ("albums", "favorites=true"),
+        ("artists", "sort=name&order=desc"),
+        ("artists", "sort=album_count&order=desc&scope=album_artists"),
+        ("tracks", "sort=artist"),
+        ("tracks", "sort=title&formats=flac"),
+        ("tracks", "sort=title&q=abaco"),
+        ("tracks", "sort=random&seed=7"),
+    ] {
+        let rows = walk_list(&app, list, query).await;
+        let len = rows.len();
+        for offset in [0, 1, 4, len - 1, len, len + 5] {
+            let path = format!("/api/v3/library/{list}?{query}&limit=3&offset={offset}");
+            let (status, page) = get(app(), &path).await;
+            assert_eq!(status, StatusCode::OK, "{path}: {page}");
+            let want = &rows[offset.min(len)..(offset + 3).min(len)];
+            let items = page["items"].as_array().expect("items");
+            assert_eq!(ids_of(items), ids_of(want), "{path}");
+            assert_eq!(page["total"], serde_json::json!(len), "{path}");
+            assert_eq!(page["next"].is_null(), offset + 3 >= len, "{path}");
+            let mut read = items.clone();
+            let mut next = page["next"].as_str().map(str::to_owned);
+            while let Some(cursor) = next {
+                let onward = without_seed(query);
+                let (status, page) = get(
+                    app(),
+                    &format!("/api/v3/library/{list}?{onward}&limit=3&after={cursor}"),
+                )
+                .await;
+                assert_eq!(status, StatusCode::OK, "{path} read on: {page}");
+                read.extend(page["items"].as_array().expect("items").iter().cloned());
+                next = page["next"].as_str().map(str::to_owned);
+            }
+            assert_eq!(ids_of(&read), ids_of(&rows[offset.min(len)..]), "{path}");
+        }
+    }
+    for path in [
+        "/api/v3/library/albums?offset=-1",
+        "/api/v3/library/tracks?offset=1&after=abc",
+        "/api/v3/library/tracks?sort=random&seed=7&after=abc",
+        "/api/v3/library/artists?offset=-5",
+    ] {
+        let (status, body) = get(app(), path).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}: {body}");
+        assert_eq!(body["error"]["code"], "INVALID_INPUT", "{path}");
+    }
 }

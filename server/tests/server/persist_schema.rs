@@ -5691,7 +5691,9 @@ fn every_registered_statement_prepares() {
 }
 
 /// The registered statements that read every indexed track on purpose:
-/// the library-wide track list and its total, the newest and oldest
+/// the library-wide track list, its total, the key of the track at a
+/// position in it and how many tracks each letter files (each over the
+/// whole filtered list, in its sort order), the newest and oldest
 /// imports, a random pick, the genres and one genre's tracks and total,
 /// the playable totals across every folder, and the player apps' track
 /// lists, totals and unplayed halves over the whole library (one album's
@@ -5730,6 +5732,10 @@ const TRACK_WALKS: &[&str] = &[
     "droppedneedle_library::loudness::sql::DUE",
     "droppedneedle_catalog::local::sql::TRACK_PAGE_LIKE",
     "droppedneedle_catalog::local::sql::TRACK_PAGE_WORDS",
+    "droppedneedle_catalog::local::sql::TRACK_KEY_AT_LIKE",
+    "droppedneedle_catalog::local::sql::TRACK_KEY_AT_WORDS",
+    "droppedneedle_catalog::local::sql::TRACK_LETTERS_LIKE",
+    "droppedneedle_catalog::local::sql::TRACK_LETTERS_WORDS",
     "droppedneedle_catalog::local::sql::TRACK_COUNT_LIKE",
     "droppedneedle_catalog::local::sql::TRACK_COUNT_WORDS",
     "droppedneedle_catalog::local::sql::NEWEST_TRACKS",

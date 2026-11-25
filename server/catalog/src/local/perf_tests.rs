@@ -263,6 +263,27 @@ async fn explain_outer(db: &Db, text: &str) -> Vec<String> {
         .collect()
 }
 
+/// The plan lines of `text` outside its correlated subqueries, every
+/// parameter bound NULL.
+async fn explain_uncorrelated(db: &Db, text: &str) -> Vec<String> {
+    let binds = vec![Value::Null; text.matches('?').count()];
+    let lines: Vec<(i64, i64, String)> =
+        fetch(db, &format!("EXPLAIN QUERY PLAN {text}"), binds, |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(3)?))
+        })
+        .await;
+    let mut inside: Vec<i64> = Vec::new();
+    let mut kept = Vec::new();
+    for (id, parent, line) in lines {
+        if line.starts_with("CORRELATED") || inside.contains(&parent) {
+            inside.push(id);
+        } else {
+            kept.push(line);
+        }
+    }
+    kept
+}
+
 /// Every track sort.
 const TRACK_SORTS: [TrackSort; 5] = [
     TrackSort::Title,
@@ -336,7 +357,10 @@ async fn walk_albums(
     limit: u64,
     seed: u32,
 ) -> (Vec<String>, Vec<u64>) {
-    let mut after = After { seed, key: None };
+    let mut after = After {
+        seed,
+        ..After::default()
+    };
     let (mut ids, mut totals) = (Vec::new(), Vec::new());
     loop {
         let page = fixture
@@ -873,7 +897,10 @@ async fn walk_tracks(
     limit: u64,
     seed: u32,
 ) -> Vec<String> {
-    let mut after = After { seed, key: None };
+    let mut after = After {
+        seed,
+        ..After::default()
+    };
     let mut ids = Vec::new();
     loop {
         let page = fixture
@@ -1379,6 +1406,11 @@ async fn assert_hot_plans(db: &Db) {
             "idx_local_albums_created",
         ),
         (
+            "newest albums at a position",
+            sql::album_key_at(AlbumSort::DateAdded, true, false),
+            "idx_local_albums_created",
+        ),
+        (
             "recently added",
             sql::RECENT_ALBUM_IDS.text().to_owned(),
             "idx_local_albums_created",
@@ -1397,6 +1429,97 @@ async fn assert_hot_plans(db: &Db) {
             plan.iter().any(|line| line.contains(index) && seeks(line)),
             "{name} walks {index}: {plan:?}"
         );
+        assert!(
+            !plan
+                .iter()
+                .any(|line| line.contains("TEMP B-TREE FOR ORDER BY")),
+            "{name} sorts nothing: {plan:?}"
+        );
+    }
+
+    // A page at a position reads the key there on the order's own index,
+    // and a letter index counts along it: neither sorts the list, and a
+    // track walk tests for retired albums once, on their index, never by
+    // scanning the albums or the tracks.
+    for (name, text, index) in [
+        (
+            "tracks by title at a position",
+            sql::track_key_at_like(TrackSort::Title, false, false),
+            "idx_local_tracks_availability_title",
+        ),
+        (
+            "tracks by artist at a position",
+            sql::track_key_at_like(TrackSort::Artist, false, false),
+            "idx_local_tracks_artist_order",
+        ),
+        (
+            "tracks by album at a position",
+            sql::track_key_at_like(TrackSort::Album, false, false),
+            "idx_local_tracks_album_order_folded",
+        ),
+        (
+            "newest tracks at a position",
+            sql::track_key_at_like(TrackSort::DateAdded, true, false),
+            "idx_local_tracks_recent",
+        ),
+        (
+            "track letters by title",
+            sql::track_letters_like(TrackSort::Title, false),
+            "idx_local_tracks_availability_title",
+        ),
+        (
+            "track letters by artist",
+            sql::track_letters_like(TrackSort::Artist, false),
+            "idx_local_tracks_artist_order",
+        ),
+    ] {
+        let plan = explain_unbound(db, &text).await;
+        assert!(
+            plan.iter().any(|line| line.contains(index)),
+            "{name} walks {index}: {plan:?}"
+        );
+        assert!(
+            !plan
+                .iter()
+                .any(|line| line.contains("TEMP B-TREE FOR ORDER BY")),
+            "{name} sorts nothing: {plan:?}"
+        );
+        assert!(
+            !plan.iter().any(|line| {
+                let mut words = line.split_whitespace();
+                words.next() == Some("SCAN")
+                    && matches!(words.next(), Some("t" | "a" | "ra" | "rt"))
+            }),
+            "{name} scans no albums or tracks: {plan:?}"
+        );
+        if name.starts_with("track") {
+            assert!(
+                plan.iter()
+                    .any(|line| line.contains("idx_local_albums_retired")),
+                "{name} seeks the retired albums: {plan:?}"
+            );
+        }
+    }
+    let plan = explain_outer(db, &sql::album_key_at(AlbumSort::Name, false, false)).await;
+    assert!(
+        plan.iter()
+            .any(|line| line.contains("idx_local_albums_search")),
+        "an album at a position by name walks the title index: {plan:?}"
+    );
+
+    // The album walk by name at a position and its letter count sort
+    // nothing; only a row's own correlated subqueries may.
+    for (name, text) in [
+        (
+            "albums by name at a position",
+            sql::album_key_at(AlbumSort::Name, false, false),
+        ),
+        (
+            "album letters by name",
+            sql::album_letters(AlbumSort::Name, false),
+        ),
+    ] {
+        let plan = explain_uncorrelated(db, &text).await;
         assert!(
             !plan
                 .iter()
@@ -4032,6 +4155,7 @@ async fn perf_100k_endpoints_hold_p95() {
             .await
             .remove(0),
         ),
+        offset: 0,
     };
     let deep_tracks = After {
         seed: 0,
@@ -4046,6 +4170,7 @@ async fn perf_100k_endpoints_hold_p95() {
             .await
             .remove(0),
         ),
+        offset: 0,
     };
     let deep_by_artist = After {
         seed: 0,
@@ -4061,6 +4186,7 @@ async fn perf_100k_endpoints_hold_p95() {
             .await
             .remove(0),
         ),
+        offset: 0,
     };
     let deep = (deep_albums, deep_tracks, deep_by_artist);
     // (name, samples). Every row holds the budget.
@@ -4075,6 +4201,14 @@ async fn perf_100k_endpoints_hold_p95() {
         "library_tracks_deep_99500",
         "library_tracks_by_artist",
         "library_tracks_by_artist_deep_99500",
+        "library_albums_at_6000",
+        "library_artists_at_300",
+        "library_tracks_at_60000",
+        "library_tracks_by_artist_at_60000",
+        "library_albums_letters",
+        "library_artists_letters",
+        "library_tracks_letters",
+        "library_tracks_by_artist_letters",
         "library_recently_added",
         "library_contributors_by_appearances",
         "library_artists_by_appearances",
@@ -4132,6 +4266,9 @@ async fn perf_100k_endpoints_hold_p95() {
         "library_artists_min_tracks_cold",
         "library_album_artists_min_tracks_by_album_count_cold",
         "library_contributors_min_tracks_cold",
+        "library_albums_letters_cold",
+        "library_artists_letters_cold",
+        "library_tracks_letters_cold",
     ]
     .into_iter()
     .map(|name| (name, Vec::new()))
@@ -4214,7 +4351,7 @@ async fn read_endpoint(catalog: &LocalCatalog, name: &str, deep: &(After, After,
     let first = After::default();
     let random = After {
         seed: 42,
-        key: None,
+        ..After::default()
     };
     let albums = AlbumFilter::default();
     let tracks = TrackFilter::default();
@@ -4301,6 +4438,74 @@ async fn read_endpoint(catalog: &LocalCatalog, name: &str, deep: &(After, After,
                 .list_tracks(&tracks, TrackSort::Random, false, 48, &random)
                 .await
                 .expect("lists");
+        }
+        "library_albums_at_6000" => {
+            let at = After {
+                offset: 6000,
+                ..After::default()
+            };
+            let page = catalog
+                .list_albums(&albums, AlbumSort::Name, false, 50, &at)
+                .await
+                .expect("lists");
+            assert_eq!(page.items.len(), 50, "{name}");
+        }
+        "library_artists_at_300" => {
+            let at = After {
+                offset: 300,
+                ..After::default()
+            };
+            let (page, ..) = catalog
+                .artist_list(
+                    ArtistScope::All,
+                    None,
+                    None,
+                    ArtistSort::Name,
+                    false,
+                    48,
+                    &at,
+                    &unbounded,
+                )
+                .await
+                .expect("lists");
+            assert_eq!(page.items.len(), 48, "{name}");
+        }
+        "library_tracks_at_60000" | "library_tracks_by_artist_at_60000" => {
+            let sort = if name == "library_tracks_at_60000" {
+                TrackSort::Title
+            } else {
+                TrackSort::Artist
+            };
+            let at = After {
+                offset: 60000,
+                ..After::default()
+            };
+            let page = catalog
+                .list_tracks(&tracks, sort, false, 48, &at)
+                .await
+                .expect("lists");
+            assert_eq!(page.items.len(), 48, "{name}");
+        }
+        "library_albums_letters" => {
+            catalog
+                .album_letters(&albums, AlbumSort::Name)
+                .await
+                .expect("letters");
+        }
+        "library_artists_letters" => {
+            catalog
+                .artist_letters(ArtistScope::All, None, None, &unbounded)
+                .await
+                .expect("letters");
+        }
+        "library_tracks_letters" | "library_tracks_by_artist_letters" => {
+            let sort = if name == "library_tracks_letters" {
+                TrackSort::Title
+            } else {
+                TrackSort::Artist
+            };
+            let letters = catalog.track_letters(&tracks, sort).await.expect("letters");
+            assert_eq!(letters.iter().sum::<u64>(), 100007, "{name}");
         }
         "library_stats" => {
             catalog.stats().await.expect("stats read");

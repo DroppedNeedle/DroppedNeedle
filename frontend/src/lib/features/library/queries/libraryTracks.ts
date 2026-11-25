@@ -68,3 +68,24 @@ export function fetchLibraryTracks(
 		{ signal }
 	);
 }
+
+/**
+ * One page of the local catalog's tracks from a position in the list, its
+ * `next` reading on from there. A random order reads `params.seed`.
+ */
+export function fetchLibraryTracksAt(
+	params: LibraryV3TracksParams,
+	offset: number,
+	signal?: AbortSignal
+): Promise<LibraryTrackPage> {
+	return api.v3.GET(
+		v3('/api/v3/library/tracks', {
+			query: {
+				...tracksQuery(params, null),
+				offset,
+				...(params.seed !== undefined ? { seed: params.seed } : {})
+			}
+		}),
+		{ signal }
+	);
+}
