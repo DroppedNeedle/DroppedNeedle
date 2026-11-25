@@ -337,6 +337,10 @@ Run from the repo root. `make help` lists every target.
   ending `user_id` is listed in `server/forget-coverage.txt` as forgotten,
   kept (with its reason) or not personal, and `persist_schema.rs` fails on
   one left out.
+- A list on rotation is a `catalog_playlists` row named by its row in
+  `catalog_rotation_lists`; only its refresh
+  (`catalog/src/collections/rotation/`) writes its songs, it is read-only
+  on the web and in apps, and it reads only the person's own data.
 - Every table has one owning area, listed in `server/table-owners.txt` and
   checked by a test. Only the owner writes and migrates it.
 - A read model derived from other tables (a summary table or a column) is
