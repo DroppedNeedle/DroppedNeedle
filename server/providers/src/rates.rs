@@ -320,40 +320,38 @@ pub fn row(source: &str) -> Option<&'static RateRow> {
     RATES.iter().find(|row| row.source == source)
 }
 
-/// Rows that reach one front door and share one budget on top of
-/// their own: a request of any member takes a token from its row and one
-/// from the shared bucket.
+/// One shared rest: rows behind the same gateway that wait it out together
+/// while each keeps its own pace.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SharedBudget {
-    /// The budget's name.
+pub struct SharedRest {
+    /// The rest's name.
     pub name: &'static str,
     /// The member rows, by key.
     pub sources: &'static [&'static str],
-    /// Sustained requests per second, all members together.
-    pub per_second: f64,
-    /// How many requests may go at once after a quiet spell.
-    pub burst: u32,
-    /// Why the members share it, in one line.
+    /// The day the basis was last read (`YYYY-MM-DD`).
+    pub verified_on: &'static str,
+    /// Why a wait rests every member, in one or two sentences.
     pub basis: &'static str,
+    /// Where it was read.
+    pub url: &'static str,
 }
 
-/// Every shared budget.
-pub const SHARED_BUDGETS: &[SharedBudget] = &[SharedBudget {
+/// Every shared rest.
+pub const SHARED_RESTS: &[SharedRest] = &[SharedRest {
     name: "metabrainz",
     sources: &["musicbrainz", "coverartarchive", "listenbrainz"],
-    // MetaBrainz limits per IP. 0.8 spaces requests 1.25 s apart, so network
-    // jitter cannot bunch two into one second at MetaBrainz's end.
-    per_second: 0.8,
-    burst: 1,
-    basis: "musicbrainz.org, coverartarchive.org and listenbrainz.org share one front \
-            door (142.132.241.153) and one per-IP limit; a burst on one made every \
-            MetaBrainz host refuse this client (coverartarchive row).",
+    verified_on: "2026-11-25",
+    basis: "The three hosts sit behind one MetaBrainz gateway, and a burst on one \
+            once made every MetaBrainz host refuse this client for five minutes (the \
+            coverartarchive row). A wait any of them asks for rests all three; each \
+            keeps its own pace otherwise.",
+    url: "https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting",
 }];
 
-/// The shared budget a row belongs to, if any.
+/// The shared rest a row belongs to, if any.
 #[must_use]
-pub fn shared_budget(source: &str) -> Option<&'static SharedBudget> {
-    SHARED_BUDGETS
+pub fn shared_rest(source: &str) -> Option<&'static SharedRest> {
+    SHARED_RESTS
         .iter()
-        .find(|budget| budget.sources.contains(&source))
+        .find(|rest| rest.sources.contains(&source))
 }

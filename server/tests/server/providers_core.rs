@@ -1033,6 +1033,72 @@ async fn a_labs_rate_limit_rests_the_main_api() {
     );
 }
 
+/// The MetaBrainz hosts share one rest: a wait the official MusicBrainz
+/// host asks for rests the Cover Art Archive and ListenBrainz too, while a
+/// wait an archive.org storage node names rests only the Cover Art Archive
+/// row, since that answer is not the MetaBrainz gateway's.
+#[tokio::test(start_paused = true)]
+async fn a_metabrainz_wait_rests_every_metabrainz_host() {
+    let wire = Arc::new(ScriptedWire::new());
+    let official = format!("{}/release/{RELEASE}", musicbrainz::MB_API_BASE);
+    wire.answer(&official, 429, &[("retry-after", "20")], "");
+    let providers = providers_over(&wire);
+    providers
+        .musicbrainz
+        .fixed(MbSource::official(), RequestPriority::UserInitiated)
+        .lookup_release(RELEASE, &[], Criticality::IdentityCritical)
+        .await
+        .expect_err("the gateway says wait");
+    for source in ["coverartarchive", "listenbrainz"] {
+        let rest = providers.limiter(source).expect("row").cooling_for();
+        assert!(
+            rest > Duration::from_secs(10),
+            "{source} waits out MusicBrainz's rest: {rest:?}"
+        );
+    }
+    assert_eq!(
+        providers.limiter("lastfm").expect("row").cooling_for(),
+        Duration::ZERO,
+        "Last.fm sits outside the MetaBrainz rest"
+    );
+
+    let front = format!(
+        "{}/release-group/{RELEASE}/front-500",
+        coverart::COVER_ART_ARCHIVE_BASE
+    );
+    let node = "https://ia600508.us.archive.org/9/items/mbid-x/front_500.jpg";
+    let wire = Arc::new(ScriptedWire::new());
+    wire.on(Method::Get, &front, answer(307, &[("location", node)], ""));
+    wire.on(Method::Get, node, answer(429, &[("retry-after", "20")], ""));
+    let providers = providers_over(&wire);
+    providers
+        .coverart
+        .fetch_front(
+            EntityKind::ReleaseGroup,
+            RELEASE,
+            DownloadSize::Size500,
+            1 << 20,
+            RequestPriority::BackgroundSync,
+        )
+        .await
+        .expect_err("the storage node says wait");
+    assert!(
+        providers
+            .limiter("coverartarchive")
+            .expect("row")
+            .cooling_for()
+            > Duration::from_secs(10),
+        "the archive row waits out the wait its storage node named"
+    );
+    for source in ["musicbrainz", "listenbrainz"] {
+        assert_eq!(
+            providers.limiter(source).expect("row").cooling_for(),
+            Duration::ZERO,
+            "a storage node's wait does not rest {source}"
+        );
+    }
+}
+
 /// The Last.fm rules: an error code inside an answer is read whatever the
 /// status. Error 6 is "no such thing", 29 rests the bucket a second, 11
 /// and 16 are a passing outage worth another try, and 10 is a refused

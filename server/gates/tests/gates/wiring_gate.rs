@@ -349,8 +349,8 @@ const LATE_ALLOWED: &[(&str, &str, &str)] = &[
     ),
     (
         "providers/src/limiter.rs",
-        "door",
-        "the shared budget a row also draws from, none for a row outside every shared budget",
+        "rest_group",
+        "the MetaBrainz rest a row shares with its siblings, none for a row outside every shared rest",
     ),
     (
         "src/app.rs",

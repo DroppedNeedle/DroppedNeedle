@@ -825,7 +825,11 @@ impl Executor {
                     off_host = foreign;
                     let error = self.cap_wait(error);
                     if let Some(delay) = self.cooldown_after(&error) {
-                        self.limiter.cool_down(delay);
+                        if foreign {
+                            self.limiter.cool_down(delay);
+                        } else {
+                            self.limiter.cool_down_shared(delay);
+                        }
                     }
                     error
                 }
@@ -954,7 +958,7 @@ impl Executor {
             Err(error) => {
                 let error = self.cap_wait(error);
                 if let Some(delay) = self.cooldown_after(&error) {
-                    self.limiter.cool_down(delay);
+                    self.limiter.cool_down_shared(delay);
                 }
                 Err(DownloadError::Provider(self.finish(error)))
             }
