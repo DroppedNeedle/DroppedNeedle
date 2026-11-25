@@ -5,7 +5,7 @@
 //! 100,000 files:
 //!
 //! ```text
-//! DN_SCAN_FILES=100000 cargo test --release --test library \
+//! DN_SCAN_FILES=100000 cargo test --profile local --test library \
 //!     full_scan_throughput -- --ignored --nocapture
 //! ```
 //!
@@ -117,7 +117,7 @@ fn generate(root: &Path, files: usize, one_artist: bool) -> u64 {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "scan throughput measurement; run explicitly with --release: cargo test --release --test library full_scan_throughput -- --ignored --nocapture"]
+#[ignore = "scan throughput measurement; run explicitly with --profile local: cargo test --profile local --test library full_scan_throughput -- --ignored --nocapture"]
 async fn full_scan_throughput() {
     let files = match std::env::var(FILES_ENV) {
         Ok(value) => value.parse().expect("DN_SCAN_FILES is a file count"),

@@ -78,7 +78,7 @@ fn fresh_migrate_marks_version_and_seeds() {
             &connection,
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'"
         ),
-        74
+        78
     );
 
     let catalog: (i64, i64) = connection
@@ -465,6 +465,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0173_drop_durable_loops.sql",
         "1a4ae17eb87b07c6c66a9c7ac256e7623a13a52d41ccf979c65403f514396aeb",
+    ),
+    (
+        "0174_album_primary_format.sql",
+        "63e2a6a2d00f042e46f40e2a999c5f875b4e003add30e654caf11717a7733feb",
     ),
 ];
 
@@ -3957,6 +3961,90 @@ fn durable_loops_upgrade_drops_the_table() {
         schema_rows(&connection),
         before_schema,
         "the table is gone and nothing else changes"
+    );
+}
+
+/// 0174 fills `local_albums.primary_format` from each album's indexed
+/// tracks: the most common codec (ALAC for an m4a file with a bit depth,
+/// the first by name on a tie), lowercased, and NULL for an album with no
+/// indexed track.
+#[test]
+fn album_primary_format_upgrade_backfills_every_album() {
+    let dir = ScratchDir::new("album-primary-format-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 174)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 173);
+    let album = |id: &str| {
+        format!(
+            "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_name, album_artist_name_folded, album_artist_id, year, \
+             grouping_source, created_at, updated_at) VALUES ('{id}', 'root', 'k-{id}', '{id}', \
+             '{id}', 'A', 'a', 'artist', 2000, 'automatic', 1, 1);"
+        )
+    };
+    let track = |id: &str, album: &str, format: &str, depth: &str, availability: &str| {
+        format!(
+            "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, file_format, bit_depth, availability, \
+             ingest_source, imported_at, membership_source) VALUES ('{id}', '{album}', 'root', \
+             '/m/{id}', '{id}', 'h-{id}', 1, 1, 'r', 'T', 't', 'X', 'x', '{format}', {depth}, \
+             '{availability}', 'scan', 1, 'automatic');"
+        )
+    };
+    let seed = [
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+         updated_at) VALUES ('artist', 'A', 'a', 'group', 1, 1);"
+            .to_owned(),
+        album("lossless"),
+        track("l1", "lossless", "flac", "16", "indexed"),
+        track("l2", "lossless", "flac", "16", "indexed"),
+        track("l3", "lossless", "mp3", "NULL", "indexed"),
+        track("l4", "lossless", "mp3", "NULL", "missing"),
+        track("l5", "lossless", "mp3", "NULL", "missing"),
+        album("apple"),
+        track("p1", "apple", "m4a", "24", "indexed"),
+        track("p2", "apple", "m4a", "NULL", "indexed"),
+        track("p3", "apple", "m4a", "16", "indexed"),
+        album("tied"),
+        track("t1", "tied", "ogg", "NULL", "indexed"),
+        track("t2", "tied", "mp3", "NULL", "indexed"),
+        album("gone"),
+        track("g1", "gone", "flac", "16", "missing"),
+        album("empty"),
+    ]
+    .concat();
+    connection.execute_batch(&seed).unwrap();
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 174);
+    let formats: Vec<(String, Option<String>)> = connection
+        .prepare("SELECT id, primary_format FROM local_albums ORDER BY rowid")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    let named = |id: &str, format: Option<&str>| (id.to_owned(), format.map(str::to_owned));
+    assert_eq!(
+        formats,
+        [
+            named("lossless", Some("flac")),
+            named("apple", Some("alac")),
+            named("tied", Some("mp3")),
+            named("gone", None),
+            named("empty", None),
+        ]
     );
 }
 

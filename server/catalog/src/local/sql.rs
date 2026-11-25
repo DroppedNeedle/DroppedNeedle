@@ -144,7 +144,11 @@ macro_rules! album_track {
 
 /// Album `$album`'s primary format: its most common indexed track format
 /// as [`track_codec!`] names it (ALAC apart from AAC), lowercased; NULL for
-/// an album without indexed tracks.
+/// an album without indexed tracks. Reads use the kept
+/// `local_albums.primary_format`, which triggers hold to this rule; the
+/// read-model test compares the two. A change to the rule needs a new
+/// migration with its refresh and backfill.
+#[cfg(test)]
 macro_rules! album_primary_format {
     ($album:literal) => {
         concat!(
@@ -158,7 +162,7 @@ macro_rules! album_primary_format {
 }
 
 /// Album `$album`'s primary bitrate: the rounded average bitrate in kbps of
-/// indexed tracks in the album's primary format ([`album_primary_format!`])
+/// indexed tracks in the album's primary format (`album_primary_format!`)
 /// with a positive bitrate, NULL when none exists.
 macro_rules! album_primary_bitrate {
     ($album:literal) => {
@@ -239,6 +243,8 @@ macro_rules! rated_within {
     };
 }
 
+#[cfg(test)]
+pub(crate) use album_primary_format;
 pub(crate) use album_track;
 
 droppedneedle_kernel::sql! {
@@ -253,7 +259,7 @@ droppedneedle_kernel::sql! {
         COUNT(t.id) AS track_count, \
         COALESCE(SUM(t.duration_seconds), 0.0) AS total_duration_seconds, \
         COALESCE(SUM(t.file_size_bytes), 0) AS total_size_bytes, "
-        + (album_primary_format!("a")) + " AS format, "
+        + "a.primary_format AS format, "
         + (album_primary_bitrate!("a")) + " AS bit_rate, \
         a.year AS year, a.is_compilation AS is_compilation, \
         COALESCE(w.source IN ('folder','embedded'), 0) AS cover_available, \
@@ -289,21 +295,19 @@ droppedneedle_kernel::sql! {
          OR a.album_artist_name_folded LIKE ? ESCAPE '\\') \
          AND (? IS NULL OR a.album_artist_id = ?) \
          AND (? IS NULL OR (a.year >= ? AND a.year < ? + 10)) \
-         AND (? IS NULL OR (instr(?, ',' || COALESCE(",
-        album_primary_format!("a"),
-        ", '') || ',') > 0) = ?) AND ",
+         AND (? IS NULL OR (instr(?, ',' || COALESCE(a.primary_format, '') || ',') > 0) = ?) \
+         AND ",
         album_min_tracks!("a"),
         " AND (? IS NULL OR ",
         rated_within!("album", "a.id"),
         ")"
     ));
-    /// How many albums with files each primary format has, most first.
+    /// How many albums with files each primary format has, most first,
+    /// from the kept `primary_format` (`album_primary_format!`'s rule).
     pub(crate) ALBUM_FORMAT_COUNTS = (concat!(
-        "SELECT format, COUNT(*) FROM (SELECT ",
-        album_primary_format!("a"),
-        " AS format FROM local_albums a WHERE ",
+        "SELECT a.primary_format AS format, COUNT(*) FROM local_albums a WHERE ",
         owned_album!("a"),
-        ") WHERE format IS NOT NULL GROUP BY format ORDER BY 2 DESC, 1"
+        " AND a.primary_format IS NOT NULL GROUP BY 1 ORDER BY 2 DESC, 1"
     ));
     /// A shuffle seed's three numbers as one row `s` beside the rows a
     /// random list shuffles, from [`shuffle_values`].
@@ -767,7 +771,7 @@ droppedneedle_kernel::sql! {
     /// import's local-only twin check makes, kept to unlinked albums.
     pub(crate) UNLINKED_COPIES = "SELECT a.id AS id, a.title AS title, \
         (SELECT COUNT(*) FROM local_tracks t WHERE " + (album_track!("t", "a.id")) + ") \
-        AS track_count, " + (album_primary_format!("a")) + " AS format \
+        AS track_count, a.primary_format AS format \
         FROM local_albums a WHERE " + (owned_album!("a")) + " \
         AND a.title_folded = ?1 AND a.album_artist_name_folded = ?2 \
         AND NOT EXISTS (SELECT 1 FROM local_album_external_identities e \
@@ -1004,6 +1008,36 @@ droppedneedle_kernel::sql! {
         WHERE t.availability = 'indexed' AND t.missing_at IS NOT NULL \
         ORDER BY 1 LIMIT ? OFFSET ?) p CROSS JOIN local_tracks pt \
         WHERE pt.search_key = p.k ORDER BY p.k";
+    /// Every streamable track's search key in [`PLAYER_NATURAL_PAGE`]'s
+    /// order, from the same index: a deep page's checkpoints are taken
+    /// from it.
+    pub(crate) PLAYER_NATURAL_KEYS = "SELECT t.search_key FROM local_tracks t \
+        WHERE t.availability = 'indexed' AND t.missing_at IS NULL \
+        UNION ALL SELECT t.search_key FROM local_tracks t \
+        WHERE t.availability = 'indexed' AND t.missing_at IS NOT NULL \
+        ORDER BY 1";
+    /// [`PLAYER_NATURAL_PAGE`] from a checkpoint: the page at an offset
+    /// counted from the streamable track with search key at least the
+    /// bound one. Binds: that key twice, limit, offset.
+    pub(crate) PLAYER_NATURAL_PAGE_FROM = "SELECT pt.id FROM (\
+        SELECT t.search_key AS k FROM local_tracks t \
+        WHERE t.availability = 'indexed' AND t.missing_at IS NULL AND t.search_key >= ? \
+        UNION ALL SELECT t.search_key FROM local_tracks t \
+        WHERE t.availability = 'indexed' AND t.missing_at IS NOT NULL AND t.search_key >= ? \
+        ORDER BY 1 LIMIT ? OFFSET ?) p CROSS JOIN local_tracks pt \
+        WHERE pt.search_key = p.k ORDER BY p.k";
+    /// The lowest and the highest search key, as two rows; none in an
+    /// empty library. The bounds over the whole integer range make each
+    /// side a seek on the key, not a walk of the table.
+    pub(crate) TRACK_KEY_SPAN = "SELECT k FROM (SELECT search_key AS k FROM local_tracks \
+        WHERE search_key >= -9223372036854775808 ORDER BY search_key LIMIT 1) \
+        UNION ALL SELECT k FROM (SELECT search_key AS k FROM local_tracks \
+        WHERE search_key <= 9223372036854775807 ORDER BY search_key DESC LIMIT 1)";
+    /// The streamable tracks among drawn search keys (a JSON list), in
+    /// the order drawn.
+    pub(crate) PLAYER_DRAWN_TRACKS = "SELECT t.id FROM json_each(?) d \
+        CROSS JOIN local_tracks t ON t.search_key = d.value \
+        WHERE t.availability = 'indexed' ORDER BY d.key";
     /// One page of player track ids in a catalog order, over the whole
     /// library.
     family PLAYER_TRACK_PAGE = player_track_page;

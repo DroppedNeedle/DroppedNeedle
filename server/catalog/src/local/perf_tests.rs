@@ -1496,9 +1496,9 @@ async fn assert_hot_plans(db: &Db) {
         "album id page never table-scans: {plan:?}"
     );
 
-    // The page aggregate probes each album's tracks for the primary format
-    // and primary-format average bitrate; both probes must stay on the album
-    // index, never an availability scan.
+    // The page reads the primary format from the kept column and probes
+    // each album's tracks for the primary-format average bitrate; that probe
+    // must stay on the album index, never an availability scan.
     let plan = explain(
         db,
         &sql::album_rows(ListLen::new(2)),
@@ -1513,8 +1513,8 @@ async fn assert_hot_plans(db: &Db) {
         .filter(|line| line.contains("SEARCH t2 USING INDEX idx_local_tracks_album_availability"))
         .count();
     assert_eq!(
-        indexed_probes, 2,
-        "format and bitrate probes stay on the album index: {plan:?}"
+        indexed_probes, 1,
+        "the bitrate probe stays on the album index: {plan:?}"
     );
     assert!(
         !plan.iter().any(|line| line.contains("SCAN t2")),
@@ -1661,8 +1661,8 @@ async fn assert_filter_plans(db: &Db) {
 
     let plan = explain(db, sql::ALBUM_FORMAT_COUNTS.text(), &[]).await;
     assert!(
-        by_key(&plan, &["t2"]) && !plan.iter().any(|line| line.contains("SCAN local_tracks")),
-        "format counts probe each album's tracks by key: {plan:?}"
+        !plan.iter().any(|line| line.contains("local_tracks")),
+        "format counts read the kept column, not the tracks: {plan:?}"
     );
 
     for (name, text) in [
@@ -2281,6 +2281,211 @@ fn marked(user: &str, tracks: &str, played: bool, at: i64) -> String {
          SELECT '{user}', id, {values} FROM ({tracks}) WHERE true \
          ON CONFLICT (user_id, local_track_id) DO UPDATE SET {update};"
     )
+}
+
+/// Every album's kept `primary_format` equals `album_primary_format!`'s
+/// rule worked out from its tracks.
+async fn assert_primary_formats(db: &Db, step: &str) {
+    let wrong: Vec<String> = fetch(
+        db,
+        concat!(
+            "SELECT a.id FROM local_albums a WHERE a.primary_format IS NOT ",
+            sql::album_primary_format!("a")
+        ),
+        Vec::new(),
+        |row| row.get(0),
+    )
+    .await;
+    assert!(
+        wrong.is_empty(),
+        "{step}: primary_format wrong on {wrong:?}"
+    );
+}
+
+/// The kept `primary_format` follows every kind of track write: an insert,
+/// a format change (ALAC and AAC apart), a track going missing and coming
+/// back, a move to another album, a delete, and a track added missing.
+#[tokio::test]
+async fn album_primary_format_follows_every_track_write() {
+    let fixture = seed_small().await;
+    let db = fixture.db();
+    assert_primary_formats(db, "seeded").await;
+    let added = ["f1", "f2", "f3", "f4"]
+        .map(|id| track_values(id, "al1", "indexed"))
+        .join(", ");
+    let steps: [(&'static str, String); 9] = [
+        ("insert", format!("{TRACK_INSERT}{added};")),
+        (
+            "format",
+            "UPDATE local_tracks SET file_format = 'mp3' WHERE id LIKE 'f%'".into(),
+        ),
+        (
+            "alac",
+            "UPDATE local_tracks SET file_format = 'm4a', bit_depth = 24 \
+             WHERE id LIKE 'f%'"
+                .into(),
+        ),
+        (
+            "aac",
+            "UPDATE local_tracks SET bit_depth = NULL WHERE id = 'f1'".into(),
+        ),
+        (
+            "missing",
+            "UPDATE local_tracks SET availability = 'missing', missing_at = 1 \
+             WHERE local_album_id = 'al1' AND id <> 'f3'"
+                .into(),
+        ),
+        (
+            "back",
+            "UPDATE local_tracks SET availability = 'indexed', missing_at = NULL \
+             WHERE local_album_id = 'al1'"
+                .into(),
+        ),
+        (
+            "move",
+            "UPDATE local_tracks SET local_album_id = 'al2' WHERE id IN ('f2', 'f3')".into(),
+        ),
+        (
+            "delete",
+            "DELETE FROM local_tracks WHERE id LIKE 'f%'".into(),
+        ),
+        (
+            "added missing",
+            format!("{TRACK_INSERT}{};", track_values("g1", "al3", "missing")),
+        ),
+    ];
+    let mut seen = std::collections::HashSet::new();
+    for (step, sql) in steps {
+        write_batch(&fixture, step, sql).await;
+        assert_primary_formats(db, step).await;
+        let formats: Vec<Option<String>> = fetch(
+            db,
+            "SELECT primary_format FROM local_albums",
+            Vec::new(),
+            |row| row.get(0),
+        )
+        .await;
+        seen.extend(formats.into_iter().flatten());
+    }
+    for format in ["flac", "mp3", "alac"] {
+        assert!(
+            seen.contains(format),
+            "{format} was kept at some step: {seen:?}"
+        );
+    }
+}
+
+/// `count` more tracks on album `album`, all in one state.
+fn more_tracks(prefix: &str, album: &str, availability: &str, count: usize) -> String {
+    let values = (0..count)
+        .map(|at| track_values(&format!("{prefix}{at}"), album, availability))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{TRACK_INSERT}{values};")
+}
+
+/// A deep natural page started from a checkpoint answers the same ids, in
+/// the same order, as the walk from the first track, at every offset,
+/// past the end included, with missing tracks between the streamable ones
+/// and a streamable track that once went missing.
+#[tokio::test]
+async fn a_natural_page_from_a_checkpoint_matches_the_walk() {
+    let fixture = seed_small().await;
+    let sql = more_tracks("n", "al1", "indexed", 12)
+        + &more_tracks("m", "al1", "missing", 4)
+        + &more_tracks("o", "al1", "indexed", 5)
+        + "UPDATE local_tracks SET missing_at = 5 WHERE id = 'n3';";
+    write_batch(&fixture, "natural tracks", sql).await;
+    let total: i64 = fetch_one(
+        fixture.db(),
+        "SELECT COUNT(*) FROM local_tracks WHERE availability = 'indexed'",
+        Vec::new(),
+        |row| row.get(0),
+    )
+    .await;
+    for offset in 0..=(total as u64 + 2) {
+        for limit in [1, 4, 50] {
+            let walked: Vec<String> = fetch(
+                fixture.db(),
+                sql::PLAYER_NATURAL_PAGE,
+                vec![Value::Integer(limit as i64), Value::Integer(offset as i64)],
+                |row| row.get(0),
+            )
+            .await;
+            let sought = fixture
+                .catalog
+                .natural_page_from(limit, offset, 3)
+                .await
+                .expect("deep page");
+            assert_eq!(sought, walked, "limit {limit}, offset {offset}");
+        }
+    }
+}
+
+/// How many of `ids` are streamable tracks.
+async fn live_tracks(db: &Db, ids: &[String]) -> i64 {
+    let list = serde_json::to_string(ids).expect("ids");
+    fetch_one(
+        db,
+        "SELECT COUNT(*) FROM local_tracks WHERE availability = 'indexed' \
+         AND id IN (SELECT value FROM json_each(?))",
+        vec![Value::Text(list)],
+        |row| row.get(0),
+    )
+    .await
+}
+
+/// Random tracks drawn by search key are streamable and distinct; a
+/// library too small to draw from, or with too few streamable tracks
+/// between its keys, falls back to the sorted pick, which still answers
+/// only streamable tracks.
+#[tokio::test]
+async fn random_tracks_draw_only_streamable_ones_and_fall_back() {
+    use local::player::{TrackOrder, TrackQuery};
+    let fixture = seed_small().await;
+    let catalog = &fixture.catalog;
+    assert_eq!(catalog.drawn_tracks(5).await.expect("draw"), None);
+
+    let sql = more_tracks("r", "al1", "indexed", 300) + &more_tracks("x", "al1", "missing", 300);
+    write_batch(&fixture, "random tracks", sql).await;
+    // A test write moves no catalog revision; forget what was counted
+    // before it, as a real catalog write does.
+    catalog.forget_totals();
+    for _ in 0..20 {
+        let drawn = catalog
+            .drawn_tracks(20)
+            .await
+            .expect("draw")
+            .expect("enough to draw from");
+        assert_eq!(drawn.len(), 20);
+        assert_eq!(
+            live_tracks(fixture.db(), &drawn).await,
+            20,
+            "only streamable tracks: {drawn:?}"
+        );
+    }
+
+    write_batch(
+        &fixture,
+        "random gaps",
+        "UPDATE local_tracks SET availability = 'missing', missing_at = 1 \
+         WHERE id LIKE 'r%' AND id NOT IN ('r1', 'r2')"
+            .to_owned(),
+    )
+    .await;
+    catalog.forget_totals();
+    assert_eq!(catalog.drawn_tracks(50).await.expect("draw"), None);
+    let page = catalog
+        .track_page(&TrackQuery::default(), TrackOrder::Random, 50, 0)
+        .await
+        .expect("random page");
+    let ids: Vec<String> = page.iter().map(|track| track.id.clone()).collect();
+    assert!(!ids.is_empty());
+    assert_eq!(
+        live_tracks(fixture.db(), &ids).await,
+        ids.len() as i64,
+        "{ids:?}"
+    );
 }
 
 /// The album play summary and `has_indexed_track` equal the rule worked
@@ -3489,7 +3694,7 @@ async fn owned_plans_probe_by_key() {
 /// whole owned set is timed and reported. Ignored by default, as the other
 /// timings are.
 #[tokio::test]
-#[ignore = "100k acceptance timing; run explicitly with --release on reference hardware"]
+#[ignore = "100k acceptance timing; run explicitly with --profile local on reference hardware"]
 async fn perf_100k_owned_reads_hold_p95() {
     let fixture = seed_small().await;
     seed_100k(&fixture).await;
@@ -3580,7 +3785,7 @@ async fn perf_100k_owned_reads_hold_p95() {
 /// tags), hold the 100 ms page budget. Ignored by default, as the other
 /// timings are.
 #[tokio::test]
-#[ignore = "100k acceptance timing; run explicitly with --release: cargo test --release -p droppedneedle-catalog --lib perf_100k_artist_songs -- --ignored --nocapture"]
+#[ignore = "100k acceptance timing; run explicitly with --profile local: cargo test --profile local -p droppedneedle-catalog --lib perf_100k_artist_songs -- --ignored --nocapture"]
 async fn perf_100k_artist_songs_hold_the_page_budget() {
     const ARTIST: &str = "0a0b0c0d-1111-4000-8000-000000000000";
     let fixture = seed_small().await;
@@ -3784,11 +3989,11 @@ fn percentile(sorted: &mut [f64], pct: f64) -> f64 {
 /// 100k catalog, 50 samples after 3 warmup per endpoint. Ignored by
 /// default: timing is machine-dependent, so CI guards the mechanisms
 /// (fixture pages, totals, and plan tests above) while the weekly perf job
-/// runs this with --release, matching the HTTP bench shape (checkpointed
+/// runs this with --profile local, matching the HTTP bench shape (checkpointed
 /// store, optimized build). Debug runs only report timings: an unoptimized
 /// build adds milliseconds per call there.
 #[tokio::test]
-#[ignore = "100k acceptance timing; run explicitly with --release: cargo test --release -p droppedneedle-catalog --lib perf_100k_endpoints -- --ignored --nocapture"]
+#[ignore = "100k acceptance timing; run explicitly with --profile local: cargo test --profile local -p droppedneedle-catalog --lib perf_100k_endpoints -- --ignored --nocapture"]
 async fn perf_100k_endpoints_hold_p95() {
     let fixture = seed_small().await;
     seed_100k(&fixture).await;
@@ -3951,17 +4156,22 @@ async fn perf_100k_endpoints_hold_p95() {
         .iter_mut()
         .map(|endpoint| (endpoint, 10.0))
         .chain(cold.iter_mut().map(|endpoint| (endpoint, 100.0)));
+    let mut over = Vec::new();
     for ((name, samples), budget) in budgets {
         let p95 = percentile(samples, 95.0);
-        // The budget binds release runs; debug runs report only, since
-        // an unoptimized build adds milliseconds per call there.
-        if !cfg!(debug_assertions) {
-            assert!(
-                p95 < budget,
-                "{name} p95 {p95:.2} ms exceeds the {budget} ms budget:\n{}",
-                report.join("\n")
-            );
+        if p95 >= budget {
+            over.push(format!("{name}: p95 {p95:.2} ms, budget {budget} ms"));
         }
+    }
+    // The budget binds release runs; debug runs report only, since an
+    // unoptimized build adds milliseconds per call there.
+    if !cfg!(debug_assertions) {
+        assert!(
+            over.is_empty(),
+            "over budget:\n{}\n\nall rows:\n{}",
+            over.join("\n"),
+            report.join("\n")
+        );
     }
 }
 
@@ -4210,7 +4420,7 @@ async fn read_endpoint(catalog: &LocalCatalog, name: &str, deep: &(After, After,
 /// albums) hold the same 10 ms p95 budget on the seeded 100k catalog, and
 /// the common-word search page and the 1000-row search3 page 100 ms.
 #[tokio::test]
-#[ignore = "100k acceptance timing; run explicitly with --release: cargo test --release -p droppedneedle-catalog --lib perf_100k_player -- --ignored --nocapture"]
+#[ignore = "100k acceptance timing; run explicitly with --profile local: cargo test --profile local -p droppedneedle-catalog --lib perf_100k_player -- --ignored --nocapture"]
 async fn perf_100k_player_pages_hold_p95() {
     use local::player::{AlbumOrder, AlbumQuery, OrderKey, TrackOrder, TrackQuery};
 
@@ -4457,18 +4667,26 @@ async fn perf_100k_player_pages_hold_p95() {
         // The common-word search matches every track: its search read alone
         // is about 25 ms, and no path that keeps its results reached 10 ms.
         // The 1000-row search3 page, the largest count search3 takes, gets
-        // the same 100 ms.
+        // the same 100 ms. A new shuffle sorts every track by design, like
+        // `library_tracks_random`, so it is held to a whole page's 100 ms.
         let budget = match name {
-            "search3_songs_common_page" | "search3_sync_page_1000_offset_99000" => 100.0,
+            "search3_songs_common_page"
+            | "search3_sync_page_1000_offset_99000"
+            | "player_tracks_shuffle_page" => 100.0,
             _ => 10.0,
         };
         if p95 >= budget {
-            over.push(name);
+            over.push(format!("{name}: p95 {p95:.2} ms, budget {budget} ms"));
         }
     }
     eprintln!("100k player pages:\n{}", report.join("\n"));
     // The budget binds release runs; debug runs report only.
     if !cfg!(debug_assertions) {
-        assert!(over.is_empty(), "over budget:\n{}", report.join("\n"));
+        assert!(
+            over.is_empty(),
+            "over budget:\n{}\n\nall rows:\n{}",
+            over.join("\n"),
+            report.join("\n")
+        );
     }
 }

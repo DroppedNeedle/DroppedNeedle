@@ -1010,6 +1010,17 @@ fn first_text(row: &Row<'_>) -> rusqlite::Result<String> {
     row.get(0)
 }
 
+/// The interval of a deep natural page's checkpoints: a page at any offset
+/// walks fewer keys than this before it starts.
+const NATURAL_CHECKPOINT: u64 = 1000;
+
+/// Draws of random search keys before a random page sorts instead.
+const DRAW_ROUNDS: usize = 4;
+
+/// How many search keys a random page needs per track it asks for before
+/// it draws them: below this the library is small enough to sort.
+const DRAW_HEADROOM: u128 = 4;
+
 /// Player reads.
 impl LocalCatalog {
     /// The ids `text` answers over `values`, in one read named `name`.
@@ -1203,6 +1214,19 @@ impl LocalCatalog {
                     .map(Some)
             }
             Paging::Catalog(sequence, seed) => {
+                let statements = &filters.statements;
+                let open = statements.shape == TrackShape::OPEN && statements.key == TrackKey::Open;
+                if open && sequence == TrackSequence::Random && offset == 0 {
+                    if let Some(ids) = self.drawn_tracks(limit).await? {
+                        return Ok(Some(ids));
+                    }
+                } else if open && sequence == TrackSequence::Natural && offset >= NATURAL_CHECKPOINT
+                {
+                    return self
+                        .natural_page_from(limit, offset, NATURAL_CHECKPOINT)
+                        .await
+                        .map(Some);
+                }
                 let seed: Vec<Value> = seed
                     .map(|seed| sql::track_shuffle_values(seed).to_vec())
                     .unwrap_or_default();
@@ -1215,6 +1239,103 @@ impl LocalCatalog {
                 .map(Some)
             }
         }
+    }
+
+    /// A page of the whole library in insertion order at a deep `offset`:
+    /// it starts from the checkpoint at or before it, so it walks fewer
+    /// than `every` keys before the page. The checkpoints, every
+    /// `every`-th search key, are read once per catalog revision.
+    pub(crate) async fn natural_page_from(
+        &self,
+        limit: u64,
+        offset: u64,
+        every: u64,
+    ) -> Result<Vec<String>, StoreError> {
+        let every = every.max(1);
+        let step = usize::try_from(every).unwrap_or(usize::MAX);
+        let marks = self
+            .totals(
+                format!("player.tracks.checkpoints {step}"),
+                "player.tracks.checkpoints",
+                move |conn| {
+                    let keys = rows(conn, sql::PLAYER_NATURAL_KEYS.text(), &[], |row| {
+                        row.get::<_, i64>(0)
+                    })?;
+                    Ok(keys.into_iter().step_by(step).map(unsigned).collect())
+                },
+            )
+            .await?;
+        let at = usize::try_from(offset / every).unwrap_or(usize::MAX);
+        // No checkpoint there: the offset is past the last track.
+        let Some(&from) = marks.get(at) else {
+            return Ok(Vec::new());
+        };
+        self.ids(
+            "player.tracks",
+            sql::PLAYER_NATURAL_PAGE_FROM.text().to_owned(),
+            vec![
+                count(from),
+                count(from),
+                count(limit),
+                count(offset % every),
+            ],
+        )
+        .await
+    }
+
+    /// `limit` streamable tracks picked at random from the whole library,
+    /// in the order drawn, without sorting every track: search keys are
+    /// drawn between the lowest and the highest, and the drawn keys of
+    /// streamable tracks kept, so each streamable track is as likely as
+    /// any other. `None` when too few are found after a few draws (a
+    /// small library, or one with many gaps): the caller sorts instead.
+    pub(crate) async fn drawn_tracks(&self, limit: u64) -> Result<Option<Vec<String>>, StoreError> {
+        let span = self
+            .totals(
+                "player.tracks.key_span".to_owned(),
+                "player.tracks.key_span",
+                |conn| {
+                    let keys = rows(conn, sql::TRACK_KEY_SPAN.text(), &[], |row| {
+                        row.get::<_, i64>(0)
+                    })?;
+                    Ok(keys.into_iter().map(unsigned).collect())
+                },
+            )
+            .await?;
+        let (Some(&low), Some(&high)) = (span.first(), span.last()) else {
+            return Ok(None);
+        };
+        let width = u128::from(high.saturating_sub(low)) + 1;
+        if limit == 0 || width < u128::from(limit) * DRAW_HEADROOM {
+            return Ok(None);
+        }
+        let wanted = usize::try_from(limit).unwrap_or(usize::MAX);
+        let mut drawn = HashSet::new();
+        let mut picked = Vec::new();
+        for _ in 0..DRAW_ROUNDS {
+            let missing = wanted - picked.len();
+            let mut batch = Vec::new();
+            while batch.len() < missing * 2 + 8 && (drawn.len() as u128) < width {
+                let key = low + (uuid::Uuid::new_v4().as_u128() % width) as u64;
+                if drawn.insert(key) {
+                    batch.push(key);
+                }
+            }
+            let list = serde_json::to_string(&batch)
+                .map_err(|error| StoreError::Internal(format!("drawn keys: {error}")))?;
+            let found = self
+                .ids(
+                    "player.tracks.drawn",
+                    sql::PLAYER_DRAWN_TRACKS.text().to_owned(),
+                    vec![Value::Text(list)],
+                )
+                .await?;
+            picked.extend(found.into_iter().take(missing));
+            if picked.len() == wanted {
+                return Ok(Some(picked));
+            }
+        }
+        Ok(None)
     }
 
     /// How many tracks match `query`.

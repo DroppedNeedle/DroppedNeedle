@@ -65,7 +65,8 @@
 # transaction of every write to library_play_history,
 # catalog_user_play_marks and local_tracks, whichever area makes it, and
 # removes a user's rows when auth deletes the user.
-# local_albums.has_indexed_track is kept the same way, from local_tracks.
+# local_albums.has_indexed_track and local_albums.primary_format are kept
+# the same way, from local_tracks.
 #
 # Kept by triggers (trg_artist_*), not by code: no code writes
 # library_artist_album_credits or library_artist_counts. The database
