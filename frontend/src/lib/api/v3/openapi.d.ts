@@ -26732,6 +26732,10 @@ export interface components {
             items: components["schemas"]["TrackView"][];
             /** @description Pass as `after` for the next page; absent on the last page. */
             next?: string | null;
+            /** @description The caller's listening history, keyed by track ID, when requested. */
+            play_stats?: {
+                [key: string]: components["schemas"]["TrackPlayStat"];
+            } | null;
             /**
              * Format: int64
              * @description Tracks matching the filter, all pages.
@@ -26807,6 +26811,19 @@ export interface components {
              * @description Tracks matching the filter, all pages.
              */
             total: number;
+        };
+        /** @description One listener's recorded plays of a local track. */
+        TrackPlayStat: {
+            /**
+             * Format: double
+             * @description Time of the most recent play in Unix seconds, or null for an unplayed track.
+             */
+            last_played?: number | null;
+            /**
+             * Format: int64
+             * @description Number of plays, including zero for an unplayed track.
+             */
+            play_count: number;
         };
         /** @description A 30-second track preview. Empty (no URL) means no provider had one. */
         TrackPreviewResponse: {
@@ -44527,6 +44544,8 @@ export interface operations {
                  *     comes first, and `order=asc` puts the oldest first.
                  */
                 favorites?: boolean;
+                /** @description Include the caller's play count and most recent play time for each track on this page. */
+                include_play_stats?: boolean;
             };
             header?: never;
             path?: never;

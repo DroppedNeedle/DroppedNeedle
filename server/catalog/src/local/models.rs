@@ -664,6 +664,18 @@ pub struct TrackListPage {
     pub total: u64,
     /// Pass as `after` for the next page; absent on the last page.
     pub next: Option<String>,
+    /// The caller's listening history, keyed by track ID, when requested.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub play_stats: Option<HashMap<String, TrackPlayStat>>,
+}
+
+/// One listener's recorded plays of a local track.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct TrackPlayStat {
+    /// Number of plays, including zero for an unplayed track.
+    pub play_count: u64,
+    /// Time of the most recent play in Unix seconds, or null for an unplayed track.
+    pub last_played: Option<f64>,
 }
 
 /// Track list filters and order.
@@ -695,6 +707,9 @@ pub struct TrackQuery {
     /// Only the caller's favourites. Without `sort`, the newest favourite
     /// comes first, and `order=asc` puts the oldest first.
     pub favorites: Option<bool>,
+    /// Include the caller's play count and most recent play time for each track on this page.
+    #[serde(default)]
+    pub include_play_stats: bool,
 }
 
 /// Library totals. Track and size totals count streamable tracks only.

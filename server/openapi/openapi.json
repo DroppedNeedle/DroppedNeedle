@@ -23251,6 +23251,15 @@
             "schema": {
               "type": "boolean"
             }
+          },
+          {
+            "name": "include_play_stats",
+            "in": "query",
+            "description": "Include the caller's play count and most recent play time for each track on this page.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -74625,6 +74634,19 @@
             ],
             "description": "Pass as `after` for the next page; absent on the last page."
           },
+          "play_stats": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The caller's listening history, keyed by track ID, when requested.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/TrackPlayStat"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
           "total": {
             "type": "integer",
             "format": "int64",
@@ -74739,6 +74761,29 @@
             "type": "integer",
             "format": "int64",
             "description": "Tracks matching the filter, all pages.",
+            "minimum": 0
+          }
+        }
+      },
+      "TrackPlayStat": {
+        "type": "object",
+        "description": "One listener's recorded plays of a local track.",
+        "required": [
+          "play_count"
+        ],
+        "properties": {
+          "last_played": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Time of the most recent play in Unix seconds, or null for an unplayed track."
+          },
+          "play_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of plays, including zero for an unplayed track.",
             "minimum": 0
           }
         }
