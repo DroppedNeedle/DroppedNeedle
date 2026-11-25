@@ -2,7 +2,7 @@
 # Container entrypoint: apply UMASK, run the given command as PUID/PGID.
 #
 # Started as root (the default), it moves the baked droppedneedle user to
-# PUID/PGID, hands the data folders over to it, and drops to it with gosu.
+# PUID/PGID, hands the data folders over to it, and drops to it with setpriv.
 # Started with `docker run --user`, it skips user setup and runs the command
 # as that user. Any command works, e.g. `droppedneedle-tool upgrade`, which
 # then writes its files as the same user the server runs as. When started as
@@ -32,13 +32,21 @@ is_server() {
     [ "$(basename -- "$1")" = "droppedneedle" ]
 }
 
-# Probe write access by creating and removing a file, as the given
-# uid:gid when one is passed, else as the current user.
+# Run a command as the runtime user with no supplementary groups, as gosu
+# did: neither the image's root group nor a --group-add reaches it.
+# Never --keep-groups (it keeps group 0) or --reset-env (it drops PORT,
+# BASE_PATH and the rest).
+as_runtime_user() {
+    setpriv --reuid="$TARGET_UID" --regid="$TARGET_GID" --clear-groups "$@"
+}
+
+# Probe write access by creating and removing a file, as the runtime user
+# when the second argument is "runtime", else as the current user.
 check_writable() {
     _probe="$1/.droppedneedle_write_test_$$"
-    if [ -n "$2" ]; then
-        gosu "$2" touch "$_probe" 2>/dev/null; _rc=$?
-        gosu "$2" rm -f "$_probe" 2>/dev/null
+    if [ "$2" = runtime ]; then
+        as_runtime_user touch "$_probe" 2>/dev/null; _rc=$?
+        as_runtime_user rm -f "$_probe" 2>/dev/null
     else
         touch "$_probe" 2>/dev/null; _rc=$?
         rm -f "$_probe" 2>/dev/null
@@ -49,7 +57,7 @@ check_writable() {
 # Makes $1 writable by the runtime user, chowning the folder itself when it is
 # not. Returns 1 if it still is not. The chown never reaches inside the folder.
 make_writable() {
-    if check_writable "$1" "$TARGET_UID:$TARGET_GID"; then
+    if check_writable "$1" runtime; then
         return 0
     fi
     if chown -h droppedneedle:droppedneedle "$1" 2>/dev/null; then
@@ -57,7 +65,7 @@ make_writable() {
     else
         echo "[init] WARNING: Could not chown $1 (the mount may not support ownership changes)."
     fi
-    check_writable "$1" "$TARGET_UID:$TARGET_GID"
+    check_writable "$1" runtime
 }
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -145,4 +153,7 @@ if is_server "$1"; then
     done
 fi
 
-exec gosu droppedneedle:droppedneedle "$@"
+# setpriv keeps root's HOME, so it is set to the account's home, as gosu
+# set it. A command that cannot be run exits 127 here (gosu exited 1).
+export HOME=/nonexistent
+exec setpriv --reuid="$TARGET_UID" --regid="$TARGET_GID" --clear-groups "$@"

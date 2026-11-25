@@ -54,7 +54,7 @@ The config folder holds the key that seals stored secrets. A `config/config.json
 
 ## Network and reverse proxy
 
-The app answers on IPv4 and IPv6, but Docker still has to publish the port on both. `docker port droppedneedle` should list `0.0.0.0:8688` and `[::]:8688`; if only the first appears, turn on IPv6 for the daemon (`"ipv6"` and `"ip6tables"` in `/etc/docker/daemon.json`). Pinning `BIND_HOST` to one interface IP answers only there, but the container `HEALTHCHECK` still uses localhost, so keep a wildcard or loopback value unless you check that address yourself.
+The app answers on IPv4 and IPv6, but Docker still has to publish the port on both. `docker port droppedneedle` should list `0.0.0.0:8688` and `[::]:8688`; if only the first appears, turn on IPv6 for the daemon (`"ipv6"` and `"ip6tables"` in `/etc/docker/daemon.json`). Pinning `BIND_HOST` to one interface IP answers only there. The image checks its own health with the server binary (`droppedneedle --health-check`), which asks the address and base path the server listens on, so it works with any `BIND_HOST`.
 
 Behind a reverse proxy, list the proxy in `TRUSTED_PROXY_IPS` and have it pass `Host` and `X-Forwarded-Proto` through. Serve DroppedNeedle over HTTPS through the proxy if you can. Browsers use HTTP/2 only over HTTPS, and HTTP/2 loads cover grids faster than plain HTTP, where six connections per host can all be busy with slow covers. The proxy headers, `BASE_PATH`, the public address, HSTS and the content-security policy are covered in [Reverse proxy and security](reverse-proxy-and-security.md).
 

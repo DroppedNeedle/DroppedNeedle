@@ -5,6 +5,9 @@
 //! server is made of is wired in `droppedneedle::bootstrap`.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+
+mod health_check;
 
 use droppedneedle::{bootstrap, docs::ApiDoc, upgrade_mode::ToolCommand};
 use droppedneedle_kernel::{config::AppConfig, observability::init_tracing};
@@ -13,6 +16,10 @@ use utoipa::OpenApi as _;
 /// `--print-openapi` dumps the contract document to stdout for the
 /// TypeScript pipeline and CI drift gate.
 const PRINT_OPENAPI_ARG: &str = "--print-openapi";
+
+/// `--health-check` asks the running server's `/health` and exits 0 when
+/// it answers 2xx: the image's health check.
+const HEALTH_CHECK_ARG: &str = "--health-check";
 
 /// `--tooling-routes` mounts the dev-only tooling routes (covers-debug).
 /// Debug builds only: a release binary rejects it as unknown.
@@ -46,7 +53,7 @@ fn tune_allocator() {
 /// True for the arguments this binary accepts. The tooling flag only
 /// exists in debug builds.
 fn is_known_arg(arg: &str) -> bool {
-    if arg == PRINT_OPENAPI_ARG {
+    if arg == PRINT_OPENAPI_ARG || arg == HEALTH_CHECK_ARG {
         return true;
     }
     #[cfg(debug_assertions)]
@@ -63,8 +70,14 @@ fn main() {
         print_openapi();
         return;
     }
+    // Before tracing starts, so no log line lands in Docker's health log.
+    if args.iter().any(|arg| arg == HEALTH_CHECK_ARG) {
+        health_check::run();
+    }
     if let Some(unknown) = args.iter().find(|arg| !is_known_arg(arg)) {
-        eprintln!("unknown argument {unknown:?}: expected {PRINT_OPENAPI_ARG}");
+        eprintln!(
+            "unknown argument {unknown:?}: expected {PRINT_OPENAPI_ARG} or {HEALTH_CHECK_ARG}"
+        );
         std::process::exit(2);
     }
     let config = match AppConfig::load() {

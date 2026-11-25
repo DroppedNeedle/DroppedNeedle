@@ -9,7 +9,9 @@
 #    output, with and without a seek, using the argument shape of build_cmd in
 #    transcode.rs.
 # 3. Smoke: fresh boot, healthy, clean SIGTERM shutdown. Prints cold and
-#    warm boot time, idle RSS and shutdown time.
+#    warm boot time, idle RSS and shutdown time. Then the image's own health
+#    check reaches healthy under a base path, and the server runs as the
+#    runtime user only: no group a --group-add gives, no root group.
 # 4. PUID: a boot with PUID=568 hands the config and cache folders, and the
 #    imports and plugins folders Docker created owned by root, to uid 568 and
 #    the server writes as it; a boot with PUID back at 1000 hands them back.
@@ -284,6 +286,38 @@ EXIT_CODE=$(docker inspect "$NAME" --format '{{.State.ExitCode}}')
 [ "$EXIT_CODE" = "0" ] || fail "exit code $EXIT_CODE, expected 0"
 docker logs "$NAME" 2>&1 | grep -q "shutdown complete" || fail "missing 'shutdown complete' log line"
 echo "exit code 0, graceful-shutdown log line present"
+docker rm -f "$NAME" >/dev/null 2>&1 || true
+
+echo "--- health check and runtime user ---"
+# The image's own health check reaches healthy under a base path, and the
+# server runs as uid and gid 1000 in every field, with neither the group a
+# --group-add gives nor root's, and the HOME gosu gave it.
+docker run -d --name "$NAME" -e RUST_LOG=info -e BASE_PATH=/music \
+  --health-interval=2s --group-add 44 "$IMAGE" >/dev/null || fail "docker run failed"
+STATUS=""
+for _ in $(seq 1 90); do
+  STATUS=$(docker inspect "$NAME" --format '{{.State.Health.Status}}')
+  [ "$STATUS" = "healthy" ] && break
+  sleep 1
+done
+[ "$STATUS" = "healthy" ] || fail "health check status is '$STATUS', expected healthy"
+# The server is the droppedneedle process tini started; the health check
+# runs the same binary under another parent.
+SERVER_PID=$(docker exec "$NAME" sh -c '
+  for status in /proc/[0-9]*/status; do
+    dir=${status%/status}
+    [ "$(cat "$dir/comm" 2>/dev/null)" = droppedneedle ] || continue
+    [ "$(awk "/^PPid:/ {print \$2}" "$status")" = 1 ] && echo "${dir#/proc/}"
+  done')
+[ -n "$SERVER_PID" ] || fail "no server process under tini"
+PROC_STATUS=$(docker exec "$NAME" cat "/proc/$SERVER_PID/status")
+echo "$PROC_STATUS" | awk '/^Uid:|^Gid:/ { for (i = 2; i <= 5; i++) if ($i != 1000) bad = 1 } END { exit bad }' \
+  || fail "server ids are not 1000 in every field: $(echo "$PROC_STATUS" | grep -E '^(Uid|Gid):')"
+echo "$PROC_STATUS" | awk '/^Groups:/ { for (i = 2; i <= NF; i++) if ($i == 0 || $i == 44) bad = 1 } END { exit bad }' \
+  || fail "server keeps a supplementary group: $(echo "$PROC_STATUS" | grep '^Groups:')"
+SERVER_HOME=$(docker exec -u 1000:1000 "$NAME" sh -c "tr '\\0' '\\n' < /proc/$SERVER_PID/environ" | sed -n 's/^HOME=//p')
+[ "$SERVER_HOME" = "/nonexistent" ] || fail "server HOME is '$SERVER_HOME', expected /nonexistent"
+echo "healthy under BASE_PATH=/music; server runs as 1000:1000, no group 0 or 44, HOME=/nonexistent"
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 
 # Fail unless the database the server wrote, and everything else in the config

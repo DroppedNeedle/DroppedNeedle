@@ -284,6 +284,12 @@ const HTTP: Rule = Rule {
             why: "passes the factory's client to the settings Test probes",
         },
         Allow {
+            path: "src/health_check.rs",
+            shapes: &["factory", "send"],
+            why: "the image's health check asks this server's own /health, not an outside \
+                  service",
+        },
+        Allow {
             path: "src/bootstrap/",
             shapes: &["factory"],
             why: "bootstrap opens the factory and hands its clients to the areas",

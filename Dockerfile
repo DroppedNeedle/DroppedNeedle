@@ -172,14 +172,14 @@ ENV PORT=8688
 
 WORKDIR /app
 
-# The two encoder libraries the slim ffmpeg links, gosu for the PUID/PGID drop
-# in entrypoint.sh, tini as PID 1, curl for the health check, tzdata so TZ
-# resolves.
+# The two encoder libraries the slim ffmpeg links, tini as PID 1, curl for
+# compose files that run it in their own health check, tzdata so TZ resolves.
+# entrypoint.sh drops to PUID/PGID with setpriv, which the base image has.
 # python3 runs Python plugins; build with --build-arg PLUGIN_PYTHON=0 for
 # an image without it (plugins that ship their own program still run).
 ARG PLUGIN_PYTHON=1
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl gosu libmp3lame0 libopus0 tini tzdata \
+    && apt-get install -y --no-install-recommends ca-certificates curl libmp3lame0 libopus0 tini tzdata \
     && if [ "$PLUGIN_PYTHON" = "1" ]; then apt-get install -y --no-install-recommends python3; fi \
     && rm -rf /var/lib/apt/lists/*
 
@@ -236,9 +236,12 @@ LABEL org.opencontainers.image.title="DroppedNeedle" \
 
 EXPOSE 8688
 
-# Shell form so ${PORT} and ${BASE_PATH} expand from the container env.
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -fsS "http://localhost:${PORT}${BASE_PATH:-}/health" || exit 1
+# The server checks itself, on the address and base path it serves. The start
+# period covers a long upgrade, which runs after the port binds; the first
+# success ends it, and checks every 5 seconds until then report a normal boot
+# healthy quickly.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=600s --start-interval=5s --retries=3 \
+    CMD ["droppedneedle", "--health-check"]
 
 ENTRYPOINT ["tini", "--", "/app/entrypoint.sh"]
 CMD ["droppedneedle"]
