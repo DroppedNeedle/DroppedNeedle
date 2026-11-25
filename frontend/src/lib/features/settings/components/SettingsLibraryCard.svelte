@@ -32,6 +32,8 @@
 
 	useSuggestion(section, () => suggested, addFolder);
 
+	const warnings = $derived(library.currentSettings?.warnings ?? []);
+
 	let impactOpen = $state(false);
 	// The save button is busy while the preview loads, so focus is gone by the
 	// time the dialog opens.
@@ -113,6 +115,17 @@
 						roots={draft.library_roots}
 						onchange={(value) => (draft.library_roots = value)}
 					/>
+
+					{#if warnings.length > 0}
+						<div class="alert alert-warning items-start text-sm">
+							<TriangleAlert class="mt-0.5 h-4 w-4 shrink-0" />
+							<div class="min-w-0 space-y-1">
+								{#each warnings as warning, index (`${index}:${warning}`)}
+									<p>{warning}</p>
+								{/each}
+							</div>
+						</div>
+					{/if}
 
 					<div class="divider my-0"></div>
 
