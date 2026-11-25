@@ -70,10 +70,6 @@ const OPENS: &[Place] = &[
         "the offline import runs on a connection of its own, with its bundle attached",
     ),
     place(
-        "src/admin/backups.rs",
-        "backup and restore checks, read-only: integrity, stamp, tables",
-    ),
-    place(
         "src/bootstrap/data_dirs.rs",
         "the read-only stamp probe of an existing database before the runtime opens it, upgrade mode's read of the v2 admins' passwords, and its tests",
     ),
@@ -938,6 +934,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("providers/src/cache.rs", 1, PROVIDER_FETCH),
     ("providers/src/singleflight.rs", 1, SHARED_FLIGHT),
     ("providers/src/youtube.rs", 1, REQUEST),
+    ("src/admin/backups.rs", 1, LOOP_STEP),
     ("src/admin/handlers.rs", 1, REQUEST),
     ("src/bootstrap/key_check.rs", 1, BOOT_STEP),
     ("src/bootstrap/mod.rs", 2, BOOT_STEP),

@@ -1,9 +1,9 @@
-//! Backup UX: list, run, pre-restore reports.
+//! Backup UX: list, run, pre-restore reports, and the nightly loop.
 //!
 //! The mechanism lives in [`droppedneedle_kernel::db::backup`]; this module is the admin
-//! face over it. Rotation stays at five (`BACKUP_KEEP`): verification
-//! always precedes rotation, so a failed run leaves the previous five
-//! untouched.
+//! face over it. Each kind of backup is kept by its own rule
+//! ([`RETENTION`]), and verification always precedes rotation, so a failed
+//! run removes nothing.
 //!
 //! Two simplifications on purpose: backup runs are synchronous (a
 //! catalog-sized backup finishes in seconds, and no client needs progress
@@ -13,21 +13,35 @@
 //! database.
 
 use std::{
-    path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    path::Path,
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::Connection;
 
 use super::{
     error::AdminError,
-    models::{BackupListResponse, BackupRunResponse, BackupView, RestoreCheck, RestoreReport},
+    models::{
+        BackupKeep, BackupListResponse, BackupRunResponse, BackupView, RestoreCheck, RestoreReport,
+    },
 };
 use droppedneedle_kernel::db::{
-    BACKUP_KEEP, BackupManifest, BackupReport, BackupService, SchemaError, Stamp, UndoDir,
-    backup::{MANIFEST_SUFFIX, backup_order, named_undo_copies},
+    BackupError, BackupKind, BackupManifest, BackupReport, BackupService, RETENTION, SchemaError,
+    Stamp, UndoDir,
+    backup::{
+        PACKED_SUFFIX, PLAIN_SUFFIX, backup_order, backup_undo_names, is_backup_name,
+        is_packed_name, manifest_path, open_immutable,
+    },
     undo_dir::UNDO_DIR_NAME,
+    writer::CancelFlag,
 };
+use droppedneedle_kernel::jobs::{
+    AlreadyRunning, CancellationToken, Next, Schedule, Supervisor, Tick, TickCtx, TickError,
+    TickResult,
+};
+use droppedneedle_kernel::runtime_config::Live;
+use droppedneedle_kernel::runtime_config::sections::Backups;
 
 /// The restore report's check on the backup's undo copies. A restore
 /// does not stop on it.
@@ -38,20 +52,44 @@ pub const UNDO_COPIES_CHECK: &str = "undo-copies";
 /// Unlike `schema-version`, `--allow-downgrade` never overrides it.
 pub const SCHEMA_FLOOR_CHECK: &str = "schema-floor";
 
+/// The nightly backup loop's name in the jobs view.
+pub const BACKUP_JOB: &str = "database-backup";
+/// How often the loop looks whether a nightly backup is due.
+const BACKUP_TICK: Duration = Duration::from_secs(30 * 60);
+/// The loop's first look after boot.
+const BACKUP_FIRST_TICK: Duration = Duration::from_secs(10 * 60);
+/// A nightly backup is due once the newest scheduled one is this old.
+const NIGHTLY_EVERY_MS: i64 = 24 * 60 * 60 * 1000;
+/// After an integrity failure the loop tries again only this much later.
+const INTEGRITY_HOLD_MS: i64 = 6 * 60 * 60 * 1000;
+
+/// The loop's codes for a failed pass.
+pub const BACKUP_INTEGRITY_FAILED: &str = "BACKUP_INTEGRITY_FAILED";
+/// The backups folder has no room for a backup.
+pub const BACKUP_NO_ROOM: &str = "BACKUP_NO_ROOM";
+/// A backup failed otherwise; the log says why.
+pub const BACKUP_FAILED: &str = "BACKUP_FAILED";
+
 /// List the backups on disk, oldest first, with whether the boot check found the database
 /// held in memory. Blocking file IO. Files without a manifest sidecar still list with their
-/// on-disk size; only the manifest fields stay empty.
+/// on-disk size and as manual; only the manifest fields stay empty.
 pub fn list_backups(
     backup_dir: &Path,
     database_in_memory: bool,
 ) -> Result<BackupListResponse, AdminError> {
+    let keep = BackupKeep {
+        daily: RETENTION.daily as u32,
+        weekly: RETENTION.weekly as u32,
+        pre_upgrade: RETENTION.pre_upgrade as u32,
+        manual: RETENTION.manual as u32,
+    };
     let mut names: Vec<String> = Vec::new();
     let entries = match std::fs::read_dir(backup_dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(BackupListResponse {
                 backups: Vec::new(),
-                keep: BACKUP_KEEP as u32,
+                keep,
                 database_in_memory,
             });
         }
@@ -67,7 +105,7 @@ pub fn list_backups(
             Err(_) => continue,
         };
         let name = entry.file_name().to_string_lossy().into_owned();
-        if is_backup_file(&name) {
+        if is_backup_name(&name) {
             names.push(name);
         }
     }
@@ -80,6 +118,10 @@ pub fn list_backups(
         backups.push(BackupView {
             name,
             size_bytes,
+            kind: manifest
+                .as_ref()
+                .map(|found| found.kind)
+                .unwrap_or_default(),
             sha256: manifest.as_ref().map(|found| found.sha256.clone()),
             user_version: manifest.as_ref().map(|found| found.user_version),
             created_at_unix: manifest
@@ -90,19 +132,117 @@ pub fn list_backups(
     }
     Ok(BackupListResponse {
         backups,
-        keep: BACKUP_KEEP as u32,
+        keep,
         database_in_memory,
     })
 }
 
-/// Run one backup now and report what it produced.
-pub async fn run_backup(service: &BackupService) -> Result<BackupRunResponse, AdminError> {
-    let cancel = droppedneedle_kernel::db::writer::CancelFlag::never();
+/// Run one backup now, as a person asked, and report what it produced.
+pub async fn run_backup(service: &BackupService) -> Result<BackupRunResponse, BackupError> {
     let report = service
-        .backup(None, &cancel)
-        .await
-        .map_err(|error| AdminError::internal(&format_args!("backup run failed: {error}")))?;
+        .backup(BackupKind::Manual, None, &CancelFlag::never())
+        .await?;
     Ok(run_response(&report))
+}
+
+/// The nightly backup loop: every half hour, a scheduled backup once the
+/// newest one in the folder is a day old. What is due is read from the
+/// backups folder alone, so a restart never doubles a backup.
+pub struct NightlyBackup {
+    service: Arc<BackupService>,
+    settings: Live<Backups>,
+    /// No backup is tried before this time (kernel clock milliseconds): a
+    /// failed integrity check holds the loop off. In memory only.
+    held_until: Option<i64>,
+}
+
+impl NightlyBackup {
+    /// The loop over the one backup service and its settings section.
+    pub fn new(service: Arc<BackupService>, settings: Live<Backups>) -> Self {
+        Self {
+            service,
+            settings,
+            held_until: None,
+        }
+    }
+
+    /// Start the loop on the supervisor.
+    pub fn spawn_on(self, supervisor: &Supervisor) -> Result<(), AlreadyRunning> {
+        let schedule = Schedule::new(BACKUP_TICK)
+            .with_jitter(Duration::from_secs(5 * 60))
+            .with_initial_delay(BACKUP_FIRST_TICK);
+        supervisor.periodic(BACKUP_JOB, schedule, self)
+    }
+
+    /// One pass: take a scheduled backup when nightly backups are on and
+    /// one is due. An unreadable settings section skips the pass. An
+    /// integrity failure answers its code and holds the loop off for
+    /// [`INTEGRITY_HOLD_MS`], answering the same code meanwhile.
+    pub async fn pass(&mut self, token: &CancellationToken) -> TickResult {
+        let Some(settings) = self.settings.read() else {
+            return Ok(Next::Continue);
+        };
+        if !settings.nightly {
+            return Ok(Next::Continue);
+        }
+        drop(settings);
+        let now = self.service.now_ms();
+        if let Some(until) = self.held_until {
+            if now < until {
+                return Err(TickError::new(
+                    BACKUP_INTEGRITY_FAILED,
+                    "the last nightly backup found the database damaged; the next try waits",
+                ));
+            }
+            self.held_until = None;
+        }
+        let service = Arc::clone(&self.service);
+        let newest = tokio::task::spawn_blocking(move || service.newest_scheduled_at())
+            .await
+            .map_err(|error| TickError::new(BACKUP_FAILED, error))?
+            .map_err(|error| TickError::new(BACKUP_FAILED, error))?;
+        if newest.is_some_and(|at| now.saturating_sub(at) < NIGHTLY_EVERY_MS) {
+            return Ok(Next::Continue);
+        }
+        let cancel = CancelFlag::never();
+        let run = self.service.backup(BackupKind::Scheduled, None, &cancel);
+        tokio::pin!(run);
+        let outcome = tokio::select! {
+            outcome = &mut run => outcome,
+            () = token.cancelled() => {
+                cancel.cancel();
+                run.await
+            }
+        };
+        match outcome {
+            Ok(report) => {
+                tracing::info!(backup = %report.path.display(), "nightly backup complete");
+                Ok(Next::Continue)
+            }
+            // A backup someone started is running: the next pass looks again.
+            Err(BackupError::Running) => Ok(Next::Continue),
+            Err(BackupError::Db(droppedneedle_kernel::db::DbError::Cancelled { .. }))
+                if token.is_cancelled() =>
+            {
+                Ok(Next::Finish)
+            }
+            Err(error @ BackupError::NoRoom { .. }) => Err(TickError::new(BACKUP_NO_ROOM, error)),
+            Err(BackupError::Db(droppedneedle_kernel::db::DbError::IntegrityFailed)) => {
+                self.held_until = Some(now.saturating_add(INTEGRITY_HOLD_MS));
+                Err(TickError::new(
+                    BACKUP_INTEGRITY_FAILED,
+                    "the live database failed its integrity check; previous backups are kept",
+                ))
+            }
+            Err(error) => Err(TickError::new(BACKUP_FAILED, error)),
+        }
+    }
+}
+
+impl Tick for NightlyBackup {
+    async fn tick(&mut self, ctx: &TickCtx) -> TickResult {
+        self.pass(ctx.token()).await
+    }
 }
 
 /// Verify a backup read-only and report whether an offline restore should
@@ -110,9 +250,28 @@ pub async fn run_backup(service: &BackupService) -> Result<BackupRunResponse, Ad
 /// blocking thread. `ok` means every check passed; `restorable` means the file is
 /// intact and its schema is not newer than this binary (a missing manifest
 /// fails `ok` but a hand-placed backup can still restore).
-pub fn restore_report(backup_dir: &Path, name: &str) -> Result<RestoreReport, AdminError> {
+///
+/// How deep a restore report looks at a gzip backup.
+#[derive(Clone, Copy)]
+pub enum ReportDepth<'a> {
+    /// Unpack it through the server's backup service into a temporary file
+    /// in the backups folder, and run the database checks on that.
+    Unpacked(&'a BackupService),
+    /// Check only the stored file against its manifest and write nothing
+    /// beside it: the offline restore's preflight, whose restore unpacks
+    /// the backup and runs the database checks itself.
+    StoredFile,
+}
+
+/// A gzip backup is looked at as `depth` says; a plain one always gets the
+/// database checks.
+pub fn restore_report(
+    backup_dir: &Path,
+    name: &str,
+    depth: ReportDepth<'_>,
+) -> Result<RestoreReport, AdminError> {
     let safe = safe_backup_name(name).ok_or_else(|| AdminError::InvalidInput {
-        message: "Backup name must be a plain file name ending in .db".to_owned(),
+        message: "Backup name must be a plain file name ending in .db or .db.gz".to_owned(),
     })?;
     let path = backup_dir.join(safe);
     let mut checks: Vec<RestoreCheck> = Vec::new();
@@ -151,6 +310,7 @@ pub fn restore_report(backup_dir: &Path, name: &str) -> Result<RestoreReport, Ad
         ),
     });
 
+    let mut identity_ok = true;
     if let Some(found) = &manifest {
         let size_bytes = std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
         let size_ok = size_bytes == found.size_bytes;
@@ -177,14 +337,36 @@ pub fn restore_report(backup_dir: &Path, name: &str) -> Result<RestoreReport, Ad
                 "SHA-256 differs from the manifest; the file changed after the backup".to_owned()
             },
         });
+        identity_ok = size_ok && sha_ok;
     }
 
-    let integrity = integrity_clean(&path);
+    let packed = is_packed_name(&path);
+    let unpacked = match (packed, depth) {
+        (false, _) => None,
+        (true, ReportDepth::Unpacked(service)) => Some(service.unpack_for_check(&path)),
+        (true, ReportDepth::StoredFile) => {
+            return Ok(RestoreReport {
+                backup: safe.to_owned(),
+                ok: checks.iter().all(|check| check.passed),
+                restorable: identity_ok,
+                checks,
+            });
+        }
+    };
+    let database: Option<&Path> = match &unpacked {
+        None => Some(&path),
+        Some(Ok(copy)) => Some(copy.path()),
+        Some(Err(_)) => None,
+    };
+
+    let integrity = database.is_some_and(integrity_clean);
     checks.push(RestoreCheck {
         name: "integrity-check".to_owned(),
         passed: integrity,
         detail: if integrity {
             "integrity_check reads ok with no foreign-key violations".to_owned()
+        } else if database.is_none() {
+            "The backup does not unpack; the file is damaged or cut short".to_owned()
         } else {
             "The backup fails integrity_check or has foreign-key violations".to_owned()
         },
@@ -192,8 +374,13 @@ pub fn restore_report(backup_dir: &Path, name: &str) -> Result<RestoreReport, Ad
 
     // Two checks: newer than the binary (which `--allow-downgrade` may
     // override) and the floor, a stamp the runner refuses at any binary.
-    let (version_ok, floor_ok) = match Stamp::read_file(&path) {
-        Ok(stamp) => {
+    let stamp = database.and_then(|database| {
+        open_immutable(database)
+            .ok()
+            .and_then(|connection| Stamp::read(&connection).ok())
+    });
+    let (version_ok, floor_ok) = match stamp {
+        Some(stamp) => {
             let expected = droppedneedle_kernel::schema::latest_version();
             let found = stamp.version;
             let current = found <= expected;
@@ -223,7 +410,7 @@ pub fn restore_report(backup_dir: &Path, name: &str) -> Result<RestoreReport, Ad
             });
             (current, floor.is_none())
         }
-        Err(_) => {
+        None => {
             for name in ["schema-version", SCHEMA_FLOOR_CHECK] {
                 checks.push(RestoreCheck {
                     name: name.to_owned(),
@@ -234,6 +421,7 @@ pub fn restore_report(backup_dir: &Path, name: &str) -> Result<RestoreReport, Ad
             (false, false)
         }
     };
+    drop(unpacked);
 
     checks.push(undo_copies_check(backup_dir, &path, manifest.as_ref()));
 
@@ -255,7 +443,7 @@ fn undo_copies_check(
     manifest: Option<&BackupManifest>,
 ) -> RestoreCheck {
     let name = UNDO_COPIES_CHECK.to_owned();
-    let named = match named_undo_copies(path) {
+    let named = match backup_undo_names(path) {
         Ok(named) => named,
         Err(_) => {
             return RestoreCheck {
@@ -286,9 +474,12 @@ fn undo_copies_check(
 }
 
 /// Accept only plain backup file names: no separators, no parent climbs,
-/// no hidden files, ending in `.db`.
+/// no hidden files, ending in `.db` or `.db.gz`.
 fn safe_backup_name(name: &str) -> Option<&str> {
-    if name.is_empty() || !name.ends_with(".db") || name.starts_with('.') {
+    if name.is_empty()
+        || !(name.ends_with(PLAIN_SUFFIX) || name.ends_with(PACKED_SUFFIX))
+        || name.starts_with('.')
+    {
         return None;
     }
     if name.contains('/') || name.contains('\\') || name.contains("..") {
@@ -300,19 +491,6 @@ fn safe_backup_name(name: &str) -> Option<&str> {
     } else {
         None
     }
-}
-
-/// Directory entries that count as backups: finished `.db` files, never
-/// staging or restore temp files.
-fn is_backup_file(name: &str) -> bool {
-    name.ends_with(".db") && !name.starts_with(".staging-") && !name.starts_with(".restore-")
-}
-
-/// Manifest sidecar path for a backup file.
-fn manifest_path(backup: &Path) -> PathBuf {
-    let mut name = backup.as_os_str().to_owned();
-    name.push(MANIFEST_SUFFIX);
-    PathBuf::from(name)
 }
 
 /// Best-effort manifest read: a missing or corrupt sidecar is `None`, never
@@ -330,9 +508,10 @@ fn unix_secs(at: SystemTime) -> Option<u64> {
 }
 
 /// `integrity_check` must read `ok` and `foreign_key_check` must be empty.
-/// Opens read-only; any failure reads as unclean.
+/// Opens read-only and immutable, so nothing is written beside the file;
+/// any failure reads as unclean.
 fn integrity_clean(path: &Path) -> bool {
-    let connection = match Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY) {
+    let connection: Connection = match open_immutable(path) {
         Ok(connection) => connection,
         Err(_) => return false,
     };
@@ -372,6 +551,10 @@ mod tests {
     #[test]
     fn backup_names_and_listing() {
         assert_eq!(safe_backup_name("library-1-0.db"), Some("library-1-0.db"));
+        assert_eq!(
+            safe_backup_name("library-1-0.db.gz"),
+            Some("library-1-0.db.gz")
+        );
         for refused in [
             "",
             "library.db.bak",
@@ -384,13 +567,16 @@ mod tests {
             assert_eq!(safe_backup_name(refused), None, "name {refused:?}");
         }
 
-        assert!(is_backup_file("library-1-0.db"));
+        assert!(is_backup_name("library-1-0.db"));
+        assert!(is_backup_name("library-1-0.db.gz"));
         for unfinished in [
             "library-1-0.db.manifest.json",
+            "library-1-0.db.gz.manifest.json",
             ".staging-1-2-3.db",
+            ".staging-1-2-3.db.gz",
             ".restore-1-2.tmp",
         ] {
-            assert!(!is_backup_file(unfinished), "listed {unfinished:?}");
+            assert!(!is_backup_name(unfinished), "listed {unfinished:?}");
         }
     }
 }

@@ -8,6 +8,7 @@ use axum::{
 };
 
 use droppedneedle_auth::{Admin, Curator, User};
+use droppedneedle_kernel::db::BackupError;
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::ValidJson;
 
@@ -58,14 +59,46 @@ pub async fn list_backups(
     post,
     tag = "admin",
     path = "/api/v3/admin/backups",
-    responses((status = 201, description = "Backup completed", body = BackupRunResponse))
+    responses(
+        (status = 201, description = "Backup completed", body = BackupRunResponse),
+        (status = 409, description = "`BACKUP_NO_ROOM`: too little free space, with `needed_mb` and \
+            `free_mb` in the details; `BACKUP_RUNNING`: another backup is running")
+    )
 )]
 pub async fn run_backup(
     State(admin): State<AdminSetup>,
     _caller: Admin,
 ) -> Result<(StatusCode, Json<BackupRunResponse>), ApiError> {
-    let report = super::backups::run_backup(&admin.backups).await?;
+    let report = super::backups::run_backup(&admin.backups)
+        .await
+        .map_err(backup_refused)?;
     Ok((StatusCode::CREATED, Json(report)))
+}
+
+/// A backup that did not run, as its answer: a refusal a person can act on
+/// is a 409, anything else the internal error with its cause logged.
+fn backup_refused(error: BackupError) -> ApiError {
+    const MIB: u64 = 1024 * 1024;
+    match error {
+        BackupError::NoRoom { needed, free } => {
+            let (needed_mb, free_mb) = (needed.div_ceil(MIB), free / MIB);
+            ApiError::new(
+                StatusCode::CONFLICT,
+                "BACKUP_NO_ROOM",
+                format!(
+                    "Not enough free space for a backup: it needs {needed_mb} MB and {free_mb} MB \
+                     are free."
+                ),
+            )
+            .with_details(serde_json::json!({ "needed_mb": needed_mb, "free_mb": free_mb }))
+        }
+        BackupError::Running => ApiError::new(
+            StatusCode::CONFLICT,
+            "BACKUP_RUNNING",
+            "A backup is already running. Try again when it is done.",
+        ),
+        BackupError::Db(error) => ApiError::internal(format_args!("backup run failed: {error}")),
+    }
 }
 
 /// Pre-restore verification report for one backup. Read-only.
@@ -81,10 +114,16 @@ pub async fn restore_report(
     _caller: Admin,
     Path(name): Path<String>,
 ) -> Result<Json<RestoreReport>, ApiError> {
-    let dir = admin.backups.backup_dir().to_owned();
-    blocking(move || super::backups::restore_report(&dir, &name))
-        .await
-        .map(Json)
+    let service = admin.backups.clone();
+    blocking(move || {
+        super::backups::restore_report(
+            service.backup_dir(),
+            &name,
+            super::backups::ReportDepth::Unpacked(&service),
+        )
+    })
+    .await
+    .map(Json)
 }
 
 /// Provider data and image cache counters.

@@ -28,9 +28,9 @@ use axum::{
 };
 use droppedneedle_kernel::{
     db::{
-        BACKUP_KEEP, CancelFlag, CheckpointMode, ChunkedError, Db, DbConfig, DbError, DbRuntime,
-        FOREGROUND_QUEUE_CAPACITY, LONG_READERS, Lane, LaneLimits, block_on, filesystem_is_local,
-        open_runtime, rusqlite_is_busy,
+        BackupError, BackupKind, CancelFlag, CheckpointMode, ChunkedError, Db, DbConfig, DbError,
+        DbRuntime, FOREGROUND_QUEUE_CAPACITY, LONG_READERS, Lane, LaneLimits, RETENTION, block_on,
+        filesystem_is_local, open_runtime, rusqlite_is_busy,
     },
     error::{ApiError, Unavailable},
     ids::REQUEST_ID_HEADER,
@@ -527,9 +527,9 @@ async fn busy_path_returns_503_with_retry_after_and_no_spin() {
     std::fs::remove_dir_all(dir).ok();
 }
 
-/// Backup verifies before rotating; restore lands in empty dirs and refuses
-/// occupied targets, version-newer backups and backups older than the
-/// bridge.
+/// Backup verifies before rotating and keeps the newest backups taken by
+/// hand; restore lands in empty dirs and refuses occupied targets,
+/// version-newer backups and backups older than the bridge, gzip or plain.
 #[tokio::test]
 async fn backup_restore_round_trip_with_refusals() {
     let (runtime, dir) = open_scratch("backup").await;
@@ -551,6 +551,7 @@ async fn backup_restore_round_trip_with_refusals() {
     let report = runtime
         .backups()
         .backup(
+            BackupKind::Manual,
             Some(Arc::new(move |_copied, _total| {
                 calls_moved.fetch_add(1, Ordering::Relaxed);
             })),
@@ -600,8 +601,10 @@ async fn backup_restore_round_trip_with_refusals() {
         other => panic!("occupied target must refuse, got {other:?}"),
     }
 
+    // Plain `.db` backups, as earlier builds wrote them, made from the
+    // restored database.
     let newer = dir.join("newer.db");
-    std::fs::copy(&report.path, &newer).unwrap();
+    std::fs::copy(&restored.path, &newer).unwrap();
     rusqlite::Connection::open(&newer)
         .unwrap()
         .execute("PRAGMA user_version = 9999", [])
@@ -626,7 +629,7 @@ async fn backup_restore_round_trip_with_refusals() {
     // A backup older than the bridge is refused before anything is copied,
     // whatever the downgrade switch says.
     let older = dir.join("older.db");
-    std::fs::copy(&report.path, &older).unwrap();
+    std::fs::copy(&restored.path, &older).unwrap();
     rusqlite::Connection::open(&older)
         .unwrap()
         .pragma_update(
@@ -652,10 +655,10 @@ async fn backup_restore_round_trip_with_refusals() {
         );
     }
 
-    for _ in 0..(BACKUP_KEEP + 2) {
+    for _ in 0..(RETENTION.manual + 2) {
         runtime
             .backups()
-            .backup(None, &CancelFlag::never())
+            .backup(BackupKind::Manual, None, &CancelFlag::never())
             .await
             .unwrap();
     }
@@ -664,10 +667,13 @@ async fn backup_restore_round_trip_with_refusals() {
         .filter(|entry| {
             entry
                 .as_ref()
-                .is_ok_and(|entry| entry.file_name().to_string_lossy().ends_with(".db"))
+                .is_ok_and(|entry| entry.file_name().to_string_lossy().ends_with(".db.gz"))
         })
         .count();
-    assert_eq!(kept, BACKUP_KEEP, "verified-then-rotate keeps five");
+    assert_eq!(
+        kept, RETENTION.manual,
+        "verified-then-rotate keeps the newest manual backups"
+    );
 
     runtime.shutdown().await;
     std::fs::remove_dir_all(dir).ok();
@@ -682,14 +688,20 @@ async fn backup_cancel_stops_before_rename() {
     let (runtime, dir) = open_scratch("backupcancel").await;
     let stop = CancelFlag::never();
     stop.cancel();
-    match runtime.backups().backup(None, &stop).await {
-        Err(DbError::Cancelled { operation, .. }) => assert_eq!(operation, "backup"),
+    match runtime
+        .backups()
+        .backup(BackupKind::Manual, None, &stop)
+        .await
+    {
+        Err(BackupError::Db(DbError::Cancelled { operation, .. })) => {
+            assert_eq!(operation, "backup")
+        }
         other => panic!("cancelled backup must stop, got {other:?}"),
     }
     let landed: Vec<String> = std::fs::read_dir(runtime.backups().backup_dir())
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .filter(|name| name.ends_with(".db"))
+        .filter(|name| name.starts_with("library-"))
         .collect();
     assert!(landed.is_empty(), "nothing must rename, left {landed:?}");
     runtime.shutdown().await;

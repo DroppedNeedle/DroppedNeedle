@@ -1,4 +1,5 @@
-//! Backup briefs: list, run, restore reports, and rotation.
+//! Backup briefs: list, run, restore reports, rotation, room and the
+//! nightly loop.
 //!
 //! Everything runs against scratch runtimes (migrated temp databases) with
 //! the admin router mounted directly and sessions injected - no network, no
@@ -10,9 +11,12 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use droppedneedle::admin::AdminSetup;
+use droppedneedle::admin::backups::NightlyBackup;
 use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_kernel::db::undo_dir::{Stored, UNDO_DIR_NAME, UndoDir};
-use droppedneedle_kernel::db::{BACKUP_KEEP, BackupService, DbRuntime};
+use droppedneedle_kernel::db::{BackupService, DbRuntime, RETENTION};
+use droppedneedle_kernel::jobs::CancellationToken;
+use droppedneedle_kernel::test_support::ManualClock;
 use serde_json::Value;
 use tower::ServiceExt as _;
 
@@ -33,6 +37,14 @@ struct Rig {
 
 impl Rig {
     async fn open(tag: &str) -> Self {
+        Self::open_with_space(tag, droppedneedle_kernel::disk::free_bytes).await
+    }
+
+    /// A rig whose backup service reads free space through `probe`.
+    async fn open_with_space(
+        tag: &str,
+        probe: fn(&std::path::Path) -> std::io::Result<u64>,
+    ) -> Self {
         let scratch = crate::common::ScratchDir::new(&format!("admin-backups-{tag}"));
         let dir = scratch.to_path_buf();
         let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
@@ -67,12 +79,15 @@ impl Rig {
             quota,
             providers,
             runtime.db().clone(),
-            std::sync::Arc::new(droppedneedle_kernel::db::BackupService::new(
-                &dir.join("app.db"),
-                &backup_dir,
-                std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
-                false,
-            )),
+            std::sync::Arc::new(
+                droppedneedle_kernel::db::BackupService::new(
+                    &dir.join("app.db"),
+                    &backup_dir,
+                    std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+                    false,
+                )
+                .with_space_probe(probe),
+            ),
             runtime.checkpoint().clone(),
             platform.supervisor.clone(),
             jobs.precache_trigger(),
@@ -133,7 +148,7 @@ async fn backup_run_then_list_then_report() {
     let (status, run) = call(rig.admin_app(), "POST", "/api/v3/admin/backups", None).await;
     assert_eq!(status, StatusCode::CREATED, "{run}");
     let name = run["name"].as_str().expect("run names the backup");
-    assert!(name.ends_with(".db"), "{name}");
+    assert!(name.ends_with(".db.gz"), "{name}");
     let sha = run["sha256"].as_str().expect("run reports sha");
     assert_eq!(sha.len(), 64, "sha256 hex length");
     assert!(run["size_bytes"].as_u64().expect("size") > 0);
@@ -153,7 +168,12 @@ async fn backup_run_then_list_then_report() {
     assert_eq!(list["backups"].as_array().expect("list").len(), 1);
     assert_eq!(list["backups"][0]["name"], run["name"]);
     assert_eq!(list["backups"][0]["sha256"], run["sha256"]);
+    assert_eq!(list["backups"][0]["kind"], Value::from("manual"));
     assert!(list["backups"][0]["created_at_unix"].as_u64().is_some());
+    assert_eq!(
+        list["keep"],
+        serde_json::json!({"daily": 7, "weekly": 4, "pre_upgrade": 3, "manual": 3})
+    );
 
     let uri = format!("/api/v3/admin/backups/{name}/restore-report");
     let (status, report) = call(rig.admin_app(), "GET", &uri, None).await;
@@ -183,6 +203,25 @@ async fn backup_run_then_list_then_report() {
     ] {
         assert!(names.contains(&expected), "{names:?}");
     }
+    // The copy the check unpacked is gone.
+    let left = files(&rig.dir.join("backups"));
+    assert!(left.iter().all(|file| !file.starts_with('.')), "{left:?}");
+}
+
+/// Every name in a folder, sorted.
+fn files(dir: &std::path::Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .expect("folder reads")
+        .map(|entry| {
+            entry
+                .expect("entry reads")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    names
 }
 
 /// Backup names sort by the wall-clock millisecond they carry. Wait for the
@@ -201,9 +240,9 @@ async fn next_millisecond() {
 }
 
 #[tokio::test]
-async fn backup_rotation_keeps_five() {
+async fn backup_rotation_keeps_the_newest_taken_by_hand() {
     let rig = Rig::open("rotation").await;
-    for _ in 0..BACKUP_KEEP + 1 {
+    for _ in 0..RETENTION.manual + 1 {
         let (status, _) = call(rig.admin_app(), "POST", "/api/v3/admin/backups", None).await;
         assert_eq!(status, StatusCode::CREATED);
         next_millisecond().await;
@@ -211,7 +250,7 @@ async fn backup_rotation_keeps_five() {
     let (status, list) = call(rig.admin_app(), "GET", "/api/v3/admin/backups", None).await;
     assert_eq!(status, StatusCode::OK);
     let backups = list["backups"].as_array().expect("list");
-    assert_eq!(backups.len(), BACKUP_KEEP);
+    assert_eq!(backups.len(), RETENTION.manual);
     // Oldest first: names ascend.
     let names: Vec<&str> = backups
         .iter()
@@ -233,7 +272,87 @@ async fn backup_rotation_keeps_five() {
         .filter(|name| name != UNDO_DIR_NAME)
         .collect();
     files.sort();
-    assert_eq!(files.len(), BACKUP_KEEP * 2, "{files:?}");
+    assert_eq!(files.len(), RETENTION.manual * 2, "{files:?}");
+}
+
+/// Too little free space: "Back up now" answers 409 with what it needs,
+/// stages nothing and keeps every backup.
+#[tokio::test]
+async fn back_up_now_without_room_is_refused_and_keeps_every_backup() {
+    let rig = Rig::open_with_space("room", |_| Ok(5 * 1024 * 1024)).await;
+    let backups = rig.dir.join("backups");
+    BackupService::new(
+        &rig.dir.join("app.db"),
+        &backups,
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        false,
+    )
+    .backup(
+        droppedneedle_kernel::db::BackupKind::Manual,
+        None,
+        &droppedneedle_kernel::db::CancelFlag::never(),
+    )
+    .await
+    .expect("a backup with room runs");
+    let before = files(&backups);
+
+    let (status, body) = call(rig.admin_app(), "POST", "/api/v3/admin/backups", None).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], Value::from("BACKUP_NO_ROOM"));
+    assert_eq!(body["error"]["details"]["free_mb"], Value::from(5));
+    assert!(
+        body["error"]["details"]["needed_mb"]
+            .as_u64()
+            .expect("needed")
+            > 64,
+        "{body}"
+    );
+    assert_eq!(files(&backups), before, "the folder changed");
+}
+
+/// A nightly backup under a day old means none is due, after a restart too:
+/// what is due is read from the backups folder alone. A day after the
+/// first, the next is taken.
+#[tokio::test]
+async fn a_nightly_backup_is_taken_once_a_day() {
+    let scratch = crate::common::ScratchDir::new("admin-backups-nightly");
+    let dir = scratch.to_path_buf();
+    let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
+    let platform = crate::common::TestPlatform::on(runtime.db(), &dir)
+        .build()
+        .await;
+    let clock = ManualClock::at(1_767_225_600_000);
+    let backups = dir.join("backups");
+    let service = || {
+        Arc::new(BackupService::new(
+            &dir.join("app.db"),
+            &backups,
+            Arc::new(clock.clone()),
+            false,
+        ))
+    };
+    let nightly_count = || {
+        files(&backups)
+            .iter()
+            .filter(|name| name.ends_with(".db.gz"))
+            .count()
+    };
+    let token = CancellationToken::new();
+    const HOUR: i64 = 60 * 60 * 1000;
+
+    let mut nightly = NightlyBackup::new(service(), platform.settings.live());
+    nightly.pass(&token).await.expect("the first pass backs up");
+    assert_eq!(nightly_count(), 1);
+
+    clock.advance(23 * HOUR);
+    let mut nightly = NightlyBackup::new(service(), platform.settings.live());
+    nightly.pass(&token).await.expect("a pass after a restart");
+    assert_eq!(nightly_count(), 1, "a backup under a day old was doubled");
+
+    clock.advance(HOUR);
+    nightly.pass(&token).await.expect("a pass a day later");
+    assert_eq!(nightly_count(), 2);
+    drop(runtime);
 }
 
 #[tokio::test]
@@ -359,7 +478,7 @@ async fn a_backup_carries_the_undo_copies_its_database_names() {
     std::fs::remove_dir(pool.file_path(&lost).unwrap()).unwrap();
     conn.execute("DELETE FROM library_publish_blob_refs", [])
         .unwrap();
-    for _ in 0..BACKUP_KEEP {
+    for _ in 0..RETENTION.manual {
         next_millisecond().await;
         let (status, _) = call(rig.admin_app(), "POST", "/api/v3/admin/backups", None).await;
         assert_eq!(status, StatusCode::CREATED);

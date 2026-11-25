@@ -8793,6 +8793,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/settings/backups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read whether the database is backed up every night. */
+        get: operations["get_backup_settings"];
+        /** Save whether the database is backed up every night. */
+        put: operations["put_backup_settings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/settings/connect-apps": {
         parameters: {
             query?: never;
@@ -12587,6 +12605,37 @@ export interface components {
             /** @description Base64 image bytes. */
             image_base64: string;
         };
+        /** @description How many backups of each kind are kept. */
+        BackupKeep: {
+            /**
+             * Format: int32
+             * @description The newest nightly backup of each of this many newest days that
+             *     hold one.
+             */
+            daily: number;
+            /**
+             * Format: int32
+             * @description The newest backups taken by hand.
+             */
+            manual: number;
+            /**
+             * Format: int32
+             * @description Backups taken before an upgrade, the newest for each schema version.
+             */
+            pre_upgrade: number;
+            /**
+             * Format: int32
+             * @description The newest nightly backup of each of this many newest weeks that
+             *     hold one.
+             */
+            weekly: number;
+        };
+        /**
+         * @description Why a backup was taken. A manifest without one, or a backup without a
+         *     manifest, reads as manual.
+         * @enum {string}
+         */
+        BackupKind: "scheduled" | "manual" | "pre_upgrade";
         /** @description Backup listing, oldest first. */
         BackupListResponse: {
             /** @description Backups on disk, oldest first. */
@@ -12596,11 +12645,8 @@ export interface components {
              *     or ramfs): it and these backups are lost when the server restarts.
              */
             database_in_memory: boolean;
-            /**
-             * Format: int32
-             * @description Rolling retention: the directory keeps this many.
-             */
-            keep: number;
+            /** @description How many of each kind the folder keeps. */
+            keep: components["schemas"]["BackupKeep"];
         };
         /** @description What one backup run produced. */
         BackupRunResponse: {
@@ -12631,6 +12677,8 @@ export interface components {
              * @description Manifest creation time as unix seconds, when present.
              */
             created_at_unix?: number | null;
+            /** @description Why it was taken, from the manifest; manual without one. */
+            kind: components["schemas"]["BackupKind"];
             /** @description File name inside the backups directory. */
             name: string;
             /** @description Hex SHA-256 from the manifest, when a manifest sits beside it. */
@@ -12651,6 +12699,17 @@ export interface components {
              * @description Schema stamp from the manifest, when present.
              */
             user_version?: number | null;
+        };
+        /**
+         * @description Whether the server backs the database up every night. What each kind
+         *     of backup keeps is fixed, not a setting.
+         */
+        Backups: {
+            /**
+             * @description Take a backup once a day.
+             * @default true
+             */
+            nightly: boolean;
         };
         /** @description Batch-cancel body. Dedupe is by exact string before lookup. */
         BatchCancelBody: {
@@ -28565,6 +28624,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BackupRunResponse"];
+                };
+            };
+            /** @description `BACKUP_NO_ROOM`: too little free space, with `needed_mb` and `free_mb` in the details; `BACKUP_RUNNING`: another backup is running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -50710,6 +50778,50 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_backup_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Nightly backups switch */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Backups"];
+                };
+            };
+        };
+    };
+    put_backup_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Backups"];
+            };
+        };
+        responses: {
+            /** @description Saved switch */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Backups"];
                 };
             };
         };

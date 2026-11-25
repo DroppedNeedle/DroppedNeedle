@@ -23,8 +23,8 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
     YouTubeConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::{
-    AppConnect, ConnectApps, DeemixConnection, EditionPreferences, FilesystemWatcher, GetIt,
-    ImportFolder, ListenBrainzSettings, LyricsSettings, PlainSection, PublicAddress,
+    AppConnect, Backups, ConnectApps, DeemixConnection, EditionPreferences, FilesystemWatcher,
+    GetIt, ImportFolder, ListenBrainzSettings, LyricsSettings, PlainSection, PublicAddress,
     SecuritySettings, UserPreferences, WantedWatcher,
 };
 use droppedneedle_kernel::runtime_config::{Masked, SecretSection, Section};
@@ -160,6 +160,12 @@ section_routes! {
             => "Import folder";
         put put_import_folder: "Save the import folder. Music copied there is imported, then\nremoved from it."
             => "Saved import folder";
+    }
+    plain Backups at "/api/v3/settings/backups", read admin, write admin {
+        get get_backup_settings: "Read whether the database is backed up every night."
+            => "Nightly backups switch";
+        put put_backup_settings: "Save whether the database is backed up every night."
+            => "Saved switch";
     }
     plain ListenBrainzSettings at "/api/v3/settings/listenbrainz", read admin, write admin {
         get get_listenbrainz: "Read the ListenBrainz reads switch."

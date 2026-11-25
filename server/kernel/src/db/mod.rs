@@ -105,8 +105,8 @@ pub mod writer;
 
 pub use analyze::AnalyzeService;
 pub use backup::{
-    BACKUP_KEEP, BACKUP_STEP_PAGES, BackupManifest, BackupProgress, BackupReport, BackupService,
-    RestoredBackup,
+    BACKUP_STEP_PAGES, BackupError, BackupKind, BackupManifest, BackupProgress, BackupReport,
+    BackupService, RETENTION, RestoredBackup, Retention,
 };
 pub use checkpoint::{
     ACTIVE_HIGH_WATER_BYTES, ACTIVE_LOW_WATER_BYTES, BackpressurePolicy, CHECKPOINT_CADENCE,

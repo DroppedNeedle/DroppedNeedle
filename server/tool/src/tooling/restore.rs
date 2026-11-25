@@ -2,12 +2,14 @@
 //!
 //! The mechanism is [`BackupService::restore`](droppedneedle_kernel::db::BackupService):
 //! verify the backup (integrity plus schema stamp), copy it into an empty
-//! directory under the server's database file name, verify the copy, and
-//! put the undo copies it names back beside it in `undo`, from the `undo`
-//! folder beside the backup. This module adds the
-//! operator face: a read-only preflight over the backup restore report
-//! (manifest identity when a sidecar exists), fail-closed refusals with
-//! plain messages, and a small JSON summary on success.
+//! directory under the server's database file name (unpacking a `.db.gz`
+//! backup there first), verify the copy, and put the undo copies it names
+//! back beside it in `undo`, from the `undo` folder beside the backup. This
+//! module adds the operator face: a read-only preflight over the backup
+//! restore report (manifest identity when a sidecar exists; for a `.db.gz`
+//! backup only that, so nothing is written beside it and a read-only
+//! backups folder still restores), fail-closed refusals with plain
+//! messages, and a small JSON summary on success.
 //!
 //! There is no HTTP route for restore by decision: the server must be
 //! stopped, and the target directory must be empty, so a restore can never
@@ -18,7 +20,7 @@ use std::path::Path;
 use serde::Serialize;
 use thiserror::Error;
 
-use droppedneedle::admin::backups::{UNDO_COPIES_CHECK, restore_report};
+use droppedneedle::admin::backups::{ReportDepth, UNDO_COPIES_CHECK, restore_report};
 use droppedneedle_kernel::db::BackupService;
 use droppedneedle_kernel::db::backup::Placement;
 use droppedneedle_kernel::db::datalock::DataLockError;
@@ -152,15 +154,15 @@ fn preflight(backup_db: &Path, allow_downgrade: bool) -> Result<Vec<String>, Res
         .parent()
         .filter(|dir| !dir.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let report = match restore_report(parent, name) {
+    let report = match restore_report(parent, name, ReportDepth::StoredFile) {
         Ok(report) => report,
         Err(_) => {
             let mut sidecar = backup_db.as_os_str().to_owned();
             sidecar.push(droppedneedle_kernel::db::backup::MANIFEST_SUFFIX);
             if Path::new(&sidecar).exists() {
                 return Err(RestoreError::Refused(
-                    "backup name must be a plain file name ending in .db; rename the backup \
-                     and its manifest so the manifest can be checked"
+                    "backup name must be a plain file name ending in .db or .db.gz; rename \
+                     the backup and its manifest so the manifest can be checked"
                         .to_owned(),
                 ));
             }

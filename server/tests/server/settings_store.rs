@@ -613,7 +613,11 @@ async fn a_restored_backup_brings_its_settings() {
     if let Some(parent) = config.library_db_path.parent() {
         std::fs::create_dir_all(parent).unwrap();
     }
-    std::fs::copy(&backup, &config.library_db_path).unwrap();
+    std::io::copy(
+        &mut flate2::read::GzDecoder::new(std::fs::File::open(&backup).unwrap()),
+        &mut std::fs::File::create(&config.library_db_path).unwrap(),
+    )
+    .unwrap();
     std::fs::copy(&key, config.config_dir().join("data_enc.key")).unwrap();
     source.stop().await;
     let wrapped = app_settings(&config).get_raw::<WrappedSettings>().unwrap();

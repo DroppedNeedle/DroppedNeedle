@@ -33,7 +33,7 @@ use crate::clock::Clock;
 
 use super::{
     analyze::AnalyzeService,
-    backup::BackupService,
+    backup::{BackupError, BackupKind, BackupService},
     checkpoint::{ACTIVE_HIGH_WATER_BYTES, ACTIVE_LOW_WATER_BYTES, CheckpointService},
     error::DbError,
     fs::{IN_MEMORY_WARNING, check_filesystem, reject_symlink},
@@ -223,8 +223,9 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
 /// user to restore. Otherwise one verified backup is taken whenever the
 /// plan changes the file. A missing or empty database has nothing to lose
 /// and skips. A failed backup stops the boot: migrating without a way back
-/// risks the catalog. True when the plan changes a database that holds
-/// data.
+/// risks the catalog, and so does one the backups folder has no room for:
+/// the log says how much is needed. True when the plan changes a database
+/// that holds data.
 async fn backup_before_upgrade(path: &Path, backups: &BackupService) -> Result<bool, DbError> {
     if !path.exists() {
         return Ok(false);
@@ -245,10 +246,36 @@ async fn backup_before_upgrade(path: &Path, backups: &BackupService) -> Result<b
         expected = crate::schema::latest_version(),
         "schema upgrade pending; taking a backup first"
     );
-    let report = backups.backup(None, &CancelFlag::never()).await?;
+    let report = match backups
+        .backup(BackupKind::PreUpgrade, None, &CancelFlag::never())
+        .await
+    {
+        Ok(report) => report,
+        Err(BackupError::NoRoom { needed, free }) => {
+            let (needed, free) = (needed.div_ceil(MIB), free / MIB);
+            tracing::error!(
+                needed_mb = needed,
+                free_mb = free,
+                "the upgrade cannot start: the backup taken before it needs {needed} MB free \
+                 where the database lives and {free} MB are; free some space and start again"
+            );
+            return Err(DbError::Io(std::io::Error::other(format!(
+                "no room for the backup before the upgrade: it needs {needed} MB free and {free} MB are"
+            ))));
+        }
+        Err(BackupError::Running) => {
+            return Err(DbError::Io(std::io::Error::other(
+                "another backup was running when the upgrade's backup was due",
+            )));
+        }
+        Err(BackupError::Db(error)) => return Err(error),
+    };
     tracing::info!(backup = %report.path.display(), "pre-upgrade backup complete");
     Ok(true)
 }
+
+/// Bytes in a megabyte, for the log.
+const MIB: u64 = 1024 * 1024;
 
 /// How long opening the boot connection may take before the log says boot
 /// is waiting on the database.

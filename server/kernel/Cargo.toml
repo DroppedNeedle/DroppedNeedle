@@ -13,6 +13,7 @@ base64.workspace = true
 caseless.workspace = true
 chacha20poly1305.workspace = true
 const_format.workspace = true
+flate2.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
 hmac.workspace = true

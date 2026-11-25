@@ -13,13 +13,23 @@ A backup is a copy of the database, which holds your settings, accounts, playlis
 
 ## Making backups
 
-Admins make and check backups under Settings > Backups: "Back up now" makes one, and "Check" tests whether a backup would restore. DroppedNeedle also makes one by itself, verified, before a new version changes the database schema. The five newest are kept, in the `backups` folder next to `library.db` (`/app/cache/backups` unless `LIBRARY_DB_PATH` moves the database).
+DroppedNeedle backs the database up by itself once a day while it runs, and before a new version changes the database schema. Admins see and check backups under Settings > Backups: "Back up now" makes one, "Check" tests whether a backup would restore, and "Back up every night" turns the daily backup off or on. Backups live in the `backups` folder next to `library.db` (`/app/cache/backups` unless `LIBRARY_DB_PATH` moves the database).
+
+Each backup is checked before it is kept, then compressed: a backup is a `library-<number>.db.gz` file with a `.manifest.json` file beside it. Older ones are removed only after a new one has been checked, and each kind is kept on its own:
+
+- **Nightly:** the newest backup of each of the 7 newest days that have one, and of each of the 4 newest weeks that have one. Days the server was off do not count, so a server that was off for a month still has its last backups.
+- **Before an upgrade:** the 3 newest, one per database version.
+- **By hand ("Back up now"):** the 3 newest.
+
+A backup needs free space in the `backups` folder of about two and a half times the database's size. Without it, the backup is refused and nothing is removed: "Back up now" says how much it needs, and a new version that must back up before it upgrades does not start until there is room. Free some space and try again.
+
+Backups made by versions before this one (plain `.db` files, or ones whose manifest does not say their kind) are listed, checked and restored as before, but never removed by themselves and not counted in any kind above. Delete them by hand once you no longer need them.
 
 Restoring is always done on the host, never from the web UI.
 
 ## What to keep
 
-- **The whole `backups` folder**, not only the `.db` files. The copies Undo and "Restore original state" need live in the `undo` folder beside the database, and each backup copies the ones it names into `backups/undo`, which all kept backups share.
+- **The whole `backups` folder**, not only the backup files. The copies Undo and "Restore original state" need live in the `undo` folder beside the database, and each backup copies the ones it names into `backups/undo`, which all kept backups share.
 - **The key file `config/data_enc.key`.** A backup holds your settings too, and the stored passwords and API keys in it are sealed with this key. A backup cannot be used without it. See [The key file](#the-key-file).
 
 Backups leave out `metadata-cache.db` on purpose: it holds only provider answers that are fetched again when needed.
@@ -37,10 +47,10 @@ Backups leave out `metadata-cache.db` on purpose: it holds only provider answers
 2. Restore the backup into an empty folder:
 
    ```bash
-   docker compose run --rm droppedneedle droppedneedle-tool restore --backup /app/cache/backups/BACKUP.db --target-dir /app/cache/restored
+   docker compose run --rm droppedneedle droppedneedle-tool restore --backup /app/cache/backups/BACKUP.db.gz --target-dir /app/cache/restored
    ```
 
-   `restore` checks the backup first and never replaces a file. It puts the undo copies the backup names back beside the restored database.
+   `restore` checks the backup first and never replaces a file. It unpacks a `.db.gz` backup itself, and also takes an older plain `.db` one. It puts the undo copies the backup names back beside the restored database. A version from before compression cannot read a `.db.gz` file: unpack it first (see [Going back after a failed update](#going-back-after-a-failed-update)).
 
    Without Compose (Unraid, Portainer, Synology, where `docker` needs `sudo` over SSH), run it with `docker run` instead:
 
@@ -48,7 +58,7 @@ Backups leave out `metadata-cache.db` on purpose: it holds only provider answers
    docker run --rm -e PUID=1000 -e PGID=1000 \
      -v /path/to/config:/app/config -v /path/to/cache:/app/cache \
      droppedneedle/droppedneedle:TAG \
-     droppedneedle-tool restore --backup /app/cache/backups/BACKUP.db --target-dir /app/cache/restored
+     droppedneedle-tool restore --backup /app/cache/backups/BACKUP.db.gz --target-dir /app/cache/restored
    ```
 
    Use the server's own values:
@@ -87,7 +97,17 @@ If an update goes wrong, you can put the backup made before it back by hand and 
 
 1. Stop the container.
 2. Delete `library.db-wal` and `library.db-shm` in `/app/cache` if they exist.
-3. Put the backup from `/app/cache/backups` in place of `/app/cache/library.db`, keeping its owner and mode: on the host, `cp -a /path/to/cache/backups/BACKUP.db /path/to/cache/library.db`.
+3. Unpack the backup from `/app/cache/backups` in place of `/app/cache/library.db`. On the host:
+
+   ```bash
+   cd /path/to/cache
+   gunzip -k backups/BACKUP.db.gz
+   mv backups/BACKUP.db library.db
+   chown --reference=backups/BACKUP.db.gz library.db
+   chmod --reference=backups/BACKUP.db.gz library.db
+   ```
+
+   `gunzip -k` keeps the backup itself. The two `--reference` commands give the database the backup's owner and mode, which are the server's. A plain `.db` backup needs no unpacking: `cp -a backups/BACKUP.db library.db`.
 4. Copy everything in `/app/cache/backups/undo` into `/app/cache/undo`, keeping each file's owner and mode and skipping files already there: on the host, `cp -an /path/to/cache/backups/undo/. /path/to/cache/undo/`. Files there are named by their content, so skipping existing ones is safe.
 5. Change the image tag back to the previous version and start the container.
 

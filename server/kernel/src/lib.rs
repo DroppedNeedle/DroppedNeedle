@@ -13,6 +13,7 @@ pub mod beneath;
 pub mod clock;
 pub mod config;
 pub mod db;
+pub mod disk;
 pub mod error;
 pub mod events;
 pub mod extract;

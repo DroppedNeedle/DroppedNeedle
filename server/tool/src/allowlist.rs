@@ -310,6 +310,7 @@ mod tests {
             "library_import_folder",
             "appearance",
             "deemix",
+            "backups",
             // This install's own id.
             "instance_id",
         ];

@@ -782,6 +782,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "`BACKUP_NO_ROOM`: too little free space, with `needed_mb` and `free_mb` in the details; `BACKUP_RUNNING`: another backup is running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -33384,6 +33394,70 @@
         ]
       }
     },
+    "/api/v3/settings/backups": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Read whether the database is backed up every night.",
+        "operationId": "get_backup_settings",
+        "responses": {
+          "200": {
+            "description": "Nightly backups switch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Backups"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Save whether the database is backed up every night.",
+        "operationId": "put_backup_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Backups"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved switch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Backups"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/settings/connect-apps": {
       "get": {
         "tags": [
@@ -43349,6 +43423,51 @@
           }
         }
       },
+      "BackupKeep": {
+        "type": "object",
+        "description": "How many backups of each kind are kept.",
+        "required": [
+          "daily",
+          "weekly",
+          "pre_upgrade",
+          "manual"
+        ],
+        "properties": {
+          "daily": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The newest nightly backup of each of this many newest days that\nhold one.",
+            "minimum": 0
+          },
+          "manual": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The newest backups taken by hand.",
+            "minimum": 0
+          },
+          "pre_upgrade": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Backups taken before an upgrade, the newest for each schema version.",
+            "minimum": 0
+          },
+          "weekly": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The newest nightly backup of each of this many newest weeks that\nhold one.",
+            "minimum": 0
+          }
+        }
+      },
+      "BackupKind": {
+        "type": "string",
+        "description": "Why a backup was taken. A manifest without one, or a backup without a\nmanifest, reads as manual.",
+        "enum": [
+          "scheduled",
+          "manual",
+          "pre_upgrade"
+        ]
+      },
       "BackupListResponse": {
         "type": "object",
         "description": "Backup listing, oldest first.",
@@ -43370,10 +43489,8 @@
             "description": "True when the database sits on a filesystem held in memory (tmpfs\nor ramfs): it and these backups are lost when the server restarts."
           },
           "keep": {
-            "type": "integer",
-            "format": "int32",
-            "description": "Rolling retention: the directory keeps this many.",
-            "minimum": 0
+            "$ref": "#/components/schemas/BackupKeep",
+            "description": "How many of each kind the folder keeps."
           }
         }
       },
@@ -43420,7 +43537,8 @@
         "description": "One backup on disk, with its manifest identity when present.",
         "required": [
           "name",
-          "size_bytes"
+          "size_bytes",
+          "kind"
         ],
         "properties": {
           "created_at_unix": {
@@ -43431,6 +43549,10 @@
             "format": "int64",
             "description": "Manifest creation time as unix seconds, when present.",
             "minimum": 0
+          },
+          "kind": {
+            "$ref": "#/components/schemas/BackupKind",
+            "description": "Why it was taken, from the manifest; manual without one."
           },
           "name": {
             "type": "string",
@@ -43465,6 +43587,17 @@
             ],
             "format": "int64",
             "description": "Schema stamp from the manifest, when present."
+          }
+        }
+      },
+      "Backups": {
+        "type": "object",
+        "description": "Whether the server backs the database up every night. What each kind\nof backup keeps is fixed, not a setting.",
+        "properties": {
+          "nightly": {
+            "type": "boolean",
+            "description": "Take a backup once a day.",
+            "default": true
           }
         }
       },

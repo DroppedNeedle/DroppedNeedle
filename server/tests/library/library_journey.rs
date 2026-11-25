@@ -3241,7 +3241,11 @@ async fn a_restored_backup_still_undoes_and_restores_originals() {
         false,
     );
     let report = service
-        .backup(None, &CancelFlag::never())
+        .backup(
+            droppedneedle_kernel::db::BackupKind::Manual,
+            None,
+            &CancelFlag::never(),
+        )
         .await
         .expect("backup runs");
     // The pool loses the copy the second file's undo and original need.

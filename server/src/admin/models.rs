@@ -1,6 +1,6 @@
 //! Admin-UX wire shapes. Clean-slate v3; no v2 byte compatibility is kept.
 
-use droppedneedle_kernel::db::CheckpointMode;
+use droppedneedle_kernel::db::{BackupKind, CheckpointMode};
 use droppedneedle_kernel::jobs::JobState;
 use droppedneedle_providers::{CallOutcome, RequestPriority};
 use serde::{Deserialize, Serialize};
@@ -13,6 +13,8 @@ pub struct BackupView {
     pub name: String,
     /// File size in bytes.
     pub size_bytes: u64,
+    /// Why it was taken, from the manifest; manual without one.
+    pub kind: BackupKind,
     /// Hex SHA-256 from the manifest, when a manifest sits beside it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sha256: Option<String>,
@@ -33,11 +35,26 @@ pub struct BackupView {
 pub struct BackupListResponse {
     /// Backups on disk, oldest first.
     pub backups: Vec<BackupView>,
-    /// Rolling retention: the directory keeps this many.
-    pub keep: u32,
+    /// How many of each kind the folder keeps.
+    pub keep: BackupKeep,
     /// True when the database sits on a filesystem held in memory (tmpfs
     /// or ramfs): it and these backups are lost when the server restarts.
     pub database_in_memory: bool,
+}
+
+/// How many backups of each kind are kept.
+#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+pub struct BackupKeep {
+    /// The newest nightly backup of each of this many newest days that
+    /// hold one.
+    pub daily: u32,
+    /// The newest nightly backup of each of this many newest weeks that
+    /// hold one.
+    pub weekly: u32,
+    /// Backups taken before an upgrade, the newest for each schema version.
+    pub pre_upgrade: u32,
+    /// The newest backups taken by hand.
+    pub manual: u32,
 }
 
 /// What one backup run produced.

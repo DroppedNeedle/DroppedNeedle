@@ -3,8 +3,11 @@
 	import { CircleCheck, CircleX, DatabaseBackup, TriangleAlert } from 'lucide-svelte';
 	import {
 		createRunBackupMutation,
+		createSaveBackupSettingsMutation,
+		getBackupSettingsQuery,
 		getBackupsQuery,
 		getRestoreReportQuery,
+		type BackupKind,
 		type BackupView
 	} from '$lib/features/settings/queries/system.svelte';
 	import { docsUrl } from '$lib/ui/docsUrl';
@@ -16,12 +19,25 @@
 	import Card from '$lib/ui/Card.svelte';
 	import Modal from '$lib/ui/Modal.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
+	import SaveBar from '$lib/ui/SaveBar.svelte';
+	import ToggleRow from '$lib/ui/ToggleRow.svelte';
+	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
 
 	const RESTORE_DOCS = docsUrl('backups-and-restore', 'restoring-a-backup');
 	const STORAGE_DOCS = docsUrl('configuration', 'storage-and-permissions');
 
 	const backupsQuery = getBackupsQuery();
 	const runBackup = createRunBackupMutation();
+	const settings = createSettingsSection(
+		getBackupSettingsQuery(),
+		createSaveBackupSettingsMutation()
+	);
+
+	const KIND_LABELS: Record<BackupKind, string> = {
+		scheduled: 'Nightly',
+		manual: 'By hand',
+		pre_upgrade: 'Before upgrade'
+	};
 
 	let checking = $state<string | null>(null);
 	let checkOpen = $state(false);
@@ -39,6 +55,7 @@
 
 	function details(backup: BackupView): string {
 		return [
+			KIND_LABELS[backup.kind],
 			backup.created_at_unix != null ? formatDate(backup.created_at_unix) : null,
 			formatBytes(backup.size_bytes),
 			backup.user_version != null ? `Schema ${backup.user_version}` : null
@@ -70,7 +87,13 @@
 
 <div class="space-y-5">
 	<SettingsPaneHeader title="Backups" description="Copies of the database, settings included.">
-		{#if backupsQuery.data}<p>The newest {backupsQuery.data.keep} are kept.</p>{/if}
+		{#if backupsQuery.data}
+			{@const keep = backupsQuery.data.keep}
+			<p>
+				Kept: {keep.daily} daily, {keep.weekly} weekly, {keep.pre_upgrade} before an upgrade,
+				{keep.manual} by hand.
+			</p>
+		{/if}
 		{#snippet actions()}
 			<AsyncButton variant="primary" size="display-sm" icon={DatabaseBackup} onclick={backUpNow}>
 				Back up now
@@ -94,6 +117,21 @@
 			</div>
 		</div>
 	{/if}
+	<Card variant="bordered" padding="md">
+		<QueryBoundary query={settings} what="the nightly backup setting">
+			{#snippet children(draft)}
+				<div class="space-y-4">
+					<ToggleRow
+						label="Back up every night"
+						description="Once a day, while the server runs."
+						bind:checked={draft.nightly}
+						disabled={settings.saving}
+					/>
+					<SaveBar {...settings.bar} />
+				</div>
+			{/snippet}
+		</QueryBoundary>
+	</Card>
 	<Card variant="bordered" padding="md">
 		<QueryBoundary
 			query={backupsQuery}

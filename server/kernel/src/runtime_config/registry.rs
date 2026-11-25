@@ -112,6 +112,7 @@ section_list! {
         LibraryManagement,
         EditionPreferences,
         Appearance,
+        Backups,
     ],
     secret: [
         YouTubeConnection,

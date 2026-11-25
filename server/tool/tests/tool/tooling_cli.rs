@@ -1855,9 +1855,12 @@ fn a_killed_v2_upgrades_with_its_committed_writes() {
     assert_eq!(without_shm(backup_trees(&root)), original);
 }
 
+/// A gzip backup restores through the binary and round-trips; a plain
+/// `.db` backup, as earlier builds wrote them, still restores; occupied
+/// targets and newer backups refuse.
 #[tokio::test]
 async fn restore_round_trips_and_refuses() {
-    use droppedneedle_kernel::db::{BackupService, CancelFlag};
+    use droppedneedle_kernel::db::{BackupKind, BackupService, CancelFlag};
 
     let root = scratch_dir("restore");
     let live = root.join("live.db");
@@ -1877,9 +1880,14 @@ async fn restore_round_trips_and_refuses() {
         false,
     );
     let taken = service
-        .backup(None, &CancelFlag::never())
+        .backup(BackupKind::Manual, None, &CancelFlag::never())
         .await
         .expect("backup runs");
+    assert!(
+        taken.path.to_string_lossy().ends_with(".db.gz"),
+        "{}",
+        taken.path.display()
+    );
 
     // The binary restores into an empty directory.
     let target = root.join("restored");
@@ -1931,9 +1939,27 @@ async fn restore_round_trips_and_refuses() {
     droppedneedle_tool::tooling::restore::restore_backup(&taken.path, &locked, "library.db", false)
         .expect("restores beside a server lock file");
 
+    // A plain backup with no manifest restores as it always did.
+    let plain_dir = root.join("plain");
+    std::fs::create_dir_all(&plain_dir).expect("plain dir");
+    let plain = plain_dir.join("library-1-0.db");
+    std::fs::copy(target.join("library.db"), &plain).expect("backup copies");
+    droppedneedle_tool::tooling::restore::restore_backup(
+        &plain,
+        &root.join("from-plain"),
+        "library.db",
+        false,
+    )
+    .expect("a plain backup restores");
+    let name: String = root.join("from-plain").join("library.db").one(
+        "SELECT display_name FROM auth_users WHERE id = ?",
+        rusqlite::params!["restore-alice"],
+    );
+    assert_eq!(name, "Alice");
+
     // A backup newer than the binary refuses without --allow-downgrade.
     let future = root.join("future.db");
-    std::fs::copy(&taken.path, &future).expect("backup copies");
+    std::fs::copy(&plain, &future).expect("backup copies");
     future.exec("PRAGMA user_version = 9999", []);
     let too_new = droppedneedle_tool::tooling::restore::restore_backup(
         &future,
