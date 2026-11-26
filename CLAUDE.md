@@ -258,6 +258,15 @@ Run from the repo root. `make help` lists every target.
   cannot be fetched again. A cache key starts with its source and carries
   every value that changes the answer, so no settings save clears it, and a
   lookup that met any failure stores nothing.
+- A second exception: the provider facts Discover keeps (similar artists,
+  listener counts, album lists, in `catalog_artist_neighbours`,
+  `catalog_artist_listeners` and `catalog_artist_albums` with their
+  `catalog_fact_fetches` rows) live in `library.db`, written only by
+  `catalog/src/discover/facts/`. A reader at background priority reads their
+  rows only and records what is missing as wanted; background reads for them
+  go only through one job (`discover.facts`), and a reader a person waits on
+  may read one nobody has asked about and keep it. A failed read keeps the
+  rows. Clear provider data empties them; the read counter stays.
 - All writes go through the single writer lane, one transaction per atomic
   change. No network calls inside one: writes run one at a time, so a slow
   one stalls the rest. The offline upgrade tool is the one exception: with
@@ -330,13 +339,26 @@ Run from the repo root. `make help` lists every target.
   `POST /api/v3/playback/events` and compat stop reports). It sits beside
   `library_play_history` and never counts as a play: no play count,
   scrobble or statistic reads it.
+- A person's ListenBrainz history lives in `media_imported_listens`, written
+  only by `media/src/history/`: from an export ZIP they upload or, with a
+  ListenBrainz link, one asked for through ListenBrainz's export API
+  (`export.rs`), then kept current by `listens.sync`, each listen once by
+  its time and names. An imported listen is never a play: nothing writes
+  `library_play_history` from it, no play count, scrobble or statistic reads
+  it, and a listen in the same second as one of their plays here is not
+  kept. Every import write checks the person's `media_history_imports` row
+  still reads the same file, so a forget stops an import already under way.
 - "Forget my history" (`catalog/src/discover/forget.rs`) deletes a person's
-  pick record, how their plays ended, their Discover activity and their
-  saved pages, by user id and safe to run again; it keeps plays, the
-  library, requests and what they told Discover. Every table with a column
-  ending `user_id` is listed in `server/forget-coverage.txt` as forgotten,
-  kept (with its reason) or not personal, and `persist_schema.rs` fails on
-  one left out.
+  pick record, how their plays ended, their imported ListenBrainz history
+  (its import marked `forgotten` and its jobs cancelled in the same write),
+  their Discover activity, their taste and candidate pool, their weekly sets
+  (and when their first set began waiting) and their saved pages, by user id
+  and safe to run again. It keeps plays, the library, requests and what the
+  person chose themselves: their answers to Discover, their tunings, their
+  Later pile, the artists they named and their set day. Every table with a
+  column ending `user_id` is listed in `server/forget-coverage.txt` as
+  forgotten, kept (with its reason) or not personal, and `persist_schema.rs`
+  fails on one left out.
 - A list on rotation is a `catalog_playlists` row named by its row in
   `catalog_rotation_lists`; only its refresh
   (`catalog/src/collections/rotation/`) writes its songs, it is read-only
@@ -356,6 +378,12 @@ Run from the repo root. `make help` lists every target.
   row and before its AFTER DELETE trigger). The tables it follows are
   never written with REPLACE, which removes rows without firing their
   delete triggers.
+- A result Discover computes per person is not a read model, and the trigger
+  rule above does not apply to it. The taste build and the candidate pool
+  are rebuilt whole by their job and written only by `rebuild` in
+  `engine/taste_store.rs` and `engine/pool_store.rs`; the weekly set is
+  computed once and written only by `weekly_store::keep`, which never
+  replaces a week's set. Besides these, only Forget deletes their rows.
 
 **Background work and outbound HTTP**
 - Loops are cancellable, back off with jitter and re-read settings each
@@ -363,10 +391,16 @@ Run from the repo root. `make help` lists every target.
 - Every loop runs on the one loop supervisor (`kernel/src/jobs/supervisor.rs`)
   and appears in the admin jobs view. A spawn outside it is listed, with
   its reason, in `server/gates/tests/gates/source_gates.rs`.
-- Discover's background work for a person is queued only from
+- Discover's background work is queued only from
   `catalog/src/discover/due.rs`: `clock_pass` from the demand tick (nothing
-  while `DISCOVER_WARMER_ENABLED` is off) and `visit` where the page records
-  a person's activity.
+  while `DISCOVER_WARMER_ENABLED` is off), `visit` where the page records a
+  person's activity, and `queue_now` inside another write. Who is due a
+  taste build, a pool build or a weekly set is decided in
+  `engine/schedule.rs`, which only those first two ask. A person's
+  ListenBrainz history jobs (`listens.import`, `listens.sync`) are queued
+  only by media's own due rule (`media/src/history/due.rs`), which
+  `clock_pass`, `visit` and the Profile's history routes call, and by an
+  upload or a running step.
 - Spotify sync (`acquire/src/spotify_sync/`) is one job kind keyed per
   playlist, queued only by its due tick, its switch, a grant decision, a
   Spotify reconnect, the import route and a kept album (below). It reads a
@@ -427,11 +461,28 @@ Run from the repo root. `make help` lists every target.
   data allows, background work never refetches what a kept row can answer, and
   a user's chosen source is asked first, the other only when it cannot answer.
   A change that adds calls to them says how many a day, for one active install.
+- Background reads to ListenBrainz and the official MusicBrainz service made
+  for Discover, a person's history import and sync included (through media's
+  `ReadBudget` port, which catalog's `KeptFacts` implements), are counted by
+  day in `catalog_background_read_days`, only when a request goes out, and
+  stop once the day reaches `facts::plan::ceiling`: 60 plus 30 for each
+  person seen in seven days, at most 300, and none while nobody was seen.
+  "Is this person active" is `droppedneedle_auth::sqlite::seen_since`, and
+  nothing else reads those columns for it.
+- New releases from a person's artists are cut from one install-wide feed:
+  ListenBrainz's sitewide fresh releases of the last 90 days, read with no
+  token by the `discover.fresh_feed` job
+  (`catalog/src/discover/listening/fresh.rs`) at most twice a UTC day and
+  kept in the provider cache under one key. Nothing reads fresh releases per
+  person, and readers never dial out.
 - Every "similar to" list reads one answer per artist from
   `catalog/src/discover/listening/similar.rs`: ListenBrainz labs'
-  co-listening list, ordered by score over the neighbour's listener count to
-  `FAME_EXPONENT`, with Last.fm's only while ListenBrainz reads are off or
-  have nothing for the artist. No list is ordered or cut by listen counts
+  co-listening list, kept in `catalog_artist_neighbours` with each
+  neighbour's count in `catalog_artist_listeners`, ordered by score over the
+  neighbour's listener count to `FAME_EXPONENT`. Last.fm's list stands in
+  only while ListenBrainz reads are off or have nothing for the artist,
+  except in the candidate pool, which reads it beside labs' as a second
+  opinion (Discover, below). No list is ordered or cut by listen counts
   alone. A failed labs read rests labs in the ListenBrainz client, so a pass
   stops at its first failure.
 - The User-Agent is `DroppedNeedleApp/v<version> (<contact>; <site>)`, the form
@@ -483,7 +534,9 @@ Run from the repo root. `make help` lists every target.
   fills in the forms Settings shows, and only each form's Save writes.
 - Treat every outside server as hostile, the user's own media server and
   download client included. Read a response body only through
-  `http_client::read_capped`. Never join a value from a request or from a
+  `http_client::read_capped`, or `read_capped_to` for a file too large to
+  hold in memory (the provider executor's `download`, which streams it to
+  disk under a cap). Never join a value from a request or from a
   server's answer into an outbound URL as text: validate it and build the URL
   from the parsed base. Relay a server's bytes only under a content type of
   ours from a short allowlist, with `nosniff` and a sandbox policy. A path a
@@ -880,10 +933,18 @@ Run from the repo root. `make help` lists every target.
 
 **Discover**
 - Discover's seed artists come from one function, `weighted_seeds`
-  (`catalog/src/discover/queue/seeds.rs`), over the person's own plays,
-  hearts, ratings, follows, playlists and requests and the accounts they
-  linked themselves; the library only tops up a short list. Discover reads
-  a media server only through the person's own link (`source_gates.rs`,
+  (`catalog/src/discover/queue/seeds.rs`), weighed by `weigh` over the
+  person's own plays and imported listens, hearts, ratings, follows,
+  playlists, requests, Later pile (each artist as a follow), the albums they
+  said they know already (as a heart), the artists they named as ones they
+  love (`catalog_stated_artists`) and the accounts they linked themselves
+  (ListenBrainz's top artists only while their imported history is not
+  current), and read from their taste build once it exists; the library only
+  tops up a short list. An artist is a seed at `MIN_WEIGHT`, or with
+  `SEED_PLAYS` plays and listens while its ratings do not count against it
+  (`Tally::is_seed`). A play the person also scrobbled to ListenBrainz
+  counts once, as the play (`SAME_PLAY_MS` in `engine/history.rs`). Discover
+  reads a media server only through the person's own link (`source_gates.rs`,
   `discover_never_resolves_a_shared_media_server_account`).
 - What a person tells Discover (No, Know it already, Not this artist, Not
   now) is one row per person and target in `catalog_discover_feedback`,
@@ -891,10 +952,58 @@ Run from the repo root. `make help` lists every target.
   recommending surface, the Weekly Mix's top-up and auto-requests included,
   which request nothing while it cannot be read. Charts, the library, a
   person's own history, search and an artist's own lists are not filtered.
+- The candidate pool (`catalog/src/discover/engine/`) holds only albums the
+  album gate offers (below) that the library does not hold and is not
+  fetching, and that the person has not played, said no to, marked known or
+  put off. A new-artist candidate's artist is not one they know (their taste
+  rows, or any library artist with a MusicBrainz id, an album of theirs held
+  or not), not one they turned down and not a special-purpose id; its album
+  may credit a known artist beside it. Owned, fetching, the Later pile and
+  what they told Discover are checked again as the pool is read
+  (`pool_store::ranked`). A selection (`engine/select.rs`) takes one album
+  an artist and is never padded: a short one says why.
+- The pool's order (`engine/rank.rs`) is support, then artist id: nothing
+  random and no date. A candidate's support is the sum, over the person's
+  seeds whose kept similar-artists list names its artist, of the seed's
+  weight times the link's strength (co-listening with fame divided out, the
+  best 1.0). Where the person's Last.fm key works and Last.fm's list is
+  kept, it is a second opinion: a link both name is `AGREEMENT_BOOST` times
+  as strong, and a neighbour only Last.fm names counts with its match, fame
+  divided the same way. With two taste groups or more, an artist under
+  `HUB_SHARE` of whose support comes from one group is left out.
+- What may be offered as an artist's album is one gate, `may_offer` in
+  `catalog/src/discover/listening/gate.rs`, which every Discover read of an
+  artist's albums passes (the pool and its sources, Discover's and Home's
+  shelves, radio, the album page's similar albums): an album or EP credited
+  to the artist, with none of the secondary types Live, Demo, Compilation,
+  Soundtrack, Remix, DJ-mix, Spokenword, Interview, Audiobook or Audio drama
+  where its types are known. New from your artists shows every type but the
+  last seven (`never_offered`). The library's own lists, search and artist
+  pages are not filtered by it.
+- A pick's reason is built in one place, `reason` in
+  `catalog/src/discover/engine/reason.rs`, from the pick's stored paths
+  only: no score, share or rank is in a line or its evidence, and a pick
+  whose line would name an artist no longer among the person's seeds is not
+  offered. "Why this?"
+  (`GET /api/v3/discover/picks/{release_group_mbid}/why`) reads stored rows
+  only; `discover_reasons.rs` audits twenty picks against their source rows.
+- Each person's weekly set (`catalog/src/discover/engine/weekly.rs`) is
+  built from stored rows only by the `discover.weekly_set` job, once a week:
+  on their set day (Friday unless they chose another, from 00:00 server
+  time) for anyone seen in 30 days, else on their first visit after it. It
+  holds up to eight new-artist picks from the pool: short, with its reason,
+  when the pool is complete, and nothing is written while the pool waits for
+  facts. A pool missing or older than the taste build is never dealt from;
+  for someone unseen in seven days it is rebuilt only by their visit, and an
+  incomplete one counts as final (`not_checked`). A linked person's first
+  set waits for their history import, at most six hours from their first
+  Discover visit. A kept set is a record: nothing rebuilds or changes it, a
+  pick's state is read from requests, the library, Later and feedback, and a
+  new set day counts from the next week. A set that cannot be built leaves
+  last week's, and the week answer says why.
 - A Discover build never drops a section that was good: a section whose own
   reads failed keeps the one the saved page showed (same variant, under a
-  week old) and says so in `section_states`, and a deck whose reads failed
-  keeps the deck before it.
+  week old) and says so in `section_states`.
 
 **Compat, plugins, upgrade, readiness**
 - Compat support means the tested matrix and its golden traces, for the apps
@@ -1030,7 +1139,26 @@ Run from the repo root. `make help` lists every target.
   `BarcodeTicket`, `Illustration` (turntable, dripping heart, folder
   sticker, and the halftone prints record crate, tag boxes and fingerprint),
   `HalftoneArt` (a record, crowd or map printed in dots, for an empty card's
-  corner); in `src/lib/media` the one album and artist tile, `MediaTile`
+  corner), the Counter's pieces `Tape` (a torn tape label: `acid`, `ink`,
+  `warn` with its warning sign, `embossed` for a pick found by sound),
+  `Panel` (hardware with an edge: `metal` plate with screws, `mat` counter,
+  `tray` inset tray), `ReceiptStrip` and `Receipt` (a till strip of figures;
+  the full till sheet as a table), `Bin` with `DividerTab` (a record bin
+  filed under name-only tabs, the current row a paper slip pulled forward),
+  `Sticker` (a pick's state on a sleeve's corner, in `StatusChip`'s words),
+  `RankRule` (a tick strip with one inked, named by its sentence),
+  `WeekShelf` (a week's covers on a rule, kept proud and passed low; `tab`
+  names the week, `look="paper"` sits on a paper card), `GapShelf` (an
+  artist's covers in date order with a slot where the missing album goes),
+  `QuietGauge` (a tick a month, hatched since the last play), `NameTag` (a
+  paper pill for something a person chose, with its remove button), `Card`'s
+  `index` card, `BarcodeTicket`'s facts ticket (given a `figure`),
+  `Button`'s `caps-link` (underlined caps), `disc` (a round play face over a
+  cover) and `key` (a hardware key, `lamp` lit or not), `Input`'s `paper`
+  ink, `Knob`'s `xs` size, `caption` (`beside`, `none`) and `lit="sound"`,
+  `VinylSleeve`'s `playing` (the record slides out and its `label` turns),
+  `StatRow`'s `phoneRows` and `Tabs`' `scroll` (one line that scrolls
+  sideways); in `src/lib/media` the one album and artist tile, `MediaTile`
   (`wrapName` in a dense artist grid) and `MediaTileSkeleton`): do not
   hand-write a button, a card, a text input, a modal, a confirm, a form row,
   a `<dialog>` or a query's loading, error and empty branches (lint refuses
