@@ -87,7 +87,7 @@ quick-xml = { version = "0.42", default-features = false }
 # 3.0.0-rc.1 came out on 2026-11-18); 2.1.1 has the API we use. Its parser,
 # granit-parser, is held at 2.1.0 in the lockfile, the version 2.1.1 shipped
 # with (2.2.0 parses more loosely).
-serde-saphyr = { version = "=2.1.1", default-features = false, features = ["deserialize"] }
+serde-saphyr = { version = "=2.2.0", default-features = false, features = ["deserialize"] }
 # Unicode script classes for Picard's "is this name in Latin script" test
 # when translating artist names. Already in the tree under tracing's
 # env-filter (regex-automata, regex-syntax).
