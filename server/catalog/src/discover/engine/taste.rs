@@ -34,7 +34,10 @@ pub const RISING: f64 = 1.25;
 pub const FADING: f64 = 0.75;
 
 /// Whether a group is played more or less of late than it is all told.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum Trend {
     /// Its share of the last [`RECENT_DAYS`] of plays is well above its
     /// share of all of them.

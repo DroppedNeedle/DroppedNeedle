@@ -230,14 +230,17 @@ fn assemble(
         .iter()
         .filter_map(|mbid| {
             let tally = tallies.artists().get(mbid)?;
+            // A seed the person said was a phase is one by what they chose:
+            // its plays say nothing about the trend.
+            let played = played
+                .get(mbid.as_str())
+                .filter(|_| !tallies.phases().contains(mbid));
             Some(TasteSeed {
                 mbid: mbid.clone(),
                 name: tally.name.clone(),
                 weight: tally.weight,
-                plays: played
-                    .get(mbid.as_str())
-                    .map_or(0, |artist| artist.plays + artist.imported_listens),
-                recent: played.get(mbid.as_str()).map_or(0, |artist| artist.recent),
+                plays: played.map_or(0, |artist| artist.plays + artist.imported_listens),
+                recent: played.map_or(0, |artist| artist.recent),
             })
         })
         .collect();

@@ -2,7 +2,9 @@
 	Everything the person told Discover that is in effect, on the large
 	index card in a paper sheet, grouped by kind under ruled heads with a
 	count: artists you love (with the field to name more), not this artist,
-	less from this, not now, know it already, no.
+	more from this, less from this, that was a phase, not now, know it
+	already, no. A statement about a whole taste group is one row under the
+	group's name, listing its artists, and its Undo takes back all of it.
 	Each row says how long it lasts and since when, with Undo. A long group
 	shows its newest ten until asked for all. Later albums have their own
 	page, linked at the foot.
@@ -23,6 +25,12 @@
 		FeedbackKind
 	} from '$lib/features/discover/queries/feedback';
 	import { dayMonth, dayMonthYear } from '$lib/features/discover/state/weekWords';
+	import {
+		ARTIST_TUNINGS,
+		TUNING_WORDS,
+		tuningLines,
+		undoLabel
+	} from '$lib/features/discover/state/tuningWords';
 	import { getStatedArtistsQuery } from '$lib/features/discover/queries/statedArtists.svelte';
 	import StatedArtists from '$lib/features/discover/components/StatedArtists.svelte';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
@@ -152,30 +160,32 @@
 		</QueryBoundary>
 		<QueryBoundary query={tuningsQuery} what="how you tuned Discover">
 			{#snippet children(data)}
-				{@const tunings = data.items.filter((tuning) => tuning.kind === 'less_from_seed')}
-				{#if tunings.length}
-					<section>
-						{@render groupHead('Less from this', tunings.length)}
-						<ul>
-							{#each shown('less', tunings) as tuning (`${tuning.kind}:${tuning.target}`)}
-								{@const name = tuning.name || tuning.target}
-								{@render row(
-									{ mbid: tuning.target, name, round: true },
-									name,
-									'',
-									'Until you undo it',
-									tuning.created_at,
-									`Undo less from ${name}`,
-									() =>
-										undoTuning
-											.mutateAsync({ kind: tuning.kind, target: tuning.target })
-											.catch(() => undefined)
-								)}
-							{/each}
-						</ul>
-						{@render more('less', tunings.length)}
-					</section>
-				{/if}
+				{@const lines = tuningLines(data.items)}
+				{#each ARTIST_TUNINGS as kind (kind)}
+					{@const rows = lines.filter((line) => line.kind === kind)}
+					{#if rows.length}
+						<section>
+							{@render groupHead(TUNING_WORDS[kind].head, rows.length)}
+							<ul>
+								{#each shown(kind, rows) as line (line.key)}
+									{@render row(
+										{ mbid: line.target, name: line.name, round: true },
+										line.name,
+										line.artists.join(', '),
+										'Until you undo it',
+										line.created_at,
+										undoLabel(kind, line.name),
+										() =>
+											undoTuning
+												.mutateAsync({ kind, target: line.target, group: line.group })
+												.catch(() => undefined)
+									)}
+								{/each}
+							</ul>
+							{@render more(kind, rows.length)}
+						</section>
+					{/if}
+				{/each}
 			{/snippet}
 		</QueryBoundary>
 		{#if toldQuery.data}

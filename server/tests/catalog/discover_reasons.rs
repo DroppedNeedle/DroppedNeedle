@@ -40,7 +40,7 @@ const SEEDS: [(usize, i64, f64); 5] = [
 /// How many albums the library holds of the fifth seed.
 const SHELF_ALBUMS: usize = 4;
 
-fn seed(n: usize) -> String {
+pub(crate) fn seed(n: usize) -> String {
     id(1, n)
 }
 
@@ -282,17 +282,17 @@ fn playlist(made_ms: i64) -> (WeeklyPlaylist, HashMap<String, String>) {
 }
 
 /// What the test built and against which rows it checks.
-struct Rig {
+pub(crate) struct Rig {
     rig: AuthRig,
     _dir: crate::common::ScratchDir,
     deps: DiscoverDeps,
-    app: Router,
+    pub(crate) app: Router,
     weekly: WeeklyPlaylist,
     recordings: HashMap<String, String>,
 }
 
 impl Rig {
-    fn db(&self) -> &Db {
+    pub(crate) fn db(&self) -> &Db {
         &self.rig.platform.db
     }
 
@@ -300,7 +300,7 @@ impl Rig {
         self.rig.clock().now_ms()
     }
 
-    async fn build(&self) {
+    pub(crate) async fn build(&self) {
         self.deps
             .pool
             .run_once("user-1", |_| Ok(()))
@@ -328,7 +328,7 @@ impl Rig {
     }
 
     /// Whether Ada's pool build is queued, clearing it.
-    fn pool_queued(&self) -> bool {
+    pub(crate) fn pool_queued(&self) -> bool {
         let queued: i64 = self.db().one(
             "SELECT COUNT(*) FROM durable_jobs WHERE kind = 'discover.pool' \
              AND idempotency_key = 'user-1' AND state = 'queued'",
@@ -340,7 +340,7 @@ impl Rig {
     }
 }
 
-async fn rig(name: &str) -> Rig {
+pub(crate) async fn rig(name: &str) -> Rig {
     rig_with(name, "").await
 }
 
@@ -745,7 +745,7 @@ async fn audit_less_from_this_moves_the_pool_and_undoes() {
     assert_eq!(
         listed["items"],
         json!([{"kind": "less_from_seed", "target": seed(1), "name": seed_name(1),
-            "created_at": rig.now() / 1000}]),
+            "group_anchor_mbid": null, "group_label": null, "created_at": rig.now() / 1000}]),
         "{listed}"
     );
     let (_, why) = rig.why(&group(4, 1)).await;

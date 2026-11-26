@@ -23,7 +23,7 @@ use super::{
         AlbumPreviewMode, AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection,
         DigFurtherPick, DiscoverActivityRequest, DiscoverActivityResponse, DiscoverFeedbackEntry,
         DiscoverFeedbackRequest, DiscoverFeedbackResponse, DiscoverHealthResponse,
-        DiscoverPickEventRequest, DiscoverPrefs, DiscoverResponse, DiscoverTuningEntry,
+        DiscoverPickEventRequest, DiscoverPrefs, DiscoverResponse, DiscoverTasteResponse,
         DiscoverTuningRequest, DiscoverTuningsResponse, FeedbackTarget, FoundOnDiscover,
         GenreDetailResponse, HomeResponse, IntegrationStatus, LaterAlbum, LaterRequest,
         ListenSource, NewRelease, PastWeeksPage, PickAnswer, PickEvidence,
@@ -62,6 +62,14 @@ pub struct LaterQuery {
     pub cursor: Option<String>,
     /// Only this album, by its release-group id: a page of one row or none.
     pub release_group_mbid: Option<String>,
+}
+
+/// `DELETE /discover/tunings/{kind}/{target}` params.
+#[derive(Debug, Deserialize)]
+pub struct UndoTuningQuery {
+    /// Every row of that kind said for the same group, not this one alone.
+    #[serde(default)]
+    pub group: bool,
 }
 
 /// `GET /discover/new-releases` params.
@@ -722,17 +730,20 @@ pub async fn pick_why(
         .map_err(ApiError::from)
 }
 
-/// Keep one way the caller tunes what Discover offers them. Only "Less
-/// from this" (`less_from_seed`, about one of their artists) is taken; the
-/// other kinds are refused. Their pool is built again.
+/// Keep one way the caller tunes what Discover offers them, about one of
+/// their artists or every artist of one of their taste groups: less or
+/// more from it, or that it was a phase. An artist keeps one of these at a
+/// time; in a group, an artist with one of its own keeps it. The other
+/// kinds are refused. Their pool is built again, after their taste for a
+/// phase.
 #[utoipa::path(
     post,
     tag = "discover",
     path = "/api/v3/discover/tunings",
     request_body = DiscoverTuningRequest,
     responses(
-        (status = 200, description = "The tuning as stored", body = DiscoverTuningEntry),
-        (status = 400, description = "Bad request body, a kind not taken yet, or not one of the caller's artists"),
+        (status = 200, description = "The rows as stored: one, or one for each artist of the group", body = DiscoverTuningsResponse),
+        (status = 400, description = "Bad request body, a kind not taken yet, neither or both of a target and a group, or not one of the caller's artists or groups"),
         (status = 401, description = "Not authenticated"),
         (status = 500, description = "The tuning could not be saved"),
     )
@@ -741,7 +752,7 @@ pub async fn save_tuning(
     State(deps): State<DiscoverDeps>,
     User(user): User,
     ValidJson(body): ValidJson<DiscoverTuningRequest>,
-) -> Result<Json<DiscoverTuningEntry>, ApiError> {
+) -> Result<Json<DiscoverTuningsResponse>, ApiError> {
     services::save_tuning(&deps, user.user_id(), &body)
         .await
         .map(Json)
@@ -764,6 +775,30 @@ pub async fn list_tunings(
     User(user): User,
 ) -> Result<Json<DiscoverTuningsResponse>, ApiError> {
     services::list_tunings(&deps, user.user_id())
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+/// The caller's taste as Discover reads it: their groups, largest share
+/// first, each with its artists and what the caller said about them, what
+/// it was worked out from, and whether a change they made is still being
+/// followed. The artists they named are listed by their own route.
+#[utoipa::path(
+    get,
+    tag = "discover",
+    path = "/api/v3/discover/taste",
+    responses(
+        (status = 200, description = "The caller's taste", body = DiscoverTasteResponse),
+        (status = 401, description = "Not authenticated"),
+        (status = 500, description = "The taste could not be read"),
+    )
+)]
+pub async fn get_taste(
+    State(deps): State<DiscoverDeps>,
+    User(user): User,
+) -> Result<Json<DiscoverTasteResponse>, ApiError> {
+    services::taste(&deps, user.user_id())
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -848,8 +883,9 @@ pub async fn remove_stated_artist(
         .map_err(ApiError::from)
 }
 
-/// Take back one way the caller tuned Discover. Their pool is built again.
-/// Answers the same when there was no such tuning.
+/// Take back one way the caller tuned Discover, or with `group` the whole
+/// statement it was part of. Their pool is built again, after their taste
+/// for a phase. Answers the same when there was no such tuning.
 #[utoipa::path(
     delete,
     tag = "discover",
@@ -857,6 +893,7 @@ pub async fn remove_stated_artist(
     params(
         ("kind" = TuningKind, Path, description = "What the tuning is"),
         ("target" = String, Path, description = "What it is about: an artist's MusicBrainz id"),
+        ("group" = Option<bool>, Query, description = "Every row of that kind said for the same taste group as this one"),
     ),
     responses(
         (status = 204, description = "No such tuning is in effect"),
@@ -869,8 +906,9 @@ pub async fn undo_tuning(
     State(deps): State<DiscoverDeps>,
     User(user): User,
     Path((kind, target)): Path<(String, String)>,
+    ValidQuery(query): ValidQuery<UndoTuningQuery>,
 ) -> Result<StatusCode, ApiError> {
-    services::undo_tuning(&deps, user.user_id(), &kind, &target)
+    services::undo_tuning(&deps, user.user_id(), &kind, &target, query.group)
         .await
         .map(|()| StatusCode::NO_CONTENT)
         .map_err(ApiError::from)
@@ -1226,6 +1264,7 @@ pub fn routes() -> Routes<DiscoverDeps> {
         .user(routes!(save_tuning))
         .user(routes!(list_tunings))
         .user(routes!(undo_tuning))
+        .user(routes!(get_taste))
         .user(routes!(mark_later))
         .user(routes!(remove_later))
         .user(routes!(list_later))

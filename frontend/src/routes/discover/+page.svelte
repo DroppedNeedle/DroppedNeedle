@@ -3,11 +3,8 @@
 	import { prefersReducedMotion } from 'svelte/motion';
 	import {
 		ArrowRight,
-		ChevronRight,
 		CircleAlert,
-		Clock,
 		Compass,
-		History,
 		LayoutGrid,
 		Library,
 		Music,
@@ -37,6 +34,7 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import SectionStateLine from '$lib/features/discover/components/SectionStateLine.svelte';
 	import WeekHeader from '$lib/features/discover/components/WeekHeader.svelte';
+	import DiscoverPageLinks from '$lib/features/discover/components/DiscoverPageLinks.svelte';
 	import Counter from '$lib/features/discover/components/Counter.svelte';
 	import PickCard from '$lib/features/discover/components/PickCard.svelte';
 	import PickCardSkeleton from '$lib/features/discover/components/PickCardSkeleton.svelte';
@@ -842,32 +840,12 @@
 					{/snippet}
 				</Counter>
 
-				<nav class="dn-discover__links" aria-label="Discover">
-					{#if laterCount > 0}
-						<a href={withBasePath('/discover/later')}>
-							<Clock class="size-4" aria-hidden="true" />
-							<span>Later ({laterCount})</span>
-							<ChevronRight class="ml-auto size-4" aria-hidden="true" />
-						</a>
-					{/if}
-					<a href={withBasePath('/discover/weeks')}>
-						<History class="size-4" aria-hidden="true" />
-						<span>Past weeks</span>
-						<ChevronRight class="ml-auto size-4" aria-hidden="true" />
-					</a>
-					<div class="dn-discover__link-row">
-						<Button
-							variant="caps"
-							size="sm"
-							icon={ChevronRight}
-							iconPosition="end"
-							class="w-full justify-between"
-							onclick={() => (toldOpen = true)}
-						>
-							What you told Discover
-						</Button>
-					</div>
-				</nav>
+				<DiscoverPageLinks
+					look="rows"
+					{laterCount}
+					ontold={() => (toldOpen = true)}
+					class="dn-discover__links"
+				/>
 			{/if}
 		{/if}
 	</div>
@@ -1268,33 +1246,14 @@
 		text-transform: uppercase;
 	}
 
-	/* the phone's three ways on, ruled rows under the bin */
-	.dn-discover__links {
+	/* the phone's ways on, ruled rows under the bin */
+	.dn-discover-col :global(.dn-discover__links) {
 		display: none;
 	}
 	@media (max-width: 639px) {
-		.dn-discover__links {
+		.dn-discover-col :global(.dn-discover__links) {
 			display: flex;
-			flex-direction: column;
 			margin-top: 0.75rem;
-		}
-		.dn-discover__links a,
-		.dn-discover__link-row {
-			display: flex;
-			align-items: center;
-			gap: 0.5rem;
-			min-height: 3rem;
-			padding: 0 0.25rem;
-			border-bottom: 1px solid var(--dn-line);
-			font-family: var(--font-mono);
-			font-size: 0.75rem;
-			font-weight: 700;
-			letter-spacing: 0.14em;
-			text-align: left;
-			text-transform: uppercase;
-		}
-		.dn-discover__links :first-child {
-			border-top: 1px solid var(--dn-line);
 		}
 	}
 

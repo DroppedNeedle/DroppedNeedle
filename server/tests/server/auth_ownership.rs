@@ -2043,6 +2043,54 @@ async fn caller_keyed_state_stays_with_its_caller() {
     ok(status, &body, "A reads A's tunings");
     assert_eq!(body["items"].as_array().map(Vec::len), Some(1), "{body}");
 
+    // A's taste: B and an admin read only their own, which is empty, say
+    // nothing about A's group and undo nothing of A's statement on it.
+    app.seed(&format!(
+        "INSERT INTO catalog_taste_groups (user_id, group_no, anchor_artist_mbid, \
+         anchor_name, share, recent_share, trend) VALUES ('{id}', 0, '{seed_artist}', \
+         'Seed', 1.0, 1.0, 'steady'); \
+         UPDATE catalog_taste_artists SET group_no = 0 WHERE user_id = '{id}'; \
+         UPDATE catalog_discover_tunings SET group_anchor_mbid = '{seed_artist}', \
+         group_label = 'Seed' WHERE user_id = '{id}'",
+        id = ada.id
+    ))
+    .await;
+    let taste = "/api/v3/discover/taste";
+    let by_group = json!({"kind": "phase", "group_no": 0});
+    for (who, what) in [(&bob, "B"), (&admin, "an admin")] {
+        let (status, body) = call(&app, who, "GET", taste, None).await;
+        ok(status, &body, &format!("{what} reads their taste"));
+        assert_eq!(
+            (&body["made_from"], &body["groups"]),
+            (&json!(null), &json!([])),
+            "{what} sees only their own: {body}"
+        );
+        let (status, body) = call(&app, who, "POST", tunings, Some(by_group.clone())).await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "{what} has no group 0: {body}"
+        );
+        let (status, body) = call(
+            &app,
+            who,
+            "DELETE",
+            &format!("{undo_tuning}?group=true"),
+            None,
+        )
+        .await;
+        ok(status, &body, &format!("{what} undoes no group of A's"));
+    }
+    let (status, body) = call(&app, &ada, "GET", taste, None).await;
+    ok(status, &body, "A reads A's taste");
+    assert_eq!(body["groups"][0]["anchor_name"], "Seed", "{body}");
+    assert_eq!(
+        body["groups"][0]["artists"][0]["tuning"],
+        json!({"kind": "less_from_seed", "group_anchor_mbid": seed_artist,
+            "group_label": "Seed"}),
+        "{body}"
+    );
+
     // A's Later pile: B and an admin see none of it, and marking or
     // removing the same album touches only their own.
     let pile = "/api/v3/discover/later";

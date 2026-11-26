@@ -6,8 +6,12 @@
 	that tab's. `aside` sits in the row beside the tabs (a list's search and
 	sort, which belong to every tab). The `caps` look is a strip of mono
 	capitals, the current tab underlined in the title colour (a drawer's
-	tabs). `scroll` keeps the tabs on one line that scrolls sideways when it
-	is wider than the screen, rather than wrapping.
+	tabs). The `folder` look is a row of paper divider tabs standing up from
+	a paper panel, the current one taller and joined to it, the others
+	stepping down (a file's sections, each a taste); `tab` then draws what a
+	tab holds in place of its label. `scroll` keeps the tabs on one line
+	that scrolls sideways when it is wider than the screen, rather than
+	wrapping.
 -->
 <script lang="ts" module>
 	import type { KitIcon } from './Button.svelte';
@@ -33,11 +37,13 @@
 		label: string;
 		/** Keeps the ids of two rows on one page apart. */
 		idPrefix: string;
-		look?: 'box' | 'border' | 'caps';
+		look?: 'box' | 'border' | 'caps' | 'folder';
 		class?: string;
 		/** Layout only, for the panel: a drawer's panel fills and scrolls. */
 		panelClass?: string;
 		aside?: Snippet;
+		/** What a tab holds in place of its label: the tab, and whether it is current. */
+		tab?: Snippet<[TabItem<T>, boolean]>;
 		/** One line of tabs that scrolls sideways instead of wrapping. */
 		scroll?: boolean;
 		children: Snippet;
@@ -53,13 +59,20 @@
 		class: className = '',
 		panelClass = '',
 		aside,
+		tab: tabContent,
 		scroll = false,
 		children
 	}: Props = $props();
 
 	const tabId = (id: string) => `${idPrefix}-tab-${id}`;
 	const panelId = $derived(`${idPrefix}-panel`);
-	const looks = { box: 'tabs tabs-box', border: 'tabs tabs-border', caps: 'dn-tabs-caps' };
+	const looks = {
+		box: 'tabs tabs-box',
+		border: 'tabs tabs-border',
+		caps: 'dn-tabs-caps',
+		folder: 'dn-tabs-folder'
+	};
+	const tabLooks = { box: 'tab', border: 'tab', caps: 'dn-tab-caps', folder: 'dn-tab-folder' };
 	let row = $state<HTMLDivElement | null>(null);
 
 	function move(event: KeyboardEvent): void {
@@ -99,27 +112,26 @@
 			: 'flex-wrap'} {aside ? '' : className}"
 		onkeydown={move}
 	>
-		{#each tabs as tab (tab.id)}
+		{#each tabs as tab, at (tab.id)}
 			<button
 				type="button"
 				role="tab"
 				id={tabId(tab.id)}
-				class="{look === 'caps' ? 'dn-tab-caps' : 'tab'} gap-2 {tab.id === selected
-					? 'tab-active'
-					: ''}"
+				class="{tabLooks[look]} gap-2 {tab.id === selected ? 'tab-active' : ''}"
+				style:--tab-at={look === 'folder' ? at : undefined}
 				aria-selected={tab.id === selected}
 				aria-controls={panelId}
 				tabindex={tab.id === selected ? 0 : -1}
 				onclick={() => onselect(tab.id)}
 			>
-				{#if tab.icon}<tab.icon
-						class="h-4 w-4"
-						aria-hidden="true"
-					/>{/if}{tab.label}{#if tab.count != null}&nbsp;<span
-						class="font-mono text-xs tabular-nums opacity-80"
-					>
-						{tab.count.toLocaleString()}
-					</span>{/if}
+				{#if tabContent}{@render tabContent(tab, tab.id === selected)}{:else}{#if tab.icon}<tab.icon
+							class="h-4 w-4"
+							aria-hidden="true"
+						/>{/if}{tab.label}{#if tab.count != null}&nbsp;<span
+							class="font-mono text-xs tabular-nums opacity-80"
+						>
+							{tab.count.toLocaleString()}
+						</span>{/if}{/if}
 			</button>
 		{/each}
 	</div>
@@ -138,7 +150,8 @@
 	id={panelId}
 	aria-labelledby={tabId(selected)}
 	tabindex="-1"
-	class={panelClass || undefined}
+	class={[look === 'folder' ? 'dn-tabs-folder__panel' : '', panelClass].filter(Boolean).join(' ') ||
+		undefined}
 >
 	{@render children()}
 </div>
@@ -176,9 +189,60 @@
 	.dn-tab-caps:focus-visible {
 		outline-offset: -2px;
 	}
+	.dn-tabs-folder {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.375rem;
+	}
+	.dn-tab-folder {
+		display: flex;
+		flex-direction: column;
+		align-items: stretch;
+		gap: 0.4375rem;
+		margin-top: calc(0.5rem + min(var(--tab-at, 0), 4) * 0.25rem);
+		padding: 0.625rem 1rem;
+		border-radius: 7px 7px 0 0;
+		background-color: color-mix(in oklab, var(--dn-paper) 82%, var(--dn-paper-content));
+		color: var(--dn-paper-content);
+		text-align: left;
+		cursor: pointer;
+		transition: background-color 150ms;
+	}
+	.dn-tab-folder:hover {
+		background-color: color-mix(in oklab, var(--dn-paper) 90%, var(--dn-paper-content));
+	}
+	.dn-tab-folder.tab-active {
+		margin-top: 0;
+		padding-top: 0.875rem;
+		background-color: var(--dn-paper-white);
+	}
+	.dn-tab-folder:focus-visible {
+		outline-offset: -3px;
+	}
+	.dn-tabs-folder__panel {
+		border-radius: 0 7px 7px 7px;
+		background-color: var(--dn-paper-white);
+		color: var(--dn-paper-content);
+		box-shadow: 0 6px 14px rgb(0 0 0 / 0.35);
+	}
+	:global([data-theme='light']) .dn-tabs-folder__panel {
+		border: 1px solid var(--dn-paper-border);
+		box-shadow: none;
+	}
+	:global([data-theme='light']) .dn-tab-folder {
+		border: 1px solid var(--dn-paper-border);
+		border-bottom: 0;
+	}
 	@media (forced-colors: active) {
 		.dn-tab-caps.tab-active {
 			border-bottom-color: Highlight;
+		}
+		.dn-tab-folder,
+		.dn-tabs-folder__panel {
+			border: 1px solid CanvasText;
+		}
+		.dn-tab-folder.tab-active {
+			border-color: Highlight;
 		}
 	}
 </style>

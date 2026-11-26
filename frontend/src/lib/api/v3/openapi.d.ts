@@ -2163,6 +2163,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/discover/taste": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The caller's taste as Discover reads it: their groups, largest share
+         *     first, each with its artists and what the caller said about them, what
+         *     it was worked out from, and whether a change they made is still being
+         *     followed. The artists they named are listed by their own route.
+         */
+        get: operations["get_taste"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/discover/track-preview": {
         parameters: {
             query?: never;
@@ -2191,9 +2213,12 @@ export interface paths {
         get: operations["list_tunings"];
         put?: never;
         /**
-         * Keep one way the caller tunes what Discover offers them. Only "Less
-         *     from this" (`less_from_seed`, about one of their artists) is taken; the
-         *     other kinds are refused. Their pool is built again.
+         * Keep one way the caller tunes what Discover offers them, about one of
+         *     their artists or every artist of one of their taste groups: less or
+         *     more from it, or that it was a phase. An artist keeps one of these at a
+         *     time; in a group, an artist with one of its own keeps it. The other
+         *     kinds are refused. Their pool is built again, after their taste for a
+         *     phase.
          */
         post: operations["save_tuning"];
         delete?: never;
@@ -2213,8 +2238,9 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Take back one way the caller tuned Discover. Their pool is built again.
-         *     Answers the same when there was no such tuning.
+         * Take back one way the caller tuned Discover, or with `group` the whole
+         *     statement it was part of. Their pool is built again, after their taste
+         *     for a phase. Answers the same when there was no such tuning.
          */
         delete: operations["undo_tuning"];
         options?: never;
@@ -14666,6 +14692,26 @@ export interface components {
             /** @description Whether the weekly set is switched on for the user. */
             weekly_set_enabled: boolean;
         };
+        /**
+         * @description A person's taste as Discover reads it: the groups their picks are
+         *     shared out by, each with its artists, what it was worked out from, and
+         *     whether a tuning they made is still being followed.
+         */
+        DiscoverTasteResponse: {
+            /** @description Their groups, largest share first; empty without any. */
+            groups: components["schemas"]["TasteGroup"][];
+            /**
+             * @description What the taste was worked out from; null before their first taste
+             *     build.
+             */
+            made_from?: null | components["schemas"]["TasteMadeFrom"];
+            /**
+             * @description Their picks are still catching up: a tuning they made is newer than
+             *     the picks built from it, or a taste or pool build is queued or
+             *     running.
+             */
+            updating: boolean;
+        };
         /** @description One way a person tuned what Discover offers them. */
         DiscoverTuningEntry: {
             /**
@@ -14673,6 +14719,13 @@ export interface components {
              * @description When it was said (unix seconds).
              */
             created_at: number;
+            /**
+             * @description The taste group it was said for, by its anchor artist's MusicBrainz
+             *     id (lowercased); null for a tuning about one artist.
+             */
+            group_anchor_mbid?: string | null;
+            /** @description That group's name when it was said; null for one artist. */
+            group_label?: string | null;
             /** @description What the tuning is. */
             kind: components["schemas"]["TuningKind"];
             /** @description The target's name, as the person's taste rows give it. */
@@ -14681,17 +14734,22 @@ export interface components {
             target: string;
         };
         /**
-         * @description One way a person tuned what Discover offers them. Only
-         *     `less_from_seed` is taken today; the other kinds are refused.
+         * @description One way a person tuned what Discover offers them, about one of their
+         *     artists or every artist of one of their taste groups: exactly one of
+         *     `target` and `group_no`. `less_from_seed`, `more_from_seed` and `phase`
+         *     are taken today; the other kinds are refused.
          */
         DiscoverTuningRequest: {
+            /**
+             * Format: int64
+             * @description One of the person's taste groups, by its number: the tuning is kept
+             *     for each artist the group holds now.
+             */
+            group_no?: number | null;
             /** @description What the tuning is. */
             kind: components["schemas"]["TuningKind"];
-            /**
-             * @description What it is about: for `less_from_seed`, the MusicBrainz id of one of
-             *     the person's own artists.
-             */
-            target: string;
+            /** @description The MusicBrainz id of one of the person's own artists. */
+            target?: string | null;
         };
         /** @description Every way a person tuned what Discover offers them, newest first. */
         DiscoverTuningsResponse: {
@@ -26920,6 +26978,86 @@ export interface components {
          * @enum {string}
          */
         TaskStatus: "queued" | "downloading" | "processing" | "completed" | "partial" | "failed" | "cancelled";
+        /** @description One artist in a person's taste group. */
+        TasteArtist: {
+            /** @description MusicBrainz id, lowercased. */
+            artist_mbid: string;
+            /**
+             * Format: int64
+             * @description Their imported listens of it.
+             */
+            imported_listens: number;
+            /** @description Whether their picks start from it. */
+            is_seed: boolean;
+            /** @description Name, as the person's rows give it. */
+            name: string;
+            /**
+             * Format: int64
+             * @description Their plays of it in the app.
+             */
+            plays: number;
+            /** @description What they said about it, when they did. */
+            tuning?: null | components["schemas"]["TasteArtistTuning"];
+        };
+        /** @description A statement a person made about one artist. */
+        TasteArtistTuning: {
+            /**
+             * @description The group it was said for, by its anchor's MusicBrainz id; null
+             *     when said for the artist.
+             */
+            group_anchor_mbid?: string | null;
+            /** @description That group's name; null when said for the artist. */
+            group_label?: string | null;
+            /** @description What it is. */
+            kind: components["schemas"]["TuningKind"];
+        };
+        /** @description One of a person's taste groups. */
+        TasteGroup: {
+            /**
+             * @description Its heaviest artist's MusicBrainz id, lowercased: the key of a
+             *     statement about the whole group.
+             */
+            anchor_artist_mbid: string;
+            /** @description The name of its heaviest artist, which it is named after. */
+            anchor_name: string;
+            /** @description Its artists, most played first. */
+            artists: components["schemas"]["TasteArtist"][];
+            /**
+             * Format: int64
+             * @description Its number, by share: 0 is the largest.
+             */
+            group_no: number;
+            /**
+             * Format: int64
+             * @description The latest play of any artist in it (unix seconds); null with none.
+             */
+            last_played_at?: number | null;
+            /**
+             * Format: double
+             * @description Its share of each set, 0 to 1.
+             */
+            share: number;
+            /** @description Whether it is played more or less of late than all told. */
+            trend: components["schemas"]["Trend"];
+        };
+        /** @description What a person's taste was worked out from. */
+        TasteMadeFrom: {
+            /**
+             * Format: int64
+             * @description The earliest of them (unix seconds); null with none.
+             */
+            history_from_at?: number | null;
+            /**
+             * Format: int64
+             * @description Their listens imported from ListenBrainz.
+             */
+            imported_listens_counted: number;
+            /**
+             * Format: int64
+             * @description Their plays in the app.
+             */
+            plays_counted: number;
+        };
         /** @description The pick Home's teaser shows. */
         TeaserPick: {
             /** @description The album, with its year and type. */
@@ -27376,10 +27514,15 @@ export interface components {
          */
         TransportDto: "cookie" | "bearer";
         /**
+         * @description Whether a group is played more or less of late than it is all told.
+         * @enum {string}
+         */
+        Trend: "rising" | "steady" | "fading";
+        /**
          * @description What a tuning is.
          * @enum {string}
          */
-        TuningKind: "less_from_seed" | "less_of_kind" | "not_this_source";
+        TuningKind: "less_from_seed" | "more_from_seed" | "phase" | "less_of_kind" | "not_this_source";
         /**
          * @description Unicode normalization for paths.
          * @enum {string}
@@ -33790,6 +33933,44 @@ export interface operations {
             };
         };
     };
+    get_taste: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's taste */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoverTasteResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The taste could not be read */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     track_preview: {
         parameters: {
             query: {
@@ -33902,16 +34083,16 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The tuning as stored */
+            /** @description The rows as stored: one, or one for each artist of the group */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DiscoverTuningEntry"];
+                    "application/json": components["schemas"]["DiscoverTuningsResponse"];
                 };
             };
-            /** @description Bad request body, a kind not taken yet, or not one of the caller's artists */
+            /** @description Bad request body, a kind not taken yet, neither or both of a target and a group, or not one of the caller's artists or groups */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -33942,7 +34123,10 @@ export interface operations {
     };
     undo_tuning: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Every row of that kind said for the same taste group as this one */
+                group?: boolean;
+            };
             header?: never;
             path: {
                 /** @description What the tuning is */

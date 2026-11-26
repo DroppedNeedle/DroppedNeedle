@@ -38,7 +38,8 @@
 	// Whole class strings, so Tailwind's scan finds every one. The dn-btn-*
 	// looks live in kit.css: primary is the acid action fill in both themes,
 	// neutral and outline a solid surface with an edge, paper an outline in
-	// a paper card's ink, danger-outline a red outline (a destructive
+	// a paper card's ink (filled in that ink while `active`, a pressed
+	// toggle), danger-outline a red outline (a destructive
 	// action that sits beside outline buttons), caps a quiet mono
 	// uppercase link-like button (Back to top), caps-link the same
 	// underlined (a card's "Why this?"), disc a round paper face with an ink

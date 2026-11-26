@@ -23,13 +23,14 @@ use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::jobs::queue::JobQueue;
 use droppedneedle_providers::Providers;
 use droppedneedle_providers::listenbrainz::ArtistPopularity;
+use serde_json::json;
 use tower::ServiceExt as _;
 
 use crate::common::Probe;
 use crate::common::auth::AuthRig;
 use crate::discover_queue::{
-    Script, after_commits, discover_deps, discover_routes, insert, keep_facts_of, library_artist,
-    seen_now,
+    Script, after_commits, call, discover_deps, discover_routes, insert, keep_facts_of,
+    library_artist, seen_now,
 };
 
 const DAY: i64 = 86_400_000;
@@ -577,4 +578,281 @@ async fn discover_taste_two_plays_make_a_seed() {
         [],
     );
     assert_eq!(seeds, ["Mixed", "Twice"]);
+}
+
+/// Whether Ada's job of `kind` is queued, clearing every queued job of it.
+fn queued(db: &Db, kind: &str) -> bool {
+    let queued: i64 = db.one(
+        "SELECT COUNT(*) FROM durable_jobs WHERE kind = ?1 AND idempotency_key = 'user-1' \
+         AND state = 'queued'",
+        [kind],
+    );
+    db.exec("DELETE FROM durable_jobs WHERE kind = ?1", [kind]);
+    queued > 0
+}
+
+/// Ada's tunings: kind, name and group.
+fn statements(db: &Db) -> Vec<(String, String, Option<String>)> {
+    db.rows(
+        "SELECT kind, target_name, group_label FROM catalog_discover_tunings \
+         WHERE user_id = 'user-1' ORDER BY target_name, kind",
+        [],
+    )
+}
+
+/// The rig of the first test: Ada's history, her import current and the
+/// two circles' lists kept, built once.
+async fn built(name: &str) -> (AuthRig, crate::common::ScratchDir, DiscoverDeps) {
+    let dir = crate::common::ScratchDir::new(name);
+    let rig = AuthRig::new(name).await;
+    let db = rig.platform.db.clone();
+    history(&db, rig.clock().now_ms() - 10 * DAY).await;
+    import_current(&db).await;
+    keep_facts_of(&rig, Arc::new(two_circles(Vec::new()))).await;
+    let network = Arc::new(two_circles(Vec::new()));
+    let deps = discover_deps(&rig, &dir, Providers::closed(), move |slot| {
+        *slot = network;
+    });
+    build(&deps).await;
+    // The build queued her pool; it is taken as built.
+    clear_jobs(&db);
+    (rig, dir, deps)
+}
+
+/// Every one of Ada's queued jobs, taken as run.
+fn clear_jobs(db: &Db) {
+    db.exec(
+        "DELETE FROM durable_jobs WHERE idempotency_key = 'user-1'",
+        [],
+    );
+}
+
+/// Ada's page lists her two groups with their artists by plays. "That
+/// was a phase" for the Alphas' group is one row for each Alpha, named for
+/// the group, and queues her taste build; the page shows it at once and
+/// says it is updating. The next build leaves the group out while both
+/// Alphas stay artists she knows, and the statement survives that build
+/// and the one after. Undoing the group takes both rows back and queues her
+/// taste again: the page says it is updating until that build and the pool
+/// after it have run, and the groups come back as they were. Bob has no
+/// group to say anything about.
+#[tokio::test]
+async fn discover_taste_a_phase_on_a_group_leaves_it_out_until_undone() {
+    let (rig, _dir, deps) = built("discover-taste-phase-group").await;
+    let db = rig.platform.db.clone();
+    let app = discover_routes(deps.clone());
+    let before = groups(&db);
+    assert_eq!(before.len(), 2);
+    let (a1, a2) = (mbid('a', 1), mbid('a', 2));
+
+    let (status, page) = get(&app, "/api/v3/discover/taste").await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(
+        (
+            &page["made_from"]["plays_counted"],
+            &page["made_from"]["imported_listens_counted"]
+        ),
+        (&json!(8), &json!(10)),
+        "{page}"
+    );
+    let alphas = &page["groups"][1];
+    assert_eq!(alphas["anchor_name"], "Alpha One", "{page}");
+    let names: Vec<&str> = alphas["artists"]
+        .as_array()
+        .expect("artists")
+        .iter()
+        .filter_map(|artist| artist["name"].as_str())
+        .collect();
+    assert_eq!(names, ["Alpha One", "Alpha Two"], "most played first");
+    assert_eq!(page["updating"], false);
+
+    rig.clock().advance(MINUTE);
+    let tunings = "/api/v3/discover/tunings";
+    let (status, body) = call(
+        &app,
+        "POST",
+        tunings,
+        Some(json!({"kind": "phase", "group_no": 1})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["items"].as_array().map(Vec::len), Some(2), "{body}");
+    let said = vec![
+        (
+            "phase".to_owned(),
+            "Alpha One".to_owned(),
+            Some("Alpha One".to_owned()),
+        ),
+        (
+            "phase".to_owned(),
+            "Alpha Two".to_owned(),
+            Some("Alpha One".to_owned()),
+        ),
+    ];
+    assert_eq!(statements(&db), said);
+    assert!(queued(&db, "discover.taste"), "the write queued her taste");
+    let (_, page) = get(&app, "/api/v3/discover/taste").await;
+    assert_eq!(page["updating"], true, "{page}");
+    assert_eq!(
+        page["groups"][1]["artists"][1]["tuning"],
+        json!({"kind": "phase", "group_anchor_mbid": a1, "group_label": "Alpha One"})
+    );
+    assert_eq!(page["groups"][1]["anchor_artist_mbid"], json!(a1));
+
+    build(&deps).await;
+    assert_eq!(
+        groups(&db),
+        [(0, "Beta One".to_owned(), "steady".to_owned())]
+    );
+    assert_eq!(
+        artists(&db),
+        [
+            ("Alpha One".to_owned(), 5, 0, false, None),
+            ("Alpha Two".to_owned(), 3, 0, false, None),
+            ("Beta One".to_owned(), 0, 6, true, Some(0)),
+            ("Beta Two".to_owned(), 0, 4, true, Some(0)),
+        ],
+        "the Alphas are still artists she knows"
+    );
+    build(&deps).await;
+    assert_eq!(statements(&db), said, "the statement outlives two builds");
+
+    let (status, body) = call(
+        &app,
+        "POST",
+        tunings,
+        Some(json!({"kind": "phase", "group_no": 5})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "no such group: {body}");
+    let (status, body) = call(
+        &app,
+        "POST",
+        tunings,
+        Some(json!({"kind": "phase", "group_no": 0, "target": a1})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "both: {body}");
+
+    clear_jobs(&db);
+    let (status, _) = call(
+        &app,
+        "DELETE",
+        &format!("{tunings}/phase/{a2}?group=true"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(statements(&db).is_empty(), "both rows went");
+    let (_, page) = get(&app, "/api/v3/discover/taste").await;
+    assert_eq!(page["updating"], true, "the undo is being followed: {page}");
+    assert!(queued(&db, "discover.taste"), "the undo queued her taste");
+    build(&deps).await;
+    let (_, page) = get(&app, "/api/v3/discover/taste").await;
+    assert_eq!(page["updating"], true, "her pool is still to build: {page}");
+    clear_jobs(&db);
+    let (_, page) = get(&app, "/api/v3/discover/taste").await;
+    assert_eq!(page["updating"], false, "{page}");
+    assert_eq!(groups(&db), before, "the groups are back");
+}
+
+/// "That was a phase" on Alpha One, which Ada also hearted, takes its
+/// plays out: it stays a seed on the heart's weight alone, with its plays
+/// still listed. "More from this" on it then replaces the phase, which
+/// queues her taste again so its plays count once more.
+#[tokio::test]
+async fn discover_taste_a_phase_keeps_what_she_chose() {
+    let (rig, _dir, deps) = built("discover-taste-phase-heart").await;
+    let db = rig.platform.db.clone();
+    insert(
+        &db,
+        "INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
+         VALUES ('user-1', 'artist', 'art-a1', 1)"
+            .to_owned(),
+    )
+    .await;
+    let app = discover_routes(deps.clone());
+    let a1 = mbid('a', 1);
+    let weight = |db: &Db| -> (f64, bool, i64) {
+        db.row(
+            "SELECT weight, is_seed, plays FROM catalog_taste_artists \
+             WHERE user_id = 'user-1' AND artist_mbid_lower = ?1",
+            [mbid('a', 1)],
+        )
+    };
+    build(&deps).await;
+    let (with_plays, ..) = weight(&db);
+    assert!(with_plays > 2.0, "plays and the heart: {with_plays}");
+
+    let tunings = "/api/v3/discover/tunings";
+    let (status, body) = call(
+        &app,
+        "POST",
+        tunings,
+        Some(json!({"kind": "phase", "target": a1})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(queued(&db, "discover.taste"));
+    build(&deps).await;
+    assert_eq!(weight(&db), (2.0, true, 5), "the heart alone");
+
+    let (status, body) = call(
+        &app,
+        "POST",
+        tunings,
+        Some(json!({"kind": "more_from_seed", "target": a1})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        statements(&db),
+        [("more_from_seed".to_owned(), "Alpha One".to_owned(), None)],
+        "one statement an artist"
+    );
+    assert!(queued(&db, "discover.taste"), "the phase left");
+    build(&deps).await;
+    assert_eq!(weight(&db).0, with_plays, "its plays count again");
+}
+
+/// "More from this" on Ada's second seed raises the support of every
+/// candidate only it found in her next pool, and queues that pool.
+#[tokio::test]
+async fn discover_taste_more_from_this_raises_the_seeds_support() {
+    let rig = crate::discover_reasons::rig("discover-taste-more").await;
+    let second = crate::discover_reasons::seed(2);
+    let supports = || -> Vec<f64> {
+        rig.db().column(
+            "SELECT support FROM catalog_discover_candidates c WHERE user_id = 'user-1' \
+             AND EXISTS (SELECT 1 FROM catalog_discover_candidate_paths p \
+               WHERE p.user_id = c.user_id \
+                 AND p.release_group_mbid_lower = c.release_group_mbid_lower \
+                 AND p.kind = 'seed' AND p.artist_mbid = ?1) \
+             AND NOT EXISTS (SELECT 1 FROM catalog_discover_candidate_paths p \
+               WHERE p.user_id = c.user_id \
+                 AND p.release_group_mbid_lower = c.release_group_mbid_lower \
+                 AND p.kind = 'seed' AND p.artist_mbid <> ?1) \
+             ORDER BY release_group_mbid_lower",
+            [second.clone()],
+        )
+    };
+    let before = supports();
+    assert!(!before.is_empty());
+    rig.pool_queued();
+
+    let (status, body) = call(
+        &rig.app,
+        "POST",
+        "/api/v3/discover/tunings",
+        Some(json!({"kind": "more_from_seed", "target": second})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(rig.pool_queued(), "the write queued her pool");
+    rig.build().await;
+    let after = supports();
+    assert_eq!(after.len(), before.len());
+    for (was, is) in before.iter().zip(&after) {
+        assert!(is > was, "{was} became {is}");
+    }
 }

@@ -23,7 +23,7 @@ use super::taste_store::Kept;
 use crate::discover::cache::ForgetCounts;
 use crate::discover::feedback::Feedback;
 use crate::discover::later;
-use crate::discover::tunings;
+use crate::discover::tunings::{self, TuningKind};
 
 fn json(ids: &[String]) -> String {
     serde_json::to_string(ids).unwrap_or_else(|_| "[]".to_owned())
@@ -48,18 +48,26 @@ pub(in crate::discover) struct Taste {
 }
 
 /// `user_id`'s taste for the pool; `None` while they have no taste build.
-/// A seed they asked for less from weighs what [`rank::tuned_weight`] says,
-/// and the seeds stay heaviest first.
+/// A seed they asked for less or more from weighs what
+/// [`rank::tuned_weight`] says, and the seeds stay heaviest first.
 ///
 /// # Errors
 ///
 /// A read's failure.
 pub(in crate::discover) async fn taste(db: &Db, user_id: &str) -> Result<Option<Taste>, DbError> {
-    let less_from = tunings::less_from(db, user_id).await?;
+    let less_from = tunings::of_kind(db, user_id, TuningKind::LessFromSeed).await?;
+    let more_from = tunings::of_kind(db, user_id, TuningKind::MoreFromSeed).await?;
     let mut taste = taste_rows(db, user_id).await?;
     if let Some(taste) = taste.as_mut() {
         for seed in &mut taste.seeds {
-            seed.weight = rank::tuned_weight(seed.weight, less_from.contains(&seed.mbid));
+            let tune = if less_from.contains(&seed.mbid) {
+                rank::SeedTune::Less
+            } else if more_from.contains(&seed.mbid) {
+                rank::SeedTune::More
+            } else {
+                rank::SeedTune::AsIs
+            };
+            seed.weight = rank::tuned_weight(seed.weight, tune);
         }
         taste.seeds.sort_by(|a, b| {
             b.weight

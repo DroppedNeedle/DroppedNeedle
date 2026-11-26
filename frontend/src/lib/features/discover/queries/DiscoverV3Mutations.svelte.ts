@@ -47,11 +47,27 @@ export const createLessFromSeedMutation = () =>
 		onError: () => toastStore.show({ message: "Couldn't save that.", type: 'error' })
 	}));
 
-/** Takes back one way the caller tuned Discover, from the list of them. */
+/**
+ * Takes back one way the caller tuned Discover, or with `group` the whole
+ * statement about a taste group that it is part of.
+ */
 export const createUndoTuningMutation = () =>
 	createAppMutation(() => ({
-		mutationFn: ({ kind, target }: { kind: TuningKindV3; target: string }) =>
-			api.v3.DELETE(v3('/api/v3/discover/tunings/{kind}/{target}', { path: { kind, target } })),
+		mutationFn: ({
+			kind,
+			target,
+			group = false
+		}: {
+			kind: TuningKindV3;
+			target: string;
+			group?: boolean;
+		}) =>
+			api.v3.DELETE(
+				v3('/api/v3/discover/tunings/{kind}/{target}', {
+					path: { kind, target },
+					...(group ? { query: { group: true } } : {})
+				})
+			),
 		effects: () => [tuningsChanged(authStore.user?.id)],
 		onError: () => toastStore.show({ message: "Couldn't undo that.", type: 'error' })
 	}));

@@ -38,6 +38,7 @@ pub mod sections;
 pub mod services;
 pub(crate) mod sql;
 pub mod stated;
+pub mod taste_page;
 pub mod tunings;
 pub mod wiring;
 pub mod youtube;

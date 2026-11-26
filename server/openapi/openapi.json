@@ -6900,6 +6900,54 @@
         ]
       }
     },
+    "/api/v3/discover/taste": {
+      "get": {
+        "tags": [
+          "discover"
+        ],
+        "summary": "The caller's taste as Discover reads it: their groups, largest share\nfirst, each with its artists and what the caller said about them, what\nit was worked out from, and whether a change they made is still being\nfollowed. The artists they named are listed by their own route.",
+        "operationId": "get_taste",
+        "responses": {
+          "200": {
+            "description": "The caller's taste",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoverTasteResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The taste could not be read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/discover/track-preview": {
       "get": {
         "tags": [
@@ -7039,7 +7087,7 @@
         "tags": [
           "discover"
         ],
-        "summary": "Keep one way the caller tunes what Discover offers them. Only \"Less\nfrom this\" (`less_from_seed`, about one of their artists) is taken; the\nother kinds are refused. Their pool is built again.",
+        "summary": "Keep one way the caller tunes what Discover offers them, about one of\ntheir artists or every artist of one of their taste groups: less or\nmore from it, or that it was a phase. An artist keeps one of these at a\ntime; in a group, an artist with one of its own keeps it. The other\nkinds are refused. Their pool is built again, after their taste for a\nphase.",
         "operationId": "save_tuning",
         "requestBody": {
           "content": {
@@ -7053,17 +7101,17 @@
         },
         "responses": {
           "200": {
-            "description": "The tuning as stored",
+            "description": "The rows as stored: one, or one for each artist of the group",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DiscoverTuningEntry"
+                  "$ref": "#/components/schemas/DiscoverTuningsResponse"
                 }
               }
             }
           },
           "400": {
-            "description": "Bad request body, a kind not taken yet, or not one of the caller's artists",
+            "description": "Bad request body, a kind not taken yet, neither or both of a target and a group, or not one of the caller's artists or groups",
             "content": {
               "application/json": {
                 "schema": {
@@ -7107,7 +7155,7 @@
         "tags": [
           "discover"
         ],
-        "summary": "Take back one way the caller tuned Discover. Their pool is built again.\nAnswers the same when there was no such tuning.",
+        "summary": "Take back one way the caller tuned Discover, or with `group` the whole\nstatement it was part of. Their pool is built again, after their taste\nfor a phase. Answers the same when there was no such tuning.",
         "operationId": "undo_tuning",
         "parameters": [
           {
@@ -7126,6 +7174,15 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "group",
+            "in": "query",
+            "description": "Every row of that kind said for the same taste group as this one",
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           }
         ],
@@ -48181,6 +48238,38 @@
           }
         }
       },
+      "DiscoverTasteResponse": {
+        "type": "object",
+        "description": "A person's taste as Discover reads it: the groups their picks are\nshared out by, each with its artists, what it was worked out from, and\nwhether a tuning they made is still being followed.",
+        "required": [
+          "groups",
+          "updating"
+        ],
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TasteGroup"
+            },
+            "description": "Their groups, largest share first; empty without any."
+          },
+          "made_from": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TasteMadeFrom"
+              }
+            ],
+            "description": "What the taste was worked out from; null before their first taste\nbuild."
+          },
+          "updating": {
+            "type": "boolean",
+            "description": "Their picks are still catching up: a tuning they made is newer than\nthe picks built from it, or a taste or pool build is queued or\nrunning."
+          }
+        }
+      },
       "DiscoverTuningEntry": {
         "type": "object",
         "description": "One way a person tuned what Discover offers them.",
@@ -48195,6 +48284,20 @@
             "type": "integer",
             "format": "int64",
             "description": "When it was said (unix seconds)."
+          },
+          "group_anchor_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The taste group it was said for, by its anchor artist's MusicBrainz\nid (lowercased); null for a tuning about one artist."
+          },
+          "group_label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "That group's name when it was said; null for one artist."
           },
           "kind": {
             "$ref": "#/components/schemas/TuningKind",
@@ -48212,19 +48315,29 @@
       },
       "DiscoverTuningRequest": {
         "type": "object",
-        "description": "One way a person tuned what Discover offers them. Only\n`less_from_seed` is taken today; the other kinds are refused.",
+        "description": "One way a person tuned what Discover offers them, about one of their\nartists or every artist of one of their taste groups: exactly one of\n`target` and `group_no`. `less_from_seed`, `more_from_seed` and `phase`\nare taken today; the other kinds are refused.",
         "required": [
-          "kind",
-          "target"
+          "kind"
         ],
         "properties": {
+          "group_no": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "One of the person's taste groups, by its number: the tuning is kept\nfor each artist the group holds now."
+          },
           "kind": {
             "$ref": "#/components/schemas/TuningKind",
             "description": "What the tuning is."
           },
           "target": {
-            "type": "string",
-            "description": "What it is about: for `less_from_seed`, the MusicBrainz id of one of\nthe person's own artists."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The MusicBrainz id of one of the person's own artists."
           }
         }
       },
@@ -75157,6 +75270,158 @@
           "cancelled"
         ]
       },
+      "TasteArtist": {
+        "type": "object",
+        "description": "One artist in a person's taste group.",
+        "required": [
+          "artist_mbid",
+          "name",
+          "plays",
+          "imported_listens",
+          "is_seed"
+        ],
+        "properties": {
+          "artist_mbid": {
+            "type": "string",
+            "description": "MusicBrainz id, lowercased."
+          },
+          "imported_listens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Their imported listens of it."
+          },
+          "is_seed": {
+            "type": "boolean",
+            "description": "Whether their picks start from it."
+          },
+          "name": {
+            "type": "string",
+            "description": "Name, as the person's rows give it."
+          },
+          "plays": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Their plays of it in the app."
+          },
+          "tuning": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TasteArtistTuning"
+              }
+            ],
+            "description": "What they said about it, when they did."
+          }
+        }
+      },
+      "TasteArtistTuning": {
+        "type": "object",
+        "description": "A statement a person made about one artist.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "group_anchor_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The group it was said for, by its anchor's MusicBrainz id; null\nwhen said for the artist."
+          },
+          "group_label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "That group's name; null when said for the artist."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/TuningKind",
+            "description": "What it is."
+          }
+        }
+      },
+      "TasteGroup": {
+        "type": "object",
+        "description": "One of a person's taste groups.",
+        "required": [
+          "group_no",
+          "anchor_artist_mbid",
+          "anchor_name",
+          "share",
+          "trend",
+          "artists"
+        ],
+        "properties": {
+          "anchor_artist_mbid": {
+            "type": "string",
+            "description": "Its heaviest artist's MusicBrainz id, lowercased: the key of a\nstatement about the whole group."
+          },
+          "anchor_name": {
+            "type": "string",
+            "description": "The name of its heaviest artist, which it is named after."
+          },
+          "artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TasteArtist"
+            },
+            "description": "Its artists, most played first."
+          },
+          "group_no": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Its number, by share: 0 is the largest."
+          },
+          "last_played_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The latest play of any artist in it (unix seconds); null with none."
+          },
+          "share": {
+            "type": "number",
+            "format": "double",
+            "description": "Its share of each set, 0 to 1."
+          },
+          "trend": {
+            "$ref": "#/components/schemas/Trend",
+            "description": "Whether it is played more or less of late than all told."
+          }
+        }
+      },
+      "TasteMadeFrom": {
+        "type": "object",
+        "description": "What a person's taste was worked out from.",
+        "required": [
+          "plays_counted",
+          "imported_listens_counted"
+        ],
+        "properties": {
+          "history_from_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The earliest of them (unix seconds); null with none."
+          },
+          "imported_listens_counted": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Their listens imported from ListenBrainz."
+          },
+          "plays_counted": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Their plays in the app."
+          }
+        }
+      },
       "TeaserPick": {
         "type": "object",
         "description": "The pick Home's teaser shows.",
@@ -76136,11 +76401,22 @@
           "bearer"
         ]
       },
+      "Trend": {
+        "type": "string",
+        "description": "Whether a group is played more or less of late than it is all told.",
+        "enum": [
+          "rising",
+          "steady",
+          "fading"
+        ]
+      },
       "TuningKind": {
         "type": "string",
         "description": "What a tuning is.",
         "enum": [
           "less_from_seed",
+          "more_from_seed",
+          "phase",
           "less_of_kind",
           "not_this_source"
         ]

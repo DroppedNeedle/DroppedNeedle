@@ -6,12 +6,11 @@
 	the first row, with where the person is in the week on one line under it.
 -->
 <script lang="ts">
-	import Button from '$lib/ui/Button.svelte';
 	import BarcodeTicket from '$lib/ui/BarcodeTicket.svelte';
 	import Tape from '$lib/ui/Tape.svelte';
-	import { withBasePath } from '$lib/utils/basePath';
 	import type { WeekResponse } from '$lib/features/discover/queries/week.svelte';
 	import { clockTime, dayDate, longDayDate } from '$lib/features/discover/state/weekWords';
+	import DiscoverPageLinks from './DiscoverPageLinks.svelte';
 	import WeekSpines, { type Spine } from './WeekSpines.svelte';
 
 	interface Props {
@@ -44,16 +43,7 @@
 			`Next set ${longDayDate(set.next_set_at)}`
 		];
 	});
-	const laterHref = withBasePath('/discover/later');
 </script>
-
-{#snippet links()}
-	{#if laterCount > 0}
-		<Button variant="caps" size="sm" href={laterHref}>Later ({laterCount})</Button>
-	{/if}
-	<Button variant="caps" size="sm" href={withBasePath('/discover/weeks')}>Past weeks</Button>
-	<Button variant="caps" size="sm" onclick={ontold}>What you told Discover</Button>
-{/snippet}
 
 <header class="dn-week-head">
 	<h1 class="dn-week-head__title">Discover</h1>
@@ -81,7 +71,7 @@
 			<span>{lines[1]}</span>
 		</p>
 	{/if}
-	<nav class="dn-week-head__links" aria-label="Discover">{@render links()}</nav>
+	<DiscoverPageLinks look="caps" {laterCount} {ontold} class="dn-week-head__links" />
 
 	<div class="dn-week-head__phone">
 		{#if set && position}
@@ -142,9 +132,7 @@
 	.dn-week-head__notice > span {
 		color: var(--dn-muted);
 	}
-	.dn-week-head__links {
-		display: flex;
-		gap: 0.25rem;
+	.dn-week-head :global(.dn-week-head__links) {
 		margin-left: auto;
 	}
 	.dn-week-head__phone {
@@ -162,7 +150,7 @@
 		}
 		.dn-week-head :global(.dn-week-head__ticket),
 		.dn-week-head__lines,
-		.dn-week-head__links {
+		.dn-week-head :global(.dn-week-head__links) {
 			display: none;
 		}
 		.dn-week-head {

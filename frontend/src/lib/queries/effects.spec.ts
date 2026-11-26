@@ -64,7 +64,11 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 		key(U, 'albums', 'similar'),
 		key(U, 'artist')
 	],
-	tuningsChanged: [key(U, 'discover', 'tunings'), key(U, 'discover', 'pick-evidence')],
+	tuningsChanged: [
+		key(U, 'discover', 'tunings'),
+		key(U, 'discover', 'taste'),
+		key(U, 'discover', 'pick-evidence')
+	],
 	laterChanged: [
 		key(U, 'discover', 'later'),
 		key(U, 'discover', 'home'),
@@ -74,6 +78,7 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 	],
 	statedArtistsChanged: [
 		key(U, 'discover', 'stated-artists'),
+		key(U, 'discover', 'taste'),
 		key(U, 'discover', 'week'),
 		key(U, 'discover', 'home')
 	],

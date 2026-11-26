@@ -11,6 +11,7 @@ use droppedneedle_library::owns_group;
 use droppedneedle_media::history::HistoryImportState;
 
 use super::candidate::{CandidateKind, PathKind, PathSource};
+use super::taste::Trend;
 use super::weekly::{SetDay, ShortReason};
 use crate::discover::facts::FactSource;
 use crate::discover::models::PickState;
@@ -425,28 +426,124 @@ droppedneedle_kernel::sql! {
     /// no row when it is not one of their artists.
     pub(in crate::discover) TUNING_TARGET_NAME = "SELECT name FROM catalog_taste_artists \
          WHERE user_id = ?1 AND artist_mbid_lower = ?2";
-    /// Keep one tuning of a person's; the same one again takes the new name
-    /// and time.
+    /// The anchor of a person's taste group `?2`, by id (lowercased) and
+    /// name; no row when they have none by that number.
+    pub(in crate::discover) TUNING_GROUP_ANCHOR = "SELECT lower(anchor_artist_mbid) AS mbid, \
+         anchor_name AS name FROM catalog_taste_groups WHERE user_id = ?1 AND group_no = ?2";
+    pub(in crate::discover) row TuningGroupAnchor for [TUNING_GROUP_ANCHOR] {
+        mbid: String,
+        name: String,
+    }
+    /// The artists in a person's taste group `?2`, by id.
+    pub(in crate::discover) TUNING_GROUP_ARTISTS = "SELECT artist_mbid_lower, name \
+         FROM catalog_taste_artists WHERE user_id = ?1 AND group_no = ?2 \
+         ORDER BY artist_mbid_lower";
+    pub(in crate::discover) row TuningGroupArtist for [TUNING_GROUP_ARTISTS] {
+        artist_mbid_lower: String,
+        name: String,
+    }
+    /// What a person said about the target `?2`, of any kind.
+    pub(in crate::discover) TUNING_OF_TARGET = "SELECT kind, group_anchor_mbid \
+         FROM catalog_discover_tunings WHERE user_id = ?1 AND target = ?2";
+    pub(in crate::discover) row TuningOfTarget for [TUNING_OF_TARGET] {
+        kind: TuningKind,
+        group_anchor_mbid: Option<String>,
+    }
+    /// Keep one tuning of a person's, about a whole group when `?6` names
+    /// its anchor (and `?7` its name); the same one again takes the new
+    /// name, group and time.
     pub(in crate::discover) TUNING_SAVE = "INSERT INTO catalog_discover_tunings \
-         (user_id, kind, target, target_name, created_at) VALUES (?1, ?2, ?3, ?4, ?5) \
+         (user_id, kind, target, target_name, created_at, group_anchor_mbid, group_label) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
          ON CONFLICT (user_id, kind, target) DO UPDATE SET \
-           target_name = excluded.target_name, created_at = excluded.created_at";
+           target_name = excluded.target_name, created_at = excluded.created_at, \
+           group_anchor_mbid = excluded.group_anchor_mbid, group_label = excluded.group_label";
     /// Take back one tuning of a person's.
     pub(in crate::discover) TUNING_UNDO = "DELETE FROM catalog_discover_tunings \
          WHERE user_id = ?1 AND kind = ?2 AND target = ?3";
+    /// The anchor of the group a person's tuning was said for; null for
+    /// one artist.
+    pub(in crate::discover) TUNING_ANCHOR = "SELECT group_anchor_mbid \
+         FROM catalog_discover_tunings WHERE user_id = ?1 AND kind = ?2 AND target = ?3";
+    /// Take back one statement a person made about a whole group: every row
+    /// of kind `?2` said for the group anchored on `?3`.
+    pub(in crate::discover) TUNING_UNDO_GROUP = "DELETE FROM catalog_discover_tunings \
+         WHERE user_id = ?1 AND kind = ?2 AND group_anchor_mbid = ?3";
     /// A person's tunings, newest first.
-    pub(in crate::discover) TUNING_LIST = "SELECT kind, target, target_name, created_at \
-         FROM catalog_discover_tunings WHERE user_id = ?1 \
-         ORDER BY created_at DESC, kind, target";
+    pub(in crate::discover) TUNING_LIST = "SELECT kind, target, target_name, \
+         group_anchor_mbid, group_label, created_at FROM catalog_discover_tunings \
+         WHERE user_id = ?1 ORDER BY created_at DESC, kind, target";
     pub(in crate::discover) row TuningRow for [TUNING_LIST] {
         kind: TuningKind,
         target: String,
         target_name: String,
+        group_anchor_mbid: Option<String>,
+        group_label: Option<String>,
         created_at: Millis,
     }
     /// The targets of a person's tunings of kind `?2`.
     pub(in crate::discover) TUNING_TARGETS = "SELECT target FROM catalog_discover_tunings \
          WHERE user_id = ?1 AND kind = ?2";
+
+    // -- a person's taste, as their page shows it -------------------------------------
+
+    /// A person's taste build: what it counted, from when, and whether a
+    /// tuning they made is newer than their pool build, which every tuning
+    /// is followed by (a phase through the taste build first). Whether a
+    /// build is queued or running is read from the jobs beside it.
+    pub(in crate::discover) TASTE_PAGE_BUILD = "SELECT b.plays_counted AS plays_counted, \
+         b.imported_listens_counted AS imported_listens_counted, \
+         b.history_from_at AS history_from_at, \
+         EXISTS (SELECT 1 FROM catalog_discover_tunings t \
+           WHERE t.user_id = b.user_id AND t.created_at > coalesce((SELECT p.built_at \
+             FROM catalog_discover_pool_builds p WHERE p.user_id = b.user_id), 0)) AS updating \
+         FROM catalog_taste_builds b WHERE b.user_id = ?1";
+    pub(in crate::discover) row TastePageBuild for [TASTE_PAGE_BUILD] {
+        plays_counted: i64,
+        imported_listens_counted: i64,
+        history_from_at: Option<Millis>,
+        updating: bool,
+    }
+    /// A person's taste groups, largest share first, each with the latest
+    /// play of any artist in it.
+    pub(in crate::discover) TASTE_PAGE_GROUPS = "SELECT g.group_no AS group_no, \
+         lower(g.anchor_artist_mbid) AS anchor_mbid, g.anchor_name AS anchor_name, \
+         g.share AS share, g.trend AS trend, \
+         (SELECT MAX(a.last_played_at) FROM catalog_taste_artists a \
+           WHERE a.user_id = g.user_id AND a.group_no = g.group_no) AS last_played_at \
+         FROM catalog_taste_groups g WHERE g.user_id = ?1 ORDER BY g.group_no";
+    pub(in crate::discover) row TastePageGroup for [TASTE_PAGE_GROUPS] {
+        group_no: i64,
+        anchor_mbid: String,
+        anchor_name: String,
+        share: f64,
+        trend: Trend,
+        last_played_at: Option<Millis>,
+    }
+    /// The artists in a person's taste groups, most played first.
+    pub(in crate::discover) TASTE_PAGE_ARTISTS = "SELECT group_no, artist_mbid_lower, name, \
+         plays, imported_listens, is_seed FROM catalog_taste_artists \
+         WHERE user_id = ?1 AND group_no IS NOT NULL \
+         ORDER BY group_no, plays + imported_listens DESC, weight DESC, artist_mbid_lower";
+    pub(in crate::discover) row TastePageArtist for [TASTE_PAGE_ARTISTS] {
+        group_no: i64,
+        artist_mbid_lower: String,
+        name: String,
+        plays: i64,
+        imported_listens: i64,
+        is_seed: bool,
+    }
+    /// A person's tunings about one artist each, with the group each was
+    /// said for.
+    pub(in crate::discover) TASTE_PAGE_TUNINGS = "SELECT target, kind, group_anchor_mbid, \
+         group_label FROM catalog_discover_tunings WHERE user_id = ?1 \
+         ORDER BY target, kind";
+    pub(in crate::discover) row TastePageTuning for [TASTE_PAGE_TUNINGS] {
+        target: String,
+        kind: TuningKind,
+        group_anchor_mbid: Option<String>,
+        group_label: Option<String>,
+    }
 
     // -- who is due a pool build -------------------------------------------------
 

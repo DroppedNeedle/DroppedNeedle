@@ -24,6 +24,8 @@ export const DiscoverQueryKeyFactory = {
 		home: (userId: DiscoverV3UserId) => [...root(userId), 'home'] as const,
 		feedback: (userId: DiscoverV3UserId) => [...root(userId), 'feedback'] as const,
 		tunings: (userId: DiscoverV3UserId) => [...root(userId), 'tunings'] as const,
+		// The caller's taste groups, as their page shows them.
+		taste: (userId: DiscoverV3UserId) => [...root(userId), 'taste'] as const,
 		// The Later pile, and whether one album is on it, under the pile's prefix.
 		later: (userId: DiscoverV3UserId) => [...root(userId), 'later'] as const,
 		laterAlbum: (userId: DiscoverV3UserId, releaseGroupMbid: string) =>

@@ -490,6 +490,10 @@ const SHIPPED: &[(&str, &str)] = &[
         "0179_section_switches.sql",
         "3d6fe4f8d8784b9d58f87554ce4252a4377b982ca80c52cb6e909a05aaa72df6",
     ),
+    (
+        "0180_tuning_statements.sql",
+        "5be94c62f5adee547e372b77983123bd6fbae88c9fa95a735b4b1a10a0cd4555",
+    ),
 ];
 
 /// Upgrading an instance keeps existing sessions valid and outside the
@@ -4847,6 +4851,98 @@ fn section_switches_upgrade_carries_each_change() {
             "u4 home discover_queue 0 17",
         ]
         .map(str::to_owned)
+    );
+}
+
+/// 0180 rebuilds the tunings with "More from this" and "That was a phase"
+/// among the kinds, and a group's anchor and name for a statement about a
+/// whole group. Every row carries across, rowid and all, with no group; a
+/// kind outside the list, or one of anchor and name without the other, is
+/// refused, and an account's tunings go with it, and only its own.
+#[test]
+fn tuning_statements_upgrade_carries_every_row() {
+    let dir = ScratchDir::new("tuning-statements-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 180)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, created_at)
+                 VALUES ('u1', 'One', 1), ('u2', 'Two', 1);
+             INSERT INTO catalog_discover_tunings (user_id, kind, target, target_name,
+                 created_at)
+                 VALUES ('u1', 'less_from_seed', 's1', 'S1', 5),
+                        ('u1', 'less_from_seed', 's2', 'S2', 6),
+                        ('u2', 'less_from_seed', 's1', 'S1', 7);",
+        )
+        .unwrap();
+    let before = table_rows(&connection, "catalog_discover_tunings", "rowid, *");
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 180);
+    assert_eq!(
+        table_rows(
+            &connection,
+            "catalog_discover_tunings",
+            "rowid, user_id, kind, target, target_name, created_at"
+        ),
+        before,
+        "every row carries across"
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT COUNT(*) FROM catalog_discover_tunings \
+             WHERE group_label IS NOT NULL OR group_anchor_mbid IS NOT NULL"
+        ),
+        0,
+        "no row was about a group"
+    );
+
+    connection
+        .execute_batch(
+            "PRAGMA foreign_keys = ON;
+             INSERT INTO catalog_discover_tunings (user_id, kind, target, target_name,
+                 group_anchor_mbid, group_label, created_at)
+                 VALUES ('u1', 'more_from_seed', 's3', 'S3', NULL, NULL, 8),
+                        ('u1', 'phase', 's4', 'S4', 's4', 'S4', 9),
+                        ('u2', 'phase', 's1', 'S1', NULL, NULL, 9);",
+        )
+        .expect("the new kinds are stored");
+    for refused in [
+        "INSERT INTO catalog_discover_tunings (user_id, kind, target, target_name, created_at) \
+         VALUES ('u1', 'muted', 's', 'S', 1)",
+        "INSERT INTO catalog_discover_tunings (user_id, kind, target, target_name, created_at) \
+         VALUES ('u1', 'phase', 's4', 'S4', 2)",
+        "INSERT INTO catalog_discover_tunings (user_id, kind, target, target_name, created_at) \
+         VALUES ('nobody', 'phase', 's', 'S', 1)",
+        "INSERT INTO catalog_discover_tunings (user_id, kind, target, target_name, \
+         group_label, created_at) VALUES ('u1', 'phase', 's5', 'S5', 'S4', 1)",
+        "INSERT INTO catalog_discover_tunings (user_id, kind, target, target_name, \
+         group_anchor_mbid, created_at) VALUES ('u1', 'phase', 's5', 'S5', 's4', 1)",
+    ] {
+        assert!(connection.execute_batch(refused).is_err(), "{refused}");
+    }
+    connection
+        .execute("DELETE FROM auth_users WHERE id = 'u1'", [])
+        .unwrap();
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT user_id || ' ' || kind FROM catalog_discover_tunings ORDER BY kind",
+            []
+        ),
+        ["u2 less_from_seed", "u2 phase"],
+        "an account's tunings go with it, and only its own"
     );
 }
 

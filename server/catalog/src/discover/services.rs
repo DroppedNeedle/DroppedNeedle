@@ -19,7 +19,7 @@ use crate::discover::{
         AlbumPreviewMode, AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection,
         DigFurtherPick, DiscoverActivityResponse, DiscoverFeedbackEntry, DiscoverFeedbackRequest,
         DiscoverFeedbackResponse, DiscoverHealthResponse, DiscoverPickEventRequest, DiscoverPrefs,
-        DiscoverResponse, DiscoverTuningEntry, DiscoverTuningRequest, DiscoverTuningsResponse,
+        DiscoverResponse, DiscoverTasteResponse, DiscoverTuningRequest, DiscoverTuningsResponse,
         FoundOnDiscover, GenreDetailResponse, HomeResponse, IntegrationStatus, LaterAlbum,
         LaterRequest, ListenSource, NewRelease, PastWeeksPage, PickAnswer, PickEvidence,
         PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, RadioPlanRequest,
@@ -34,6 +34,7 @@ use crate::discover::{
     record::{EventError, PickRecord},
     scheduler::{ArtistDetail, Feature},
     stated::{self, StatedArtists, StatedError},
+    taste_page::TastePage,
     tunings::{self, TuningError, Tunings},
     youtube::LiveYouTube,
 };
@@ -127,6 +128,8 @@ pub struct DiscoverDeps {
     pub evidence: crate::discover::engine::evidence::Evidence,
     /// How people tuned what Discover offers them.
     pub tunings: Tunings,
+    /// Each person's taste, as their page shows it.
+    pub taste_page: TastePage,
     /// Each person's Later pile.
     pub later: LaterPile,
     /// The artists each person named as ones they love.
@@ -429,16 +432,19 @@ fn tuning_failure(error: TuningError) -> ServiceError {
     }
 }
 
-/// Keep one way the user tuned Discover; their pool is built again.
+/// Keep one way the user tuned Discover, about one artist or a group;
+/// what it changes is built again.
 pub async fn save_tuning(
     deps: &DiscoverDeps,
     user_id: &str,
     body: &DiscoverTuningRequest,
-) -> Result<DiscoverTuningEntry, ServiceError> {
-    deps.tunings
+) -> Result<DiscoverTuningsResponse, ServiceError> {
+    let items = deps
+        .tunings
         .save(user_id, body)
         .await
-        .map_err(tuning_failure)
+        .map_err(tuning_failure)?;
+    Ok(DiscoverTuningsResponse { items })
 }
 
 /// Every way the user tuned Discover, newest first.
@@ -454,18 +460,31 @@ pub async fn list_tunings(
     Ok(DiscoverTuningsResponse { items })
 }
 
-/// Take back one way the user tuned Discover; their pool is built again.
+/// Take back one way the user tuned Discover, or with `group` the whole
+/// statement it was part of; what it changed is built again.
 pub async fn undo_tuning(
     deps: &DiscoverDeps,
     user_id: &str,
     kind: &str,
     target: &str,
+    group: bool,
 ) -> Result<(), ServiceError> {
     let (kind, target) = tunings::checked_path(kind, target).map_err(tuning_failure)?;
     deps.tunings
-        .undo(user_id, kind, &target)
+        .undo(user_id, kind, &target, group)
         .await
         .map_err(tuning_failure)
+}
+
+/// The user's taste, as their page shows it.
+pub async fn taste(
+    deps: &DiscoverDeps,
+    user_id: &str,
+) -> Result<DiscoverTasteResponse, ServiceError> {
+    deps.taste_page
+        .read(user_id)
+        .await
+        .map_err(|error| ServiceError::Internal(format!("taste read: {error}")))
 }
 
 fn later_failure(error: LaterError) -> ServiceError {

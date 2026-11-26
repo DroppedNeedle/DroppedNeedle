@@ -101,6 +101,11 @@
 		--btn-fg: var(--dn-paper-content);
 		--btn-border: var(--dn-paper-content);
 	}
+	/* a pressed toggle on a paper card fills in the ink */
+	.btn.dn-btn-paper.btn-active {
+		--btn-bg: var(--dn-paper-content);
+		--btn-fg: var(--dn-paper);
+	}
 	/* a field on a paper card, in the paper's ink */
 	.dn-input-paper {
 		border-color: var(--dn-paper-content);

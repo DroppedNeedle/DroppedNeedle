@@ -172,10 +172,12 @@ export const EFFECTS = {
 	],
 	/**
 	 * The caller tuned what Discover offers them, or took it back: their
-	 * tunings and everything read from their pool, which is built again.
+	 * tunings, their taste page that shows them, and everything read from
+	 * their pool, which is built again.
 	 */
 	tuningsChanged: (userId: UserId): Sweep[] => [
 		{ key: DiscoverQueryKeyFactory.v3.tunings(userId) },
+		{ key: DiscoverQueryKeyFactory.v3.taste(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.allPickEvidence(userId) }
 	],
 	/**
@@ -191,11 +193,13 @@ export const EFFECTS = {
 		{ key: HomeQueryKeyFactory.home(userId) }
 	],
 	/**
-	 * The caller named an artist they love or took one off: the list, and
-	 * their week and Discover page, which grow from it.
+	 * The caller named an artist they love or took one off: the list, their
+	 * taste page, which is built again, and their week and Discover page,
+	 * which grow from it.
 	 */
 	statedArtistsChanged: (userId: UserId): Sweep[] => [
 		{ key: DiscoverQueryKeyFactory.v3.statedArtists(userId) },
+		{ key: DiscoverQueryKeyFactory.v3.taste(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.week(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.home(userId) }
 	],

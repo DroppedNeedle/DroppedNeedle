@@ -8,8 +8,10 @@
 //!    well as labs' is [`proposed::AGREEMENT_BOOST`] times as strong; one
 //!    only Last.fm names counts with its match, fame divided out the same
 //!    way ([`fame_divided`]). A seed the person asked for less from
-//!    ("Less from this") weighs [`proposed::LESS_FROM_SEED`] of its weight
-//!    ([`tuned_weight`]), so every link of it counts that much less.
+//!    ("Less from this") weighs [`proposed::LESS_FROM_SEED`] of its weight,
+//!    and one they asked for more from [`proposed::MORE_FROM_SEED`] times
+//!    it ([`tuned_weight`]), so every link of it counts that much less or
+//!    more.
 //! 2. Artist gates: not an artist the person knows, not one the library
 //!    has with a MusicBrainz id (an album of theirs held or not), not one
 //!    they turned down, not Various Artists or another special-purpose id.
@@ -69,15 +71,30 @@ pub mod proposed {
     /// What part of its weight a seed keeps once the person asked for less
     /// from it.
     pub const LESS_FROM_SEED: f64 = 0.5;
+    /// How many times its weight a seed weighs once the person asked for
+    /// more from it.
+    pub const MORE_FROM_SEED: f64 = 1.5;
 }
 
-/// A seed's weight in the ranking: `weight`, or [`proposed::LESS_FROM_SEED`]
-/// of it when the person asked for less from it.
-pub fn tuned_weight(weight: f64, less_from: bool) -> f64 {
-    if less_from {
-        weight * proposed::LESS_FROM_SEED
-    } else {
-        weight
+/// What the person asked of one seed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeedTune {
+    /// Nothing.
+    AsIs,
+    /// Less from it.
+    Less,
+    /// More from it.
+    More,
+}
+
+/// A seed's weight in the ranking: `weight`, [`proposed::LESS_FROM_SEED`]
+/// of it when the person asked for less from it, or
+/// [`proposed::MORE_FROM_SEED`] times it when they asked for more.
+pub fn tuned_weight(weight: f64, tune: SeedTune) -> f64 {
+    match tune {
+        SeedTune::AsIs => weight,
+        SeedTune::Less => weight * proposed::LESS_FROM_SEED,
+        SeedTune::More => weight * proposed::MORE_FROM_SEED,
     }
 }
 

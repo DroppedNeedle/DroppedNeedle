@@ -49,7 +49,14 @@ const ENTRIES: Entry[] = [
 ];
 
 const TUNED: Tuning[] = [
-	{ kind: 'less_from_seed', target: 'ar-2', name: 'Circa Survive', created_at: TOLD_AT }
+	{
+		kind: 'less_from_seed',
+		target: 'ar-2',
+		name: 'Circa Survive',
+		group_anchor_mbid: null,
+		group_label: null,
+		created_at: TOLD_AT
+	}
 ];
 
 describe('ToldDiscoverModal.svelte', () => {
@@ -112,6 +119,38 @@ describe('ToldDiscoverModal.svelte', () => {
 		expect(api.calls(UNDO_TUNING).map((call) => call.params)).toEqual([
 			{ kind: 'less_from_seed', target: 'ar-2' }
 		]);
+	});
+
+	it('gathers a group statement on one row, and its undo takes back the group', async () => {
+		const grouped = (target: string, name: string): Tuning => ({
+			kind: 'phase',
+			target,
+			name,
+			group_anchor_mbid: 'ar-5',
+			group_label: 'Deep Purple',
+			created_at: TOLD_AT
+		});
+		let tunings: Tuning[] = [grouped('ar-5', 'Deep Purple'), grouped('ar-6', 'Cream')];
+		const api = fakeApi({
+			[LIST]: { items: [] },
+			[TUNINGS]: () => ({ items: tunings }),
+			[UNDO_TUNING]: ({ query }) => {
+				if (query.get('group') === 'true') tunings = [];
+			},
+			[STATED]: { items: [], limit: 30 }
+		});
+		await renderWithQuery(ToldDiscoverModal, { open: true }, { client: queryClient });
+
+		const dialog = page.getByRole('dialog', { name: 'What you told Discover' });
+		await expect.element(dialog.getByRole('heading', { name: 'That was a phase 1' })).toBeVisible();
+		await expect.element(dialog.getByText('Around Deep Purple')).toBeVisible();
+		await expect.element(dialog.getByText('Deep Purple, Cream')).toBeVisible();
+
+		await page.getByRole('button', { name: 'Undo the phase for Around Deep Purple' }).click();
+		await expect.element(page.getByText('Around Deep Purple')).not.toBeInTheDocument();
+		expect(
+			api.calls(UNDO_TUNING).map((call) => [call.params.kind, call.query.get('group')])
+		).toEqual([['phase', 'true']]);
 	});
 
 	it('says when one of the two lists did not load, and keeps the other', async () => {

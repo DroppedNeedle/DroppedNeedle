@@ -18,10 +18,13 @@
 //! Plays are the person's plays in the app and the listens imported from
 //! their ListenBrainz history; while that import is current, ListenBrainz's
 //! top artists are not read, since the history already holds them. An
-//! album they said they know already counts as a heart on it. Once their
-//! taste is built the seeds are read from it instead
-//! ([`crate::discover::engine`]): the heaviest, taking turns across their
-//! groups.
+//! album they said they know already counts as a heart on it. An artist
+//! they said was a phase keeps nothing of its plays, listens and linked
+//! accounts' listens, so they make it no seed; what they chose (hearts,
+//! ratings, follows, playlists, requests, Later, naming it) still counts,
+//! and it stays an artist they know. Once their taste is built the seeds
+//! are read from it instead ([`crate::discover::engine`]): the heaviest,
+//! taking turns across their groups.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -33,6 +36,7 @@ use crate::discover::engine::history::History;
 use crate::discover::engine::{sql as engine_sql, taste_store};
 use crate::discover::feedback::{FeedbackKind, FeedbackTarget};
 use crate::discover::listening::{ArtistRow, JellyfinList, ListenSource, StatsRange, UserMusic};
+use crate::discover::tunings::TuningKind;
 use crate::discover::{read_all, sql};
 
 // The weights, the minimum and the cap: proposed. Taste groups weigh with them too.
@@ -200,11 +204,22 @@ impl Tally {
     }
 }
 
-/// Every artist an input named, by MusicBrainz id.
+/// Every artist an input named, by MusicBrainz id, and the ones the
+/// person said were a phase.
 #[derive(Default)]
-pub(in crate::discover) struct Tallies(BTreeMap<String, Tally>);
+pub(in crate::discover) struct Tallies(BTreeMap<String, Tally>, HashSet<String>);
 
 impl Tallies {
+    /// The artist `mbid` known, with nothing counted for it; nothing for a
+    /// row without a usable id.
+    fn known(&mut self, mbid: Option<&str>, name: &str) -> Option<&mut Tally> {
+        let tally = self.0.entry(seed_mbid(mbid)?).or_default();
+        if tally.name.is_empty() {
+            tally.name = name.trim().to_owned();
+        }
+        Some(tally)
+    }
+
     /// Count `weight` for the artist `mbid` from `input`; nothing for a
     /// row without a usable id. The first name an input gives is kept.
     fn add(
@@ -250,6 +265,11 @@ impl Tallies {
     /// Every artist named, by id.
     pub(in crate::discover) fn artists(&self) -> &BTreeMap<String, Tally> {
         &self.0
+    }
+
+    /// The artists the person said were a phase, by id.
+    pub(in crate::discover) fn phases(&self) -> &HashSet<String> {
+        &self.1
     }
 
     /// The seeds' ids, heaviest first, ties by id: at most [`MAX_SEEDS`].
@@ -323,7 +343,7 @@ pub(crate) async fn weighted_seeds(
     source: ListenSource,
 ) -> Vec<Seed> {
     match taste_store::seeds(ctx.db.db(), user_id).await {
-        Ok(Some(seeds)) => return topped_up(ctx, seeds).await,
+        Ok(Some(seeds)) => return topped_up(ctx, user_id, seeds).await,
         Ok(None) => {}
         Err(cause) => {
             tracing::warn!(%cause, "taste build unreadable; weighing seeds afresh");
@@ -341,19 +361,36 @@ pub(crate) async fn weighted_seeds(
     let read_listenbrainz = !history.import_current;
     let mut tallies = weigh(ctx, user_id, user, source, &history, read_listenbrainz).await;
     if tallies.seeds() < SEEDS {
-        top_up(ctx, &mut tallies).await;
+        let phases = tallies.phases().clone();
+        top_up(ctx, &mut tallies, &phases).await;
     }
     tallies.into_seeds()
 }
 
+/// The artists `user_id` said were a phase, lowercased; a failed read is
+/// logged, marks the build's ask and reads as none.
+async fn phases(ctx: &BuildContext<'_>, user_id: &str) -> HashSet<String> {
+    rows(
+        ctx,
+        "discover.seeds.phases",
+        engine_sql::TUNING_TARGETS.text(),
+        (user_id.to_owned(), TuningKind::Phase),
+        |row| row.get::<_, String>(0),
+    )
+    .await
+    .into_iter()
+    .collect()
+}
+
 /// `seeds` from the taste build, with the library's artists after them
 /// when there are too few.
-async fn topped_up(ctx: &BuildContext<'_>, mut seeds: Vec<Seed>) -> Vec<Seed> {
+async fn topped_up(ctx: &BuildContext<'_>, user_id: &str, mut seeds: Vec<Seed>) -> Vec<Seed> {
     if seeds.len() >= SEEDS {
         return seeds;
     }
     let mut library = Tallies::default();
-    top_up(ctx, &mut library).await;
+    let phases = phases(ctx, user_id).await;
+    top_up(ctx, &mut library, &phases).await;
     let have: HashSet<String> = seeds
         .iter()
         .filter_map(|seed| seed.artist.mbid.clone())
@@ -364,8 +401,9 @@ async fn topped_up(ctx: &BuildContext<'_>, mut seeds: Vec<Seed>) -> Vec<Seed> {
     seeds
 }
 
-/// Add the library's artists to `tallies`, weighed by their albums.
-async fn top_up(ctx: &BuildContext<'_>, tallies: &mut Tallies) {
+/// Add the library's artists to `tallies`, weighed by their albums; an
+/// artist in `phases` (the person said it was a phase) is left out.
+async fn top_up(ctx: &BuildContext<'_>, tallies: &mut Tallies, phases: &HashSet<String>) {
     let library = rows(
         ctx,
         "discover.seeds.library",
@@ -375,6 +413,9 @@ async fn top_up(ctx: &BuildContext<'_>, tallies: &mut Tallies) {
     )
     .await;
     for row in library {
+        if seed_mbid(row.mbid.as_deref()).is_some_and(|mbid| phases.contains(&mbid)) {
+            continue;
+        }
         let weight = LIBRARY_SCALE * ln_1p(row.album_count);
         tallies.add(
             row.mbid.as_deref(),
@@ -389,7 +430,8 @@ async fn top_up(ctx: &BuildContext<'_>, tallies: &mut Tallies) {
 /// plays and imported listens in `history`, hearts, ratings, follows,
 /// playlists, requests, the albums they said they know already or put on
 /// their Later pile, the accounts they linked, and the artists they named
-/// as ones they love, weighed last. ListenBrainz's top
+/// as ones they love, weighed last. An artist they said was a phase is
+/// known but gets nothing from plays or listens. ListenBrainz's top
 /// artists are read only when `read_listenbrainz` says so. What the library
 /// holds is not added.
 pub(in crate::discover) async fn weigh(
@@ -401,7 +443,7 @@ pub(in crate::discover) async fn weigh(
     read_listenbrainz: bool,
 ) -> Tallies {
     let id = || (user_id.to_owned(),);
-    let (hearts, known, ratings, follows, playlists, requests, later, stated, linked) = tokio::join!(
+    let (hearts, known, ratings, follows, playlists, requests, later, stated, phases, linked) = tokio::join!(
         rows(
             ctx,
             "discover.seeds.hearts",
@@ -462,11 +504,21 @@ pub(in crate::discover) async fn weigh(
             id(),
             sql::SeedStated::read
         ),
+        phases(ctx, user_id),
         linked_artists(ctx, user_id, user, source, read_listenbrainz),
     );
+    let phase = |artist: &ArtistRow| {
+        seed_mbid(artist.mbid.as_deref()).is_some_and(|mbid| phases.contains(&mbid))
+    };
 
     let mut tallies = Tallies::default();
     for played in &history.artists {
+        if phases.contains(&played.mbid) {
+            if let Some(tally) = tallies.known(Some(&played.mbid), &played.name) {
+                tally.plays += played.plays;
+            }
+            continue;
+        }
         let days_since = (ctx.now_ms - played.last_at) as f64 / DAY_MS;
         let listens = played.plays + played.imported_listens;
         let weight = plays_weight(listens, played.months, days_since);
@@ -535,6 +587,18 @@ pub(in crate::discover) async fn weigh(
         .filter_map(|(artist, _)| seed_mbid(artist.mbid.as_deref()))
         .collect();
     for (artist, weight) in linked.listenbrainz.into_iter().chain(linked.others) {
+        if phase(&artist) {
+            tallies.known(artist.mbid.as_deref(), &artist.name);
+            continue;
+        }
+        tallies.add(
+            artist.mbid.as_deref(),
+            &artist.name,
+            SeedInput::Linked,
+            weight,
+        );
+    }
+    for (artist, weight) in linked.favorites {
         tallies.add(
             artist.mbid.as_deref(),
             &artist.name,
@@ -555,7 +619,9 @@ pub(in crate::discover) async fn weigh(
         );
         for (artist, weight) in rows.into_iter().map(listens) {
             let id = seed_mbid(artist.mbid.as_deref());
-            if id.is_some_and(|id| !named_this_year.contains(&id)) {
+            if phase(&artist) {
+                tallies.known(artist.mbid.as_deref(), &artist.name);
+            } else if id.is_some_and(|id| !named_this_year.contains(&id)) {
                 tallies.add(
                     artist.mbid.as_deref(),
                     &artist.name,
@@ -581,6 +647,7 @@ pub(in crate::discover) async fn weigh(
             stated_weight(start, plays),
         );
     }
+    tallies.1 = phases;
     tallies
 }
 
@@ -597,8 +664,11 @@ struct Linked<'u> {
     username: Option<&'u str>,
     /// Its top artists of [`LINKED_RANGE`], each with its weight.
     listenbrainz: Vec<(ArtistRow, f64)>,
-    /// Last.fm's and their own Jellyfin's artists, each with its weight.
+    /// Last.fm's and their own Jellyfin's most played, each with the
+    /// weight of its listens.
     others: Vec<(ArtistRow, f64)>,
+    /// Their own Jellyfin's favourites, each weighed as a heart.
+    favorites: Vec<(ArtistRow, f64)>,
 }
 
 /// A linked account's row with the weight of its listens.
@@ -685,10 +755,13 @@ async fn linked_artists<'u>(
             listen_count: Some(row.play_count),
         })
     }));
-    others.extend(favorites.into_iter().map(|row| (row, JELLYFIN_FAVORITE)));
     Linked {
         username,
         listenbrainz: listenbrainz.into_iter().map(listens).collect(),
         others,
+        favorites: favorites
+            .into_iter()
+            .map(|row| (row, JELLYFIN_FAVORITE))
+            .collect(),
     }
 }

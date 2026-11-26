@@ -17,6 +17,9 @@
 	`mark` sits before the title (a media server's round icon badge). The
 	record, ticket and strokes are decoration. `compact` sets a smaller title
 	on a desktop, for a working page whose panes need the height (Settings).
+	`facts` prints real facts on the ticket in place of its label (a figure
+	and two lines, as the week's ticket does); a phone leaves that ticket
+	out, so the page says the same in its own words.
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
@@ -33,6 +36,8 @@
 		count?: string | null;
 		/** The ticket's mono label. */
 		ticket: string;
+		/** Facts the ticket prints in place of its label. */
+		facts?: { figure: string; lines: readonly [string, string]; spoken?: string };
 		backHref?: string;
 		backLabel?: string;
 		/** The square button before the title, or a mono caps link over it. */
@@ -65,6 +70,7 @@
 		subtitle,
 		count = null,
 		ticket,
+		facts,
 		backHref,
 		backLabel = 'Back',
 		backStyle = 'button',
@@ -162,7 +168,16 @@
 			{#if !stroke}<span class="dn-decor dn-lph__rule" aria-hidden="true"></span>{/if}
 			<div class="dn-lph__meta">
 				{#if count}<p class="dn-lph__count">{count}</p>{/if}
-				<BarcodeTicket label={ticket} class="dn-lph__ticket" />
+				{#if facts}
+					<BarcodeTicket
+						figure={facts.figure}
+						lines={facts.lines}
+						spoken={facts.spoken}
+						class="dn-lph__ticket dn-lph__ticket--facts"
+					/>
+				{:else}
+					<BarcodeTicket label={ticket} class="dn-lph__ticket" />
+				{/if}
 			</div>
 		{/if}
 		<div class="dn-lph__deck" aria-hidden="true">
@@ -396,6 +411,10 @@
 	.dn-lph--back .dn-lph__meta :global(.dn-lph__ticket) {
 		width: 12.5rem;
 	}
+	/* the facts set their own width, so every word on them reads in full */
+	.dn-lph .dn-lph__meta :global(.dn-lph__ticket--facts) {
+		width: max-content;
+	}
 
 	.dn-lph__actions {
 		display: flex;
@@ -499,6 +518,10 @@
 			grid-area: ticket;
 			width: 6.5rem;
 			margin-top: -0.75rem;
+		}
+		/* too many words for a phone's small ticket: the page says them */
+		.dn-lph .dn-lph__meta :global(.dn-lph__ticket--facts) {
+			display: none;
 		}
 		.dn-lph__title,
 		.dn-lph:not(.dn-lph--back) .dn-lph__title {

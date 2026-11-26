@@ -828,15 +828,21 @@ pub struct DiscoverFeedbackResponse {
     pub items: Vec<DiscoverFeedbackEntry>,
 }
 
-/// One way a person tuned what Discover offers them. Only
-/// `less_from_seed` is taken today; the other kinds are refused.
+/// One way a person tuned what Discover offers them, about one of their
+/// artists or every artist of one of their taste groups: exactly one of
+/// `target` and `group_no`. `less_from_seed`, `more_from_seed` and `phase`
+/// are taken today; the other kinds are refused.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DiscoverTuningRequest {
     /// What the tuning is.
     pub kind: TuningKind,
-    /// What it is about: for `less_from_seed`, the MusicBrainz id of one of
-    /// the person's own artists.
-    pub target: String,
+    /// The MusicBrainz id of one of the person's own artists.
+    #[serde(default)]
+    pub target: Option<String>,
+    /// One of the person's taste groups, by its number: the tuning is kept
+    /// for each artist the group holds now.
+    #[serde(default)]
+    pub group_no: Option<i64>,
 }
 
 /// One way a person tuned what Discover offers them.
@@ -848,8 +854,89 @@ pub struct DiscoverTuningEntry {
     pub target: String,
     /// The target's name, as the person's taste rows give it.
     pub name: String,
+    /// The taste group it was said for, by its anchor artist's MusicBrainz
+    /// id (lowercased); null for a tuning about one artist.
+    pub group_anchor_mbid: Option<String>,
+    /// That group's name when it was said; null for one artist.
+    pub group_label: Option<String>,
     /// When it was said (unix seconds).
     pub created_at: i64,
+}
+
+/// A person's taste as Discover reads it: the groups their picks are
+/// shared out by, each with its artists, what it was worked out from, and
+/// whether a tuning they made is still being followed.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DiscoverTasteResponse {
+    /// What the taste was worked out from; null before their first taste
+    /// build.
+    pub made_from: Option<TasteMadeFrom>,
+    /// Their groups, largest share first; empty without any.
+    pub groups: Vec<TasteGroup>,
+    /// Their picks are still catching up: a tuning they made is newer than
+    /// the picks built from it, or a taste or pool build is queued or
+    /// running.
+    pub updating: bool,
+}
+
+/// What a person's taste was worked out from.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct TasteMadeFrom {
+    /// Their plays in the app.
+    pub plays_counted: i64,
+    /// Their listens imported from ListenBrainz.
+    pub imported_listens_counted: i64,
+    /// The earliest of them (unix seconds); null with none.
+    pub history_from_at: Option<i64>,
+}
+
+/// One of a person's taste groups.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct TasteGroup {
+    /// Its number, by share: 0 is the largest.
+    pub group_no: i64,
+    /// Its heaviest artist's MusicBrainz id, lowercased: the key of a
+    /// statement about the whole group.
+    pub anchor_artist_mbid: String,
+    /// The name of its heaviest artist, which it is named after.
+    pub anchor_name: String,
+    /// Its share of each set, 0 to 1.
+    pub share: f64,
+    /// Whether it is played more or less of late than all told.
+    pub trend: super::engine::taste::Trend,
+    /// The latest play of any artist in it (unix seconds); null with none.
+    pub last_played_at: Option<i64>,
+    /// Its artists, most played first.
+    pub artists: Vec<TasteArtist>,
+}
+
+/// One artist in a person's taste group.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct TasteArtist {
+    /// MusicBrainz id, lowercased.
+    pub artist_mbid: String,
+    /// Name, as the person's rows give it.
+    pub name: String,
+    /// Their plays of it in the app.
+    pub plays: i64,
+    /// Their imported listens of it.
+    pub imported_listens: i64,
+    /// Whether their picks start from it.
+    pub is_seed: bool,
+    /// What they said about it, when they did.
+    pub tuning: Option<TasteArtistTuning>,
+}
+
+/// A statement a person made about one artist.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct TasteArtistTuning {
+    /// What it is.
+    pub kind: TuningKind,
+    /// The group it was said for, by its anchor's MusicBrainz id; null
+    /// when said for the artist.
+    pub group_anchor_mbid: Option<String>,
+    /// That group's name; null when said for the artist.
+    pub group_label: Option<String>,
 }
 
 /// Every way a person tuned what Discover offers them, newest first.
