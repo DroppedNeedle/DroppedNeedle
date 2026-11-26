@@ -9,6 +9,7 @@
 	import AlbumHistory from '$lib/features/library/components/AlbumHistory.svelte';
 	import AlbumRetagPairs from '$lib/features/library-management/components/AlbumRetagPairs.svelte';
 	import EditionPlate from '$lib/features/library/components/edition/EditionPlate.svelte';
+	import FoundOnDiscover from '$lib/features/discover/components/FoundOnDiscover.svelte';
 	import AlbumOrganizationDialog from '$lib/features/library-management/components/AlbumOrganizationDialog.svelte';
 	import LocalAlbumTrackList from '$lib/features/library/components/LocalAlbumTrackList.svelte';
 	import LocalFilesIcon from '$lib/media/icons/LocalFilesIcon.svelte';
@@ -301,6 +302,7 @@
 					/>
 				</div>
 				<EditionPlate copies={[album]} />
+				<FoundOnDiscover mbid={album.release_group_mbid} />
 			{/snippet}
 
 			{#snippet actions()}

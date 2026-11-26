@@ -24,6 +24,7 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { deckSampler } from '$lib/features/discover/state/deckSampler.svelte';
+	import FoundOnDiscover from '$lib/features/discover/components/FoundOnDiscover.svelte';
 	import EditionPlate from '$lib/features/library/components/edition/EditionPlate.svelte';
 	import NoFilesBadge from '$lib/features/library/components/NoFilesBadge.svelte';
 	import {
@@ -327,6 +328,7 @@
 		{#if unlinkedCopies.length > 0}
 			<UnlinkedCopyNote copies={unlinkedCopies} />
 		{/if}
+		<FoundOnDiscover mbid={releaseGroupMbid || album.musicbrainz_id} />
 	{/snippet}
 
 	{#snippet actions()}

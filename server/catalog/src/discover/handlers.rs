@@ -17,7 +17,7 @@ use droppedneedle_kernel::page::{Page, PageRequest};
 use serde::Deserialize;
 
 use super::{
-    engine::weekly,
+    engine::{archive, weekly},
     later,
     models::{
         AlbumPreviewMode, AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection,
@@ -25,10 +25,11 @@ use super::{
         DiscoverFeedbackRequest, DiscoverFeedbackResponse, DiscoverHealthResponse,
         DiscoverPickEventRequest, DiscoverPrefs, DiscoverQueueStatusResponse, DiscoverResponse,
         DiscoverTuningEntry, DiscoverTuningRequest, DiscoverTuningsResponse, FeedbackTarget,
-        GenreDetailResponse, HomeResponse, IntegrationStatus, LaterAlbum, LaterRequest,
-        ListenSource, NewRelease, PickEvidence, PlaylistSuggestionsRequest,
-        PlaylistSuggestionsResponse, RadioPlanRequest, RadioPlanResponse, RadioRequest, StatsRange,
-        TrackPreviewResponse, TuningKind, WeekResponse, YouTubeSearchResponse,
+        FoundOnDiscover, GenreDetailResponse, HomeResponse, IntegrationStatus, LaterAlbum,
+        LaterRequest, ListenSource, NewRelease, PastWeeksPage, PickAnswer, PickEvidence,
+        PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, RadioPlanRequest,
+        RadioPlanResponse, RadioRequest, StatsRange, TrackPreviewResponse, TuningKind,
+        WeekResponse, YouTubeSearchResponse,
     },
     new_releases,
     services::{self, DiscoverDeps},
@@ -78,6 +79,19 @@ pub struct WeekMoreQuery {
     pub limit: Option<u32>,
     /// `next_cursor` from the previous page.
     pub cursor: Option<String>,
+}
+
+/// `GET /discover/weeks` params.
+#[derive(Debug, Deserialize)]
+pub struct PastWeeksQuery {
+    /// Weeks per page, 1 to 20 (default 8); more is read as 20.
+    pub limit: Option<u32>,
+    /// `next_cursor` from the previous page.
+    pub cursor: Option<String>,
+    /// Only picks with this answer.
+    pub state: Option<PickAnswer>,
+    /// Only picks whose title or artist holds this.
+    pub q: Option<String>,
 }
 
 /// Genre detail params.
@@ -557,6 +571,74 @@ pub async fn week_more(
         weekly::MORE_PAGE_MAX,
     )?;
     services::week_more(&deps, user.user_id(), paging)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+/// The caller's past weeks, newest first, a page of weeks at a time: each
+/// set as it was shown, with what became of every pick and the week's
+/// tally. `state` and `q` narrow the picks, and a week with none left is
+/// not listed. The first page also carries the record of every set.
+/// Read from the caller's own rows alone.
+#[utoipa::path(
+    get,
+    tag = "discover",
+    path = "/api/v3/discover/weeks",
+    params(
+        ("limit" = Option<u32>, Query, description = "Weeks per page, 1 to 20; more is read as 20"),
+        ("cursor" = Option<String>, Query, description = "`next_cursor` from the previous page"),
+        ("state" = Option<PickAnswer>, Query, description = "Only picks with this answer"),
+        ("q" = Option<String>, Query, description = "Only picks whose title or artist holds this"),
+    ),
+    responses(
+        (status = 200, description = "One page of weeks, newest first", body = PastWeeksPage),
+        (status = 400, description = "Bad cursor, answer or search"),
+        (status = 401, description = "Not authenticated"),
+        (status = 500, description = "The weeks could not be read"),
+    )
+)]
+pub async fn list_past_weeks(
+    State(deps): State<DiscoverDeps>,
+    User(user): User,
+    ValidQuery(query): ValidQuery<PastWeeksQuery>,
+) -> Result<Json<PastWeeksPage>, ApiError> {
+    let paging = PageRequest::read(
+        query.limit,
+        query.cursor.as_deref(),
+        archive::PAGE_DEFAULT,
+        archive::PAGE_MAX,
+    )?;
+    services::past_weeks(
+        &deps,
+        user.user_id(),
+        paging,
+        query.state,
+        query.q.as_deref(),
+    )
+    .await
+    .map(Json)
+    .map_err(ApiError::from)
+}
+
+/// The albums the caller kept from their weekly sets, each with the week
+/// it was first picked, newest first. Read from the caller's own rows
+/// alone.
+#[utoipa::path(
+    get,
+    tag = "discover",
+    path = "/api/v3/discover/found",
+    responses(
+        (status = 200, description = "The caller's kept picks", body = FoundOnDiscover),
+        (status = 401, description = "Not authenticated"),
+        (status = 500, description = "The picks could not be read"),
+    )
+)]
+pub async fn found_on_discover(
+    State(deps): State<DiscoverDeps>,
+    User(user): User,
+) -> Result<Json<FoundOnDiscover>, ApiError> {
+    services::found_on_discover(&deps, user.user_id())
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -1074,6 +1156,8 @@ pub fn routes() -> Routes<DiscoverDeps> {
         .user(routes!(list_new_releases))
         .user(routes!(get_week))
         .user(routes!(week_more))
+        .user(routes!(list_past_weeks))
+        .user(routes!(found_on_discover))
         .user(routes!(get_discover_prefs))
         .user(routes!(save_discover_prefs))
         .user(routes!(forget_history))

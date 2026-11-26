@@ -21,12 +21,15 @@
 //! - [`weekly`]: the `discover.weekly_set` job kind and the routes' answers,
 //!   and [`weekly_store`] its tables: each person's weekly sets, kept as a
 //!   record once built, and their set day.
+//! - [`archive`]: past weeks, each set read back as it was shown, and the
+//!   albums kept from them.
 //! - [`schedule`]: who is due a build, asked by
 //!   [`Due`](crate::discover::due::Due).
 //!
 //! What the library holds is the other half of what a person knows, and is
 //! read live where it is needed, never copied here.
 
+pub mod archive;
 pub mod candidate;
 pub mod evidence;
 pub mod history;

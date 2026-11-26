@@ -6,7 +6,8 @@
 	that tab's. `aside` sits in the row beside the tabs (a list's search and
 	sort, which belong to every tab). The `caps` look is a strip of mono
 	capitals, the current tab underlined in the title colour (a drawer's
-	tabs).
+	tabs). `scroll` keeps the tabs on one line that scrolls sideways when it
+	is wider than the screen, rather than wrapping.
 -->
 <script lang="ts" module>
 	import type { KitIcon } from './Button.svelte';
@@ -37,6 +38,8 @@
 		/** Layout only, for the panel: a drawer's panel fills and scrolls. */
 		panelClass?: string;
 		aside?: Snippet;
+		/** One line of tabs that scrolls sideways instead of wrapping. */
+		scroll?: boolean;
 		children: Snippet;
 	}
 
@@ -50,6 +53,7 @@
 		class: className = '',
 		panelClass = '',
 		aside,
+		scroll = false,
 		children
 	}: Props = $props();
 
@@ -90,7 +94,9 @@
 		role="tablist"
 		aria-label={label}
 		tabindex="-1"
-		class="{looks[look]} w-fit max-w-full flex-wrap {aside ? '' : className}"
+		class="{looks[look]} w-fit max-w-full {scroll
+			? 'dn-tabs-scroll flex-nowrap overflow-x-auto'
+			: 'flex-wrap'} {aside ? '' : className}"
 		onkeydown={move}
 	>
 		{#each tabs as tab (tab.id)}
@@ -138,6 +144,10 @@
 </div>
 
 <style>
+	.dn-tabs-scroll > [role='tab'] {
+		flex-shrink: 0;
+		white-space: nowrap;
+	}
 	.dn-tabs-caps {
 		display: flex;
 		gap: 1.375rem;

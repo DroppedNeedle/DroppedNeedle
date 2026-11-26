@@ -114,12 +114,14 @@ export const EFFECTS = {
 		{ key: DownloadQueryKeyFactory.tasksPrefix(userId) }
 	],
 	/**
-	 * The caller's requests, and their week and new releases, whose rows read
-	 * them as their state.
+	 * The caller's requests, and their week, past weeks, the albums they kept
+	 * from them and new releases, whose rows read them as their state.
 	 */
 	requestsChanged: (userId: UserId): Sweep[] => [
 		{ key: RequestQueryKeyFactory.all(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.week(userId) },
+		{ key: DiscoverQueryKeyFactory.v3.pastWeeks(userId) },
+		{ key: DiscoverQueryKeyFactory.v3.found(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.newReleases(userId) }
 	],
 	/** One manual album search moved. */
@@ -150,12 +152,13 @@ export const EFFECTS = {
 	wantedChanged: (userId: UserId): Sweep[] => [{ key: WantedQueryKeyFactory.list(userId) }],
 	/**
 	 * The caller told Discover something about an album or an artist, or took
-	 * it back: every list that leaves out what they hid, and their week,
-	 * whose picks read it as their state.
+	 * it back: every list that leaves out what they hid, and their week and
+	 * past weeks, whose picks read it as their state.
 	 */
 	recommendationsChanged: (userId: UserId): Sweep[] => [
 		{ key: DiscoverQueryKeyFactory.v3.feedback(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.week(userId) },
+		{ key: DiscoverQueryKeyFactory.v3.pastWeeks(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.home(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.newReleases(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.radios(userId) },
@@ -175,13 +178,14 @@ export const EFFECTS = {
 	],
 	/**
 	 * The caller put an album on their Later pile or took one off: the pile,
-	 * the Discover page that deals picks around it, and their week, whose
-	 * picks read Later as their state.
+	 * the Discover page that deals picks around it, and their week and past
+	 * weeks, whose picks read Later as their state.
 	 */
 	laterChanged: (userId: UserId): Sweep[] => [
 		{ key: DiscoverQueryKeyFactory.v3.later(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.home(userId) },
-		{ key: DiscoverQueryKeyFactory.v3.week(userId) }
+		{ key: DiscoverQueryKeyFactory.v3.week(userId) },
+		{ key: DiscoverQueryKeyFactory.v3.pastWeeks(userId) }
 	],
 	/** The caller heard a pick's sample: their week, which marks it heard. */
 	pickHeard: (userId: UserId): Sweep[] => [{ key: DiscoverQueryKeyFactory.v3.week(userId) }],

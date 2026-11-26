@@ -1873,6 +1873,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/discover/found": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The albums the caller kept from their weekly sets, each with the week
+         *     it was first picked, newest first. Read from the caller's own rows
+         *     alone.
+         */
+        get: operations["found_on_discover"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/discover/history": {
         parameters: {
             query?: never;
@@ -2210,6 +2231,29 @@ export interface paths {
          *     the set was dealt from, a page at a time.
          */
         get: operations["week_more"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/weeks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The caller's past weeks, newest first, a page of weeks at a time: each
+         *     set as it was shown, with what became of every pick and the week's
+         *     tally. `state` and `q` narrow the picks, and a week with none left is
+         *     not listed. The first page also carries the record of every set.
+         *     Read from the caller's own rows alone.
+         */
+        get: operations["list_past_weeks"];
         put?: never;
         post?: never;
         delete?: never;
@@ -11610,6 +11654,34 @@ export interface components {
              */
             total_listens: number;
         };
+        /** @description How many of some picks got each answer. */
+        AnswerCounts: {
+            /**
+             * Format: int64
+             * @description Asked for.
+             */
+            kept: number;
+            /**
+             * Format: int64
+             * @description Known already.
+             */
+            known: number;
+            /**
+             * Format: int64
+             * @description On the Later pile.
+             */
+            later: number;
+            /**
+             * Format: int64
+             * @description Not answered.
+             */
+            open: number;
+            /**
+             * Format: int64
+             * @description Passed on.
+             */
+            passed: number;
+        };
         /**
          * @description Native app sign-in ("app connect"): the apps that may get a
          *     credential for the signed-in user after the user confirms it in the
@@ -16499,6 +16571,25 @@ export interface components {
              */
             writable: boolean;
         };
+        /** @description The albums the person kept from their sets, newest week first. */
+        FoundOnDiscover: {
+            items: components["schemas"]["FoundPick"][];
+        };
+        /** @description An album the person kept from a set, and the week it was first picked. */
+        FoundPick: {
+            /** @description The album's release-group id, lowercased. */
+            release_group_mbid: string;
+            /**
+             * Format: int64
+             * @description Its ISO week number.
+             */
+            week_number: number;
+            /**
+             * Format: int64
+             * @description When that week started (unix ms).
+             */
+            week_start_at: number;
+        };
         /** @description One candidate service and what answered there. */
         FoundService: {
             /** @description Which service was looked for. */
@@ -20995,6 +21086,32 @@ export interface components {
             total: number | null;
         };
         /** @description One page of a list. */
+        Page_PastWeek: {
+            items: {
+                /** @description The picks that match the filter; every pick without one. */
+                picks: components["schemas"]["PastPick"][];
+                /** @description What the person did with every pick of the set, filter or not. */
+                tally: components["schemas"]["AnswerCounts"];
+                /**
+                 * Format: int64
+                 * @description The ISO week number of that day.
+                 */
+                week_number: number;
+                /**
+                 * Format: int64
+                 * @description When its week started (unix ms).
+                 */
+                week_start_at: number;
+            }[];
+            /** @description Pass back as `cursor` for the next page; null on the last. */
+            next_cursor: string | null;
+            /**
+             * Format: int64
+             * @description Rows in the whole list, for lists that count them.
+             */
+            total: number | null;
+        };
+        /** @description One page of a list. */
         Page_PluginFileView: {
             items: {
                 /**
@@ -21320,6 +21437,40 @@ export interface components {
             /** @description Account username. */
             username: string;
         };
+        /** @description One pick of a past week, as it was shown, with what became of it. */
+        PastPick: {
+            /** @description The album, with its year and type. */
+            album: components["schemas"]["AlbumRef"];
+            /**
+             * Format: int64
+             * @description For a kept pick, when it arrived in the library (unix ms); null
+             *     before it has.
+             */
+            arrived_at?: number | null;
+            /**
+             * Format: int64
+             * @description Its place in the set, from 1.
+             */
+            pick_no: number;
+            /**
+             * Format: int64
+             * @description For a kept pick, how often the person has played the album the
+             *     library holds for it; null while they have not.
+             */
+            plays?: number | null;
+            /** @description Why it was in the set, as shown that week. */
+            reason: components["schemas"]["PickReason"];
+            /** @description What became of it. */
+            state: components["schemas"]["PickState"];
+        };
+        /**
+         * @description One page of past weeks, newest first; the first page also carries the
+         *     record of every set.
+         */
+        PastWeeksPage: components["schemas"]["Page_PastWeek"] & {
+            /** @description On the first page only. */
+            record: null | components["schemas"]["WeeksRecord"];
+        };
         /** @description Path-compatibility handling. */
         PathCompatibilitySettings: {
             /**
@@ -21436,6 +21587,11 @@ export interface components {
             /** @description The licence's page, http or https. */
             licence_url?: string | null;
         };
+        /**
+         * @description What the person did with a pick, as past weeks count and filter it.
+         * @enum {string}
+         */
+        PickAnswer: "kept" | "later" | "known" | "passed" | "open";
         /**
          * @description What the web UI saw happen to a pick.
          * @enum {string}
@@ -27934,6 +28090,22 @@ export interface components {
             /** @description Track title. */
             title: string;
         };
+        /** @description What every set of the person's came to, counts only. */
+        WeeksRecord: {
+            /** @description What the person did with them. */
+            answers: components["schemas"]["AnswerCounts"];
+            /**
+             * Format: int64
+             * @description From when "still played a month on" can be counted: the first kept
+             *     pick's arrival plus 30 days (unix ms); null while none has arrived.
+             */
+            counted_from_at?: number | null;
+            /**
+             * Format: int64
+             * @description Picks in every set.
+             */
+            picked: number;
+        };
         /**
          * @description What the work does to the library.
          * @enum {string}
@@ -32607,6 +32779,44 @@ export interface operations {
             };
         };
     };
+    found_on_discover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's kept picks */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FoundOnDiscover"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The picks could not be read */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     forget_history: {
         parameters: {
             query?: never;
@@ -33614,6 +33824,62 @@ export interface operations {
                 };
             };
             /** @description The pool could not be read */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_past_weeks: {
+        parameters: {
+            query?: {
+                /** @description Weeks per page, 1 to 20; more is read as 20 */
+                limit?: number;
+                /** @description `next_cursor` from the previous page */
+                cursor?: string;
+                /** @description Only picks with this answer */
+                state?: components["schemas"]["PickAnswer"];
+                /** @description Only picks whose title or artist holds this */
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of weeks, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PastWeeksPage"];
+                };
+            };
+            /** @description Bad cursor, answer or search */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The weeks could not be read */
             500: {
                 headers: {
                     [name: string]: unknown;

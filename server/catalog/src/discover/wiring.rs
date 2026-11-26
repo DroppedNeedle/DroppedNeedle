@@ -263,6 +263,7 @@ fn deps_with(
         later: later::LaterPile::new(inputs.db.clone(), Arc::clone(&inputs.clock)),
         new_releases,
         weekly,
+        past_weeks: engine::archive::PastWeeks::new(inputs.db.clone(), Arc::clone(&inputs.clock)),
     }
 }
 

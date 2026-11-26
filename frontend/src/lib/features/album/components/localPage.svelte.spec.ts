@@ -94,7 +94,8 @@ function fakeLibrary(options: { downloadAllowed: boolean }): FakeApi {
 			looks_wrong_count: 0
 		},
 		'GET /api/v3/library/albums/{album_id}/history': { items: [] },
-		'POST /api/v3/ratings/lookup': { albums: {}, artists: {}, tracks: {} }
+		'POST /api/v3/ratings/lookup': { albums: {}, artists: {}, tracks: {} },
+		'GET /api/v3/discover/found': { items: [] }
 	});
 }
 

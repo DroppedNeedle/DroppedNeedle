@@ -51,6 +51,7 @@
 	{#if laterCount > 0}
 		<Button variant="caps" size="sm" href={laterHref}>Later ({laterCount})</Button>
 	{/if}
+	<Button variant="caps" size="sm" href={withBasePath('/discover/weeks')}>Past weeks</Button>
 	<Button variant="caps" size="sm" onclick={ontold}>What you told Discover</Button>
 {/snippet}
 

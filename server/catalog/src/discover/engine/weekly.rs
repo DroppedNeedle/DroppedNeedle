@@ -268,7 +268,7 @@ fn set_source(source: FactSource) -> SetSource {
 }
 
 /// An album row of a candidate or a kept pick.
-fn album_row(
+pub(super) fn album_row(
     group: &str,
     title: &str,
     artist_name: &str,

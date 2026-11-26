@@ -16,6 +16,7 @@ mod discover_record;
 mod discover_replay;
 mod discover_taste;
 mod discover_week;
+mod discover_weeks;
 mod home_page;
 mod kept_facts;
 mod listenbrainz_load;

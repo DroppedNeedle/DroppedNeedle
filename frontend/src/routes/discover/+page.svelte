@@ -6,6 +6,7 @@
 		CircleAlert,
 		Clock,
 		Compass,
+		History,
 		LayoutGrid,
 		Library,
 		Music,
@@ -46,6 +47,7 @@
 	import WhyCard from '$lib/features/discover/components/WhyCard.svelte';
 	import AfterNoSlip from '$lib/features/discover/components/AfterNoSlip.svelte';
 	import NewFromYourArtists from '$lib/features/discover/components/NewFromYourArtists.svelte';
+	import PastWeeksRow from '$lib/features/discover/components/PastWeeksRow.svelte';
 	import { getDiscoverHomeV3Query } from '$lib/features/discover/queries/DiscoverV3Queries.svelte';
 	import { createPickEventMutation } from '$lib/features/discover/queries/DiscoverV3Mutations.svelte';
 	import { useDiscoverActivity } from '$lib/features/discover/queries/DiscoverDemand.svelte';
@@ -798,6 +800,11 @@
 							<ChevronRight class="ml-auto size-4" aria-hidden="true" />
 						</a>
 					{/if}
+					<a href={withBasePath('/discover/weeks')}>
+						<History class="size-4" aria-hidden="true" />
+						<span>Past weeks</span>
+						<ChevronRight class="ml-auto size-4" aria-hidden="true" />
+					</a>
 					<div class="dn-discover__link-row">
 						<Button
 							variant="caps"
@@ -816,6 +823,15 @@
 	</div>
 
 	{@render under()}
+
+	{#if setEnabled}
+		<div class="dn-discover-col dn-discover__past">
+			<PastWeeksRow
+				current={set?.week_start_at ?? null}
+				enabled={weekQuery.isSuccess || weekQuery.isError}
+			/>
+		</div>
+	{/if}
 </div>
 
 {#snippet blankCard(tape: string, said: string, line: string, found: number)}
@@ -1195,6 +1211,10 @@
 	}
 
 	.dn-discover__under {
+		margin-top: 3.5rem;
+	}
+
+	.dn-discover__past {
 		margin-top: 3.5rem;
 	}
 

@@ -99,7 +99,13 @@ function routes(week: Week | (() => Week)): FakeRoutes {
 			generation: 1
 		}),
 		'POST /api/v3/discover/picks/events': () => undefined,
-		'GET /api/v3/discover/week/more': () => ({ items: [], next_cursor: null, total: null })
+		'GET /api/v3/discover/week/more': () => ({ items: [], next_cursor: null, total: null }),
+		'GET /api/v3/discover/weeks': () => ({
+			items: [],
+			next_cursor: null,
+			total: null,
+			record: null
+		})
 	};
 }
 

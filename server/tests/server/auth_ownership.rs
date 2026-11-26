@@ -2094,7 +2094,12 @@ async fn caller_keyed_state_stays_with_its_caller() {
          release_group_mbid_lower, release_group_mbid, title, artist_mbid, artist_name, \
          reason_line, evidence) VALUES ('{id}', 1000, 1, '{set_album}', \
          '{set_album}', 'Set album', '{hidden_artist}', 'Artist', \
-         'Close to Seed.', '{evidence}')",
+         'Close to Seed.', '{evidence}'); \
+         INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, artist_name, \
+         album_title, requested_at, status, user_id) VALUES ('{set_album}', '{set_album}', \
+         'Artist', 'Set album', 1000, 'pending', '{id}'); \
+         INSERT INTO request_history_requesters (user_id, musicbrainz_id_lower, requested_at) \
+         VALUES ('{id}', '{set_album}', 1000)",
         id = ada.id
     ))
     .await;
@@ -2102,6 +2107,33 @@ async fn caller_keyed_state_stays_with_its_caller() {
     let more = "/api/v3/discover/week/more";
     let prefs = "/api/v3/discover/prefs";
     let set_why = format!("/api/v3/discover/picks/{set_album}/why");
+    // A's past weeks and the album A kept from them: B and an admin read
+    // none of either.
+    let past_weeks = "/api/v3/discover/weeks";
+    let found = "/api/v3/discover/found";
+    for (who, what) in [(&bob, "B"), (&admin, "an admin")] {
+        let (status, body) = call(&app, who, "GET", past_weeks, None).await;
+        ok(status, &body, &format!("{what} reads their past weeks"));
+        assert_eq!(body["items"], json!([]), "{what} sees A's weeks: {body}");
+        assert_eq!(body["record"]["picked"], 0, "{what} counts A's: {body}");
+        let (status, body) = call(&app, who, "GET", found, None).await;
+        ok(status, &body, &format!("{what} reads what they kept"));
+        assert_eq!(body["items"], json!([]), "{what} sees A's kept: {body}");
+    }
+    let (status, body) = call(&app, &ada, "GET", past_weeks, None).await;
+    ok(status, &body, "A reads A's past weeks");
+    assert_eq!(
+        body["items"][0]["picks"][0]["album"]["musicbrainz_id"],
+        json!(set_album),
+        "{body}"
+    );
+    let (status, body) = call(&app, &ada, "GET", found, None).await;
+    ok(status, &body, "A reads what A kept");
+    assert_eq!(
+        body["items"][0]["release_group_mbid"],
+        json!(set_album),
+        "{body}"
+    );
     for (who, what) in [(&bob, "B"), (&admin, "an admin")] {
         let (status, body) = call(&app, who, "GET", week, None).await;
         ok(status, &body, &format!("{what} reads their week"));

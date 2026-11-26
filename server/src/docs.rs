@@ -47,6 +47,9 @@ use droppedneedle_kernel::{
         // The album preview's mode: a query parameter names it, but the
         // path macro does not collect it.
         droppedneedle_catalog::discover::models::AlbumPreviewMode,
+        // The answer past weeks are narrowed to: a query parameter names
+        // it, but the path macro does not collect it.
+        droppedneedle_catalog::discover::models::PickAnswer,
         // The `details` of a refused custom CSS sheet.
         crate::appearance::models::CssRefusal,
         crate::appearance::check::CssProblem,

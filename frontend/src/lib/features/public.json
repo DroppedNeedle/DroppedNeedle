@@ -26,6 +26,7 @@
 		"queries/types.ts"
 	],
 	"discover": [
+		"components/FoundOnDiscover.svelte",
 		"components/PlaylistDiscoveryModal.svelte",
 		"components/SampleButton.svelte",
 		"components/SimpleSourceSwitcher.svelte",

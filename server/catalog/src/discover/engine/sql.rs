@@ -640,32 +640,9 @@ droppedneedle_kernel::sql! {
          k.release_group_mbid AS release_group_mbid, k.title AS title, \
          k.artist_mbid AS artist_mbid, k.artist_name AS artist_name, \
          k.primary_type AS primary_type, k.first_release_date AS first_release_date, \
-         k.taste_no AS taste_no, k.reason_line AS reason_line, k.evidence AS evidence, \
-         CASE WHEN EXISTS (SELECT 1 FROM ("
-        + (owns_group!("= +k.release_group_mbid_lower"))
-        + ")) THEN 'arrived' \
-         ELSE COALESCE((SELECT CASE \
-             WHEN r.status IN ('pending', 'queued', 'downloading') THEN 'asked' \
-             WHEN r.status = 'awaiting_approval' THEN 'awaiting_approval' \
-             WHEN r.status = 'rejected' THEN 'refused' \
-             WHEN r.status IN ('failed', 'cancelling', 'cancelled', 'incomplete') \
-               THEN 'failed' END \
-           FROM request_history_requesters q JOIN request_history r \
-             ON r.musicbrainz_id_lower = q.musicbrainz_id_lower \
-           WHERE q.user_id = k.user_id AND q.musicbrainz_id_lower = k.release_group_mbid_lower \
-             AND r.request_kind = 'album'), \
-         CASE WHEN EXISTS (SELECT 1 FROM catalog_later_albums l WHERE l.user_id = k.user_id \
-             AND l.release_group_mbid_lower = k.release_group_mbid_lower) THEN 'later' END, \
-         (SELECT CASE f.kind WHEN 'no' THEN 'no' WHEN 'know_it' THEN 'known' \
-             WHEN 'not_now' THEN 'not_now' END \
-           FROM catalog_discover_feedback f WHERE f.user_id = k.user_id AND f.target = ?4 \
-             AND f.target_mbid_lower = k.release_group_mbid_lower \
-             AND (f.expires_at IS NULL OR f.expires_at > ?3)), \
-         CASE WHEN EXISTS (SELECT 1 FROM catalog_discover_feedback f \
-             WHERE f.user_id = k.user_id AND f.target = ?5 AND k.artist_mbid <> '' \
-               AND f.target_mbid_lower = lower(k.artist_mbid) \
-               AND (f.expires_at IS NULL OR f.expires_at > ?3)) THEN 'not_artist' END, \
-         'open') END AS state, \
+         k.taste_no AS taste_no, k.reason_line AS reason_line, k.evidence AS evidence, "
+        + PICK_STATE
+        + " AS state, \
          EXISTS (SELECT 1 FROM catalog_discover_picks d WHERE d.user_id = k.user_id \
            AND d.release_group_mbid_lower = k.release_group_mbid_lower \
            AND d.sampled_at IS NOT NULL) AS heard \
@@ -708,4 +685,115 @@ droppedneedle_kernel::sql! {
     pub(in crate::discover) PREFS_WAIT_CLEARED = "UPDATE catalog_discover_prefs \
          SET history_wait_from_at = NULL WHERE user_id = ?1 \
            AND history_wait_from_at IS NOT NULL";
+
+    // -- past weeks ------------------------------------------------------------
+
+    /// What became of the set pick `k` (a `catalog_weekly_set_picks` row):
+    /// arrived when the library holds it, else what the person's request
+    /// for it says (statuses read as the pick states), else on their Later
+    /// pile, else what they told Discover in effect at `?3` about the album
+    /// (target `?4`) or its artist (target `?5`), else open. The week and
+    /// every past week read it alike.
+    fragment PICK_STATE = "CASE WHEN EXISTS (SELECT 1 FROM ("
+        + (owns_group!("= +k.release_group_mbid_lower"))
+        + ")) THEN 'arrived' \
+         ELSE COALESCE((SELECT CASE \
+             WHEN r.status IN ('pending', 'queued', 'downloading') THEN 'asked' \
+             WHEN r.status = 'awaiting_approval' THEN 'awaiting_approval' \
+             WHEN r.status = 'rejected' THEN 'refused' \
+             WHEN r.status IN ('failed', 'cancelling', 'cancelled', 'incomplete') \
+               THEN 'failed' END \
+           FROM request_history_requesters q JOIN request_history r \
+             ON r.musicbrainz_id_lower = q.musicbrainz_id_lower \
+           WHERE q.user_id = k.user_id AND q.musicbrainz_id_lower = k.release_group_mbid_lower \
+             AND r.request_kind = 'album'), \
+         CASE WHEN EXISTS (SELECT 1 FROM catalog_later_albums l WHERE l.user_id = k.user_id \
+             AND l.release_group_mbid_lower = k.release_group_mbid_lower) THEN 'later' END, \
+         (SELECT CASE f.kind WHEN 'no' THEN 'no' WHEN 'know_it' THEN 'known' \
+             WHEN 'not_now' THEN 'not_now' END \
+           FROM catalog_discover_feedback f WHERE f.user_id = k.user_id AND f.target = ?4 \
+             AND f.target_mbid_lower = k.release_group_mbid_lower \
+             AND (f.expires_at IS NULL OR f.expires_at > ?3)), \
+         CASE WHEN EXISTS (SELECT 1 FROM catalog_discover_feedback f \
+             WHERE f.user_id = k.user_id AND f.target = ?5 AND k.artist_mbid <> '' \
+               AND f.target_mbid_lower = lower(k.artist_mbid) \
+               AND (f.expires_at IS NULL OR f.expires_at > ?3)) THEN 'not_artist' END, \
+         'open') END";
+    /// Every pick of person `?1`'s sets whose week starts before `?2`, as `g`,
+    /// each with its state (see `PICK_STATE`), worked out once.
+    fragment PAST_PICKS = "WITH g AS MATERIALIZED (SELECT k.week_start_at AS week_start_at, \
+         k.pick_no AS pick_no, k.release_group_mbid_lower AS release_group_mbid_lower, \
+         k.release_group_mbid AS release_group_mbid, k.title AS title, \
+         k.artist_mbid AS artist_mbid, k.artist_name AS artist_name, \
+         k.primary_type AS primary_type, k.first_release_date AS first_release_date, \
+         k.reason_line AS reason_line, k.evidence AS evidence, "
+        + PICK_STATE
+        + " AS state FROM catalog_weekly_set_picks k \
+         WHERE k.user_id = ?1 AND k.week_start_at < ?2)";
+    /// The newest `?6` of person `?1`'s sets before the week `?2` that hold a
+    /// pick matching the filter, with every pick of each in order: its
+    /// state, whether it matches (a state in the JSON list `?7` when there
+    /// is one, and `?8`, lowercased, in its title or artist when there is
+    /// one), when it arrived from the pick record, and how often the person
+    /// played the albums that own its release group.
+    pub(in crate::discover) PAST_WEEKS_PAGE = PAST_PICKS
+        + ", m AS (SELECT g.*, (?7 IS NULL OR g.state IN (SELECT value FROM json_each(?7))) \
+           AND (?8 IS NULL OR instr(lower(g.title), ?8) > 0 \
+             OR instr(lower(g.artist_name), ?8) > 0) AS matches FROM g), \
+         w AS (SELECT DISTINCT week_start_at FROM m WHERE matches \
+           ORDER BY week_start_at DESC LIMIT ?6) \
+         SELECT m.week_start_at AS week_start_at, m.pick_no AS pick_no, \
+         m.release_group_mbid AS release_group_mbid, m.title AS title, \
+         m.artist_mbid AS artist_mbid, m.artist_name AS artist_name, \
+         m.primary_type AS primary_type, m.first_release_date AS first_release_date, \
+         m.reason_line AS reason_line, m.evidence AS evidence, m.state AS state, \
+         m.matches AS matches, \
+         (SELECT d.arrived_at FROM catalog_discover_picks d WHERE d.user_id = ?1 \
+           AND d.release_group_mbid_lower = m.release_group_mbid_lower) AS arrived_at, \
+         (SELECT SUM(p.plays) FROM library_user_album_plays p WHERE p.user_id = ?1 \
+           AND p.local_album_id IN (SELECT album_id FROM ("
+        + (owns_group!("= +m.release_group_mbid_lower"))
+        + "))) AS plays \
+         FROM m JOIN w ON w.week_start_at = m.week_start_at \
+         ORDER BY m.week_start_at DESC, m.pick_no";
+    pub(in crate::discover) row PastWeekPickRow for [PAST_WEEKS_PAGE] {
+        week_start_at: Millis,
+        pick_no: i64,
+        release_group_mbid: String,
+        title: String,
+        artist_mbid: String,
+        artist_name: String,
+        primary_type: Option<String>,
+        first_release_date: Option<String>,
+        reason_line: String,
+        evidence: String,
+        state: PickState,
+        matches: bool,
+        arrived_at: Option<Millis>,
+        plays: Option<i64>,
+    }
+    /// How many of person `?1`'s set picks before the week `?2` are in each
+    /// state, and the first arrival among them from the pick record.
+    pub(in crate::discover) PAST_WEEKS_RECORD = PAST_PICKS
+        + " SELECT g.state AS state, COUNT(*) AS picks, MIN(d.arrived_at) AS arrived_at \
+         FROM g LEFT JOIN catalog_discover_picks d ON d.user_id = ?1 \
+           AND d.release_group_mbid_lower = g.release_group_mbid_lower \
+         GROUP BY g.state";
+    pub(in crate::discover) row PastWeeksTally for [PAST_WEEKS_RECORD] {
+        state: PickState,
+        picks: i64,
+        arrived_at: Option<Millis>,
+    }
+    /// Person `?1`'s set picks before the week `?2` in a state of the JSON
+    /// list `?6`, one row an album (lowercased) with the first week it was
+    /// picked, newest first.
+    pub(in crate::discover) PAST_WEEKS_FOUND = PAST_PICKS
+        + " SELECT g.release_group_mbid_lower AS release_group_mbid, \
+         MIN(g.week_start_at) AS week_start_at FROM g \
+         WHERE g.state IN (SELECT value FROM json_each(?6)) \
+         GROUP BY g.release_group_mbid_lower ORDER BY week_start_at DESC";
+    pub(in crate::discover) row FoundPickRow for [PAST_WEEKS_FOUND] {
+        release_group_mbid: String,
+        week_start_at: Millis,
+    }
 }

@@ -34,6 +34,12 @@ export const DiscoverQueryKeyFactory = {
 		weekMore: (userId: DiscoverV3UserId) => [...root(userId), 'week', 'more'] as const,
 		// The caller's new releases from their artists.
 		newReleases: (userId: DiscoverV3UserId) => [...root(userId), 'new-releases'] as const,
+		// The caller's past weeks, every filter and search under one prefix,
+		// and the albums they kept from them.
+		pastWeeks: (userId: DiscoverV3UserId) => [...root(userId), 'weeks'] as const,
+		pastWeeksList: (userId: DiscoverV3UserId, state: string | null, search: string) =>
+			[...root(userId), 'weeks', state ?? 'all', search] as const,
+		found: (userId: DiscoverV3UserId) => [...root(userId), 'found'] as const,
 		// The caller's set day.
 		prefs: (userId: DiscoverV3UserId) => [...root(userId), 'prefs'] as const,
 		// What "Why this?" opens for one pick, and every pick's, as a prefix.

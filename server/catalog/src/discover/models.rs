@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 
+use droppedneedle_kernel::page::Page;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -1153,6 +1154,170 @@ pub struct DiscoverPrefs {
     /// The day their set comes out, from 00:00 server time. Friday unless
     /// they chose another; a new day counts from the next week.
     pub set_day: SetDay,
+}
+
+// ---------------------------------------------------------------------------
+// Past weeks
+// ---------------------------------------------------------------------------
+
+/// What the person did with a pick, as past weeks count and filter it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PickAnswer {
+    /// They asked for it, whatever became of the request.
+    Kept,
+    /// It is on their Later pile.
+    Later,
+    /// They said they know it already.
+    Known,
+    /// They said no or not now, or turned its artist down.
+    Passed,
+    /// Nothing yet.
+    Open,
+}
+
+impl PickAnswer {
+    /// Every pick state, for [`Self::states`].
+    const STATES: [PickState; 11] = [
+        PickState::Asked,
+        PickState::AwaitingApproval,
+        PickState::Refused,
+        PickState::Failed,
+        PickState::Arrived,
+        PickState::Later,
+        PickState::No,
+        PickState::Known,
+        PickState::NotNow,
+        PickState::NotArtist,
+        PickState::Open,
+    ];
+
+    /// The answer a pick in `state` counts as.
+    pub fn of(state: PickState) -> Self {
+        match state {
+            PickState::Asked
+            | PickState::AwaitingApproval
+            | PickState::Refused
+            | PickState::Failed
+            | PickState::Arrived => Self::Kept,
+            PickState::Later => Self::Later,
+            PickState::Known => Self::Known,
+            PickState::No | PickState::NotNow | PickState::NotArtist => Self::Passed,
+            PickState::Open => Self::Open,
+        }
+    }
+
+    /// The pick states that count as this answer.
+    pub fn states(self) -> Vec<PickState> {
+        Self::STATES
+            .into_iter()
+            .filter(|state| Self::of(*state) == self)
+            .collect()
+    }
+}
+
+/// How many of some picks got each answer.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct AnswerCounts {
+    /// Asked for.
+    pub kept: i64,
+    /// On the Later pile.
+    pub later: i64,
+    /// Known already.
+    pub known: i64,
+    /// Passed on.
+    pub passed: i64,
+    /// Not answered.
+    pub open: i64,
+}
+
+impl AnswerCounts {
+    /// Counts `picks` more as `answer`.
+    pub fn add(&mut self, answer: PickAnswer, picks: i64) {
+        let count = match answer {
+            PickAnswer::Kept => &mut self.kept,
+            PickAnswer::Later => &mut self.later,
+            PickAnswer::Known => &mut self.known,
+            PickAnswer::Passed => &mut self.passed,
+            PickAnswer::Open => &mut self.open,
+        };
+        *count += picks;
+    }
+}
+
+/// One pick of a past week, as it was shown, with what became of it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct PastPick {
+    /// Its place in the set, from 1.
+    pub pick_no: i64,
+    /// The album, with its year and type.
+    pub album: AlbumRef,
+    /// Why it was in the set, as shown that week.
+    pub reason: PickReason,
+    /// What became of it.
+    pub state: PickState,
+    /// For a kept pick, when it arrived in the library (unix ms); null
+    /// before it has.
+    #[serde(default)]
+    pub arrived_at: Option<i64>,
+    /// For a kept pick, how often the person has played the album the
+    /// library holds for it; null while they have not.
+    #[serde(default)]
+    pub plays: Option<i64>,
+}
+
+/// One past week: the picks of its set that match the filter, in order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct PastWeek {
+    /// When its week started (unix ms).
+    pub week_start_at: i64,
+    /// The ISO week number of that day.
+    pub week_number: i64,
+    /// What the person did with every pick of the set, filter or not.
+    pub tally: AnswerCounts,
+    /// The picks that match the filter; every pick without one.
+    pub picks: Vec<PastPick>,
+}
+
+/// What every set of the person's came to, counts only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct WeeksRecord {
+    /// Picks in every set.
+    pub picked: i64,
+    /// What the person did with them.
+    pub answers: AnswerCounts,
+    /// From when "still played a month on" can be counted: the first kept
+    /// pick's arrival plus 30 days (unix ms); null while none has arrived.
+    #[serde(default)]
+    pub counted_from_at: Option<i64>,
+}
+
+/// One page of past weeks, newest first; the first page also carries the
+/// record of every set.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct PastWeeksPage {
+    #[serde(flatten)]
+    pub page: Page<PastWeek>,
+    /// On the first page only.
+    #[schema(required = true)]
+    pub record: Option<WeeksRecord>,
+}
+
+/// An album the person kept from a set, and the week it was first picked.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct FoundPick {
+    /// The album's release-group id, lowercased.
+    pub release_group_mbid: String,
+    /// When that week started (unix ms).
+    pub week_start_at: i64,
+    /// Its ISO week number.
+    pub week_number: i64,
+}
+
+/// The albums the person kept from their sets, newest week first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct FoundOnDiscover {
+    pub items: Vec<FoundPick>,
 }
 
 // ---------------------------------------------------------------------------

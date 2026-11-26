@@ -44,6 +44,12 @@ describe('weekDeck', () => {
 		expect(keys(deck)).toBe('rg-3');
 	});
 
+	it('opens at the first pick the set says is not answered, on any device', () => {
+		const deck = createWeekDeck();
+		deck.sync([pick(1, 'asked'), pick(2, 'no'), pick(3), pick(4)], []);
+		expect(keys(deck)).toBe('rg-3');
+	});
+
 	it('moves past an answered pick to the next open one, wrapping round', () => {
 		const deck = createWeekDeck();
 		deck.sync([pick(1), pick(2, 'known'), pick(3), pick(4)], []);

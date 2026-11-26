@@ -10,6 +10,7 @@ use droppedneedle_providers::ProviderError;
 
 use crate::discover::{
     content::LiveContent,
+    engine::archive::WeeksFilter,
     feedback::{self, Answers, FeedbackError},
     forget::{self, HistoryStores},
     genre::WithGenrePages,
@@ -19,11 +20,12 @@ use crate::discover::{
         DigFurtherPick, DiscoverActivityResponse, DiscoverFeedbackEntry, DiscoverFeedbackRequest,
         DiscoverFeedbackResponse, DiscoverHealthResponse, DiscoverPickEventRequest, DiscoverPrefs,
         DiscoverQueueStatusResponse, DiscoverResponse, DiscoverTuningEntry, DiscoverTuningRequest,
-        DiscoverTuningsResponse, GenreDetailResponse, HomeResponse, IntegrationStatus, LaterAlbum,
-        LaterRequest, ListenSource, NewRelease, PickEvidence, PickState,
-        PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, QueueBuildStatus,
-        RadioPlanRequest, RadioPlanResponse, RadioRequest, RadioSeedKind, StatsRange,
-        TrackPreviewResponse, WeekResponse, WeekStatus, YouTubeSearchResponse,
+        DiscoverTuningsResponse, FoundOnDiscover, GenreDetailResponse, HomeResponse,
+        IntegrationStatus, LaterAlbum, LaterRequest, ListenSource, NewRelease, PastWeeksPage,
+        PickAnswer, PickEvidence, PickState, PlaylistSuggestionsRequest,
+        PlaylistSuggestionsResponse, QueueBuildStatus, RadioPlanRequest, RadioPlanResponse,
+        RadioRequest, RadioSeedKind, StatsRange, TrackPreviewResponse, WeekResponse, WeekStatus,
+        YouTubeSearchResponse,
     },
     new_releases::{NewReleaseLists, ReleaseKey},
     ports::{ProviderFailure, RadioFailure},
@@ -130,6 +132,8 @@ pub struct DiscoverDeps {
     pub new_releases: NewReleaseLists,
     /// Each person's weekly sets: the job kind and the routes' answers.
     pub weekly: Arc<crate::discover::engine::weekly::WeeklySets>,
+    /// Each person's past weeks and what they kept from them.
+    pub past_weeks: crate::discover::engine::archive::PastWeeks,
 }
 
 /// Clamp a limit into `1..=max`, defaulting when missing.
@@ -570,6 +574,40 @@ pub async fn week_more(
         .more(user_id, paging)
         .await
         .map_err(|error| ServiceError::Internal(format!("dig further: {error}")))
+}
+
+/// One page of the user's past weeks, the picks narrowed to `answer` and
+/// to titles or artists holding `text`.
+pub async fn past_weeks(
+    deps: &DiscoverDeps,
+    user_id: &str,
+    paging: PageRequest<i64>,
+    answer: Option<PickAnswer>,
+    text: Option<&str>,
+) -> Result<PastWeeksPage, ServiceError> {
+    let text = text.map(str::trim).filter(|text| !text.is_empty());
+    if let Some(text) = text {
+        check_name(text, "search")?;
+    }
+    let filter = WeeksFilter {
+        answer,
+        text: text.map(str::to_lowercase),
+    };
+    deps.past_weeks
+        .page(user_id, paging, filter)
+        .await
+        .map_err(|error| ServiceError::Internal(format!("past weeks: {error}")))
+}
+
+/// The albums the user kept from their sets.
+pub async fn found_on_discover(
+    deps: &DiscoverDeps,
+    user_id: &str,
+) -> Result<FoundOnDiscover, ServiceError> {
+    deps.past_weeks
+        .found(user_id)
+        .await
+        .map_err(|error| ServiceError::Internal(format!("found on discover: {error}")))
 }
 
 /// The user's set day.
