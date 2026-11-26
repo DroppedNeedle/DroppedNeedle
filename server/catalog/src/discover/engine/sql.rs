@@ -569,7 +569,7 @@ droppedneedle_kernel::sql! {
            SELECT q.musicbrainz_id_lower AS group_mbid, q.requested_at AS asked_at, \
            h.completed_at AS arrived_at, \
            (SELECT o.album_id FROM ("
-        + (owns_group!("= q.musicbrainz_id_lower"))
+        + (owns_group!("= +q.musicbrainz_id_lower"))
         + ") o ORDER BY o.album_id LIMIT 1) AS local_id \
            FROM request_history_requesters q JOIN request_history h \
              ON h.musicbrainz_id_lower = q.musicbrainz_id_lower \
@@ -578,7 +578,7 @@ droppedneedle_kernel::sql! {
          JOIN local_albums ob ON ob.id = a.local_id \
          WHERE NOT EXISTS (SELECT 1 FROM library_user_album_plays p WHERE p.user_id = ?1 \
            AND p.local_album_id IN (SELECT o.album_id FROM ("
-        + (owns_group!("= a.group_mbid"))
+        + (owns_group!("= +a.group_mbid"))
         + ") o)) \
          ORDER BY a.arrived_at, a.group_mbid LIMIT ?3";
     pub(in crate::discover) row ShelfNeverPlayedRow for [SHELF_NEVER_PLAYED] {
