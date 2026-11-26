@@ -424,6 +424,10 @@ const IDENTITY_USES: &[(&str, &str)] = &[
     ),
     ("matching::Release", "the stored release document's type"),
     (
+        "accepted",
+        "its own SQL definition, exported at the crate root for the areas above",
+    ),
+    (
         "mbid_shape",
         "its own SQL definition, exported at the crate root for the areas above",
     ),

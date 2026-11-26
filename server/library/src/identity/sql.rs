@@ -165,6 +165,8 @@ macro_rules! stuck_on_ids {
 /// release, the album carries no match flag, and no custom edition is
 /// active on it. Any decision source counts. Proof, merges and retag joins
 /// read this tier; pages, playback and compat need only a row.
+#[doc(hidden)]
+#[macro_export]
 macro_rules! accepted {
     ($identity:literal) => {
         concat!(
@@ -182,7 +184,46 @@ macro_rules! accepted {
         )
     };
 }
-pub(crate) use accepted;
+pub(crate) use crate::accepted;
+
+/// The indexed tracks that hold a recording on proof: `track_id`, the
+/// album's `album_id` and its `created_at`, for ordering the holders of one
+/// recording. `$test` finishes the comparison of a lowered recording, as in
+/// [`owns_group!`], and `$provider` names the provider compared and read
+/// for a file's own tags. A track's match row names it on an album whose
+/// match is accepted, or a file with no match row is tagged with it. A
+/// guess holds nothing.
+#[macro_export]
+macro_rules! holds_recording {
+    ($test:literal, $provider:literal) => {
+        concat!(
+            "SELECT hit.id AS track_id, hab.id AS album_id, \
+             hab.created_at AS album_created_at \
+             FROM local_track_external_identities hi \
+             JOIN local_tracks hit ON hit.id = hi.local_track_id \
+             JOIN local_albums hab ON hab.id = hit.local_album_id \
+             JOIN local_album_external_identities he \
+             ON he.local_album_id = hit.local_album_id AND he.provider = ",
+            $provider,
+            " WHERE lower(hi.recording_mbid) ",
+            $test,
+            " AND hi.provider = ",
+            $provider,
+            " AND +hit.availability = 'indexed' AND ",
+            $crate::accepted!("he"),
+            " UNION ALL SELECT hit.id, hab.id, hab.created_at \
+             FROM local_tracks hit \
+             JOIN local_albums hab ON hab.id = hit.local_album_id \
+             WHERE lower(COALESCE(hit.embedded_recording_mbid, '')) ",
+            $test,
+            " AND +hit.availability = 'indexed' AND NOT EXISTS (SELECT 1 \
+             FROM local_track_external_identities hx \
+             WHERE hx.local_track_id = hit.id AND hx.provider = ",
+            $provider,
+            ")"
+        )
+    };
+}
 
 /// An album identification has not reached yet, over an album alias: no
 /// match row and no flag row of any state. Only then may a file's own tags
@@ -662,18 +703,8 @@ droppedneedle_kernel::sql! {
     /// match row (provider `?2`) names it on an album whose match is
     /// accepted, or it has no match row and its file's own tags name it. A
     /// guess's recording holds nothing.
-    pub(super) RECORDING_HELD = "SELECT EXISTS (SELECT 1 \
-             FROM local_track_external_identities i \
-             JOIN local_tracks t ON t.id = i.local_track_id \
-             JOIN local_album_external_identities e \
-             ON e.local_album_id = t.local_album_id AND e.provider = ?2 \
-             WHERE lower(i.recording_mbid) = ?1 AND i.provider = ?2 \
-             AND +t.availability = 'indexed' AND " + (accepted!("e")) + ") \
-             OR EXISTS (SELECT 1 FROM local_tracks t \
-             WHERE lower(COALESCE(t.embedded_recording_mbid, '')) = ?1 \
-             AND +t.availability = 'indexed' AND NOT EXISTS (SELECT 1 \
-             FROM local_track_external_identities x \
-             WHERE x.local_track_id = t.id AND x.provider = ?2))";
+    pub(super) RECORDING_HELD = "SELECT EXISTS (SELECT 1 FROM ("
+        + (holds_recording!("= ?1", "?2")) + "))";
     /// The live album a local-only album would repeat: one titled `?1` by
     /// `?2` (both folded), one that owns release group `?3` (lowered), or
     /// one the scan keyed on its release, `?4` (`mbid:` and the lowered

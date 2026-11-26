@@ -588,6 +588,64 @@ async fn a_song_the_library_holds_files_nothing() {
     assert!(dispatch.take_calls().await.is_empty());
 }
 
+/// A song the library gains after its download failed is not fetched
+/// again: retrying it answers 409 ALREADY_IN_LIBRARY and starts nothing.
+#[tokio::test]
+async fn retrying_a_song_the_library_now_holds_starts_nothing() {
+    let (state, db, dispatch) = setup().await;
+    seed_edition_album(&db).await;
+    let ask = json!({"recording_mbid": MBID_B, "artist_name": "A", "track_title": "T"});
+    let (status, body) = call(
+        &state,
+        Method::POST,
+        "/api/v3/requests/tracks",
+        Some(TRUSTED),
+        Some(ask),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let first = dispatch.task(1);
+    dispatch.fail(&first).await;
+    dispatch.take_calls().await;
+
+    // The song lands on an accepted album after the request failed.
+    let recording = MBID_B.to_owned();
+    db.write("test.seed_held_recording", move |tx| {
+        tx.execute_batch(&format!(
+            "INSERT INTO local_album_external_identities (local_album_id, provider, \
+               release_group_mbid, release_mbid, decision_source, selected_at) \
+               VALUES ('al1', 'musicbrainz', '{MBID_A}', 'rel-1', 'automatic', 0);
+             INSERT INTO local_track_external_identities (local_track_id, provider, \
+               recording_mbid, decision_source, selected_at) \
+               VALUES ('t1', 'musicbrainz', '{recording}', 'automatic', 0);"
+        ))?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    let before = dispatch.ids();
+    let (status, body) = call(
+        &state,
+        Method::POST,
+        &format!("/api/v3/requests/retry/{MBID_B}?kind=track"),
+        Some(TRUSTED),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "ALREADY_IN_LIBRARY");
+    assert_eq!(body["error"]["message"], "Already in your library.");
+    assert_eq!(dispatch.ids(), before, "nothing starts");
+    let row = state
+        .store
+        .get(RequestKind::Track, MBID_B)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.status.as_str(), "failed");
+}
+
 /// Each asker's row matching `filter`, with where they asked.
 async fn places(db: &AcquireDb, filter: &str) -> Vec<(String, Option<String>)> {
     let query = format!(

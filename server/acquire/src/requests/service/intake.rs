@@ -707,7 +707,7 @@ impl RequestsService {
     /// Whether the library holds the recording `mbid` on proof, as the
     /// identity rules read it: a guessed match never refuses an ask. A read
     /// that fails is never taken as no.
-    async fn library_holds(&self, mbid: &str) -> Result<bool, RequestsError> {
+    pub(super) async fn library_holds(&self, mbid: &str) -> Result<bool, RequestsError> {
         let recording = mbid.to_owned();
         read(
             &self.library,

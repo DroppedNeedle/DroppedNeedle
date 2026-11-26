@@ -1,6 +1,6 @@
 import { v3 } from '$lib/api/v3/endpoint';
 import { api } from '$lib/api/client';
-import { ApiError } from '$lib/api/errors';
+import { ApiError, isAlreadyInLibrary } from '$lib/api/errors';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { toastStore } from '$lib/stores/toast';
 import type { RequestKind } from './types';
@@ -105,10 +105,14 @@ export const createRetryRequestMutation = () =>
 		},
 		onError: (err) => {
 			refreshIfGone(err);
-			toastStore.show({
-				message: errorMessage(err, 'Could not retry that request'),
-				type: 'error'
-			});
+			toastStore.show(
+				isAlreadyInLibrary(err)
+					? { message: err.message, type: 'info' }
+					: {
+							message: errorMessage(err, 'Could not retry that request'),
+							type: 'error'
+						}
+			);
 		}
 	}));
 
@@ -129,10 +133,14 @@ export const createFromAlbumMutation = () =>
 			toastStore.show({ message: data.message || 'Getting it from the album', type: 'success' });
 		},
 		onError: (err) =>
-			toastStore.show({
-				message: errorMessage(err, 'Could not get it from the album'),
-				type: 'error'
-			})
+			toastStore.show(
+				isAlreadyInLibrary(err)
+					? { message: err.message, type: 'info' }
+					: {
+							message: errorMessage(err, 'Could not get it from the album'),
+							type: 'error'
+						}
+			)
 	}));
 
 export const createApproveRequestMutation = () =>

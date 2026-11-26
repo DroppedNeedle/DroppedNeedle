@@ -154,7 +154,7 @@ pub async fn cancel_one_handler(
 
 /// Retry one terminal ask. `POST /api/v3/requests/retry/{musicbrainz_id}`.
 /// Plain users rejoin the queue unless the generation already carries
-/// approval provenance.
+/// approval provenance. A song the library now holds is not fetched again.
 #[utoipa::path(
     post,
     tag = "requests",
@@ -163,6 +163,7 @@ pub async fn cancel_one_handler(
     responses(
         (status = 200, body = ActionResponse),
         (status = 404, description = "No such request on the caller's list"),
+        (status = 409, description = "The library already holds that song"),
     )
 )]
 pub async fn retry_one_handler(
@@ -191,7 +192,7 @@ pub async fn retry_one_handler(
     responses(
         (status = 200, body = ActionResponse),
         (status = 404, description = "No such track request on the caller's list"),
-        (status = 409, description = "No album version to take, or the request needs approval"),
+        (status = 409, description = "No album version to take, the request needs approval, or the library already holds that song"),
     )
 )]
 pub async fn from_album_handler(

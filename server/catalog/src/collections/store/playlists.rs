@@ -641,6 +641,28 @@ fn library_copy_candidates(
         .collect()
 }
 
+/// The caller's playlist's unlinked entries that name a recording, each
+/// with the library track holding it on proof, when one does.
+fn library_copy_by_recording(
+    conn: &Connection,
+    user_id: &str,
+    playlist_id: &str,
+) -> rusqlite::Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(sql::LIBRARY_COPY_BY_RECORDING.text())?;
+    let mut rows = stmt.query_map(
+        params![user_id, playlist_id],
+        sql::LibraryCopyByRecording::read,
+    )?;
+    let mut links = Vec::new();
+    for row in &mut rows {
+        let link = row?;
+        if let Some(track_id) = link.track_id {
+            links.push((link.entry_id, track_id));
+        }
+    }
+    Ok(links)
+}
+
 /// One playlist row and its first entry covers, or None.
 fn one_playlist(
     conn: &Connection,
@@ -971,7 +993,7 @@ impl PlaylistStore {
 
     /// Every playlist, as (owner, playlist), holding an entry with no
     /// library file and no source it lists that an album now in the
-    /// library owns.
+    /// library owns, or whose exact recording the library holds on proof.
     pub async fn to_link(&self) -> Result<Vec<(String, String)>, StoreError> {
         self.db
             .read("playlists.to_link", |conn| {
@@ -2257,10 +2279,13 @@ impl OwnedPlaylists<'_> {
     }
 
     /// Point each entry with no library file and no source it lists (none
-    /// yet, or one saved without any, as a YouTube radio song is) whose
-    /// album the library owns at the library's copy (see
-    /// [`library_links`]); when the album is held
-    /// twice, the copy a lookup by its group opens comes first. Answers how
+    /// yet, or one saved without any, as a YouTube radio song is) at the
+    /// library's copy. An entry whose album the library owns links to a
+    /// track there (see [`library_links`]); when the album is held twice,
+    /// the copy a lookup by its group opens comes first. An entry the album
+    /// pass did not link whose exact recording the library holds on another
+    /// album links to that holder, picked first by album age then by track
+    /// id (see [`library_copy_by_recording`]). Group links win. Answers how
     /// many entries that linked; none when the playlist is not the user's.
     /// Opening a playlist runs this, and so does an import once its rows
     /// are written (an importer that stores rows with no source should
@@ -2277,7 +2302,18 @@ impl OwnedPlaylists<'_> {
                 .db
                 .read("playlists.library_copy_candidates", move |conn| {
                     let candidates = library_copy_candidates(conn, &user_id, &playlist_id)?;
-                    Ok(library_links(&candidates))
+                    let mut links = library_links(&candidates);
+                    // One snapshot, because the two reads must agree: the
+                    // group links win, so the recording pass only adds
+                    // entries the group pass did not link.
+                    let covered: HashSet<String> =
+                        links.iter().map(|(entry, _)| entry.clone()).collect();
+                    links.extend(
+                        library_copy_by_recording(conn, &user_id, &playlist_id)?
+                            .into_iter()
+                            .filter(|(entry, _)| !covered.contains(entry)),
+                    );
+                    Ok(links)
                 })
                 .await?
         };

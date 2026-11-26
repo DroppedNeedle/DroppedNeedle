@@ -1508,6 +1508,97 @@ async fn resolving_sources_links_imported_entries_to_the_library() {
     assert_eq!(replaced["available_sources"], json!(["local"]));
 }
 
+/// A song whose own album the library lacks still links when the library
+/// holds its exact recording on another album: the entry plays that copy.
+/// A recording held only under a guessed match is not held, so its entry
+/// stays unlinked.
+#[tokio::test]
+async fn a_recording_held_on_another_album_links_its_song() {
+    use droppedneedle_catalog::collections::service::CollectionsService;
+    const GROUP: &str = "0a0b0c0d-0001-4000-8000-000000000001";
+    const ELSEWHERE: &str = "0a0b0c0d-0001-4000-8000-0000000000f1";
+    const HELD: &str = "0a0b0c0d-0001-4000-8000-0000000000a1";
+    const GUESSED: &str = "0a0b0c0d-0001-4000-8000-0000000000a2";
+    let rig = Rig::open().await;
+    let app = rig.app();
+    let entry = |name: &str, recording: &str| {
+        json!({"track_name": name, "artist_name": "Aurora", "album_name": "Elsewhere",
+               "album_id": ELSEWHERE, "source_type": "", "track_number": 1,
+               "recording_mbid": recording})
+    };
+    let (_, created) = call(
+        &app,
+        Method::POST,
+        "/api/v3/playlists",
+        Some(ADA),
+        Some(json!({"name": "Road Trip"})),
+    )
+    .await;
+    let one = format!("/api/v3/playlists/{}", created["id"].as_str().unwrap());
+    call(
+        &app,
+        Method::POST,
+        &format!("{one}/tracks"),
+        Some(ADA),
+        Some(json!({"tracks": [entry("Opener", HELD), entry("Aurora", GUESSED)]})),
+    )
+    .await;
+
+    rig.seed_owned_album(GROUP).await;
+    rig.runtime
+        .db()
+        .write(
+            droppedneedle_kernel::db::Lane::Foreground,
+            "seed other albums' recordings",
+            |tx| {
+                tx.execute_batch(&format!(
+                    "UPDATE local_album_external_identities SET release_mbid = 'rel-a' \
+                     WHERE local_album_id = 'alb-a'; \
+                     INSERT INTO local_track_external_identities (local_track_id, provider, \
+                     recording_mbid, decision_source, selected_at) \
+                     VALUES ('trk-a1', 'musicbrainz', '{HELD}', 'automatic', 1); \
+                     INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+                     album_artist_id, grouping_source, created_at, updated_at) VALUES \
+                     ('alb-g', 'r1', 'gg', 'Elsewhere', 'elsewhere', 'art-a', 'automatic', 1, 1); \
+                     INSERT INTO local_album_external_identities (local_album_id, provider, \
+                     release_group_mbid, release_mbid, decision_source, selected_at) VALUES \
+                     ('alb-g', 'musicbrainz', '{GROUP}', 'rel-g', 'automatic', 1); \
+                     INSERT INTO local_tracks (id, local_album_id, root_id, file_path, \
+                     relative_path, path_hash, file_size_bytes, file_mtime_ns, stat_revision, \
+                     title, title_folded, album_title, album_title_folded, file_format, \
+                     availability, ingest_source, imported_at, membership_source) VALUES \
+                     ('trk-g1', 'alb-g', 'r1', '/m/g1.flac', 'g1.flac', 'hg1', 1, 1, 'sg1', \
+                     'Aurora', 'aurora', 'Elsewhere', 'elsewhere', 'flac', 'indexed', \
+                     'scan', 1, 'automatic'); \
+                     INSERT INTO local_track_external_identities (local_track_id, provider, \
+                     recording_mbid, decision_source, selected_at) \
+                     VALUES ('trk-g1', 'musicbrainz', '{GUESSED}', 'automatic', 1); \
+                     INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+                     updated_at) VALUES ('alb-g', 'unconfirmed', 'LOW_CONFIDENCE', 1);"
+                ))?;
+                Ok::<_, droppedneedle_kernel::db::DbError>(())
+            },
+        )
+        .await
+        .unwrap();
+
+    let state = rig.state();
+    let pass = || async {
+        CollectionsService::new(&state)
+            .link_library_everywhere()
+            .await
+            .unwrap()
+    };
+    assert_eq!(pass().await, 1, "the held recording links its entry");
+    let (_, detail) = call(&app, Method::GET, &one, Some(ADA), None).await;
+    assert_eq!(detail["tracks"][0]["library_file_id"], "trk-a1");
+    assert!(
+        detail["tracks"][1]["library_file_id"].is_null(),
+        "a guess holds nothing: {detail}"
+    );
+    assert_eq!(pass().await, 0, "a second pass finds nothing left to link");
+}
+
 #[tokio::test]
 async fn store_faults_render_fixed_500_envelopes() {
     let rig = Rig::open().await;

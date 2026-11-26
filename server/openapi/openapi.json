@@ -32856,7 +32856,7 @@
         "tags": [
           "requests"
         ],
-        "summary": "Retry one terminal ask. `POST /api/v3/requests/retry/{musicbrainz_id}`.\nPlain users rejoin the queue unless the generation already carries\napproval provenance.",
+        "summary": "Retry one terminal ask. `POST /api/v3/requests/retry/{musicbrainz_id}`.\nPlain users rejoin the queue unless the generation already carries\napproval provenance. A song the library now holds is not fetched again.",
         "operationId": "retry_one_handler",
         "parameters": [
           {
@@ -32891,6 +32891,16 @@
           },
           "404": {
             "description": "No such request on the caller's list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The library already holds that song",
             "content": {
               "application/json": {
                 "schema": {
@@ -32997,7 +33007,7 @@
             }
           },
           "409": {
-            "description": "No album version to take, or the request needs approval",
+            "description": "No album version to take, the request needs approval, or the library already holds that song",
             "content": {
               "application/json": {
                 "schema": {

@@ -11,7 +11,7 @@ use droppedneedle_kernel::db::time::Millis;
 use super::models::{AlbumPick, FiledKind, SourceAlbumKind};
 
 use droppedneedle_auth::listed_user;
-use droppedneedle_library::{copy_of_group, owns_group};
+use droppedneedle_library::{copy_of_group, holds_recording, owns_group};
 
 /// The playlist over an alias is not a list on rotation: only the app's
 /// refresh writes those (`super::rotation`).
@@ -260,6 +260,28 @@ droppedneedle_kernel::sql! {
         track_disc: i64,
         track_number: i64,
     }
+    /// The caller's playlist `?2`'s unlinked entries that name a recording,
+    /// each with the one indexed library track holding that recording (see
+    /// `holds_recording!`): the copy of the entry's own release group first,
+    /// then by album age, then by track id. An entry whose recording
+    /// nothing holds on proof answers no track.
+    pub(super) LIBRARY_COPY_BY_RECORDING = "SELECT r.entry_id, r.track_id FROM ( \
+         SELECT e.id AS entry_id, e.position AS position, \
+         (SELECT h.track_id FROM (" + (holds_recording!("= lower(e.recording_mbid)", "'musicbrainz'")) + ") h \
+         ORDER BY h.album_id IS NOT ("
+        + (copy_of_group!("= lower(e.album_id)"))
+        + "), h.album_created_at, h.track_id LIMIT 1) AS track_id \
+         FROM catalog_playlist_tracks e \
+         WHERE e.playlist_id = (SELECT p.id FROM catalog_playlists p WHERE p.id = ?2 AND "
+        + OWNED + ") AND " + UNLINKED + " \
+         AND trim(COALESCE(e.recording_mbid, '')) <> '') r \
+         ORDER BY r.position, r.track_id";
+    /// An unlinked entry pointed at the library track holding its recording,
+    /// when one holds it on proof.
+    pub(super) row LibraryCopyByRecording for [LIBRARY_COPY_BY_RECORDING] {
+        entry_id: String,
+        track_id: Option<String>,
+    }
     /// Point entry `?3` of the caller's playlist `?2`, still without a
     /// library file or a source it lists, at library track `?4` while that
     /// track is indexed. The library becomes its source, unless it keeps
@@ -279,9 +301,10 @@ droppedneedle_kernel::sql! {
          AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.id = ?4 AND +t.availability = 'indexed')";
     /// Every playlist, with its owner, holding an entry with no library
     /// file and no source it lists whose release group an album with an
-    /// indexed track owns: the ones a link pass opens. Entries with no
-    /// source are read through their own index; the few with an unlisted
-    /// source are found by a pass over the rest.
+    /// indexed track owns, or whose recording the library holds on proof:
+    /// the ones a link pass opens. Entries with no source are read through
+    /// their own index; the few with an unlisted source are found by a pass
+    /// over the rest.
     pub(super) PLAYLISTS_TO_LINK = "SELECT p.user_id AS user_id, p.id AS playlist_id \
          FROM catalog_playlist_tracks e JOIN catalog_playlists p ON p.id = e.playlist_id \
          WHERE e.source_type = '' AND e.library_file_id IS NULL AND e.album_id IS NOT NULL \
@@ -293,7 +316,13 @@ droppedneedle_kernel::sql! {
          WHERE " + SOURCE_UNLISTED + " AND e.library_file_id IS NULL AND e.album_id IS NOT NULL \
          AND p.user_id IS NOT NULL AND EXISTS (SELECT 1 FROM local_tracks t \
          WHERE t.local_album_id IN (SELECT album_id FROM (" + ENTRY_OWNERS + ")) \
-         AND +t.availability = 'indexed') ORDER BY user_id, playlist_id";
+         AND +t.availability = 'indexed') \
+         UNION SELECT p.user_id, p.id \
+         FROM catalog_playlist_tracks e JOIN catalog_playlists p ON p.id = e.playlist_id \
+         WHERE " + UNLINKED + " AND p.user_id IS NOT NULL \
+         AND trim(COALESCE(e.recording_mbid, '')) <> '' \
+         AND EXISTS (SELECT 1 FROM (" + (holds_recording!("= lower(e.recording_mbid)", "'musicbrainz'")) + ") h) \
+         ORDER BY user_id, playlist_id";
     /// A playlist a link pass opens, and its owner.
     pub(super) row PlaylistToLink for [PLAYLISTS_TO_LINK] {
         user_id: String,

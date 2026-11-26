@@ -1219,8 +1219,9 @@ impl CollectionsService<'_> {
     }
 
     /// Each entry's known sources. First, on the caller's own playlist, an
-    /// entry with no source yet whose album the library owns is pointed at
-    /// the library's copy, so an imported song plays once its album is in.
+    /// entry with no source yet whose album the library owns, or whose
+    /// exact recording it holds on proof, is pointed at the library's copy,
+    /// so an imported song plays once its album is in.
     pub async fn resolve_sources(
         &self,
         user_id: &str,

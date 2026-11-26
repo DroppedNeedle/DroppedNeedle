@@ -8571,7 +8571,7 @@ export interface paths {
         /**
          * Retry one terminal ask. `POST /api/v3/requests/retry/{musicbrainz_id}`.
          *     Plain users rejoin the queue unless the generation already carries
-         *     approval provenance.
+         *     approval provenance. A song the library now holds is not fetched again.
          */
         post: operations["retry_one_handler"];
         delete?: never;
@@ -51330,6 +51330,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description The library already holds that song */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     request_track_handler: {
@@ -51393,7 +51402,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description No album version to take, or the request needs approval */
+            /** @description No album version to take, the request needs approval, or the library already holds that song */
             409: {
                 headers: {
                     [name: string]: unknown;

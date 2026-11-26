@@ -324,7 +324,8 @@ impl CollectionsPlaylistBridge {
     /// Replace every row on one of the user's playlists with `tracks`, in
     /// order, and keep which Spotify song each row is, in one transaction:
     /// a failed write keeps the rows the playlist had. Then link the rows
-    /// whose album the library owns.
+    /// whose album the library owns, or whose exact recording it holds on
+    /// proof.
     pub async fn replace_tracks(
         &self,
         user_id: &str,

@@ -637,6 +637,11 @@ impl RequestsService {
                 message: "This request has no album version to take".to_owned(),
             });
         }
+        // A song the library holds now needs no album version. Checked
+        // before approval so a plain user reads why nothing will start.
+        if self.library_holds(&mbid).await? {
+            return Err(RequestsError::AlreadyInLibrary);
+        }
         // Waiting for approval would drop the choice: the retry would be
         // dispatched later as a plain one.
         if !record.dispatch_authorized && !auto_approves(principal.role()) {
@@ -665,6 +670,11 @@ impl RequestsService {
             return Ok(Decided::CannotRetry {
                 status: record.status,
             });
+        }
+        // A song that arrived another way after the request failed is not
+        // fetched again. A read that fails stays an error, never "not held".
+        if kind == RequestKind::Track && self.library_holds(&mbid).await? {
+            return Err(RequestsError::AlreadyInLibrary);
         }
         let prior_status = record.status;
         let can_dispatch = record.dispatch_authorized || auto_approves(principal.role());
