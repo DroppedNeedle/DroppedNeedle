@@ -44,33 +44,26 @@ pub enum PageKind {
     Discover,
     /// Home's provider shelves.
     Home,
-    /// The queue deck's rows, left from before the weekly set.
-    Queue,
     /// The Daily Mixes a discover build reuses.
     DailyMixes,
-    /// The Top Picks a discover build reuses.
-    TopPicks,
 }
 
 droppedneedle_kernel::spelled!(PageKind {
     Discover => "discover",
     Home => "home",
-    Queue => "queue",
     DailyMixes => "daily_mixes",
-    TopPicks => "top_picks",
 });
 
 impl PageKind {
     /// Whether a page built for `saved` may be served to a user who now
     /// has `wanted`. Linking or unlinking a service starts the pages over.
     /// The discover page and home are served from the old MusicBrainz
-    /// source while the new one builds; a deck and the memos are not.
+    /// source while the new one builds; the memos are not.
     fn fits(self, saved: &Variant, wanted: &Variant) -> bool {
         let services = saved.listenbrainz == wanted.listenbrainz && saved.lastfm == wanted.lastfm;
         match self {
             Self::Discover | Self::Home => services,
-            Self::Queue => saved.source == wanted.source,
-            Self::DailyMixes | Self::TopPicks => services && saved.source == wanted.source,
+            Self::DailyMixes => services && saved.source == wanted.source,
         }
     }
 }

@@ -482,6 +482,14 @@ const SHIPPED: &[(&str, &str)] = &[
         "0177_stated_artists.sql",
         "85f708b264e0467d214f294671edceae3401d87c217eae98132c68646bc1a5a5",
     ),
+    (
+        "0178_cached_page_kinds.sql",
+        "171e4d7b6009d00b27acfe012a244cf89aff77d47bea3ec7f2d795660c7c020a",
+    ),
+    (
+        "0179_section_switches.sql",
+        "3d6fe4f8d8784b9d58f87554ce4252a4377b982ca80c52cb6e909a05aaa72df6",
+    ),
 ];
 
 /// Upgrading an instance keeps existing sessions valid and outside the
@@ -4621,6 +4629,224 @@ fn stated_artists_upgrade_adds_one_empty_table() {
         ),
         ["u2"],
         "an account's list goes with it, and only its own"
+    );
+}
+
+/// 0178 rebuilds the page cache with the three kinds left. Home's rows, the
+/// Daily Mixes and a Discover page of today's shape are copied with their
+/// rowids; the queue deck's rows, the Top Picks memo and a Discover page
+/// that would not read (from before the weekly set, naming a section that
+/// left, or not JSON) are dropped. An album that only shares a gone key's
+/// name keeps its page, and nothing else in the schema changes.
+#[test]
+fn cached_page_kinds_upgrade_keeps_the_live_rows() {
+    let dir = ScratchDir::new("cached-page-kinds-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 178)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    let page = |sections: &str, skipped: &str| {
+        format!(
+            r#"{{"page": {{"sections": [{sections}], "section_states": [],
+                "weekly_set_enabled": true, "service_prompts": [], "genre_artwork": {{}},
+                "genre_artwork_schema_version": "v2", "refreshing": false}},
+                "skipped": [{skipped}]}}"#
+        )
+    };
+    let radio = r#"{"key": "radio_sections", "zone": "made_for_you",
+        "content": {"shape": "shelves", "shelves": []}}"#;
+    let titled = r#"{"key": "radio_sections", "zone": "made_for_you", "content": {"shape":
+        "shelves", "shelves": [{"title": "rediscover", "type": "albums", "items": [{"kind":
+        "album", "title": "top_picks"}]}]}}"#;
+    let chart = r#"{"key": "lastfm_weekly_album_chart", "zone": "trending_now",
+        "content": {"shape": "shelf", "shelf": {"title": "Chart", "type": "albums",
+        "items": []}}}"#;
+    let before_weekly = r#"{"page": {"sections": [], "discover_queue_enabled": true}}"#;
+    let rows = [
+        ("u1", "discover", page(radio, r#""genre_list""#)),
+        ("u2", "discover", page(titled, "")),
+        ("u3", "discover", page(chart, "")),
+        ("u4", "discover", page(radio, r#""top_picks""#)),
+        ("u5", "discover", before_weekly.to_owned()),
+        ("u6", "discover", "not json".to_owned()),
+        (
+            "u1",
+            "home",
+            r#"{"sections": [], "skipped": []}"#.to_owned(),
+        ),
+        ("u1", "daily_mixes", "[]".to_owned()),
+        ("u1", "queue", "{}".to_owned()),
+        ("u1", "top_picks", "{}".to_owned()),
+    ];
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, created_at) VALUES ('u1', 'One', 1),
+                 ('u2', 'Two', 1), ('u3', 'Three', 1), ('u4', 'Four', 1), ('u5', 'Five', 1),
+                 ('u6', 'Six', 1);",
+        )
+        .unwrap();
+    for (user, kind, payload) in &rows {
+        connection
+            .execute(
+                "INSERT INTO catalog_cached_pages (user_id, page, source, listenbrainz,
+                     lastfm, payload, built_at) VALUES (?1, ?2, 'source', 1, 0,
+                     CAST(?3 AS BLOB), 5)",
+                rusqlite::params![user, kind, payload],
+            )
+            .unwrap();
+    }
+    let columns = "rowid, user_id, page, source, listenbrainz, lastfm, \
+        CAST(payload AS TEXT), built_at";
+    // In insert order: u1's and u2's Discover pages, u1's Home and mixes.
+    let kept: Vec<String> = table_rows(&connection, "catalog_cached_pages", columns)
+        .into_iter()
+        .enumerate()
+        .filter(|(at, _)| [0, 1, 6, 7].contains(at))
+        .map(|(_, row)| row)
+        .collect();
+    let before_schema = schema_rows(&connection);
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON")
+        .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 178);
+    assert_eq!(
+        table_rows(&connection, "catalog_cached_pages", columns),
+        kept
+    );
+    let mut after_schema = schema_rows(&connection);
+    let table_sql = after_schema
+        .iter()
+        .find(|(_, name, _, _)| name == "catalog_cached_pages")
+        .and_then(|(_, _, _, sql)| sql.clone())
+        .unwrap();
+    assert!(
+        table_sql.contains("CHECK (page IN ('discover', 'home', 'daily_mixes'))")
+            && table_sql.ends_with("STRICT"),
+        "{table_sql}"
+    );
+    let cache_rows = |rows: &mut Vec<(String, String, String, Option<String>)>| {
+        rows.retain(|(_, _, table, _)| table != "catalog_cached_pages");
+    };
+    let mut before_schema = before_schema;
+    cache_rows(&mut before_schema);
+    cache_rows(&mut after_schema);
+    assert_eq!(after_schema, before_schema, "nothing else changes");
+
+    for refused in [
+        "INSERT INTO catalog_cached_pages (user_id, page, source, listenbrainz, lastfm,
+             payload, built_at) VALUES ('u2', 'queue', 's', 0, 0, X'00', 1)",
+        "INSERT INTO catalog_cached_pages (user_id, page, source, listenbrainz, lastfm,
+             payload, built_at) VALUES ('nobody', 'home', 's', 0, 0, X'00', 1)",
+    ] {
+        assert!(connection.execute_batch(refused).is_err(), "{refused}");
+    }
+    connection
+        .execute("DELETE FROM auth_users WHERE id = 'u1'", [])
+        .unwrap();
+    assert_eq!(
+        texts(&connection, "SELECT user_id FROM catalog_cached_pages", []),
+        ["u2"],
+        "an account's pages go with it"
+    );
+}
+
+/// 0179 carries the Discover section switches over this release's changes: a
+/// deck switched off is the week switched off, the two renames keep their
+/// switch, New from your artists is off only for a person who had both of
+/// the sections it replaces off, Milestone Anniversaries' switch moves to
+/// Home, and the switches of sections that left are gone. A rename that
+/// meets a row already under its new key keeps that row, and every other
+/// row is unchanged.
+#[test]
+fn section_switches_upgrade_carries_each_change() {
+    let dir = ScratchDir::new("section-switches-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 179)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    let mut seed = String::from(
+        "INSERT INTO auth_users (id, display_name, created_at) VALUES ('u1', 'One', 1),
+             ('u2', 'Two', 1), ('u3', 'Three', 1), ('u4', 'Four', 1);",
+    );
+    for (user, page, key, enabled, at) in [
+        ("u1", "discover", "discover_queue", 0, 1),
+        ("u1", "discover", "missing_essentials", 0, 2),
+        ("u1", "discover", "rediscover", 0, 3),
+        ("u1", "discover", "fresh_releases", 0, 4),
+        ("u1", "discover", "new_from_followed", 0, 5),
+        ("u1", "discover", "anniversaries", 0, 6),
+        ("u1", "discover", "top_picks", 0, 7),
+        ("u1", "discover", "listeners_like_you", 0, 7),
+        ("u1", "discover", "because_you_listen_to", 0, 7),
+        ("u1", "discover", "artists_you_might_like", 0, 7),
+        ("u1", "discover", "popular_in_your_genres", 0, 7),
+        ("u1", "discover", "unexplored_genres", 0, 7),
+        ("u1", "discover", "globally_trending", 0, 7),
+        ("u1", "discover", "lastfm_recent_scrobbles", 0, 7),
+        ("u1", "discover", "lastfm_weekly_artist_chart", 0, 7),
+        ("u1", "discover", "lastfm_weekly_album_chart", 0, 7),
+        ("u1", "discover", "genre_list", 0, 8),
+        ("u1", "home", "popular_albums", 0, 9),
+        ("u1", "sidebar", "youtube", 0, 9),
+        ("u2", "discover", "fresh_releases", 0, 10),
+        ("u3", "discover", "fresh_releases", 1, 11),
+        ("u3", "discover", "new_from_followed", 0, 12),
+        ("u4", "discover", "discover_queue", 0, 13),
+        ("u4", "discover", "weekly_set", 1, 14),
+        ("u4", "discover", "anniversaries", 0, 15),
+        ("u4", "home", "anniversaries", 1, 16),
+        ("u4", "home", "discover_queue", 0, 17),
+    ] {
+        seed += &format!(
+            "INSERT INTO app_section_prefs (user_id, page, section_key, enabled, updated_at)
+                 VALUES ('{user}', '{page}', '{key}', {enabled}, {at});"
+        );
+    }
+    connection.execute_batch(&seed).unwrap();
+    let before_schema = schema_rows(&connection);
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 179);
+    assert_eq!(schema_rows(&connection), before_schema, "no schema change");
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT user_id || ' ' || page || ' ' || section_key || ' ' || enabled || ' '
+                 || updated_at FROM app_section_prefs ORDER BY user_id, page, section_key",
+            []
+        ),
+        [
+            "u1 discover from_your_shelves 0 3",
+            "u1 discover gaps_in_your_artists 0 2",
+            "u1 discover genre_list 0 8",
+            "u1 discover new_from_your_artists 0 5",
+            "u1 discover weekly_set 0 1",
+            "u1 home anniversaries 0 6",
+            "u1 home popular_albums 0 9",
+            "u1 sidebar youtube 0 9",
+            "u4 discover weekly_set 1 14",
+            "u4 home anniversaries 1 16",
+            "u4 home discover_queue 0 17",
+        ]
+        .map(str::to_owned)
     );
 }
 

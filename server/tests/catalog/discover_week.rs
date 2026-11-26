@@ -487,8 +487,8 @@ async fn discover_week_a_complete_pool_of_five_writes_a_short_set() {
     }));
 }
 
-/// Home's count of open picks reads the week, and what the page saw happen
-/// to a pick is stamped on its record: a pick shown counts once per UTC day
+/// Home's teaser reads the week, and what the page saw happen to a pick
+/// is stamped on its record: a pick shown counts once per UTC day
 /// however often it is shown, its first sample and opening are stamped, and
 /// an event about an album never offered writes nothing.
 #[tokio::test]
@@ -504,16 +504,21 @@ async fn discover_week_counts_open_picks_and_stamps_what_was_seen() {
     insert(&db, rows).await;
     let deps = deps(&rig, &dir, Script::default());
     let app = discover_routes(deps.clone());
-    let (status, body) = call(&app, "GET", "/api/v3/discover/queue/status", None).await;
-    assert_eq!(
-        (status, &body),
-        (StatusCode::OK, &json!({"status": "idle"}))
-    );
+    let teaser = || async {
+        weekly::teaser(&db, "user-1", rig.clock().now_ms())
+            .await
+            .expect("the teaser reads")
+    };
+    assert_eq!(teaser().await, None, "no set yet");
 
     build(&deps, "user-1").await;
-    let (_, body) = call(&app, "GET", "/api/v3/discover/queue/status", None).await;
-    assert_eq!(body["status"], "ready");
-    assert_eq!(body["item_count"], 5, "five picks, none answered");
+    let built = teaser().await.expect("a set is out");
+    assert_eq!(built.albums.len(), 5, "five picks");
+    assert_eq!(
+        built.next.map(|pick| pick.pick_no),
+        Some(1),
+        "none answered"
+    );
 
     let card = album(0);
     let event = |id: &str, kind: &str| {
@@ -747,11 +752,10 @@ async fn discover_week_a_refused_request_does_not_read_as_kept() {
             (PickState::Open, false),
         ]
     );
-    let first_open = deps
-        .weekly
-        .next_open_pick("user-1")
+    let first_open = weekly::teaser(&db, "user-1", rig.clock().now_ms())
         .await
         .expect("the teaser")
+        .and_then(|teaser| teaser.next)
         .expect("an open pick");
     assert_eq!(first_open.pick_no, 7, "the first pick not answered");
 

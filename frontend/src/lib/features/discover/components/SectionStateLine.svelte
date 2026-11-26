@@ -21,13 +21,9 @@
 	// sections filled from the library or the person's own plays, which
 	// following artists does not fill
 	const OWN_SHELVES: ReadonlySet<SectionKey> = new Set([
-		'anniversaries',
 		'gaps_in_your_artists',
 		'genre_list',
-		'from_your_shelves',
-		'lastfm_recent_scrobbles',
-		'lastfm_weekly_artist_chart',
-		'lastfm_weekly_album_chart'
+		'from_your_shelves'
 	]);
 	const followable = $derived(!status.key || !OWN_SHELVES.has(status.key));
 

@@ -2,7 +2,8 @@ import type {
 	AlbumRef,
 	ArtistRef,
 	ListenSource,
-	StatsRange
+	StatsRange,
+	YourLastfm
 } from '$lib/features/discover/queries/types';
 import { key, userScope } from '$lib/queries/keys';
 import { v3 } from '$lib/api/v3/endpoint';
@@ -33,7 +34,8 @@ export const ChartQueryKeyFactory = {
 	overview: (userId: UserId, chart: ChartKind, source: ListenSource | null) =>
 		[...ChartQueryKeyFactory.chart(userId, chart, source), 'overview'] as const,
 	range: (userId: UserId, chart: ChartKind, source: ListenSource | null, range: StatsRange) =>
-		[...ChartQueryKeyFactory.chart(userId, chart, source), 'range', range] as const
+		[...ChartQueryKeyFactory.chart(userId, chart, source), 'range', range] as const,
+	yourLastfm: (userId: UserId) => key(userScope(userId), 'charts', 'your-lastfm')
 };
 
 type Getter<T> = () => T;
@@ -129,4 +131,13 @@ export const getChartRangeQuery = (
 			),
 		getNextPageParam: (lastPage: ChartPage) =>
 			lastPage.has_more ? lastPage.offset + lastPage.limit : undefined
+	}));
+
+/** The caller's own Last.fm lists; none for a person without Last.fm linked. */
+export const getYourLastfmQuery = () =>
+	createQuery(() => ({
+		meta: PERSIST,
+		queryKey: ChartQueryKeyFactory.yourLastfm(authStore.user?.id),
+		queryFn: ({ signal }): Promise<YourLastfm> =>
+			api.v3.GET(v3('/api/v3/home/your-top/lastfm'), { signal })
 	}));

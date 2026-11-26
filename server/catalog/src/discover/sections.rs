@@ -73,14 +73,8 @@ pub enum SectionKey {
     /// Discover: the person's own albums played a lot but not lately, and
     /// the ones they asked for and never played.
     FromYourShelves,
-    /// Discover: library albums with a round birthday this year.
+    /// Home: library albums with a round birthday this year.
     Anniversaries,
-    /// Discover: the user's recent Last.fm scrobbles.
-    LastfmRecentScrobbles,
-    /// Discover: the user's Last.fm weekly artist chart.
-    LastfmWeeklyArtistChart,
-    /// Discover: the user's Last.fm weekly album chart.
-    LastfmWeeklyAlbumChart,
 }
 
 impl SectionKey {
@@ -117,8 +111,6 @@ pub enum SectionZone {
     NewAndFresh,
     /// Discover: the user's own library and history.
     FromYourLibrary,
-    /// Discover: charts.
-    TrendingNow,
 }
 
 impl SectionZone {
@@ -133,7 +125,6 @@ impl SectionZone {
             Self::MadeForYou => "Made For You",
             Self::NewAndFresh => "New & Fresh",
             Self::FromYourLibrary => "From Your Library",
-            Self::TrendingNow => "Trending Now",
         }
     }
 }
@@ -166,12 +157,6 @@ impl Requires {
 pub enum Input {
     /// The user's top artists.
     Seeds,
-    /// The user's Last.fm weekly artist chart.
-    LastfmWeeklyArtists,
-    /// The user's Last.fm weekly album chart.
-    LastfmWeeklyAlbums,
-    /// The user's recent Last.fm scrobbles.
-    LastfmRecent,
     /// The user's ListenBrainz genres.
     Genres,
     /// The library's identified albums.
@@ -183,9 +168,6 @@ pub enum Input {
 pub enum Dedupe {
     /// It keeps every row.
     None,
-    /// Built one after another in page order, it skips artists an
-    /// earlier artist section already showed.
-    Artists,
     /// It drops albums a section of a lower rank already showed.
     Albums(u8),
 }
@@ -373,6 +355,14 @@ pub const SECTIONS: &[SectionDef] = &[
         Some(Requires::Library),
         B::Library,
     ),
+    home(
+        K::Anniversaries,
+        Z::YourLibrary,
+        "Milestone Anniversaries",
+        "Library albums turning 10, 20, 30… this year.",
+        Some(Requires::Library),
+        B::Library,
+    ),
     discover(
         K::WeeklySet,
         Z::Essentials,
@@ -443,23 +433,6 @@ pub const SECTIONS: &[SectionDef] = &[
         B::OwnHistory,
     ),
     discover(
-        K::Anniversaries,
-        Z::FromYourLibrary,
-        "Milestone Anniversaries",
-        "Library albums turning 10, 20, 30… this year.",
-        Some(Requires::Library),
-        B::Library,
-    ),
-    discover(
-        K::LastfmRecentScrobbles,
-        Z::FromYourLibrary,
-        "Recent Scrobbles",
-        "Your latest Last.fm scrobbles.",
-        Some(Requires::Lastfm),
-        B::OwnHistory,
-    )
-    .reading(&[I::LastfmRecent], Dedupe::Albums(8)),
-    discover(
         K::GenreList,
         Z::BrowseGenres,
         "Browse Genres",
@@ -468,24 +441,6 @@ pub const SECTIONS: &[SectionDef] = &[
         B::Library,
     )
     .reading(&[I::Genres], Dedupe::None),
-    discover(
-        K::LastfmWeeklyArtistChart,
-        Z::TrendingNow,
-        "Last.fm Weekly Artists",
-        "Your Last.fm weekly artist chart.",
-        Some(Requires::Lastfm),
-        B::OwnHistory,
-    )
-    .reading(&[I::LastfmWeeklyArtists], Dedupe::Artists),
-    discover(
-        K::LastfmWeeklyAlbumChart,
-        Z::TrendingNow,
-        "Last.fm Weekly Albums",
-        "Your Last.fm weekly album chart.",
-        Some(Requires::Lastfm),
-        B::OwnHistory,
-    )
-    .reading(&[I::LastfmWeeklyAlbums], Dedupe::Albums(7)),
 ];
 
 /// A page's sections in page order.

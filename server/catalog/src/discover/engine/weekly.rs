@@ -55,8 +55,9 @@ use crate::discover::facts::plan::SEEN_WINDOW_MS;
 use crate::discover::feedback::Answers;
 use crate::discover::listening::ListeningData;
 use crate::discover::models::{
-    AlbumRef, DigFurtherPick, DiscoverPrefs, PickReason, PickReasonKind, SetCounts, SetPick,
-    SetSource, SetTaste, SourceFailing, WeekResponse, WeekStatus, WeeklySet,
+    AlbumRef, DigFurtherPick, DiscoverPrefs, DiscoverPreview, PickReason, PickReasonKind,
+    PickState, SetCounts, SetPick, SetSource, SetTaste, SourceFailing, TeaserPick, WeekResponse,
+    WeekStatus, WeeklySet,
 };
 use crate::discover::page::shelves;
 use crate::discover::record::Offer;
@@ -868,30 +869,63 @@ impl WeeklySets {
         weekly_store::save_set_day(&self.db, user_id, prefs.set_day, self.clock.now_ms()).await?;
         Ok(prefs)
     }
+}
 
-    /// The first pick of `user_id`'s set for the week running that they
-    /// have not answered, for Home's teaser; `None` when there is none.
-    ///
-    /// # Errors
-    ///
-    /// A read's failure.
-    pub async fn next_open_pick(&self, user_id: &str) -> Result<Option<SetPick>, DbError> {
-        let now_ms = self.clock.now_ms();
-        let Some(context) = weekly_store::context(&self.db, user_id).await? else {
-            return Ok(None);
-        };
-        if due_week(now_ms, context.set_day, context.last_week_at).is_some() {
-            return Ok(None);
-        }
-        let Some(stored) = weekly_store::latest(&self.db, user_id).await? else {
-            return Ok(None);
-        };
-        let set = self.whole(user_id, stored, context.set_day, now_ms).await?;
-        Ok(set
-            .picks
-            .into_iter()
-            .find(|pick| pick.state == crate::discover::models::PickState::Open))
+/// Home's teaser: `user_id`'s newest set, with the first pick they have not
+/// answered; `None` with no set. While a new set is due but not built,
+/// Discover keeps showing the newest one, and so does the teaser while it
+/// has a pick open; once every pick of it is answered there is nothing to
+/// show until the new set is out. Local reads only: it starts no build and
+/// asks no provider.
+///
+/// # Errors
+///
+/// A read's failure.
+pub async fn teaser(
+    db: &Db,
+    user_id: &str,
+    now_ms: i64,
+) -> Result<Option<DiscoverPreview>, DbError> {
+    let Some(context) = weekly_store::context(db, user_id).await? else {
+        return Ok(None);
+    };
+    let due = due_week(now_ms, context.set_day, context.last_week_at).is_some();
+    let Some(stored) = weekly_store::latest(db, user_id).await? else {
+        return Ok(None);
+    };
+    let rows = weekly_store::set_picks(db, user_id, stored.week_start_at, now_ms).await?;
+    if rows.is_empty() {
+        return Ok(None);
     }
+    let mut next = None;
+    let mut albums = Vec::with_capacity(rows.len());
+    for row in rows {
+        let album = album_row(
+            &row.release_group_mbid,
+            &row.title,
+            &row.artist_name,
+            &row.artist_mbid,
+            row.primary_type.as_deref(),
+            row.first_release_date.as_deref(),
+        );
+        if next.is_none() && row.state == PickState::Open {
+            next = Some(TeaserPick {
+                pick_no: row.pick_no,
+                album: album.clone(),
+                reason: row.reason_line,
+            });
+        }
+        albums.push(album);
+    }
+    if due && next.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(DiscoverPreview {
+        week_number: week_number(stored.week_start_at),
+        next_set_at: next_set_at(stored.week_start_at, context.set_day),
+        albums,
+        next,
+    }))
 }
 
 impl JobHandler for WeeklySets {

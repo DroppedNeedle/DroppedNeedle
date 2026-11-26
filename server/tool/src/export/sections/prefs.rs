@@ -83,19 +83,53 @@ pub const PERSONAL_MIX_APPROVALS: TableSection = TableSection {
     left_behind: "approvals of deleted users; nothing to do, those accounts were deleted in v2",
 };
 
-/// Which home and page sections each user switched on.
+/// Discover sections that left the page, whose switches stay behind.
+macro_rules! gone_sections {
+    () => {
+        "'top_picks', 'listeners_like_you', 'because_you_listen_to', \
+         'artists_you_might_like', 'popular_in_your_genres', 'unexplored_genres', \
+         'globally_trending', 'lastfm_recent_scrobbles', 'lastfm_weekly_artist_chart', \
+         'lastfm_weekly_album_chart', 'new_from_followed'"
+    };
+}
+
+/// Which home and page sections each user switched on, carried over the
+/// Discover changes as migration 0179 carries v3's own rows: the deck is the
+/// weekly set, Missing Essentials and Rediscover are Gaps in artists you
+/// collect and From your shelves, Milestone Anniversaries is on Home, and
+/// New from your artists is off only for someone who had both Fresh Releases
+/// and New From Artists You Follow off (the Fresh Releases row carries it).
+/// The switches of sections that left stay behind.
 pub const SECTION_PREFS: TableSection = TableSection {
     name: "section_pref",
     source: Source::Table {
         table: "user_section_prefs",
-        filter: "",
+        filter: concat!(
+            "NOT (s.page = 'discover' AND (s.section_key IN (",
+            gone_sections!(),
+            ") OR (s.section_key = 'fresh_releases' AND NOT (",
+            flag!("enabled"),
+            " = 0 AND EXISTS (SELECT 1 FROM v2.user_section_prefs o \
+             WHERE o.user_id = s.user_id AND o.page = 'discover' \
+             AND o.section_key = 'new_from_followed' AND o.enabled = 0)))))"
+        ),
         requires: &[],
     },
     target: Target::Table("app_section_prefs"),
     columns: &[
         col("user_id"),
-        col("page"),
-        col("section_key"),
+        Column::new("page").from_sql(
+            "CASE WHEN s.page = 'discover' AND s.section_key = 'anniversaries' THEN 'home' \
+             ELSE s.page END",
+        ),
+        Column::new("section_key").from_sql(
+            "CASE WHEN s.page <> 'discover' THEN s.section_key \
+             WHEN s.section_key = 'discover_queue' THEN 'weekly_set' \
+             WHEN s.section_key = 'fresh_releases' THEN 'new_from_your_artists' \
+             WHEN s.section_key = 'missing_essentials' THEN 'gaps_in_your_artists' \
+             WHEN s.section_key = 'rediscover' THEN 'from_your_shelves' \
+             ELSE s.section_key END",
+        ),
         Column::new("enabled").from_sql(flag!("enabled")),
         Column::new("updated_at").from_sql(concat!("COALESCE(", millis!("updated_at"), ", 0)")),
     ],
@@ -103,7 +137,8 @@ pub const SECTION_PREFS: TableSection = TableSection {
     unique: &[],
     parents: &[],
     user_column: Some("user_id"),
-    left_behind: "preferences of deleted users; nothing to do, those accounts were deleted in v2",
+    left_behind: "switches of Discover sections that left the page, and preferences of deleted \
+                  users; nothing to do, those sections and accounts are gone",
 };
 
 /// Navidrome music folders each user picked.

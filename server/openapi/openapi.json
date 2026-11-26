@@ -6459,54 +6459,6 @@
         ]
       }
     },
-    "/api/v3/discover/queue/status": {
-      "get": {
-        "tags": [
-          "discover"
-        ],
-        "summary": "How many of the caller's weekly picks wait for an answer: `ready` with\ntheir count while a set is out and some are open, else `idle`.",
-        "operationId": "queue_status",
-        "responses": {
-          "200": {
-            "description": "Open picks",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DiscoverQueueStatusResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "The week could not be read",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
     "/api/v3/discover/queue/youtube-track-search": {
       "get": {
         "tags": [
@@ -9908,6 +9860,54 @@
           },
           "503": {
             "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/home/your-top/lastfm": {
+      "get": {
+        "tags": [
+          "discover"
+        ],
+        "summary": "The caller's own Last.fm lists for their charts page: recent\nscrobbles and this week's top albums and artists. Empty for a person\nwithout Last.fm linked.",
+        "operationId": "your_lastfm",
+        "responses": {
+          "200": {
+            "description": "The caller's Last.fm lists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YourLastfmResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Every list's read failed (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
             "content": {
               "application/json": {
                 "schema": {
@@ -48032,56 +48032,40 @@
       },
       "DiscoverPreview": {
         "type": "object",
-        "description": "A discover teaser on home: one seed artist plus similar artists.",
+        "description": "Home's way into Discover: the person's newest set, with the first pick\nthey have not answered, or none once every pick is answered.",
         "required": [
-          "seed_artist",
-          "seed_artist_mbid",
-          "items"
+          "week_number",
+          "next_set_at",
+          "albums"
         ],
         "properties": {
-          "items": {
+          "albums": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ArtistRef"
+              "$ref": "#/components/schemas/AlbumRef"
             },
-            "description": "Similar artists."
+            "description": "The set's albums, in pick order."
           },
-          "seed_artist": {
-            "type": "string",
-            "description": "Seed artist name."
-          },
-          "seed_artist_mbid": {
-            "type": "string",
-            "description": "Seed MusicBrainz artist id."
-          }
-        }
-      },
-      "DiscoverQueueStatusResponse": {
-        "type": "object",
-        "description": "How many of a person's weekly picks wait for an answer.",
-        "required": [
-          "status"
-        ],
-        "properties": {
-          "built_at": {
-            "type": [
-              "integer",
-              "null"
+          "next": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TeaserPick"
+              }
             ],
-            "format": "int64",
-            "description": "When the set was built (unix seconds), while `ready`."
+            "description": "The first pick not answered yet; null once every pick is answered."
           },
-          "item_count": {
-            "type": [
-              "integer",
-              "null"
-            ],
+          "next_set_at": {
+            "type": "integer",
             "format": "int64",
-            "description": "Picks still open, while `ready`."
+            "description": "When the next set comes out (unix ms)."
           },
-          "status": {
-            "$ref": "#/components/schemas/QueueBuildStatus",
-            "description": "Whether any wait."
+          "week_number": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The ISO week number of the set's first day."
           }
         }
       },
@@ -53547,7 +53531,7 @@
                 "$ref": "#/components/schemas/DiscoverPreview"
               }
             ],
-            "description": "Discover teaser. Not sent while Discover has nothing to tease\nwith: the shelf it copied has left the page."
+            "description": "Discover teaser: the newest set's next pick. Not sent while the\nperson has no set, nor while a new set is due and every pick of the\nlast one is answered."
           },
           "genre_artwork": {
             "type": "object",
@@ -66713,14 +66697,6 @@
           }
         }
       },
-      "QueueBuildStatus": {
-        "type": "string",
-        "description": "Whether a person's weekly picks wait for an answer.",
-        "enum": [
-          "idle",
-          "ready"
-        ]
-      },
       "QueueDepthView": {
         "type": "object",
         "description": "How deep one job kind's queue is.",
@@ -72659,10 +72635,7 @@
           "new_from_your_artists",
           "gaps_in_your_artists",
           "from_your_shelves",
-          "anniversaries",
-          "lastfm_recent_scrobbles",
-          "lastfm_weekly_artist_chart",
-          "lastfm_weekly_album_chart"
+          "anniversaries"
         ]
       },
       "SectionKind": {
@@ -72846,8 +72819,7 @@
           "essentials",
           "made_for_you",
           "new_and_fresh",
-          "from_your_library",
-          "trending_now"
+          "from_your_library"
         ]
       },
       "SecuritySettings": {
@@ -75174,6 +75146,30 @@
           "failed",
           "cancelled"
         ]
+      },
+      "TeaserPick": {
+        "type": "object",
+        "description": "The pick Home's teaser shows.",
+        "required": [
+          "pick_no",
+          "album",
+          "reason"
+        ],
+        "properties": {
+          "album": {
+            "$ref": "#/components/schemas/AlbumRef",
+            "description": "The album, with its year and type."
+          },
+          "pick_no": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Its place in the set, from 1."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why it is in the set, as shown when the set was built."
+          }
+        }
       },
       "TestConnectionResponse": {
         "type": "object",
@@ -79621,6 +79617,22 @@
           "track_link": {
             "$ref": "#/components/schemas/YouTubeTrackLink",
             "description": "The saved (or already saved) track link."
+          }
+        }
+      },
+      "YourLastfmResponse": {
+        "type": "object",
+        "description": "The person's own Last.fm lists for their charts page: recent scrobbles\nand this week's top albums and artists, each left out when empty or\nwhen its read failed. Empty for a person without Last.fm linked.",
+        "required": [
+          "shelves"
+        ],
+        "properties": {
+          "shelves": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChartSection"
+            },
+            "description": "The lists, in page order."
           }
         }
       }

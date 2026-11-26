@@ -4,8 +4,8 @@
 //!
 //! A visit never waits on a provider. The local shelves (recently added,
 //! your albums and artists, recently played, your top albums when you
-//! played enough in the app, the discover teaser) come straight from
-//! SQLite on every visit. The provider shelves come from
+//! played enough in the app, milestone anniversaries, the discover teaser)
+//! come straight from SQLite on every visit. The provider shelves come from
 //! the user's row in the page cache, however old, which survives a
 //! restart; when it is missing or more than five minutes old a rebuild
 //! starts behind the visit (`refreshing`, which the page polls). A build
@@ -18,9 +18,8 @@
 //! tracks, their genres and the weekly exploration playlist. Ownership is
 //! marked and genre tiles get artwork from the collection on every
 //! answer, so a library change shows at once, and the sections about the
-//! person, the discover teaser included, leave out what they told Discover
-//! to hide. Each kept build queues a
-//! background warm of its covers and artist images.
+//! person leave out what they told Discover to hide. Each kept build queues
+//! a background warm of its covers and artist images.
 //!
 //! The sections come from the section list ([`sections`]), in its order.
 //! A section the user switched off is neither read nor built, and a build
@@ -57,6 +56,15 @@ use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::Db;
 use library::{HomeLibrary, PlayedAlbum};
 
+/// Why the local shelves are read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Purpose {
+    /// A person opened Home.
+    Visit,
+    /// A build wants the shelves' images to warm.
+    Warm,
+}
+
 /// Shelves older than this are rebuilt behind the next visit, and a
 /// failed build is not retried sooner.
 const TIMING: Timing = Timing {
@@ -76,6 +84,8 @@ const PROVIDER_ROWS: u32 = 20;
 const READ_TIMEOUT: Duration = Duration::from_secs(25);
 /// Genres whose tiles get artwork.
 const ART_GENRES: usize = 20;
+/// Milestone birthdays celebrated by Milestone Anniversaries.
+const ANNIVERSARY_YEARS: [i64; 7] = [10, 20, 25, 30, 40, 50, 60];
 
 /// Run one read under the bound; a failure empties its shelf with a log
 /// line.
@@ -160,9 +170,6 @@ async fn mark_page(db: &Db, page: &mut HomeResponse) {
             }
         }
     }
-    if let Some(preview) = page.discover_preview.as_mut() {
-        artists.extend(preview.items.iter_mut());
-    }
     mark_owned(db, albums, artists).await;
 }
 
@@ -173,8 +180,8 @@ fn warm_targets(page: &HomeResponse) -> WarmTargets {
         section.content.warm(&mut targets);
     }
     if let Some(preview) = &page.discover_preview {
-        for artist in &preview.items {
-            targets.artist(artist.musicbrainz_id.as_deref());
+        for album in &preview.albums {
+            targets.cover(album.musicbrainz_id.as_deref());
         }
     }
     targets
@@ -301,7 +308,9 @@ impl LiveHome {
         let feedback =
             Feedback::load_or_none(&self.inner.db, user_id, self.inner.cache.now_ms(), "home")
                 .await;
-        let mut page = self.local(user_id, &music, status, &off, &feedback).await;
+        let mut page = self
+            .local(user_id, &music, status, &off, Purpose::Visit)
+            .await;
         if let Some(saved) = saved {
             let mut built = saved.value.sections;
             page.sections = sections::wanted(Page::Home, &off)
@@ -375,7 +384,7 @@ impl LiveHome {
                 &music,
                 self.inner.integrations.status(),
                 &off,
-                &Feedback::default(),
+                Purpose::Warm,
             )
             .await;
         page.sections.extend(shelves.sections.iter().cloned());
@@ -383,14 +392,16 @@ impl LiveHome {
         Some(shelves)
     }
 
-    /// The local shelves: SQLite only.
+    /// The local shelves: SQLite only. A build that only wants their images
+    /// to warm (`Purpose::Warm`) skips the teaser and Milestone
+    /// Anniversaries, which a visit reads fresh anyway.
     async fn local(
         &self,
         user_id: &str,
         music: &UserMusic,
         status: IntegrationStatus,
         off: &HashSet<SectionKey>,
-        feedback: &Feedback,
+        purpose: Purpose,
     ) -> HomeResponse {
         let listenbrainz_on = status.listenbrainz;
         let lastfm_on = status.lastfm;
@@ -403,11 +414,34 @@ impl LiveHome {
                 self.played_albums(user_id).await
             }
         };
-        let (recent, artists, plays, top_albums) = tokio::join!(
+        let this_year = year_of(self.inner.cache.now_ms());
+        let anniversaries = async {
+            if purpose == Purpose::Warm || off.contains(&SectionKey::Anniversaries) {
+                Vec::new()
+            } else {
+                bounded(
+                    "anniversary albums",
+                    library.anniversary_albums(
+                        this_year,
+                        &ANNIVERSARY_YEARS,
+                        shelves::ANNIVERSARY_ROWS as i64,
+                    ),
+                )
+                .await
+            }
+        };
+        let (recent, artists, plays, top_albums, anniversaries, teaser) = tokio::join!(
             bounded("recent albums", library.recent_albums(LIBRARY_ROWS)),
             bounded("library artists", library.top_artists(LIBRARY_ROWS)),
             bounded("play history", library.recent_plays(user_id, LIBRARY_ROWS)),
             top_albums,
+            anniversaries,
+            async {
+                match purpose {
+                    Purpose::Visit => self.inner.discover.teaser(user_id).await,
+                    Purpose::Warm => None,
+                }
+            },
         );
         let mut page = empty_page(status.clone(), false);
         page.sections = sections::wanted(Page::Home, off)
@@ -422,6 +456,9 @@ impl LiveHome {
                         one(shelves::your_top_albums_local(top_albums.as_deref()?))
                     }
                     SectionKey::GenreList => one(genre_list(None)),
+                    SectionKey::Anniversaries => {
+                        one(shelves::anniversaries(&anniversaries, this_year))
+                    }
                     _ => None,
                 }?;
                 page_shelves::section(Page::Home, def.key, content)
@@ -434,7 +471,7 @@ impl LiveHome {
             lastfm_on,
             status.lastfm,
         );
-        page.discover_preview = self.inner.discover.teaser(user_id, feedback).await;
+        page.discover_preview = teaser;
         page
     }
 
@@ -622,6 +659,13 @@ pub fn genre_names(section: Option<&ChartSection>) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// The year (UTC) holding `at_ms`.
+fn year_of(at_ms: i64) -> i64 {
+    time::OffsetDateTime::from_unix_timestamp(at_ms.div_euclid(1000))
+        .map(|at| i64::from(at.year()))
+        .unwrap_or(1970)
 }
 
 /// The instance status with ListenBrainz and Last.fm as this user has

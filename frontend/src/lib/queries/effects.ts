@@ -115,14 +115,16 @@ export const EFFECTS = {
 	],
 	/**
 	 * The caller's requests, and their week, past weeks, the albums they kept
-	 * from them and new releases, whose rows read them as their state.
+	 * from them, new releases and Home's teaser, whose rows read them as their
+	 * state.
 	 */
 	requestsChanged: (userId: UserId): Sweep[] => [
 		{ key: RequestQueryKeyFactory.all(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.week(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.pastWeeks(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.found(userId) },
-		{ key: DiscoverQueryKeyFactory.v3.newReleases(userId) }
+		{ key: DiscoverQueryKeyFactory.v3.newReleases(userId) },
+		{ key: HomeQueryKeyFactory.home(userId) }
 	],
 	/** One manual album search moved. */
 	searchJobChanged: (userId: UserId, jobId: string): Sweep[] => [
@@ -178,14 +180,15 @@ export const EFFECTS = {
 	],
 	/**
 	 * The caller put an album on their Later pile or took one off: the pile,
-	 * the Discover page that deals picks around it, and their week and past
-	 * weeks, whose picks read Later as their state.
+	 * the Discover page that deals picks around it, and their week, past weeks
+	 * and Home's teaser, whose picks read Later as their state.
 	 */
 	laterChanged: (userId: UserId): Sweep[] => [
 		{ key: DiscoverQueryKeyFactory.v3.later(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.home(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.week(userId) },
-		{ key: DiscoverQueryKeyFactory.v3.pastWeeks(userId) }
+		{ key: DiscoverQueryKeyFactory.v3.pastWeeks(userId) },
+		{ key: HomeQueryKeyFactory.home(userId) }
 	],
 	/**
 	 * The caller named an artist they love or took one off: the list, and

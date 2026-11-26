@@ -2,6 +2,7 @@
 	import { untrack } from 'svelte';
 	import { prefersReducedMotion } from 'svelte/motion';
 	import {
+		ArrowRight,
 		ChevronRight,
 		CircleAlert,
 		Clock,
@@ -11,8 +12,7 @@
 		Library,
 		Music,
 		SlidersHorizontal,
-		Sparkles,
-		TrendingUp
+		Sparkles
 	} from 'lucide-svelte';
 	import HomeSection from '$lib/features/discover/components/HomeSection.svelte';
 	import ServiceErrorState from '$lib/ui/ServiceErrorState.svelte';
@@ -102,6 +102,12 @@
 		weeklyOf
 	} from '$lib/features/discover/queries/sections';
 	import { albumRows, genreRows } from '$lib/features/discover/components/sectionRows';
+	import type { PageProps } from './$types';
+
+	const { data }: PageProps = $props();
+
+	// The page ends with one way to the charts, on the person's own source.
+	const popularOn = $derived(data.primarySource === 'lastfm' ? 'Last.fm' : 'ListenBrainz');
 
 	useDiscoverActivity(() => ({ feature: 'discover' }));
 
@@ -639,8 +645,7 @@
 			label: 'From Your Library',
 			icon: Library
 		},
-		browse_genres: { id: 'zone-genres', nav: 'Genres', label: 'Browse Genres', icon: LayoutGrid },
-		trending_now: { id: 'zone-trending', nav: 'Trending', label: 'Trending Now', icon: TrendingUp }
+		browse_genres: { id: 'zone-genres', nav: 'Genres', label: 'Browse Genres', icon: LayoutGrid }
 	};
 
 	// zones that come before the playlist band
@@ -877,6 +882,19 @@
 			/>
 		</div>
 	{/if}
+
+	<footer class="dn-discover-col dn-discover__end">
+		<p class="dn-discover__end-line">That is everything this week.</p>
+		<Button
+			variant="caps-link"
+			size="sm"
+			icon={ArrowRight}
+			iconPosition="end"
+			href={withBasePath('/popular')}
+		>
+			What is popular on {popularOn}
+		</Button>
+	</footer>
 </div>
 
 {#snippet blankCard(tape: string, said: string, line: string, found: number)}
@@ -1286,6 +1304,26 @@
 
 	.dn-discover__past {
 		margin-top: 3.5rem;
+	}
+
+	/* the page's last word, and its one way to the charts */
+	.dn-discover__end {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.75rem;
+		margin-top: 4rem;
+		padding-bottom: 3rem;
+		text-align: center;
+	}
+	.dn-discover__end-line {
+		margin: 0;
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		font-weight: 700;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+		color: var(--dn-muted);
 	}
 
 	.dn-discover-rows {

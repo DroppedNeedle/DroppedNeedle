@@ -88,7 +88,7 @@ fn a_page_counts_duplicates_and_repeats() {
         },
         new_releases(vec![album("a1", "x")]),
         shelf(
-            SectionKey::LastfmWeeklyArtistChart,
+            SectionKey::FromYourShelves,
             SectionKind::Artists,
             vec![SectionItem::Artist(ArtistRef {
                 musicbrainz_id: Some("y".to_owned()),
@@ -102,9 +102,8 @@ fn a_page_counts_duplicates_and_repeats() {
         SectionKey::RadioSections,
         SectionKey::NewFromYourArtists,
         SectionKey::GapsInYourArtists,
-        SectionKey::LastfmWeeklyArtistChart,
+        SectionKey::FromYourShelves,
         SectionKey::WeeklyExploration,
-        SectionKey::LastfmWeeklyAlbumChart,
     ]
     .into_iter()
     .filter_map(|key| sections::find(Page::Discover, key))

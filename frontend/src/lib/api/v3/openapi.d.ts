@@ -2067,26 +2067,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v3/discover/queue/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * How many of the caller's weekly picks wait for an answer: `ready` with
-         *     their count while a set is out and some are open, else `idle`.
-         */
-        get: operations["queue_status"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v3/discover/queue/youtube-track-search": {
         parameters: {
             query?: never;
@@ -3235,6 +3215,27 @@ export interface paths {
         };
         /** One your-top-albums page for the caller. */
         get: operations["your_top_albums"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/home/your-top/lastfm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The caller's own Last.fm lists for their charts page: recent
+         *     scrobbles and this week's top albums and artists. Empty for a person
+         *     without Last.fm linked.
+         */
+        get: operations["your_lastfm"];
         put?: never;
         post?: never;
         delete?: never;
@@ -14604,29 +14605,25 @@ export interface components {
              */
             set_day: components["schemas"]["SetDay"];
         };
-        /** @description A discover teaser on home: one seed artist plus similar artists. */
+        /**
+         * @description Home's way into Discover: the person's newest set, with the first pick
+         *     they have not answered, or none once every pick is answered.
+         */
         DiscoverPreview: {
-            /** @description Similar artists. */
-            items: components["schemas"]["ArtistRef"][];
-            /** @description Seed artist name. */
-            seed_artist: string;
-            /** @description Seed MusicBrainz artist id. */
-            seed_artist_mbid: string;
-        };
-        /** @description How many of a person's weekly picks wait for an answer. */
-        DiscoverQueueStatusResponse: {
+            /** @description The set's albums, in pick order. */
+            albums: components["schemas"]["AlbumRef"][];
+            /** @description The first pick not answered yet; null once every pick is answered. */
+            next?: null | components["schemas"]["TeaserPick"];
             /**
              * Format: int64
-             * @description When the set was built (unix seconds), while `ready`.
+             * @description When the next set comes out (unix ms).
              */
-            built_at?: number | null;
+            next_set_at: number;
             /**
              * Format: int64
-             * @description Picks still open, while `ready`.
+             * @description The ISO week number of the set's first day.
              */
-            item_count?: number | null;
-            /** @description Whether any wait. */
-            status: components["schemas"]["QueueBuildStatus"];
+            week_number: number;
         };
         /**
          * @description Discover: its sections, in page order, plus the page-level fields. A
@@ -17193,8 +17190,9 @@ export interface components {
          */
         HomeResponse: {
             /**
-             * @description Discover teaser. Not sent while Discover has nothing to tease
-             *     with: the shelf it copied has left the page.
+             * @description Discover teaser: the newest set's next pick. Not sent while the
+             *     person has no set, nor while a new set is due and every pick of the
+             *     last one is answered.
              */
             discover_preview?: null | components["schemas"]["DiscoverPreview"];
             /** @description Mosaic art keyed by genre name. */
@@ -23237,11 +23235,6 @@ export interface components {
             /** Format: int64 */
             page: number;
         };
-        /**
-         * @description Whether a person's weekly picks wait for an answer.
-         * @enum {string}
-         */
-        QueueBuildStatus: "idle" | "ready";
         /** @description How deep one job kind's queue is. */
         QueueDepthView: {
             /**
@@ -25805,7 +25798,7 @@ export interface components {
          * @description One section of the home or discover page.
          * @enum {string}
          */
-        SectionKey: "popular_albums" | "trending_artists" | "weekly_exploration" | "your_top_albums" | "recently_played" | "recently_added" | "genre_list" | "favorite_artists" | "library_artists" | "library_albums" | "weekly_set" | "playlist_discovery" | "daily_mixes" | "radio_sections" | "new_from_your_artists" | "gaps_in_your_artists" | "from_your_shelves" | "anniversaries" | "lastfm_recent_scrobbles" | "lastfm_weekly_artist_chart" | "lastfm_weekly_album_chart";
+        SectionKey: "popular_albums" | "trending_artists" | "weekly_exploration" | "your_top_albums" | "recently_played" | "recently_added" | "genre_list" | "favorite_artists" | "library_artists" | "library_albums" | "weekly_set" | "playlist_discovery" | "daily_mixes" | "radio_sections" | "new_from_your_artists" | "gaps_in_your_artists" | "from_your_shelves" | "anniversaries";
         /**
          * @description What a section's rows are.
          * @enum {string}
@@ -25882,7 +25875,7 @@ export interface components {
          * @description A group of sections on a page.
          * @enum {string}
          */
-        SectionZone: "whats_hot" | "for_you" | "your_library" | "browse_genres" | "essentials" | "made_for_you" | "new_and_fresh" | "from_your_library" | "trending_now";
+        SectionZone: "whats_hot" | "for_you" | "your_library" | "browse_genres" | "essentials" | "made_for_you" | "new_and_fresh" | "from_your_library";
         /** @description Security posture settings (no secrets; the HIBP path is a local file). */
         SecuritySettings: {
             /**
@@ -26927,6 +26920,18 @@ export interface components {
          * @enum {string}
          */
         TaskStatus: "queued" | "downloading" | "processing" | "completed" | "partial" | "failed" | "cancelled";
+        /** @description The pick Home's teaser shows. */
+        TeaserPick: {
+            /** @description The album, with its year and type. */
+            album: components["schemas"]["AlbumRef"];
+            /**
+             * Format: int64
+             * @description Its place in the set, from 1.
+             */
+            pick_no: number;
+            /** @description Why it is in the set, as shown when the set was built. */
+            reason: string;
+        };
         /** @description slskd test verdict: validity plus the reported version. */
         TestConnectionResponse: {
             /** @description Human summary. */
@@ -28884,6 +28889,15 @@ export interface components {
             quota: components["schemas"]["YouTubeQuotaStatus"];
             /** @description The saved (or already saved) track link. */
             track_link: components["schemas"]["YouTubeTrackLink"];
+        };
+        /**
+         * @description The person's own Last.fm lists for their charts page: recent scrobbles
+         *     and this week's top albums and artists, each left out when empty or
+         *     when its read failed. Empty for a person without Last.fm linked.
+         */
+        YourLastfmResponse: {
+            /** @description The lists, in page order. */
+            shelves: components["schemas"]["ChartSection"][];
         };
     };
     responses: never;
@@ -33446,44 +33460,6 @@ export interface operations {
             };
         };
     };
-    queue_status: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Open picks */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DiscoverQueueStatusResponse"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description The week could not be read */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
     youtube_track_search: {
         parameters: {
             query: {
@@ -35733,6 +35709,44 @@ export interface operations {
                 };
             };
             /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    your_lastfm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's Last.fm lists */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["YourLastfmResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Every list's read failed (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
             503: {
                 headers: {
                     [name: string]: unknown;

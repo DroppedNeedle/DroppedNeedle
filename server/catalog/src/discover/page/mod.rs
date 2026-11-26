@@ -25,9 +25,10 @@
 //! (`section_states`): kept, its source down, waiting for a linked
 //! account, thin, empty, or not built yet.
 //!
-//! Every serve, the home teaser's included, leaves out of the sections
-//! about the person what they told Discover to hide ([`Feedback`]), so an
-//! answer shows at once.
+//! Every serve leaves out of the sections about the person what they told
+//! Discover to hide ([`Feedback`]), so an answer shows at once, and leaves
+//! out a saved section that is no longer on the page. Home's teaser reads
+//! the week's set, whose picks carry what the person answered.
 //!
 //! While the advanced settings cannot be read no build starts: visits get
 //! the saved page, and builds resume once the settings are saved again.
@@ -51,6 +52,7 @@ use crate::discover::cache::{
     ForgetCounts, Generation, PageKind, Saved, Timing, UserPageCache, Variant,
 };
 use crate::discover::content::IntegrationSettings;
+use crate::discover::engine::weekly;
 use crate::discover::feedback::Feedback;
 use crate::discover::health::{BuildFacts, PageHealth, log_page_health, page_health};
 use crate::discover::listening::{Ask, ListeningData};
@@ -195,10 +197,15 @@ impl DiscoverPages {
         }
     }
 
-    /// Home's discover teaser: none, and nothing read for it, until it
-    /// shows the week's next pick. The shelf it copied has left the page.
-    pub async fn teaser(&self, _user_id: &str, _feedback: &Feedback) -> Option<DiscoverPreview> {
-        None
+    /// Home's discover teaser: the week's next pick, from local reads only.
+    /// A read that fails leaves it out, with a log line.
+    pub async fn teaser(&self, user_id: &str) -> Option<DiscoverPreview> {
+        weekly::teaser(self.inner.queue_db.db(), user_id, self.inner.cache.now_ms())
+            .await
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "the week's set unreadable; home shows no teaser");
+                None
+            })
     }
 
     /// What the person told Discover, as it stands now.
@@ -269,7 +276,7 @@ impl DiscoverPages {
         let previous = self.inner.cache.load(user_id, variant).await;
         let source = self.inner.listening.source();
         let now = self.inner.cache.now_ms() as f64 / 1000.0;
-        let (today, year) = today(now);
+        let today = today(now);
         let feedback = self.feedback(user_id, "discover build").await;
         let builder = Builder {
             listening: &self.inner.listening,
@@ -282,7 +289,6 @@ impl DiscoverPages {
             generation,
             settings,
             today,
-            year,
             now,
         };
         let wanted = sections::wanted(Page::Discover, &off);
@@ -395,7 +401,10 @@ impl LiveDiscover {
         let mut page = match saved {
             Some(saved) => {
                 let mut page = saved.value.page;
-                page.sections.retain(|section| !off.contains(&section.key));
+                page.sections.retain(|section| {
+                    !off.contains(&section.key)
+                        && sections::find(Page::Discover, section.key).is_some()
+                });
                 self.pages
                     .feedback(user_id, "discover page")
                     .await
@@ -686,22 +695,19 @@ pub(crate) fn add_section(targets: &mut WarmTargets, section: &ChartSection) {
     }
 }
 
-/// Today's date (`YYYY-MM-DD`) and year in UTC.
-fn today(now: f64) -> (String, i64) {
+/// Today's date (`YYYY-MM-DD`) in UTC.
+fn today(now: f64) -> String {
     match time::OffsetDateTime::from_unix_timestamp(now as i64) {
         Ok(at) => {
             let date = at.date();
-            (
-                format!(
-                    "{:04}-{:02}-{:02}",
-                    date.year(),
-                    u8::from(date.month()),
-                    date.day()
-                ),
-                i64::from(date.year()),
+            format!(
+                "{:04}-{:02}-{:02}",
+                date.year(),
+                u8::from(date.month()),
+                date.day()
             )
         }
-        Err(_) => ("1970-01-01".to_owned(), 1970),
+        Err(_) => "1970-01-01".to_owned(),
     }
 }
 
@@ -778,7 +784,7 @@ mod tests {
     /// keeps the week counted from the build that worked.
     #[test]
     fn a_failed_build_never_carries_rows_another_failure_left() {
-        let key = SectionKey::LastfmWeeklyAlbumChart;
+        let key = SectionKey::RadioSections;
         let outcomes = [(key, DOWN)];
 
         let first = saved(
@@ -786,7 +792,7 @@ mod tests {
                 vec![albums(key, &["a"])],
                 vec![SectionState {
                     key,
-                    zone: SectionZone::TrendingNow,
+                    zone: SectionZone::MadeForYou,
                     state: SectionCondition::SourceDown,
                     source: Some(ListenSource::Listenbrainz),
                     since: None,
@@ -827,8 +833,8 @@ mod tests {
     /// A carried section leaves out the albums a freshly built one shows.
     #[test]
     fn a_kept_section_repeats_nothing_a_fresh_one_shows() {
-        let kept = SectionKey::LastfmWeeklyAlbumChart;
-        let fresh = SectionKey::Anniversaries;
+        let kept = SectionKey::RadioSections;
+        let fresh = SectionKey::DailyMixes;
         let before = saved(page(vec![albums(kept, &["a", "b"])], Vec::new()), 0);
         let mut now = page(vec![albums(fresh, &["A"])], Vec::new());
         settle(

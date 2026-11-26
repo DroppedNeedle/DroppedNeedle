@@ -19,13 +19,13 @@ use crate::discover::{
         AlbumPreviewMode, AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection,
         DigFurtherPick, DiscoverActivityResponse, DiscoverFeedbackEntry, DiscoverFeedbackRequest,
         DiscoverFeedbackResponse, DiscoverHealthResponse, DiscoverPickEventRequest, DiscoverPrefs,
-        DiscoverQueueStatusResponse, DiscoverResponse, DiscoverTuningEntry, DiscoverTuningRequest,
-        DiscoverTuningsResponse, FoundOnDiscover, GenreDetailResponse, HomeResponse,
-        IntegrationStatus, LaterAlbum, LaterRequest, ListenSource, NewRelease, PastWeeksPage,
-        PickAnswer, PickEvidence, PickState, PlaylistSuggestionsRequest,
-        PlaylistSuggestionsResponse, QueueBuildStatus, RadioPlanRequest, RadioPlanResponse,
-        RadioRequest, RadioSeedKind, StatedArtist, StatedArtistRequest, StatedArtistsResponse,
-        StatsRange, TrackPreviewResponse, WeekResponse, WeekStatus, YouTubeSearchResponse,
+        DiscoverResponse, DiscoverTuningEntry, DiscoverTuningRequest, DiscoverTuningsResponse,
+        FoundOnDiscover, GenreDetailResponse, HomeResponse, IntegrationStatus, LaterAlbum,
+        LaterRequest, ListenSource, NewRelease, PastWeeksPage, PickAnswer, PickEvidence,
+        PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, RadioPlanRequest,
+        RadioPlanResponse, RadioRequest, RadioSeedKind, StatedArtist, StatedArtistRequest,
+        StatedArtistsResponse, StatsRange, TrackPreviewResponse, WeekResponse,
+        YouTubeSearchResponse, YourLastfmResponse,
     },
     new_releases::{NewReleaseLists, ReleaseKey},
     ports::{ProviderFailure, RadioFailure},
@@ -314,37 +314,6 @@ fn radio_failure(failure: RadioFailure) -> ServiceError {
         RadioFailure::Invalid(message) => ServiceError::InvalidInput(message),
         RadioFailure::Provider(failure) => failure.into(),
     }
-}
-
-/// How many of the user's weekly picks wait for an answer, for Home's way
-/// into Discover: `ready` with their count while a set is out and some
-/// are open, else `idle`.
-pub async fn queue_status(
-    deps: &DiscoverDeps,
-    user_id: &str,
-) -> Result<DiscoverQueueStatusResponse, ServiceError> {
-    let week = week(deps, user_id).await?;
-    let set = match week.status {
-        WeekStatus::Ready | WeekStatus::KeptLastWeek => week.set,
-        _ => None,
-    };
-    let open = set.as_ref().map_or(0, |set| {
-        set.picks
-            .iter()
-            .filter(|pick| pick.state == PickState::Open)
-            .count()
-    });
-    let mut status = DiscoverQueueStatusResponse {
-        status: QueueBuildStatus::Idle,
-        item_count: None,
-        built_at: None,
-    };
-    if let Some(set) = set.filter(|_| open > 0) {
-        status.status = QueueBuildStatus::Ready;
-        status.item_count = Some(i64::try_from(open).unwrap_or(i64::MAX));
-        status.built_at = Some(set.built_at / 1000);
-    }
-    Ok(status)
 }
 
 /// Record one thing the user told Discover and ask discover to refresh.
@@ -822,6 +791,14 @@ pub async fn popular_albums(
         .charts
         .popular_albums(user_id, range, limit, offset, source)
         .await?)
+}
+
+/// The caller's own Last.fm lists, for their charts page.
+pub async fn your_lastfm(
+    deps: &DiscoverDeps,
+    user_id: &str,
+) -> Result<YourLastfmResponse, ServiceError> {
+    Ok(deps.charts.your_lastfm(user_id).await?)
 }
 
 /// One your-top-albums page for the user.

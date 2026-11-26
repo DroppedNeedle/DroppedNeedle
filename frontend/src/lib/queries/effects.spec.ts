@@ -41,7 +41,8 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 		key(U, 'discover', 'week'),
 		key(U, 'discover', 'weeks'),
 		key(U, 'discover', 'found'),
-		key(U, 'discover', 'new-releases')
+		key(U, 'discover', 'new-releases'),
+		key(U, 'home', 'page')
 	],
 	searchJobChanged: [key(U, 'downloads', 'search', 'job')],
 	searchJobsChanged: [key(U, 'downloads', 'search')],
@@ -68,7 +69,8 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 		key(U, 'discover', 'later'),
 		key(U, 'discover', 'home'),
 		key(U, 'discover', 'week'),
-		key(U, 'discover', 'weeks')
+		key(U, 'discover', 'weeks'),
+		key(U, 'home', 'page')
 	],
 	statedArtistsChanged: [
 		key(U, 'discover', 'stated-artists'),

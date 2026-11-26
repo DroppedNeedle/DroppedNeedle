@@ -7,8 +7,9 @@
 //! every build, a page built past a failed read is rebuilt soon and keeps
 //! the sections it had, each section not plainly built says why, and a
 //! background warm that keeps nothing waits before it is tried again. The
-//! sections that left Discover are gone, a switch saved for one changes
-//! nothing, and nothing is read for them.
+//! sections that left Discover are gone, none of those left is a chart, a
+//! switch saved for one changes nothing, and nothing is read for them. The
+//! person's own Last.fm lists answer on their charts page instead.
 
 use crate::common::Probe;
 use std::collections::HashMap;
@@ -28,12 +29,14 @@ use droppedneedle_catalog::discover::content::LiveContent;
 use droppedneedle_catalog::discover::facts::{KeptFacts, job::FactJobs};
 use droppedneedle_catalog::discover::listening::shared;
 use droppedneedle_catalog::discover::listening::{
-    AlbumRow, ArtistRow, Ask, FreshRow, ListenedAlbum, ListeningData, PlaylistTrack, RankedAlbum,
-    ScoredArtist, SourceContext, UserMusic, WeeklyPlaylist,
+    AlbumRow, ArtistRow, Ask, FreshRow, LastFmChartAlbum, ListenedAlbum, ListeningData,
+    PlaylistTrack, RankedAlbum, ScoredArtist, SourceContext, UserMusic, WeeklyPlaylist,
 };
+use droppedneedle_catalog::discover::models::{SectionKey, SectionZone};
 use droppedneedle_catalog::discover::ports::BoxFuture;
 use droppedneedle_catalog::discover::scheduler::activity::ActivityDb;
 use droppedneedle_catalog::discover::scheduler::{ArtistDetail, Feature, Warm, WarmScheduler};
+use droppedneedle_catalog::discover::sections::{self, Basis, Page};
 use droppedneedle_catalog::discover::wiring::{deps_over, live_network};
 use droppedneedle_catalog::metadata::Catalog;
 use droppedneedle_catalog::metadata::library::LocalCatalog;
@@ -271,9 +274,23 @@ async fn page_builds_in_the_background_is_saved_and_records_activity() {
         "popular_in_your_genres",
         "unexplored_genres",
         "globally_trending",
+        "anniversaries",
+        "lastfm_recent_scrobbles",
+        "lastfm_weekly_artist_chart",
+        "lastfm_weekly_album_chart",
     ] {
         assert!(!shown.contains(&gone), "{gone} left Discover: {shown:?}");
     }
+    let charts = sections::of(Page::Discover)
+        .filter(|def| def.basis == Basis::Chart)
+        .map(|def| def.key)
+        .collect::<Vec<_>>();
+    assert_eq!(charts, [], "no section on Discover is a chart");
+    assert!(
+        sections::find(Page::Home, SectionKey::Anniversaries)
+            .is_some_and(|def| def.zone == SectionZone::YourLibrary),
+        "Milestone Anniversaries sits in Home's library"
+    );
     assert_eq!(
         content(&page, "radio_sections")["shelves"][0]["title"],
         "Radio: Seed"
@@ -843,9 +860,9 @@ async fn a_failed_read_keeps_the_sections_the_page_had() {
             .is_some_and(|i| !i.is_empty())
     );
     assert_eq!(
-        state_of(&first, "anniversaries"),
-        json!({"key": "anniversaries", "state": "empty"}),
-        "an empty library has no anniversaries"
+        state_of(&first, "gaps_in_your_artists"),
+        json!({"key": "gaps_in_your_artists", "state": "empty"}),
+        "an empty library has no gaps"
     );
 
     script.similar_down.store(true, Ordering::SeqCst);
@@ -909,8 +926,8 @@ async fn sections_say_what_a_person_with_nothing_linked_needs() {
         needs_listenbrainz("radio_sections")
     );
     assert_eq!(
-        state_of(&page, "anniversaries"),
-        json!({"key": "anniversaries", "state": "empty"})
+        state_of(&page, "gaps_in_your_artists"),
+        json!({"key": "gaps_in_your_artists", "state": "empty"})
     );
     assert_eq!(
         page["section_states"][0]["zone"], "essentials",
@@ -1002,6 +1019,87 @@ async fn a_switch_for_a_section_that_left_changes_nothing() {
         "Radio: Seed"
     );
     assert_eq!(script.user_album_reads.load(Ordering::SeqCst), 0);
+}
+
+/// A person with Last.fm linked gets their recent scrobbles and this
+/// week's top albums and artists on their charts page, an album once in
+/// the scrobbles and an artist only with an id. A person without Last.fm
+/// linked gets none.
+#[tokio::test]
+async fn the_lastfm_lists_answer_on_the_charts_page() {
+    let dir = crate::common::ScratchDir::new("your-lastfm");
+    let rig = AuthRig::new("your-lastfm").await;
+    seed_user(&rig.platform.db).await;
+    let scrobble = |name: &str| LastFmChartAlbum {
+        name: name.to_owned(),
+        artist_name: "Aurora".to_owned(),
+        mbid: None,
+        playcount: Some(3),
+        image_url: format!("https://lastfm.example/{name}.png"),
+    };
+    let listened = |name: &str, mbid: Option<String>| ArtistRow {
+        name: name.to_owned(),
+        mbid,
+        listen_count: Some(40),
+    };
+    let linked = Script {
+        user: UserMusic {
+            lastfm_username: Some("scrobbler".to_owned()),
+            lastfm: true,
+            ..UserMusic::default()
+        },
+        lastfm_recent: vec![scrobble("Twice"), scrobble("Twice"), scrobble("Once")],
+        lastfm_weekly_albums: vec![scrobble("Top")],
+        lastfm_weekly_artists: vec![
+            listened("Aurora", Some(mbid('e', 1))),
+            listened("No Id", None),
+        ],
+        ..Script::default()
+    };
+    let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |slot| {
+        *slot = Arc::new(linked);
+    }));
+    let (status, lists) = call(&app, "GET", "/api/v3/home/your-top/lastfm", None).await;
+    assert_eq!(status, StatusCode::OK, "{lists}");
+    let shelves: Vec<(String, Vec<String>)> = lists["shelves"]
+        .as_array()
+        .expect("shelves")
+        .iter()
+        .map(|shelf| {
+            let rows = shelf["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|item| {
+                    item["title"]
+                        .as_str()
+                        .or(item["name"].as_str())
+                        .unwrap_or_default()
+                        .to_owned()
+                })
+                .collect();
+            (shelf["title"].as_str().unwrap_or_default().to_owned(), rows)
+        })
+        .collect();
+    let owned = |list: &[&str]| list.iter().map(|row| (*row).to_owned()).collect::<Vec<_>>();
+    assert_eq!(
+        shelves,
+        [
+            ("Recently Scrobbled".to_owned(), owned(&["Twice", "Once"])),
+            ("Your Top Albums This Week".to_owned(), owned(&["Top"])),
+            ("Your Weekly Top Artists".to_owned(), owned(&["Aurora"])),
+        ]
+    );
+    assert_eq!(lists["shelves"][0]["source"], "lastfm");
+
+    let unlinked = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |slot| {
+        *slot = Arc::new(Script {
+            lastfm_recent: vec![scrobble("Unseen")],
+            ..Script::default()
+        });
+    }));
+    let (status, none) = call(&unlinked, "GET", "/api/v3/home/your-top/lastfm", None).await;
+    assert_eq!((status, none), (StatusCode::OK, json!({"shelves": []})));
 }
 
 /// A home warm that keeps nothing, as every warm does while ListenBrainz
@@ -1617,9 +1715,8 @@ fn page_rows(page: &Value) -> Vec<(String, String, String, String)> {
 /// with no rebuild: an album they said no to goes from every section that
 /// held it, and an artist they hid goes from every album shelf as a row
 /// filed under them, while an album filed under another artist that only
-/// credits them stays. A section that is not about the person keeps them:
-/// their own Last.fm chart. Home's weekly exploration playlist leaves out
-/// the hidden artist's song too.
+/// credits them stays. Home's weekly exploration playlist leaves out the
+/// hidden artist's song too.
 #[tokio::test]
 async fn what_a_person_hid_leaves_the_served_page_at_once() {
     let dir = crate::common::ScratchDir::new("discover-feedback");
@@ -1628,7 +1725,6 @@ async fn what_a_person_hid_leaves_the_served_page_at_once() {
     seed_user(&db).await;
     let hidden_artist = mbid('b', 3);
     let credited = mbid('f', 1);
-    let scrobbled = mbid('e', 1);
     // One album each for the similar artists, so the radio shelf keeps
     // the one New from your artists shows too.
     let one_each = || {
@@ -1639,8 +1735,6 @@ async fn what_a_person_hid_leaves_the_served_page_at_once() {
         script
     };
     let mut script = one_each();
-    script.user.lastfm_username = Some("scrobbler".to_owned());
-    script.user.lastfm = true;
     // New releases by artists close to the seed in the person's pool, from
     // the sitewide feed; Similar 2's album is on the radio shelf too.
     let near = |n: u8, artist: &str, name: &str| {
@@ -1680,11 +1774,6 @@ async fn what_a_person_hid_leaves_the_served_page_at_once() {
         fresh(mbid('a', b'2'), &mbid('b', 2), "Similar 2"),
         fresh(mbid('a', 91), &hidden_artist, "Hidden"),
     ];
-    script.lastfm_weekly_artists = vec![ArtistRow {
-        name: "Scrobbled".to_owned(),
-        mbid: Some(scrobbled.clone()),
-        listen_count: Some(40),
-    }];
     let mut weekly = weekly_playlist("2023-12-31T23:00:00+00:00");
     let mut by_hidden_song = weekly.tracks[0].clone();
     by_hidden_song.title = "Hidden Song".to_owned();
@@ -1763,19 +1852,13 @@ async fn what_a_person_hid_leaves_the_served_page_at_once() {
                 && *artist == credited),
         "the album that only credits them is shown"
     );
-    assert_eq!(
-        by(&scrobbled, &before),
-        ["lastfm_weekly_artist_chart".to_owned()].into(),
-        "shown on the Last.fm chart"
-    );
 
-    let ids = [passed.clone(), hidden_artist.clone(), scrobbled.clone()];
+    let ids = [passed.clone(), hidden_artist.clone()];
     db.write(Lane::Foreground, "test.feedback", move |tx| {
         tx.execute(
             "INSERT INTO catalog_discover_feedback (user_id, target, target_mbid_lower, kind, \
              release_group_mbid, created_at) VALUES ('user-1', 'album', ?1, 'no', ?1, 1), \
-             ('user-1', 'artist', ?2, 'not_artist', '', 1), \
-             ('user-1', 'artist', ?3, 'not_artist', '', 1)",
+             ('user-1', 'artist', ?2, 'not_artist', '', 1)",
             ids,
         )?;
         Ok::<_, droppedneedle_kernel::db::DbError>(())
@@ -1802,11 +1885,6 @@ async fn what_a_person_hid_leaves_the_served_page_at_once() {
             .iter()
             .any(|(key, _, id, _)| key == "new_from_your_artists" && *id == mbid('a', 90)),
         "an album filed under another artist stays"
-    );
-    assert_eq!(
-        by(&scrobbled, &after),
-        ["lastfm_weekly_artist_chart".to_owned()].into(),
-        "the Last.fm chart is not about the person, so it keeps them"
     );
     assert_eq!(
         home_weekly().await.expect("home's weekly playlist"),

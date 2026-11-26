@@ -146,15 +146,6 @@ pub struct ReleaseGroupFacts {
     pub first_release_date: Option<String>,
 }
 
-/// The artist facts behind a card.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct ArtistFacts {
-    /// Country code, else the home area's name.
-    pub country: Option<String>,
-    /// A Wikipedia or Wikidata link from the URL relationships.
-    pub wiki_url: Option<String>,
-}
-
 /// Last.fm album or artist facts used as a fallback.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct LastFmFacts {

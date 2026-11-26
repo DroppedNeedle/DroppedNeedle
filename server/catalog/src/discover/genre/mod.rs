@@ -164,6 +164,14 @@ impl WithGenrePages {
         Self { inner, pages }
     }
 
+    /// The person's own Last.fm lists.
+    pub fn your_lastfm<'a>(
+        &'a self,
+        user_id: &'a str,
+    ) -> BoxFuture<'a, Result<crate::discover::models::YourLastfmResponse, ProviderFailure>> {
+        self.inner.your_lastfm(user_id)
+    }
+
     /// One trending-artists page for the user.
     pub fn trending_artists<'a>(
         &'a self,

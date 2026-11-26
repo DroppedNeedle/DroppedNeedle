@@ -52,7 +52,7 @@ describe('SectionStateLine', () => {
 	});
 
 	it('offers no follow for a library shelf', async () => {
-		await show({ key: 'anniversaries', zone: 'from_your_library', state: 'empty' });
+		await show({ key: 'from_your_shelves', zone: 'from_your_library', state: 'empty' });
 		await expect.element(page.getByText(/^Nothing here yet\.$/)).toBeVisible();
 		await expect
 			.element(page.getByRole('link', { name: 'Follow artists' }))

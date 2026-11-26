@@ -15,9 +15,9 @@ use droppedneedle_providers::listenbrainz::{
 
 use super::ListeningResult;
 use super::rows::{
-    ArtistFacts, ArtistRow, FreshRow, JellyfinList, LastFmAlbum, LastFmChartAlbum, LastFmFacts,
-    ListenedAlbum, LovedTrack, PlayedArtist, ReleaseGroupFacts, ScoredArtist, SourceContext,
-    StatsRange, TagAlbum, UserMusic, WeeklyPlaylist,
+    ArtistRow, FreshRow, JellyfinList, LastFmAlbum, LastFmChartAlbum, LastFmFacts, ListenedAlbum,
+    LovedTrack, PlayedArtist, ReleaseGroupFacts, ScoredArtist, SourceContext, StatsRange, TagAlbum,
+    UserMusic, WeeklyPlaylist,
 };
 use crate::discover::ports::BoxFuture;
 use crate::metadata::artist::ReleaseGroupItem;
@@ -146,13 +146,6 @@ pub trait ListeningNetwork: Send + Sync {
         recording_mbids: &'a [String],
         priority: RequestPriority,
     ) -> Read<'a, HashMap<String, String>>;
-    /// Listen counts per release group (a popularity read).
-    fn listen_counts<'a>(
-        &'a self,
-        user_id: &'a str,
-        release_group_mbids: &'a [String],
-        priority: RequestPriority,
-    ) -> Read<'a, HashMap<String, i64>>;
 
     /// A Last.fm user's top artists over `period`.
     fn lastfm_user_artists<'a>(
@@ -195,14 +188,6 @@ pub trait ListeningNetwork: Send + Sync {
         limit: u32,
         priority: RequestPriority,
     ) -> Read<'a, Vec<ArtistRow>>;
-    /// Last.fm album facts.
-    fn lastfm_album<'a>(
-        &'a self,
-        user_id: &'a str,
-        artist: &'a str,
-        album: &'a str,
-        priority: RequestPriority,
-    ) -> Read<'a, Option<LastFmFacts>>;
     /// Last.fm artist facts.
     fn lastfm_artist<'a>(
         &'a self,
@@ -279,37 +264,6 @@ pub trait ListeningNetwork: Send + Sync {
         mbid: &'a str,
         priority: RequestPriority,
     ) -> Read<'a, Option<ReleaseGroupFacts>>;
-    /// Artist facts for a card.
-    fn artist<'a>(
-        &'a self,
-        mbid: &'a str,
-        priority: RequestPriority,
-    ) -> Read<'a, Option<ArtistFacts>>;
-    /// A YouTube link from a release's URL relationships.
-    fn release_video<'a>(
-        &'a self,
-        release_mbid: &'a str,
-        priority: RequestPriority,
-    ) -> Read<'a, Option<String>>;
-    /// The first recordings on a release, in track order.
-    fn release_recordings<'a>(
-        &'a self,
-        release_mbid: &'a str,
-        limit: usize,
-        priority: RequestPriority,
-    ) -> Read<'a, Vec<String>>;
-    /// A YouTube link from a recording's URL relationships.
-    fn recording_video<'a>(
-        &'a self,
-        recording_mbid: &'a str,
-        priority: RequestPriority,
-    ) -> Read<'a, Option<String>>;
-    /// The Wikipedia intro behind a Wikipedia or Wikidata link.
-    fn wikipedia_extract<'a>(
-        &'a self,
-        url: &'a str,
-        priority: RequestPriority,
-    ) -> Read<'a, Option<String>>;
 
     /// Artists from the user's Jellyfin account.
     fn jellyfin_artists<'a>(

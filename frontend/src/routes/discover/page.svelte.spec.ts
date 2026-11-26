@@ -127,13 +127,15 @@ beforeEach(async () => {
 	);
 });
 
+const PROPS = { params: {}, data: { primarySource: 'listenbrainz' as const, user: null } };
+
 const pickCard = () => page.getByRole('article');
 const bin = () => page.getByRole('region', { name: "This week's eight" });
 
 describe('the Discover page', () => {
 	it('shows pick one whole, the bin filed under the tastes and the five counts', async () => {
 		fakeApi(routes(ready()));
-		await renderWithQuery(Discover, {}, { client: queryClient });
+		await renderWithQuery(Discover, PROPS, { client: queryClient });
 
 		await expect.element(pickCard().getByRole('heading', { name: 'Album 1' })).toBeVisible();
 		await expect.element(pickCard().getByText('Close to your artists, number 1.')).toBeVisible();
@@ -161,7 +163,7 @@ describe('the Discover page', () => {
 				status: 'pending'
 			})
 		});
-		await renderWithQuery(Discover, {}, { client: queryClient });
+		await renderWithQuery(Discover, PROPS, { client: queryClient });
 
 		await pickCard().getByRole('button', { name: /^Keep/ }).click();
 		await expect.element(pickCard().getByRole('heading', { name: 'Album 2' })).toBeVisible();
@@ -185,7 +187,7 @@ describe('the Discover page', () => {
 				created_at: 1
 			})
 		});
-		await renderWithQuery(Discover, {}, { client: queryClient });
+		await renderWithQuery(Discover, PROPS, { client: queryClient });
 
 		await pickCard().getByRole('button', { name: /^No/ }).click();
 		await expect.element(pickCard().getByRole('heading', { name: 'Album 2' })).toBeVisible();
@@ -214,7 +216,7 @@ describe('the Discover page', () => {
 				}),
 			[LATER]: () => undefined
 		});
-		await renderWithQuery(Discover, {}, { client: queryClient });
+		await renderWithQuery(Discover, PROPS, { client: queryClient });
 
 		await pickCard().getByRole('button', { name: /^Keep/ }).click();
 		const slip = page.getByRole('status').filter({ hasText: 'On your Later pile.' });
@@ -230,7 +232,7 @@ describe('the Discover page', () => {
 		picks[2] = pick(3, 0, 'refused');
 		picks[3] = pick(4, 1, 'failed');
 		fakeApi(routes(ready(picks)));
-		await renderWithQuery(Discover, {}, { client: queryClient });
+		await renderWithQuery(Discover, PROPS, { client: queryClient });
 
 		await expect
 			.element(bin().getByRole('button', { name: /Album 2/ }))
@@ -261,7 +263,7 @@ describe('the Discover page', () => {
 				})
 			)
 		);
-		await renderWithQuery(Discover, {}, { client: queryClient });
+		await renderWithQuery(Discover, PROPS, { client: queryClient });
 
 		const five = page.getByRole('region', { name: "This week's five" });
 		await expect.element(five).toBeVisible();
@@ -284,7 +286,7 @@ describe('the Discover page', () => {
 		['nothing_yet', { status: 'nothing_yet' } as Week, 'Name a few artists you love']
 	])('shows the %s state and no album from elsewhere', async (_name, week, said) => {
 		fakeApi(routes(week));
-		await renderWithQuery(Discover, {}, { client: queryClient });
+		await renderWithQuery(Discover, PROPS, { client: queryClient });
 
 		await expect.element(page.getByText(said).first()).toBeVisible();
 		if (week.status !== 'kept_last_week') {
@@ -292,10 +294,26 @@ describe('the Discover page', () => {
 		}
 	});
 
+	it("ends with one link to the charts of the person's own source", async () => {
+		fakeApi(routes(ready()));
+		await renderWithQuery(
+			Discover,
+			{ params: {}, data: { primarySource: 'lastfm', user: null } },
+			{ client: queryClient }
+		);
+
+		await expect.element(page.getByText('That is everything this week.')).toBeInTheDocument();
+		const charts = page.getByRole('link', { name: 'What is popular on Last.fm' });
+		await expect.element(charts).toHaveAttribute('href', '/popular');
+		await expect
+			.element(page.getByRole('link', { name: /What is popular on/ }))
+			.toBeInTheDocument();
+	});
+
 	it('on a phone, puts the cover, the reason and the three buttons on the first screen', async () => {
 		await page.viewport(390, 844);
 		fakeApi(routes(ready()));
-		await renderWithQuery(Discover, {}, { client: queryClient });
+		await renderWithQuery(Discover, PROPS, { client: queryClient });
 
 		const cover = pickCard().getByRole('link', { name: 'Open Album 1' });
 		await expect.element(cover).toBeVisible();

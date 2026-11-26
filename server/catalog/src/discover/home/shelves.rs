@@ -75,6 +75,27 @@ pub fn your_albums(albums: &[HomeAlbum]) -> Option<ChartSection> {
     )
 }
 
+/// Milestone Anniversaries: library albums turning 10, 20, 25, ... years
+/// old in `this_year`, oldest first.
+pub fn anniversaries(albums: &[HomeAlbum], this_year: i64) -> Option<ChartSection> {
+    let mut sorted: Vec<&HomeAlbum> = albums.iter().collect();
+    let age = |row: &HomeAlbum| this_year - row.year.unwrap_or(this_year);
+    sorted.sort_by(|a, b| age(b).cmp(&age(a)).then(b.year.cmp(&a.year)));
+    shelf(
+        "Milestone Anniversaries",
+        SectionKind::Albums,
+        sorted
+            .into_iter()
+            .take(ANNIVERSARY_ROWS)
+            .map(|row| SectionItem::Album(library_album(row)))
+            .collect(),
+        Some(ShelfSource::Library),
+    )
+}
+
+/// Albums Milestone Anniversaries shows.
+pub const ANNIVERSARY_ROWS: usize = 12;
+
 /// Your Artists: the library artists with the most albums.
 pub fn your_artists(artists: &[HomeArtist]) -> Option<ChartSection> {
     shelf(

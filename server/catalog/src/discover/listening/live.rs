@@ -12,9 +12,9 @@ use std::sync::Arc;
 
 use super::network::{ListeningNetwork, Read};
 use super::rows::{
-    ArtistFacts, ArtistRow, FreshRow, JellyfinList, LastFmAlbum, LastFmChartAlbum, LastFmFacts,
-    ListenSource, ListenedAlbum, LovedTrack, PlayedArtist, PlaylistTrack, ReleaseGroupFacts,
-    ScoredArtist, SourceContext, StatsRange, TagAlbum, UserMusic, WeeklyPlaylist,
+    ArtistRow, FreshRow, JellyfinList, LastFmAlbum, LastFmChartAlbum, LastFmFacts, ListenSource,
+    ListenedAlbum, LovedTrack, PlayedArtist, PlaylistTrack, ReleaseGroupFacts, ScoredArtist,
+    SourceContext, StatsRange, TagAlbum, UserMusic, WeeklyPlaylist,
 };
 use super::{ListeningError, ListeningResult};
 use crate::discover::ports::BoxFuture;
@@ -545,22 +545,6 @@ impl ListeningNetwork for LiveNetwork {
         })
     }
 
-    fn listen_counts<'a>(
-        &'a self,
-        user_id: &'a str,
-        release_group_mbids: &'a [String],
-        priority: RequestPriority,
-    ) -> Read<'a, HashMap<String, i64>> {
-        Box::pin(async move {
-            let creds = self.credentials(user_id).await;
-            provider(
-                self.listenbrainz
-                    .release_group_popularity(release_group_mbids, &creds, priority)
-                    .await,
-            )
-        })
-    }
-
     fn lastfm_user_artists<'a>(
         &'a self,
         user_id: &'a str,
@@ -684,30 +668,6 @@ impl ListeningNetwork for LiveNetwork {
             };
             let rows = provider(client.chart_top_artists(&creds, limit, priority).await)?;
             Ok(rows.into_iter().map(top_artist).collect())
-        })
-    }
-
-    fn lastfm_album<'a>(
-        &'a self,
-        user_id: &'a str,
-        artist: &'a str,
-        album: &'a str,
-        priority: RequestPriority,
-    ) -> Read<'a, Option<LastFmFacts>> {
-        Box::pin(async move {
-            let Some((client, creds)) = self.lastfm(user_id).await else {
-                return Ok(None);
-            };
-            let info = provider(
-                client
-                    .album_info(&creds, artist, album, None, priority)
-                    .await,
-            )?;
-            Ok(info.map(|info| LastFmFacts {
-                mbid: info.mbid,
-                tags: info.tags.into_iter().map(|tag| tag.name).collect(),
-                summary: info.summary,
-            }))
         })
     }
 
@@ -965,117 +925,6 @@ impl ListeningNetwork for LiveNetwork {
                     first_release_date: first_release.and_then(|release| release.date.clone()),
                 }
             }))
-        })
-    }
-
-    fn artist<'a>(
-        &'a self,
-        mbid: &'a str,
-        priority: RequestPriority,
-    ) -> Read<'a, Option<ArtistFacts>> {
-        Box::pin(async move {
-            if !is_valid_mbid(mbid) {
-                return Ok(None);
-            }
-            let found = musicbrainz_option(
-                self.musicbrainz(priority)
-                    .lookup_artist(mbid, &["url-rels"], Criticality::BestEffort)
-                    .await,
-            )?;
-            Ok(found.map(|lookup| {
-                let artist = lookup.entity;
-                let country = artist
-                    .country
-                    .clone()
-                    .filter(|code| !code.is_empty())
-                    .or_else(|| artist.area.as_ref().and_then(|area| area.name.clone()));
-                let wiki_url = artist
-                    .relations
-                    .iter()
-                    .find(|relation| matches!(relation.rel_type.as_str(), "wikipedia" | "wikidata"))
-                    .and_then(|relation| relation.url.as_ref())
-                    .map(|url| url.resource.clone());
-                ArtistFacts { country, wiki_url }
-            }))
-        })
-    }
-
-    fn release_video<'a>(
-        &'a self,
-        release_mbid: &'a str,
-        priority: RequestPriority,
-    ) -> Read<'a, Option<String>> {
-        Box::pin(async move {
-            let found = musicbrainz_option(
-                self.musicbrainz(priority)
-                    .lookup_release(release_mbid, &["url-rels"], Criticality::BestEffort)
-                    .await,
-            )?;
-            Ok(found.and_then(|lookup| first_youtube(&lookup.entity.relations)))
-        })
-    }
-
-    fn release_recordings<'a>(
-        &'a self,
-        release_mbid: &'a str,
-        limit: usize,
-        priority: RequestPriority,
-    ) -> Read<'a, Vec<String>> {
-        Box::pin(async move {
-            let found = musicbrainz_option(
-                self.musicbrainz(priority)
-                    .lookup_release(release_mbid, &["recordings"], Criticality::BestEffort)
-                    .await,
-            )?;
-            let mut recordings: Vec<String> = Vec::new();
-            if let Some(lookup) = found {
-                for track in lookup
-                    .entity
-                    .media
-                    .iter()
-                    .flat_map(|medium| medium.tracks.iter())
-                {
-                    if recordings.len() >= limit {
-                        break;
-                    }
-                    if let Some(recording) = &track.recording
-                        && !recordings.contains(&recording.id)
-                    {
-                        recordings.push(recording.id.clone());
-                    }
-                }
-            }
-            Ok(recordings)
-        })
-    }
-
-    fn recording_video<'a>(
-        &'a self,
-        recording_mbid: &'a str,
-        priority: RequestPriority,
-    ) -> Read<'a, Option<String>> {
-        Box::pin(async move {
-            let found = musicbrainz_option(
-                self.musicbrainz(priority)
-                    .lookup_recording(recording_mbid, &["url-rels"], Criticality::BestEffort)
-                    .await,
-            )?;
-            Ok(found.and_then(|lookup| first_youtube(&lookup.entity.relations)))
-        })
-    }
-
-    fn wikipedia_extract<'a>(
-        &'a self,
-        url: &'a str,
-        priority: RequestPriority,
-    ) -> Read<'a, Option<String>> {
-        Box::pin(async move {
-            provider(
-                self.upstream
-                    .wikidata()
-                    .get_bio_extract(url, "en", priority)
-                    .await,
-            )
         })
     }
 

@@ -22,7 +22,6 @@ export const DiscoverQueryKeyFactory = {
 	v3: {
 		root,
 		home: (userId: DiscoverV3UserId) => [...root(userId), 'home'] as const,
-		queueStatus: (userId: DiscoverV3UserId) => [...root(userId), 'queue-status'] as const,
 		feedback: (userId: DiscoverV3UserId) => [...root(userId), 'feedback'] as const,
 		tunings: (userId: DiscoverV3UserId) => [...root(userId), 'tunings'] as const,
 		// The Later pile, and whether one album is on it, under the pile's prefix.

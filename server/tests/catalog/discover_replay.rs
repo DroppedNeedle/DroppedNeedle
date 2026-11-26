@@ -61,8 +61,8 @@ use droppedneedle_catalog::discover::engine::pool_store;
 use droppedneedle_catalog::discover::engine::reason::reason;
 use droppedneedle_catalog::discover::engine::select::{self, Exposure, Floors, Share, Shown};
 use droppedneedle_catalog::discover::listening::{
-    ArtistFacts, ArtistRow, FreshRow, JellyfinList, LastFmAlbum, LastFmChartAlbum, LastFmFacts,
-    ListenSource, ListenedAlbum, ListeningError, ListeningNetwork, LovedTrack, PlayedArtist, Read,
+    ArtistRow, FreshRow, JellyfinList, LastFmAlbum, LastFmChartAlbum, LastFmFacts, ListenSource,
+    ListenedAlbum, ListeningError, ListeningNetwork, LovedTrack, PlayedArtist, Read,
     ReleaseGroupFacts, ScoredArtist, SourceContext, StatsRange, TagAlbum, UserMusic,
     WeeklyPlaylist,
 };
@@ -286,14 +286,6 @@ impl ListeningNetwork for Replay {
     ) -> Read<'a, HashMap<String, String>> {
         self.refuse(format!("recording_groups {}", recording_mbids.join(",")))
     }
-    fn listen_counts<'a>(
-        &'a self,
-        _: &'a str,
-        release_group_mbids: &'a [String],
-        _: RequestPriority,
-    ) -> Read<'a, HashMap<String, i64>> {
-        self.refuse(format!("listen_counts {}", release_group_mbids.join(",")))
-    }
     fn lastfm_user_artists<'a>(
         &'a self,
         user_id: &'a str,
@@ -345,15 +337,6 @@ impl ListeningNetwork for Replay {
         _: RequestPriority,
     ) -> Read<'a, Vec<ArtistRow>> {
         self.refuse(format!("lastfm_chart_artists {limit}"))
-    }
-    fn lastfm_album<'a>(
-        &'a self,
-        _: &'a str,
-        artist: &'a str,
-        album: &'a str,
-        _: RequestPriority,
-    ) -> Read<'a, Option<LastFmFacts>> {
-        self.refuse(format!("lastfm_album {artist} - {album}"))
     }
     fn lastfm_artist<'a>(
         &'a self,
@@ -438,38 +421,6 @@ impl ListeningNetwork for Replay {
         _: RequestPriority,
     ) -> Read<'a, Option<ReleaseGroupFacts>> {
         self.refuse(format!("release_group {mbid}"))
-    }
-    fn artist<'a>(&'a self, mbid: &'a str, _: RequestPriority) -> Read<'a, Option<ArtistFacts>> {
-        self.refuse(format!("artist {mbid}"))
-    }
-    fn release_video<'a>(
-        &'a self,
-        release_mbid: &'a str,
-        _: RequestPriority,
-    ) -> Read<'a, Option<String>> {
-        self.refuse(format!("release_video {release_mbid}"))
-    }
-    fn release_recordings<'a>(
-        &'a self,
-        release_mbid: &'a str,
-        limit: usize,
-        _: RequestPriority,
-    ) -> Read<'a, Vec<String>> {
-        self.refuse(format!("release_recordings {release_mbid} {limit}"))
-    }
-    fn recording_video<'a>(
-        &'a self,
-        recording_mbid: &'a str,
-        _: RequestPriority,
-    ) -> Read<'a, Option<String>> {
-        self.refuse(format!("recording_video {recording_mbid}"))
-    }
-    fn wikipedia_extract<'a>(
-        &'a self,
-        url: &'a str,
-        _: RequestPriority,
-    ) -> Read<'a, Option<String>> {
-        self.refuse(format!("wikipedia_extract {url}"))
     }
     fn jellyfin_artists<'a>(
         &'a self,

@@ -209,9 +209,9 @@
 						</div>
 					{/if}
 
-					{#if !loading || homeData}
+					{#if homeData?.discover_preview}
 						<div class="discover-section-enter">
-							<DiscoverTeaserBand preview={homeData?.discover_preview ?? null} />
+							<DiscoverTeaserBand preview={homeData.discover_preview} />
 						</div>
 					{/if}
 

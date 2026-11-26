@@ -895,44 +895,6 @@ impl ListeningData {
             .collect())
     }
 
-    /// Listen counts per release group, each cached on its own; empty
-    /// for the uncached ones while popularity is down.
-    pub async fn listen_counts(
-        &self,
-        user_id: &str,
-        release_group_mbids: &[String],
-        ask: &Ask,
-    ) -> ListeningResult<HashMap<String, i64>> {
-        if self.listenbrainz_off() {
-            return Ok(Default::default());
-        }
-        if self.popularity_down() {
-            let (counts, _) = self
-                .cache
-                .held_each(release_group_mbids, shared::listen_count_key)
-                .await;
-            return Ok(counts);
-        }
-        self.cache
-            .fetch_each(
-                release_group_mbids,
-                shared::listen_count_key,
-                ARTIST,
-                |missing| async move {
-                    let fetched = self
-                        .call(
-                            ask,
-                            Some(Source::ListenBrainz),
-                            self.network.listen_counts(user_id, &missing, ask.priority),
-                        )
-                        .await;
-                    self.health.note(&fetched, ask.priority);
-                    fetched
-                },
-            )
-            .await
-    }
-
     /// A Last.fm user's top artists over three months.
     pub async fn lastfm_user_artists(
         &self,
@@ -1077,33 +1039,6 @@ impl ListeningData {
             })
             .await?;
         Ok(cut(rows, limit as usize))
-    }
-
-    /// Last.fm album facts, `None` when Last.fm is off or does not know it.
-    pub async fn lastfm_album(
-        &self,
-        user_id: &str,
-        artist: &str,
-        album: &str,
-        ask: &Ask,
-    ) -> ListeningResult<Option<LastFmFacts>> {
-        if !self.network.lastfm_ready(user_id).await {
-            return Ok(Default::default());
-        }
-        let key = CacheKey::hashed(Source::LastFm, "album_facts", &[artist, album]);
-        let (user, artist, album) = (user_id.to_owned(), artist.to_owned(), album.to_owned());
-        self.lookup(key, ARTIST, ask, move |network, priority| async move {
-            Ok(
-                match network
-                    .lastfm_album(&user, &artist, &album, priority)
-                    .await?
-                {
-                    Some(facts) => Fetched::Found(facts),
-                    None => Fetched::Missing,
-                },
-            )
-        })
-        .await
     }
 
     /// Last.fm artist facts (tags and bio), `None` when Last.fm is off or
@@ -1334,64 +1269,6 @@ impl ListeningData {
     ) -> ListeningResult<Option<ReleaseGroupFacts>> {
         let source = Some(Source::MusicBrainz);
         self.call(ask, source, self.network.release_group(mbid, ask.priority))
-            .await
-    }
-
-    /// Artist facts for a card.
-    pub async fn artist(&self, mbid: &str, ask: &Ask) -> ListeningResult<Option<ArtistFacts>> {
-        let source = Some(Source::MusicBrainz);
-        self.call(ask, source, self.network.artist(mbid, ask.priority))
-            .await
-    }
-
-    /// A YouTube link from a release's URL relationships.
-    pub async fn release_video(
-        &self,
-        release_mbid: &str,
-        ask: &Ask,
-    ) -> ListeningResult<Option<String>> {
-        let source = Some(Source::MusicBrainz);
-        self.call(
-            ask,
-            source,
-            self.network.release_video(release_mbid, ask.priority),
-        )
-        .await
-    }
-
-    /// The first recordings on a release, in track order.
-    pub async fn release_recordings(
-        &self,
-        release_mbid: &str,
-        limit: usize,
-        ask: &Ask,
-    ) -> ListeningResult<Vec<String>> {
-        self.call(
-            ask,
-            Some(Source::MusicBrainz),
-            self.network
-                .release_recordings(release_mbid, limit, ask.priority),
-        )
-        .await
-    }
-
-    /// A YouTube link from a recording's URL relationships.
-    pub async fn recording_video(
-        &self,
-        recording_mbid: &str,
-        ask: &Ask,
-    ) -> ListeningResult<Option<String>> {
-        self.call(
-            ask,
-            Some(Source::MusicBrainz),
-            self.network.recording_video(recording_mbid, ask.priority),
-        )
-        .await
-    }
-
-    /// The Wikipedia intro behind a Wikipedia or Wikidata link.
-    pub async fn wikipedia_extract(&self, url: &str, ask: &Ask) -> ListeningResult<Option<String>> {
-        self.call(ask, None, self.network.wikipedia_extract(url, ask.priority))
             .await
     }
 

@@ -2,14 +2,12 @@
 //!
 //! A build makes the sections the user has switched on, from the section
 //! list ([`sections`]). It runs in two rounds. The first makes the reads
-//! several sections share (seed artists, the Last.fm charts, the user's
-//! genres, the library's identified albums),
-//! only those a wanted section needs, every read bounded to 25 seconds
-//! so one slow service only costs its own sections. The second builds
-//! the sections in parallel under the same bound (the Daily Mixes stop at
-//! it themselves and keep the mixes finished by then), except the artist
-//! sections, which are built one after another in page order and share a
-//! "seen" set so an artist appears once on the page. Each section builds
+//! several sections share (seed artists, the user's genres, the library's
+//! identified albums), only those a wanted section needs, every read
+//! bounded to 25 seconds so one slow service only costs its own sections.
+//! The second builds the sections in parallel under the same bound (the
+//! Daily Mixes stop at it themselves and keep the mixes finished by then).
+//! Each section builds
 //! under an ask of its own and says how it came out ([`Outcome`]): a read
 //! it needed failing, its own or a shared one, or its bound running out
 //! makes it failed. Each section about the person leaves out what they
@@ -27,14 +25,14 @@ use futures_util::future::join_all;
 
 use super::library::{LibraryReads, fold};
 use super::memo::{BuildMemo, MemoKey};
-use super::shelves::{self, RowMut, SHELF_SIZE, album, artist, genre, one, shelf};
+use super::shelves::{self, RowMut, album, genre, one, shelf};
 use droppedneedle_kernel::db::Db;
 
 use crate::discover::cache::Variant;
 use crate::discover::engine::sources::{gaps, shelves as shelves_source};
 use crate::discover::feedback::{self, Feedback};
 use crate::discover::listening::{
-    ArtistRow, Ask, LastFmChartAlbum, ListenSource, ListeningData, TAG_PAGE, UserMusic,
+    ArtistRow, Ask, ListenSource, ListeningData, TAG_PAGE, UserMusic,
 };
 use crate::discover::models::{
     AlbumRef, ChartSection, DiscoverResponse, RadioSeedKind, SectionContent, SectionItem,
@@ -43,12 +41,12 @@ use crate::discover::models::{
 use crate::discover::queue::QueueSettings;
 use crate::discover::queue::build::{
     AlbumCard, BuildContext, VARIOUS_ARTISTS_MBID, lastfm_pools, normalize, or_empty,
-    resolve_release_groups, similar_artist_pools,
+    similar_artist_pools,
 };
 use crate::discover::queue::seeds::{SEEDS, links_listening, weighted_seeds};
 use crate::discover::queue::select::{MAX_PER_ARTIST, Shuffler, round_robin};
 use crate::discover::queue::store::QueueDb;
-use crate::discover::sections::{self, Dedupe, Input, Page, Requires, SectionDef};
+use crate::discover::sections::{self, Input, Page, Requires, SectionDef};
 use crate::discover::{new_releases, ownership};
 
 /// Bound on any one upstream read in a build.
@@ -62,12 +60,10 @@ const MIXES_BUDGET: Duration = Duration::from_secs(120);
 /// Room past [`MIXES_BUDGET`] for the Daily Mixes, which stop at it
 /// themselves; the outer bound only catches a read that never returns.
 const MIXES_GRACE: Duration = Duration::from_secs(5);
-/// Bound on resolving Last.fm release ids and weekly playlist covers.
+/// Bound on resolving weekly playlist covers.
 const RESOLVE_BUDGET: Duration = Duration::from_secs(15);
 /// Bound on one radio shelf.
 const RADIO_BUDGET: Duration = Duration::from_secs(18);
-/// Milestone birthdays celebrated by Anniversaries.
-const ANNIVERSARY_YEARS: [i64; 7] = [10, 20, 25, 30, 40, 50, 60];
 /// Albums per Daily Mix.
 const MIX_SIZE: usize = 12;
 /// Learned genres: the user's top genres whose artists are read.
@@ -113,8 +109,6 @@ pub struct Builder<'a> {
     pub settings: PageSettings,
     /// Today's date (`YYYY-MM-DD`, UTC).
     pub today: String,
-    /// The current year (UTC).
-    pub year: i64,
     /// Now, unix seconds.
     pub now: f64,
 }
@@ -324,9 +318,6 @@ fn noted<T: Default, E: std::fmt::Display>(ask: &Ask, what: &str, result: Result
 /// What the first round fetched.
 #[derive(Default)]
 struct Shared {
-    lastfm_weekly_artists: Vec<ArtistRow>,
-    lastfm_weekly_albums: Vec<LastFmChartAlbum>,
-    lastfm_recent: Vec<LastFmChartAlbum>,
     genres: Option<Vec<(String, i64)>>,
     library_albums: Vec<super::library::LibraryAlbum>,
 }
@@ -443,15 +434,7 @@ impl Builder<'_> {
         let seeds_failed = seed_ask.met_failure();
 
         let tracker = Tracker::default();
-        let shared = self
-            .first_round(
-                &tracker,
-                user_id,
-                lb_user.as_deref(),
-                lfm_user.as_deref(),
-                &needs,
-            )
-            .await;
+        let shared = self.first_round(&tracker, lb_user.as_deref(), &needs).await;
         if needs(Input::Genres) {
             bounded(
                 &self.ask,
@@ -496,38 +479,21 @@ impl Builder<'_> {
                 ..*self
             }
         };
-        let independent = join_all(
-            wanted
-                .iter()
-                .filter(|def| def.dedupe != Dedupe::Artists)
-                .map(|def| async {
-                    let section = section_builder(def);
-                    let name = def.key.name();
-                    let content = bounded_by(
-                        &section.ask,
-                        &name,
-                        section_bound(def.key),
-                        section.section(def.key, &ctx),
-                    )
-                    .await;
-                    (def.key, (content, section.ask.met_failure()))
-                }),
-        )
+        let independent = join_all(wanted.iter().map(|def| async {
+            let section = section_builder(def);
+            let name = def.key.name();
+            let content = bounded_by(
+                &section.ask,
+                &name,
+                section_bound(def.key),
+                section.section(def.key, &ctx),
+            )
+            .await;
+            (def.key, (content, section.ask.met_failure()))
+        }))
         .await;
         let mut built: HashMap<SectionKey, (Option<SectionContent>, bool)> =
             independent.into_iter().collect();
-        let mut seen_artists: HashSet<String> = HashSet::new();
-        for def in wanted.iter().filter(|def| def.dedupe == Dedupe::Artists) {
-            let section = section_builder(def);
-            let name = def.key.name();
-            let content = bounded(
-                &section.ask,
-                &name,
-                section.artist_section(def.key, &ctx, &mut seen_artists),
-            )
-            .await;
-            built.insert(def.key, (content, section.ask.met_failure()));
-        }
 
         let mut page = super::empty_page();
         let mut outcomes = Vec::new();
@@ -634,7 +600,7 @@ impl Builder<'_> {
         }
     }
 
-    /// One section that keeps every artist it finds.
+    /// One section.
     async fn section(&self, key: SectionKey, ctx: &Ctx<'_>) -> Option<SectionContent> {
         let (user_id, shared) = (ctx.user_id, ctx.shared);
         match key {
@@ -671,38 +637,7 @@ impl Builder<'_> {
             SectionKey::NewFromYourArtists => self.new_from_your_artists(user_id).await,
             SectionKey::GapsInYourArtists => self.gaps(user_id).await,
             SectionKey::FromYourShelves => self.own_shelves(user_id).await,
-            SectionKey::Anniversaries => one(self.anniversaries().await),
-            SectionKey::LastfmRecentScrobbles => one(self
-                .lastfm_album_shelf(&shared.lastfm_recent, 30, "Recently Scrobbled", true)
-                .await),
-            SectionKey::LastfmWeeklyAlbumChart => one(self
-                .lastfm_album_shelf(
-                    &shared.lastfm_weekly_albums,
-                    20,
-                    "Your Top Albums This Week",
-                    false,
-                )
-                .await),
             SectionKey::GenreList => one(genre_list(shared.genres.as_deref())),
-            _ => None,
-        }
-    }
-
-    /// One artist section: it skips artists `seen` holds and adds the
-    /// ones it shows, so an artist appears once on the page.
-    async fn artist_section(
-        &self,
-        key: SectionKey,
-        ctx: &Ctx<'_>,
-        seen: &mut HashSet<String>,
-    ) -> Option<SectionContent> {
-        match key {
-            SectionKey::LastfmWeeklyArtistChart => one(artist_shelf(
-                &ctx.shared.lastfm_weekly_artists,
-                seen,
-                "Your Weekly Top Artists",
-                Some(ShelfSource::Lastfm),
-            )),
             _ => None,
         }
     }
@@ -729,59 +664,11 @@ impl Builder<'_> {
     async fn first_round(
         &self,
         tracker: &Tracker,
-        user_id: &str,
         lb_user: Option<&str>,
-        lfm_user: Option<&str>,
         needs: &(dyn Fn(Input) -> bool + Sync),
     ) -> Shared {
         let listening = self.listening;
         let ask = &self.ask;
-        let lastfm_charts = async {
-            let Some(username) = lfm_user else {
-                return (Vec::new(), Vec::new(), Vec::new());
-            };
-            tokio::join!(
-                async {
-                    if !needs(Input::LastfmWeeklyArtists) {
-                        return Vec::new();
-                    }
-                    tracker
-                        .run(
-                            Input::LastfmWeeklyArtists,
-                            "lfm_weekly_artists",
-                            listening.lastfm_weekly_artists(user_id, username, ask),
-                        )
-                        .await
-                        .unwrap_or_default()
-                },
-                async {
-                    if !needs(Input::LastfmWeeklyAlbums) {
-                        return Vec::new();
-                    }
-                    tracker
-                        .run(
-                            Input::LastfmWeeklyAlbums,
-                            "lfm_weekly_albums",
-                            listening.lastfm_weekly_albums(user_id, username, ask),
-                        )
-                        .await
-                        .unwrap_or_default()
-                },
-                async {
-                    if !needs(Input::LastfmRecent) {
-                        return Vec::new();
-                    }
-                    tracker
-                        .run(
-                            Input::LastfmRecent,
-                            "lfm_recent",
-                            listening.lastfm_recent_albums(user_id, username, 20, ask),
-                        )
-                        .await
-                        .unwrap_or_default()
-                },
-            )
-        };
         let genres = async {
             let username = lb_user?;
             if !needs(Input::Genres) {
@@ -804,73 +691,11 @@ impl Builder<'_> {
                 .await
                 .unwrap_or_default()
         };
-        let ((lastfm_weekly_artists, lastfm_weekly_albums, lastfm_recent), genres, library_albums) =
-            tokio::join!(lastfm_charts, genres, library);
+        let (genres, library_albums) = tokio::join!(genres, library);
         Shared {
-            lastfm_weekly_artists,
-            lastfm_weekly_albums,
-            lastfm_recent,
             genres,
             library_albums,
         }
-    }
-
-    /// A Last.fm album chart as a shelf. Last.fm names releases, so each id
-    /// is matched to its release group first; rows that do not match in
-    /// time keep their Last.fm art but carry no id: a release id is not a
-    /// release group id, and passing it on would break links.
-    async fn lastfm_album_shelf(
-        &self,
-        albums: &[LastFmChartAlbum],
-        window: usize,
-        title: &str,
-        dedupe: bool,
-    ) -> Option<ChartSection> {
-        let albums = &albums[..albums.len().min(window)];
-        if albums.is_empty() {
-            return None;
-        }
-        let releases: Vec<String> = albums.iter().filter_map(|a| a.mbid.clone()).collect();
-        let settings = self.settings.queue.clone();
-        let groups = match tokio::time::timeout(
-            RESOLVE_BUDGET,
-            resolve_release_groups(&self.queue_ctx(&settings), &releases),
-        )
-        .await
-        {
-            Ok(groups) => groups,
-            Err(_) => {
-                tracing::warn!(
-                    "release group matching ran out of time; showing Last.fm rows without links"
-                );
-                HashMap::new()
-            }
-        };
-        let mut seen = HashSet::new();
-        let mut items = Vec::new();
-        for row in albums {
-            let group =
-                normalize(row.mbid.as_deref()).and_then(|release| groups.get(&release).cloned());
-            let key = group
-                .clone()
-                .unwrap_or_else(|| format!("{}|{}", row.artist_name, row.name).to_lowercase());
-            if dedupe && !seen.insert(key) {
-                continue;
-            }
-            let mut item = album(
-                group.as_deref(),
-                &row.name,
-                Some(&row.artist_name),
-                None,
-                row.playcount.filter(|count| *count > 0),
-            );
-            if item.cover_url.is_none() && !row.image_url.is_empty() {
-                item.cover_url = Some(row.image_url.clone());
-            }
-            items.push(SectionItem::Album(item));
-        }
-        items.truncate(SHELF_SIZE);
-        shelf(title, SectionKind::Albums, items, Some(ShelfSource::Lastfm))
     }
 
     /// Candidate albums from artists similar to `seeds`, one pool per
@@ -1223,44 +1048,6 @@ impl Builder<'_> {
         .await
     }
 
-    /// Library albums turning 10, 20, 25, ... years old this year,
-    /// roundest birthdays first.
-    async fn anniversaries(&self) -> Option<ChartSection> {
-        let mut albums = or_empty(
-            "anniversary albums",
-            self.library
-                .anniversary_albums(self.year, &ANNIVERSARY_YEARS, 12)
-                .await,
-        );
-        albums.sort_by(|a, b| {
-            let age = |row: &super::library::ShelfAlbum| self.year - row.year.unwrap_or(self.year);
-            age(b).cmp(&age(a)).then(b.year.cmp(&a.year))
-        });
-        let items = albums
-            .into_iter()
-            .take(12)
-            .map(|row| {
-                let mut item = album(
-                    row.release_group_mbid.as_deref(),
-                    &row.title,
-                    row.artist_name.as_deref(),
-                    row.artist_mbid.as_deref(),
-                    None,
-                );
-                item.local_id = Some(row.local_id);
-                item.release_date = row.year.map(|year| year.to_string());
-                item.in_library = true;
-                SectionItem::Album(item)
-            })
-            .collect();
-        shelf(
-            "Milestone Anniversaries",
-            SectionKind::Albums,
-            items,
-            Some(ShelfSource::Library),
-        )
-    }
-
     /// Gaps in artists you collect, read from the person's pool. A read
     /// that failed fails the section, so the page keeps the one it showed.
     async fn gaps(&self, user_id: &str) -> Option<SectionContent> {
@@ -1439,26 +1226,6 @@ fn mix_split(fresh: usize, familiar: usize) -> (usize, usize) {
         familiar_count += (familiar - familiar_count).min(MIX_SIZE - new_count - familiar_count);
     }
     (new_count, familiar_count)
-}
-
-/// An artist chart as a shelf, skipping artists already on the page.
-fn artist_shelf(
-    rows: &[ArtistRow],
-    seen: &mut HashSet<String>,
-    title: &str,
-    source: Option<ShelfSource>,
-) -> Option<ChartSection> {
-    let mut items = Vec::new();
-    for row in rows.iter().take(20) {
-        let Some(mbid) = normalize(row.mbid.as_deref()) else {
-            continue;
-        };
-        if seen.insert(mbid) {
-            items.push(artist(row.mbid.as_deref(), &row.name, row.listen_count));
-        }
-    }
-    items.truncate(SHELF_SIZE);
-    shelf(title, SectionKind::Artists, items, source)
 }
 
 /// How old a weekly exploration playlist may be and still show: a week,

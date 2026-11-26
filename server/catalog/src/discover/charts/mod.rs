@@ -30,8 +30,13 @@
 //! "your top albums" fall back to whichever service the user
 //! has linked, and a user with neither gets an empty page. Genre pages are
 //! served by the genre pages in front of this source.
+//!
+//! A person with Last.fm linked also gets their own Last.fm lists beside
+//! their top albums: recent scrobbles and this week's top albums and
+//! artists, read when they open their charts page. Anyone else gets none,
+//! and nothing is read for them.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -45,12 +50,17 @@ use super::ownership::{owned_albums, owned_artists};
 use super::queue::QueueSettings;
 use super::queue::build::{BuildContext, normalize, resolve_release_groups};
 use super::queue::store::QueueDb;
+use crate::discover::home::mark_owned;
 use crate::discover::listening::{
     ArtistRow, Ask, LastFmChartAlbum, ListenSource, ListenedAlbum, ListeningData, ListeningError,
     SourcePolicy, StatsRange, one_per_group,
 };
+use crate::discover::page::shelves::{SHELF_SIZE, album, artist, shelf};
 use crate::discover::{
-    models::{AlbumRef, ArtistRef, ChartPage},
+    models::{
+        AlbumRef, ArtistRef, ChartPage, ChartSection, SectionItem, SectionKind, ShelfSource,
+        YourLastfmResponse,
+    },
     ports::{BoxFuture, ProviderFailure},
 };
 
@@ -60,6 +70,11 @@ const PLAYED_TOP_MIN: i64 = 3;
 
 /// Most rows one Last.fm range page reads: 200.
 const LASTFM_MAX_ROWS: i64 = 200;
+
+/// Recent scrobbles read for the person's own lists.
+const RECENT_ROWS: u32 = 20;
+/// Rows of each list looked at, before the shelf is cut.
+const WEEKLY_ROWS: usize = 20;
 
 /// How long a person waits on a Last.fm page's new release group lookups.
 /// Each answer is remembered as it comes, so lookups cut off keep what
@@ -242,6 +257,34 @@ fn lastfm_albums(rows: Vec<LastFmChartAlbum>, groups: &HashMap<String, String>) 
             requested: false,
         })
         .collect()
+}
+
+/// Log a Last.fm list whose read failed, which is left out.
+fn note_failed<T>(list: &str, read: &Result<T, ListeningError>) {
+    if let Err(error) = read {
+        tracing::warn!(%error, list, "a last.fm list failed; leaving it out");
+    }
+}
+
+/// A Last.fm artist list as a shelf: rows with an MBID, once each.
+fn artist_shelf(rows: &[ArtistRow], title: &str) -> Option<ChartSection> {
+    let mut seen = HashSet::new();
+    let mut items = Vec::new();
+    for row in rows.iter().take(WEEKLY_ROWS) {
+        let Some(mbid) = normalize(row.mbid.as_deref()) else {
+            continue;
+        };
+        if seen.insert(mbid) {
+            items.push(artist(row.mbid.as_deref(), &row.name, row.listen_count));
+        }
+    }
+    items.truncate(SHELF_SIZE);
+    shelf(
+        title,
+        SectionKind::Artists,
+        items,
+        Some(ShelfSource::Lastfm),
+    )
 }
 
 /// Ownership marks are a nicety: a failed lookup is logged and the page
@@ -518,6 +561,119 @@ impl LiveCharts {
             };
             self.album_page(range, limit, offset, albums).await
         })
+    }
+
+    /// The person's own Last.fm lists: recent scrobbles, this week's top
+    /// albums and this week's top artists, each left out when empty or when
+    /// its read failed; the error only when all three failed. Empty, with
+    /// nothing read, while they have no Last.fm link or Last.fm cannot be
+    /// read.
+    pub fn your_lastfm<'a>(
+        &'a self,
+        user_id: &'a str,
+    ) -> BoxFuture<'a, Result<YourLastfmResponse, ProviderFailure>> {
+        Box::pin(async move {
+            let policy = self.listening.policy(user_id).await;
+            let user = policy.user();
+            let Some(username) = user
+                .lastfm_username
+                .clone()
+                .filter(|_| user.lastfm && policy.ready(ListenSource::Lastfm))
+            else {
+                return Ok(YourLastfmResponse {
+                    shelves: Vec::new(),
+                });
+            };
+            let ask = Ask::person();
+            let (recent, albums, artists) = tokio::join!(
+                self.listening
+                    .lastfm_recent_albums(user_id, &username, RECENT_ROWS, &ask),
+                self.listening
+                    .lastfm_weekly_albums(user_id, &username, &ask),
+                self.listening
+                    .lastfm_weekly_artists(user_id, &username, &ask),
+            );
+            // A list whose read failed is left out on its own; the page
+            // fails only when none of the three answered.
+            if let (Err(error), Err(_), Err(_)) = (&recent, &albums, &artists) {
+                return Err(error.clone().into());
+            }
+            note_failed("recent", &recent);
+            note_failed("weekly albums", &albums);
+            note_failed("weekly artists", &artists);
+            let (recent, albums, artists) = (
+                recent.unwrap_or_default(),
+                albums.unwrap_or_default(),
+                artists.unwrap_or_default(),
+            );
+            let mut shelves: Vec<ChartSection> = [
+                self.album_shelf(&recent, "Recently Scrobbled", true, &ask)
+                    .await,
+                self.album_shelf(&albums, "Your Top Albums This Week", false, &ask)
+                    .await,
+                artist_shelf(&artists, "Your Weekly Top Artists"),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            let mut album_rows = Vec::new();
+            let mut artist_rows = Vec::new();
+            for shelf in &mut shelves {
+                for item in &mut shelf.items {
+                    match item {
+                        SectionItem::Album(row) => album_rows.push(row),
+                        SectionItem::Artist(row) => artist_rows.push(row),
+                        SectionItem::Track(_) | SectionItem::Genre(_) => {}
+                    }
+                }
+            }
+            mark_owned(&self.db, album_rows, artist_rows).await;
+            Ok(YourLastfmResponse { shelves })
+        })
+    }
+
+    /// A Last.fm album list as a shelf. Last.fm names releases, so each id
+    /// is matched to its release group first; a row not matched in time
+    /// keeps its Last.fm art but carries no id: a release id is not a
+    /// release group id, and passing it on would break links. `once` keeps
+    /// one row an album.
+    async fn album_shelf(
+        &self,
+        rows: &[LastFmChartAlbum],
+        title: &str,
+        once: bool,
+        ask: &Ask,
+    ) -> Option<ChartSection> {
+        let rows = &rows[..rows.len().min(WEEKLY_ROWS)];
+        if rows.is_empty() {
+            return None;
+        }
+        let groups = self.release_groups(rows, ask).await;
+        let mut seen = HashSet::new();
+        let mut items = Vec::new();
+        for row in rows {
+            let group =
+                normalize(row.mbid.as_deref()).and_then(|release| groups.get(&release).cloned());
+            let key = group
+                .clone()
+                .unwrap_or_else(|| format!("{}|{}", row.artist_name, row.name).to_lowercase());
+            if once && !seen.insert(key) {
+                continue;
+            }
+            let mut item = album(
+                group.as_deref(),
+                &row.name,
+                Some(&row.artist_name),
+                None,
+                row.playcount.filter(|count| *count > 0),
+            );
+            if item.cover_url.is_none() && !row.image_url.is_empty() {
+                item.cover_url = Some(row.image_url.clone());
+            }
+            items.push(SectionItem::Album(item));
+        }
+        items.truncate(SHELF_SIZE);
+        shelf(title, SectionKind::Albums, items, Some(ShelfSource::Lastfm))
     }
 
     /// The user's most played albums in the app over `range`, `count` from

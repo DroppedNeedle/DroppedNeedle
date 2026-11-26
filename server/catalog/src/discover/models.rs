@@ -311,15 +311,30 @@ pub struct GenreArtworkAlbum {
     pub album_artist_name: Option<String>,
 }
 
-/// A discover teaser on home: one seed artist plus similar artists.
+/// Home's way into Discover: the person's newest set, with the first pick
+/// they have not answered, or none once every pick is answered.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct DiscoverPreview {
-    /// Seed artist name.
-    pub seed_artist: String,
-    /// Seed MusicBrainz artist id.
-    pub seed_artist_mbid: String,
-    /// Similar artists.
-    pub items: Vec<ArtistRef>,
+    /// The ISO week number of the set's first day.
+    pub week_number: i64,
+    /// When the next set comes out (unix ms).
+    pub next_set_at: i64,
+    /// The set's albums, in pick order.
+    pub albums: Vec<AlbumRef>,
+    /// The first pick not answered yet; null once every pick is answered.
+    #[serde(default)]
+    pub next: Option<TeaserPick>,
+}
+
+/// The pick Home's teaser shows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct TeaserPick {
+    /// Its place in the set, from 1.
+    pub pick_no: i64,
+    /// The album, with its year and type.
+    pub album: AlbumRef,
+    /// Why it is in the set, as shown when the set was built.
+    pub reason: String,
 }
 
 /// Home: its sections, in page order, plus the page-level fields. A
@@ -337,8 +352,9 @@ pub struct HomeResponse {
     pub genre_artwork: HashMap<String, GenreArtwork>,
     /// Genre artwork schema version.
     pub genre_artwork_schema_version: String,
-    /// Discover teaser. Not sent while Discover has nothing to tease
-    /// with: the shelf it copied has left the page.
+    /// Discover teaser: the newest set's next pick. Not sent while the
+    /// person has no set, nor while a new set is due and every pick of the
+    /// last one is answered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discover_preview: Option<DiscoverPreview>,
     /// True while a fuller build runs in the background (the UI polls).
@@ -458,6 +474,15 @@ pub struct ChartPage<T> {
     pub limit: i64,
     /// True when more rows follow.
     pub has_more: bool,
+}
+
+/// The person's own Last.fm lists for their charts page: recent scrobbles
+/// and this week's top albums and artists, each left out when empty or
+/// when its read failed. Empty for a person without Last.fm linked.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct YourLastfmResponse {
+    /// The lists, in page order.
+    pub shelves: Vec<ChartSection>,
 }
 
 // ---------------------------------------------------------------------------
@@ -735,33 +760,6 @@ pub struct PageHealthRow {
 pub struct DiscoverHealthResponse {
     /// Discover pages, one per user.
     pub pages: Vec<PageHealthRow>,
-}
-
-// ---------------------------------------------------------------------------
-// Queue status
-// ---------------------------------------------------------------------------
-
-/// Whether a person's weekly picks wait for an answer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum QueueBuildStatus {
-    /// No set is out, or every pick is answered.
-    Idle,
-    /// A set is out with picks still open.
-    Ready,
-}
-
-/// How many of a person's weekly picks wait for an answer.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct DiscoverQueueStatusResponse {
-    /// Whether any wait.
-    pub status: QueueBuildStatus,
-    /// Picks still open, while `ready`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub item_count: Option<i64>,
-    /// When the set was built (unix seconds), while `ready`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub built_at: Option<i64>,
 }
 
 /// One thing a person tells Discover: about an album (`no`, `know_it`,

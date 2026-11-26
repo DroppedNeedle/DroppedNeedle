@@ -23,13 +23,14 @@ use super::{
         AlbumPreviewMode, AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection,
         DigFurtherPick, DiscoverActivityRequest, DiscoverActivityResponse, DiscoverFeedbackEntry,
         DiscoverFeedbackRequest, DiscoverFeedbackResponse, DiscoverHealthResponse,
-        DiscoverPickEventRequest, DiscoverPrefs, DiscoverQueueStatusResponse, DiscoverResponse,
-        DiscoverTuningEntry, DiscoverTuningRequest, DiscoverTuningsResponse, FeedbackTarget,
-        FoundOnDiscover, GenreDetailResponse, HomeResponse, IntegrationStatus, LaterAlbum,
-        LaterRequest, ListenSource, NewRelease, PastWeeksPage, PickAnswer, PickEvidence,
+        DiscoverPickEventRequest, DiscoverPrefs, DiscoverResponse, DiscoverTuningEntry,
+        DiscoverTuningRequest, DiscoverTuningsResponse, FeedbackTarget, FoundOnDiscover,
+        GenreDetailResponse, HomeResponse, IntegrationStatus, LaterAlbum, LaterRequest,
+        ListenSource, NewRelease, PastWeeksPage, PickAnswer, PickEvidence,
         PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, RadioPlanRequest,
         RadioPlanResponse, RadioRequest, StatedArtist, StatedArtistRequest, StatedArtistsResponse,
         StatsRange, TrackPreviewResponse, TuningKind, WeekResponse, YouTubeSearchResponse,
+        YourLastfmResponse,
     },
     new_releases,
     services::{self, DiscoverDeps},
@@ -277,32 +278,6 @@ pub async fn playlist_suggestions(
     ValidJson(body): ValidJson<PlaylistSuggestionsRequest>,
 ) -> Result<Json<PlaylistSuggestionsResponse>, ApiError> {
     services::playlist_suggestions(&deps, user.user_id(), &body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-// ---------------------------------------------------------------------------
-// Queue
-// ---------------------------------------------------------------------------
-
-/// How many of the caller's weekly picks wait for an answer: `ready` with
-/// their count while a set is out and some are open, else `idle`.
-#[utoipa::path(
-    get,
-    tag = "discover",
-    path = "/api/v3/discover/queue/status",
-    responses(
-        (status = 200, description = "Open picks", body = DiscoverQueueStatusResponse),
-        (status = 401, description = "Not authenticated"),
-        (status = 500, description = "The week could not be read"),
-    )
-)]
-pub async fn queue_status(
-    State(deps): State<DiscoverDeps>,
-    User(user): User,
-) -> Result<Json<DiscoverQueueStatusResponse>, ApiError> {
-    services::queue_status(&deps, user.user_id())
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -1207,6 +1182,29 @@ pub async fn your_top_albums(
     .map_err(ApiError::from)
 }
 
+/// The caller's own Last.fm lists for their charts page: recent
+/// scrobbles and this week's top albums and artists. Empty for a person
+/// without Last.fm linked.
+#[utoipa::path(
+    get,
+    tag = "discover",
+    path = "/api/v3/home/your-top/lastfm",
+    responses(
+        (status = 200, description = "The caller's Last.fm lists", body = YourLastfmResponse),
+        (status = 401, description = "Not authenticated"),
+        (status = 503, description = "Every list's read failed (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
+    )
+)]
+pub async fn your_lastfm(
+    State(deps): State<DiscoverDeps>,
+    User(user): User,
+) -> Result<Json<YourLastfmResponse>, ApiError> {
+    services::your_lastfm(&deps, user.user_id())
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
 // ---------------------------------------------------------------------------
 // Routers
 // ---------------------------------------------------------------------------
@@ -1220,7 +1218,6 @@ pub fn routes() -> Routes<DiscoverDeps> {
         .user(routes!(discover_radio))
         .user(routes!(radio_plan))
         .user(routes!(playlist_suggestions))
-        .user(routes!(queue_status))
         .user(routes!(save_feedback))
         .user(routes!(list_feedback))
         .user(routes!(undo_feedback))
@@ -1252,5 +1249,6 @@ pub fn routes() -> Routes<DiscoverDeps> {
         .user(routes!(trending_artists))
         .user(routes!(popular_albums))
         .user(routes!(your_top_albums))
+        .user(routes!(your_lastfm))
         .admin(routes!(admin_discover_health))
 }

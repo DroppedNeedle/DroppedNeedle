@@ -927,6 +927,82 @@ async fn run_pipeline_with(
     .await
 }
 
+/// v2's Discover switches carry over the section changes as v3's own rows
+/// did: the deck is the weekly set, the two renamed shelves keep their
+/// switch, New from your artists is off only for someone who had both of
+/// the shelves it replaces off, Milestone Anniversaries' switch moves to
+/// Home, and the switches of shelves that left stay behind. Other rows land
+/// as they were.
+#[tokio::test]
+async fn discover_switches_carry_over_the_section_changes() {
+    let root = scratch_dir("section-switches");
+    let v2_root = root.join("v2");
+    let fixture = build_v2_fixture(&v2_root).expect("fixture builds");
+    let v2_db = v2_root.join("cache").join("library.db");
+    delete_orphan_rows(&v2_db).expect("repair runs");
+    let (alice, bob) = (fixture.alice_id.clone(), fixture.bob_id.clone());
+    let v2 = rusqlite::Connection::open(&v2_db).expect("v2 opens");
+    for (user, key, enabled) in [
+        (&alice, "discover_queue", 0),
+        (&alice, "missing_essentials", 0),
+        (&alice, "rediscover", 0),
+        (&alice, "fresh_releases", 0),
+        (&alice, "new_from_followed", 0),
+        (&alice, "anniversaries", 0),
+        (&alice, "top_picks", 0),
+        (&alice, "globally_trending", 0),
+        (&alice, "lastfm_weekly_album_chart", 0),
+        (&alice, "genre_list", 0),
+        (&bob, "fresh_releases", 1),
+        (&bob, "new_from_followed", 0),
+        (&bob, "discover_queue", 1),
+    ] {
+        v2.execute(
+            "INSERT INTO user_section_prefs (user_id, page, section_key, enabled, updated_at) \
+             VALUES (?1, 'discover', ?2, ?3, '2024-01-01T00:00:00')",
+            rusqlite::params![user, key, enabled],
+        )
+        .expect("v2 switch stored");
+    }
+    drop(v2);
+    let export_path = root.join("export.json");
+    droppedneedle_tool::export::export_v2_to_file(
+        &export_request(&v2_root, PASSPHRASE),
+        &export_path,
+    )
+    .expect("export writes");
+    let text = std::fs::read_to_string(&export_path).expect("export reads back");
+    let (v3_root, target_db) = seeded_target(&root);
+    run_pipeline(&text, PASSPHRASE, &v3_root, &target_db, false).await;
+
+    let target = target_db.connect();
+    let mut statement = target
+        .prepare(
+            "SELECT CASE user_id WHEN ?1 THEN 'alice' ELSE 'bob' END || ' ' || page || ' ' \
+             || section_key || ' ' || enabled FROM app_section_prefs \
+             WHERE user_id IN (?1, ?2) ORDER BY 1",
+        )
+        .expect("prepares");
+    let rows: Vec<String> = statement
+        .query_map(rusqlite::params![&alice, &bob], |row| row.get(0))
+        .expect("reads")
+        .collect::<Result<_, _>>()
+        .expect("rows read");
+    assert_eq!(
+        rows,
+        [
+            "alice discover from_your_shelves 0",
+            "alice discover gaps_in_your_artists 0",
+            "alice discover genre_list 0",
+            "alice discover new_from_your_artists 0",
+            "alice discover weekly_set 0",
+            "alice home anniversaries 0",
+            "alice home recently_played 1",
+            "bob discover weekly_set 1",
+        ]
+    );
+}
+
 /// Held downloads carry into the held list with their files: a track
 /// download's under its song, an album's under its album, v2's library
 /// holds as a taken destination and a reason v3 holds no file for as held

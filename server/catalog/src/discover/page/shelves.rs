@@ -242,7 +242,7 @@ pub fn dedupe_albums(page: &mut [PageSection]) {
         .filter_map(
             |(at, section)| match sections::find(Page::Discover, section.key)?.dedupe {
                 Dedupe::Albums(rank) => Some((rank, at)),
-                Dedupe::None | Dedupe::Artists => None,
+                Dedupe::None => None,
             },
         )
         .collect();

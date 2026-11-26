@@ -18,10 +18,10 @@ use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_catalog::discover::facts::KeptFacts;
 use droppedneedle_catalog::discover::listening::{
-    AlbumRow, ArtistFacts, ArtistRow, Ask, FreshRow, JellyfinList, LastFmAlbum, LastFmChartAlbum,
-    LastFmFacts, ListenedAlbum, ListeningData, ListeningError, ListeningNetwork, LovedTrack,
-    PlayedArtist, RankedAlbum, Read, ReleaseGroupFacts, ScoredArtist, SourceContext, StatsRange,
-    TagAlbum, UserMusic, WeeklyPlaylist,
+    AlbumRow, ArtistRow, Ask, FreshRow, JellyfinList, LastFmAlbum, LastFmChartAlbum, LastFmFacts,
+    ListenedAlbum, ListeningData, ListeningError, ListeningNetwork, LovedTrack, PlayedArtist,
+    RankedAlbum, Read, ReleaseGroupFacts, ScoredArtist, SourceContext, StatsRange, TagAlbum,
+    UserMusic, WeeklyPlaylist,
 };
 use droppedneedle_catalog::discover::ports::BoxFuture;
 use droppedneedle_catalog::discover::services::DiscoverDeps;
@@ -69,6 +69,10 @@ pub(crate) struct Script {
     pub lastfm_user_artists: Vec<ArtistRow>,
     /// The user's Last.fm weekly artist chart.
     pub lastfm_weekly_artists: Vec<ArtistRow>,
+    /// The user's Last.fm weekly album chart.
+    pub lastfm_weekly_albums: Vec<LastFmChartAlbum>,
+    /// The user's recent Last.fm scrobbles, as albums.
+    pub lastfm_recent: Vec<LastFmChartAlbum>,
     /// Last.fm's similar artists, by the asked artist's MBID.
     pub lastfm_similar: HashMap<String, Vec<ScoredArtist>>,
     /// Last.fm's top albums of an artist, by the artist's MBID.
@@ -342,14 +346,6 @@ impl ListeningNetwork for Script {
             })
             .collect())
     }
-    fn listen_counts<'a>(
-        &'a self,
-        _id: &'a str,
-        _g: &'a [String],
-        _p: RequestPriority,
-    ) -> Answer<'a, HashMap<String, i64>> {
-        ok(HashMap::new())
-    }
     fn lastfm_user_artists<'a>(
         &'a self,
         _id: &'a str,
@@ -414,15 +410,6 @@ impl ListeningNetwork for Script {
             Vec::new()
         })
     }
-    fn lastfm_album<'a>(
-        &'a self,
-        _id: &'a str,
-        _a: &'a str,
-        _b: &'a str,
-        _p: RequestPriority,
-    ) -> Answer<'a, Option<LastFmFacts>> {
-        ok(None)
-    }
     fn lastfm_artist<'a>(
         &'a self,
         _id: &'a str,
@@ -446,7 +433,7 @@ impl ListeningNetwork for Script {
         _u: &'a str,
         _p: RequestPriority,
     ) -> Answer<'a, Vec<LastFmChartAlbum>> {
-        ok(Vec::new())
+        ok(self.lastfm_weekly_albums.clone())
     }
     fn lastfm_recent_albums<'a>(
         &'a self,
@@ -455,7 +442,7 @@ impl ListeningNetwork for Script {
         _l: u32,
         _p: RequestPriority,
     ) -> Answer<'a, Vec<LastFmChartAlbum>> {
-        ok(Vec::new())
+        ok(self.lastfm_recent.clone())
     }
     fn lastfm_tag_artists<'a>(
         &'a self,
@@ -517,34 +504,6 @@ impl ListeningNetwork for Script {
             });
         }
         ok(self.release_group.clone())
-    }
-    fn artist<'a>(&'a self, _m: &'a str, _p: RequestPriority) -> Answer<'a, Option<ArtistFacts>> {
-        ok(None)
-    }
-    fn release_video<'a>(&'a self, _r: &'a str, _p: RequestPriority) -> Answer<'a, Option<String>> {
-        ok(None)
-    }
-    fn release_recordings<'a>(
-        &'a self,
-        _r: &'a str,
-        _l: usize,
-        _p: RequestPriority,
-    ) -> Answer<'a, Vec<String>> {
-        ok(Vec::new())
-    }
-    fn recording_video<'a>(
-        &'a self,
-        _r: &'a str,
-        _p: RequestPriority,
-    ) -> Answer<'a, Option<String>> {
-        ok(None)
-    }
-    fn wikipedia_extract<'a>(
-        &'a self,
-        _u: &'a str,
-        _p: RequestPriority,
-    ) -> Answer<'a, Option<String>> {
-        ok(None)
     }
     fn jellyfin_artists<'a>(
         &'a self,

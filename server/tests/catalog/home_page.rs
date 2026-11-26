@@ -5,7 +5,9 @@
 //! shelves at once, the genre page joins owned and popular rows, and a
 //! collage whose art file is gone falls back to a gradient. A release
 //! group the sitewide chart lists twice is one popular album. Your Top
-//! Albums comes from plays in the app while there are enough of them.
+//! Albums comes from plays in the app while there are enough of them. The
+//! Discover teaser is the week's next pick, and Milestone Anniversaries is a
+//! Home shelf.
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -456,6 +458,187 @@ async fn your_top_albums_come_from_plays_in_the_app() {
     assert_eq!(
         top_albums_after_plays(2).await,
         (("listenbrainz".to_owned(), vec![OTHER_RG.to_owned()]), 1)
+    );
+}
+
+/// Home's teaser is the first pick of the caller's set for this week they
+/// have not answered, with its reason and its place in the set, and stays
+/// on it while the next set is due but not built; once every pick is
+/// answered it says so with the week's albums; with no set it is absent. Every read behind it is local: its whole answer
+/// comes before the background build has read anything. Milestone
+/// Anniversaries is a Home shelf of library albums with a round birthday
+/// this year, oldest first.
+#[tokio::test]
+async fn home_teaser_is_the_next_pick_and_anniversaries_are_home() {
+    use droppedneedle_catalog::discover::engine::weekly::{self, SetDay, day_on_or_before};
+
+    let dir = crate::common::ScratchDir::new("home-teaser");
+    let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
+    let db = runtime.db().clone();
+    let now = 1_790_000_000_000_i64;
+    let this_year = 2026;
+    let week = day_on_or_before(now, SetDay::DEFAULT);
+    let group = |n: u8| format!("0a1b2c3d-0000-4000-8000-0000000000b{n}");
+    let mut seed = String::from(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('user-1', 'Ada', 'user', 0), ('user-2', 'Bo', 'user', 0); \
+         INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+         updated_at) VALUES ('a1', 'Aurora', 'aurora', 'group', 1, 1);",
+    );
+    for (n, year) in [(1, this_year - 10), (2, this_year - 30), (3, this_year - 7)] {
+        seed += &format!(
+            "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_id, grouping_source, created_at, updated_at, year) \
+             VALUES ('al{n}', 'r1', 'g{n}', 'Album {n}', 'album {n}', 'a1', 'automatic', 1, 1, \
+             {year}); \
+             INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, file_format, availability, ingest_source, \
+             imported_at, membership_source) VALUES ('t{n}', 'al{n}', 'r1', '/music/t{n}.flac', \
+             't{n}.flac', 'h{n}', 1, 1, 's{n}', 'Song', 'song', 'Album {n}', 'album {n}', \
+             'flac', 'indexed', 'scan', 1, 'automatic');"
+        );
+    }
+    seed += &format!(
+        "INSERT INTO catalog_weekly_sets (user_id, week_start_at, built_at, plays_counted, \
+         seeds, shelf_artists, shelf_albums, linked, tastes) \
+         VALUES ('user-1', {week}, {week}, 40, 3, 1, 3, 0, '[]');"
+    );
+    for n in 1..=3 {
+        seed += &format!(
+            "INSERT INTO catalog_weekly_set_picks (user_id, week_start_at, pick_no, \
+             release_group_mbid_lower, release_group_mbid, title, artist_mbid, artist_name, \
+             primary_type, first_release_date, reason_line, evidence) VALUES ('user-1', \
+             {week}, {n}, '{g}', '{g}', 'Pick {n}', '{OTHER_ARTIST}', 'Someone', 'Album', \
+             '2016-03-01', 'Close to Aurora, number {n}.', '{{}}');",
+            g = group(n)
+        );
+    }
+    seed += &format!(
+        "INSERT INTO catalog_discover_feedback (user_id, target, target_mbid_lower, kind, \
+         release_group_mbid, created_at) VALUES ('user-1', 'album', '{g}', 'no', '{g}', {now});",
+        g = group(1)
+    );
+    db.write(Lane::Foreground, "home seed", move |tx| {
+        tx.execute_batch(&seed).map_err(DbError::from)
+    })
+    .await
+    .expect("seed");
+    let listening = ListeningData::new(
+        Arc::new(home_script()),
+        droppedneedle_providers::Providers::closed().cache,
+        KeptFacts::new(db.clone(), Arc::new(SystemClock)),
+    );
+    let settings = crate::common::config_store(&dir);
+    let integrations = || {
+        droppedneedle_catalog::discover::content::IntegrationSettings::new(
+            &settings,
+            Arc::new(crate::common::bundles::NoDownloadSource),
+        )
+    };
+    let clock = Arc::new(ManualClock::at(now));
+    let warm = crate::common::bundles::cover_warm_at(&db, clock.clone());
+    let home = LiveHome::new(HomeInputs {
+        listening: listening.clone(),
+        db: db.clone(),
+        clock: clock.clone(),
+        integrations: integrations(),
+        art: Arc::new(GenreArt::new(HomeLibrary::new(db.clone()))),
+        warm: warm.clone(),
+        discover: DiscoverPages::new(PageInputs {
+            listening,
+            queue_db: QueueDb::new(db.clone()),
+            db: db.clone(),
+            clock,
+            advanced: settings.live(),
+            integrations: integrations(),
+            warm,
+            forgets: Default::default(),
+        }),
+        forgets: Default::default(),
+    });
+
+    // The first visit answers before any provider shelf is built.
+    let first = home.page("user-1").await;
+    assert!(first.refreshing);
+    assert!(shelf_of(&first.sections, SectionKey::TrendingArtists).is_none());
+    let teaser = first.discover_preview.expect("a set is out");
+    let next = teaser.next.expect("an open pick");
+    assert_eq!(
+        (
+            next.pick_no,
+            next.album.title.as_str(),
+            next.reason.as_str()
+        ),
+        (2, "Pick 2", "Close to Aurora, number 2."),
+        "the first pick not answered, with its reason"
+    );
+    assert_eq!(next.album.year, Some(2016));
+    assert_eq!(teaser.albums.len(), 3, "2 of 3 this week");
+    assert_eq!(teaser.next_set_at, week + 7 * 86_400_000);
+    let a_week_on = week + 8 * 86_400_000;
+    let kept = weekly::teaser(&db, "user-1", a_week_on)
+        .await
+        .expect("the teaser reads")
+        .and_then(|teaser| teaser.next);
+    assert_eq!(
+        kept.map(|pick| pick.pick_no),
+        Some(2),
+        "while the next set is due, last week's open pick stays"
+    );
+
+    let anniversaries: Vec<(String, Option<String>)> =
+        shelf_of(&first.sections, SectionKey::Anniversaries)
+            .expect("an anniversaries shelf")
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                SectionItem::Album(album) => {
+                    Some((album.title.clone(), album.release_date.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+    assert_eq!(
+        anniversaries,
+        [
+            ("Album 2".to_owned(), Some((this_year - 30).to_string())),
+            ("Album 1".to_owned(), Some((this_year - 10).to_string())),
+        ],
+        "round birthdays only, oldest first"
+    );
+
+    let answered = format!(
+        "INSERT INTO catalog_discover_feedback (user_id, target, target_mbid_lower, kind, \
+         release_group_mbid, created_at) VALUES ('user-1', 'album', '{a}', 'know_it', '{a}', \
+         {now}), ('user-1', 'album', '{b}', 'not_now', '{b}', {now});",
+        a = group(2),
+        b = group(3)
+    );
+    db.write(Lane::Foreground, "answers", move |tx| {
+        tx.execute_batch(&answered).map_err(DbError::from)
+    })
+    .await
+    .expect("answers");
+    let all = home
+        .page("user-1")
+        .await
+        .discover_preview
+        .expect("the set is still out");
+    assert_eq!(all.next, None, "every pick answered");
+    assert_eq!(all.albums.len(), 3, "the week's albums, for the covers");
+    assert_eq!(
+        weekly::teaser(&db, "user-1", a_week_on)
+            .await
+            .expect("the teaser reads"),
+        None,
+        "a due week with every pick answered has nothing to show"
+    );
+
+    assert_eq!(
+        home.page("user-2").await.discover_preview,
+        None,
+        "no set, no teaser"
     );
 }
 

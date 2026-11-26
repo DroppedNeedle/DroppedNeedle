@@ -1,6 +1,5 @@
 //! What the discover page reads from the local library: the owned
-//! albums, the genre index over the scanned tags and milestone
-//! anniversaries.
+//! albums and the genre index over the scanned tags.
 //!
 //! A genre counts the distinct artists credited (track, album or album
 //! artist) on indexed tracks tagged with it.
@@ -222,34 +221,6 @@ impl LibraryReads {
         )
         .await
         .map_err(|error| format!("genre albums read: {error}"))?;
-        Ok(rows.into_iter().map(shelf_album).collect())
-    }
-
-    /// Library albums released exactly one of `ages` years before
-    /// `this_year`, oldest first.
-    pub async fn anniversary_albums(
-        &self,
-        this_year: i64,
-        ages: &[i64],
-        limit: i64,
-    ) -> Result<Vec<ShelfAlbum>, String> {
-        if ages.is_empty() {
-            return Ok(Vec::new());
-        }
-        let binds: Vec<i64> = ages
-            .iter()
-            .map(|age| this_year - age)
-            .chain([limit.max(1)])
-            .collect();
-        let rows = read_all(
-            &self.db,
-            "discover.library.anniversary_albums",
-            sql::anniversary_albums(ListLen::new(ages.len())),
-            rusqlite::params_from_iter(binds),
-            sql::ShelfAlbumColumns::read,
-        )
-        .await
-        .map_err(|error| format!("anniversary albums read: {error}"))?;
         Ok(rows.into_iter().map(shelf_album).collect())
     }
 }

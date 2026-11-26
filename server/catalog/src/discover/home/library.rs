@@ -1,7 +1,8 @@
 //! What home and the genre page read from the local library: the newest
 //! albums, the artists with the most albums, the user's recent plays and
-//! most played albums, the owned artists and albums of one genre, and the
-//! albums whose art can make up a genre's collage.
+//! most played albums, the albums with a round birthday this year, the
+//! owned artists and albums of one genre, and the albums whose art can make
+//! up a genre's collage.
 //!
 //! Only albums with at least one indexed track count, and retired albums
 //! and artists never show.
@@ -158,6 +159,45 @@ impl HomeLibrary {
         .await
         .map_err(|error| format!("recent albums read: {error}"))?;
         Ok(rows.into_iter().map(album).collect())
+    }
+
+    /// Library albums released exactly one of `ages` years before
+    /// `this_year`, oldest first.
+    pub async fn anniversary_albums(
+        &self,
+        this_year: i64,
+        ages: &[i64],
+        limit: i64,
+    ) -> Result<Vec<HomeAlbum>, String> {
+        if ages.is_empty() {
+            return Ok(Vec::new());
+        }
+        let binds: Vec<i64> = ages
+            .iter()
+            .map(|age| this_year - age)
+            .chain([limit.max(1)])
+            .collect();
+        let rows = read_all(
+            &self.db,
+            "discover.home.anniversary_albums",
+            sql::anniversary_albums(ListLen::new(ages.len())),
+            rusqlite::params_from_iter(binds),
+            sql::ShelfAlbumColumns::read,
+        )
+        .await
+        .map_err(|error| format!("anniversary albums read: {error}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| HomeAlbum {
+                local_id: row.id,
+                title: row.title,
+                artist_name: row.album_artist_name,
+                release_group_mbid: row.release_group_mbid,
+                artist_mbid: row.artist_mbid,
+                year: row.year,
+                art_version: None,
+            })
+            .collect())
     }
 
     /// The artists with the most albums in the library.
