@@ -1,4 +1,5 @@
 <script lang="ts">
+	import DiscoverTabs from '$lib/features/discover/components/DiscoverTabs.svelte';
 	import { Music } from 'lucide-svelte';
 	import NewFromYourArtists from '$lib/features/discover/components/NewFromYourArtists.svelte';
 	import { getNewReleasesQuery } from '$lib/features/discover/queries/newReleases.svelte';
@@ -6,7 +7,6 @@
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import ListPageHeader from '$lib/ui/ListPageHeader.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
-	import { withBasePath } from '$lib/utils/basePath';
 
 	const list = getNewReleasesQuery();
 	const releases = $derived(list.data?.pages.flatMap((page) => page.items) ?? []);
@@ -25,10 +25,11 @@
 	ticket="DN / NEW 90"
 	{count}
 	lede="The last 90 days' releases from artists you play, own or follow."
-	backHref={withBasePath('/discover')}
-	backLabel="Back to Discover"
-	backStyle="link"
-/>
+>
+	{#snippet below()}
+		<DiscoverTabs current="new-releases" />
+	{/snippet}
+</ListPageHeader>
 
 <div class="dn-new-releases-page">
 	<QueryBoundary query={list} what="your new releases" isEmpty={() => releases.length === 0}>

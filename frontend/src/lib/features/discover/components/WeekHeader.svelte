@@ -1,31 +1,28 @@
 <!--
 	Discover's slim header: the title, the week's ticket, two mono lines
-	saying how many albums and when the next set comes, and the caps links.
-	While a service is not answering, an amber tape takes the lines' place.
-	On a phone the title and the week's spines, which jump to the bin, share
-	the first row, with where the person is in the week on one line under it.
+	saying how many albums and when the next set comes; the page puts the
+	strip of Discover's pages under it. While a service is not answering,
+	an amber tape takes the lines' place. On a phone the title and the
+	week's spines, which jump to the bin, share the first row, with where
+	the person is in the week on one line under it.
 -->
 <script lang="ts">
 	import BarcodeTicket from '$lib/ui/BarcodeTicket.svelte';
 	import Tape from '$lib/ui/Tape.svelte';
 	import type { WeekResponse } from '$lib/features/discover/queries/week.svelte';
 	import { clockTime, dayDate, longDayDate } from '$lib/features/discover/state/weekWords';
-	import DiscoverPageLinks from './DiscoverPageLinks.svelte';
 	import WeekSpines, { type Spine } from './WeekSpines.svelte';
 
 	interface Props {
 		week: WeekResponse | null;
-		/** Albums on the Later pile; the link shows only while it holds some. */
-		laterCount: number;
 		/** "4 of 8" on a phone, or "Extra 2"; none while nothing is on the counter. */
 		position: string | null;
 		spines: Spine[];
 		current: string | null;
 		onjump: () => void;
-		ontold: () => void;
 	}
 
-	let { week, laterCount, position, spines, current, onjump, ontold }: Props = $props();
+	let { week, position, spines, current, onjump }: Props = $props();
 
 	const SOURCES = { listenbrainz: 'ListenBrainz', musicbrainz: 'MusicBrainz', lastfm: 'Last.fm' };
 
@@ -71,7 +68,6 @@
 			<span>{lines[1]}</span>
 		</p>
 	{/if}
-	<DiscoverPageLinks look="caps" {laterCount} {ontold} class="dn-week-head__links" />
 
 	<div class="dn-week-head__phone">
 		{#if set && position}
@@ -132,9 +128,6 @@
 	.dn-week-head__notice > span {
 		color: var(--dn-muted);
 	}
-	.dn-week-head :global(.dn-week-head__links) {
-		margin-left: auto;
-	}
 	.dn-week-head__phone {
 		display: none;
 	}
@@ -149,8 +142,7 @@
 			font-size: 1.875rem;
 		}
 		.dn-week-head :global(.dn-week-head__ticket),
-		.dn-week-head__lines,
-		.dn-week-head :global(.dn-week-head__links) {
+		.dn-week-head__lines {
 			display: none;
 		}
 		.dn-week-head {

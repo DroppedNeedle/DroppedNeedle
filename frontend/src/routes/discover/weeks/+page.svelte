@@ -1,4 +1,5 @@
 <script lang="ts">
+	import DiscoverTabs from '$lib/features/discover/components/DiscoverTabs.svelte';
 	import { untrack } from 'svelte';
 	import { page } from '$app/state';
 	import { prefersReducedMotion } from 'svelte/motion';
@@ -18,7 +19,6 @@
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import StatRow from '$lib/ui/StatRow.svelte';
 	import Tabs, { type TabItem } from '$lib/ui/Tabs.svelte';
-	import { withBasePath } from '$lib/utils/basePath';
 
 	type Show = 'all' | PickAnswer;
 	const TABS: TabItem<Show>[] = [
@@ -89,14 +89,11 @@
 	<title>Past weeks - DroppedNeedle</title>
 </svelte:head>
 
-<ListPageHeader
-	title="Past weeks"
-	ticket="DN / CC 3.3"
-	lede="Every set, kept as it was."
-	backHref={withBasePath('/discover')}
-	backLabel="Back to Discover"
-	backStyle="link"
-/>
+<ListPageHeader title="Past weeks" ticket="DN / CC 3.3" lede="Every set, kept as it was.">
+	{#snippet below()}
+		<DiscoverTabs current="weeks" />
+	{/snippet}
+</ListPageHeader>
 
 <div class="dn-weeks-page">
 	{#if record && record.picked > 0}

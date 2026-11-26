@@ -12,12 +12,7 @@
 	import { getTuningsQuery } from '$lib/features/discover/queries/DiscoverV3Queries.svelte';
 	import { TUNING_WORDS, tuningLines, undoLabel } from '$lib/features/discover/state/tuningWords';
 	import { dayMonth } from '$lib/features/discover/state/weekWords';
-
-	interface Props {
-		ontold: () => void;
-	}
-
-	let { ontold }: Props = $props();
+	import { withBasePath } from '$lib/utils/basePath';
 
 	/** Lines shown until asked for all. */
 	const SHOWN = 6;
@@ -57,7 +52,9 @@
 		{#if lines.length > SHOWN && !all}
 			<Button variant="caps" size="xs" onclick={() => (all = true)}>Show all</Button>
 		{/if}
-		<Button variant="caps-link" size="xs" onclick={ontold}>All in What you told Discover</Button>
+		<Button variant="caps-link" size="xs" href={withBasePath('/discover/told')}>
+			All in What you told Discover
+		</Button>
 	</Card>
 {/if}
 

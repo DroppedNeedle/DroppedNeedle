@@ -7,7 +7,7 @@
 	header says so; this week's set never changes.
 -->
 <script lang="ts">
-	import ToldDiscoverModal from '$lib/features/discover/components/ToldDiscoverModal.svelte';
+	import DiscoverTabs from '$lib/features/discover/components/DiscoverTabs.svelte';
 	import StatedArtists from '$lib/features/discover/components/StatedArtists.svelte';
 	import TasteChanges from '$lib/features/discover/components/TasteChanges.svelte';
 	import TasteGroupPanel from '$lib/features/discover/components/TasteGroupPanel.svelte';
@@ -26,7 +26,6 @@
 	import ListPageHeader from '$lib/ui/ListPageHeader.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import Tabs, { type TabItem } from '$lib/ui/Tabs.svelte';
-	import { withBasePath } from '$lib/utils/basePath';
 
 	const NAMED = 'named';
 
@@ -34,7 +33,6 @@
 	const statedQuery = getStatedArtistsQuery();
 	const say = createTasteStatementMutation();
 	const undo = createUndoTuningMutation();
-	let toldOpen = $state(false);
 
 	const taste = $derived(tasteQuery.data ?? null);
 	const busy = $derived(say.isPending || undo.isPending);
@@ -91,9 +89,6 @@
 	ticket="DN / CC 3.4"
 	facts={facts ?? undefined}
 	lede="What your picks are made from. Each taste gets its share of a set."
-	backHref={withBasePath('/discover')}
-	backLabel="Back to Discover"
-	backStyle="link"
 >
 	{#snippet actions()}
 		<div class="dn-taste-page__follow" role="status">
@@ -105,6 +100,9 @@
 			<span>Your next set will follow this.</span>
 			<span class="dn-taste-page__muted">This week's set stays as it is.</span>
 		</div>
+	{/snippet}
+	{#snippet below()}
+		<DiscoverTabs current="taste" />
 	{/snippet}
 </ListPageHeader>
 
@@ -119,7 +117,7 @@
 						<p>Play something or name a few artists and this page fills in.</p>
 						<StatedArtists />
 					</Card>
-					<TasteChanges ontold={() => (toldOpen = true)} />
+					<TasteChanges />
 				</div>
 			{:else}
 				<div class="dn-taste-page__body">
@@ -167,15 +165,13 @@
 								do.
 							</p>
 						</Card>
-						<TasteChanges ontold={() => (toldOpen = true)} />
+						<TasteChanges />
 					</aside>
 				</div>
 			{/if}
 		{/snippet}
 	</QueryBoundary>
 </div>
-
-<ToldDiscoverModal bind:open={toldOpen} />
 
 <style>
 	.dn-taste-page {

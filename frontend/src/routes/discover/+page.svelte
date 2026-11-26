@@ -20,7 +20,6 @@
 	import DiscoverPlaylistBand from '$lib/features/discover/components/DiscoverPlaylistBand.svelte';
 	import SectionHead from '$lib/ui/SectionHead.svelte';
 	import GenreGrid from '$lib/features/genre/components/GenreGrid.svelte';
-	import ToldDiscoverModal from '$lib/features/discover/components/ToldDiscoverModal.svelte';
 	import PlaylistDiscoveryModal from '$lib/features/discover/components/PlaylistDiscoveryModal.svelte';
 	import WeeklyExploration from '$lib/features/discover/components/WeeklyExploration.svelte';
 	import SectionDivider from '$lib/ui/SectionDivider.svelte';
@@ -34,7 +33,7 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import SectionStateLine from '$lib/features/discover/components/SectionStateLine.svelte';
 	import WeekHeader from '$lib/features/discover/components/WeekHeader.svelte';
-	import DiscoverPageLinks from '$lib/features/discover/components/DiscoverPageLinks.svelte';
+	import DiscoverTabs from '$lib/features/discover/components/DiscoverTabs.svelte';
 	import Counter from '$lib/features/discover/components/Counter.svelte';
 	import PickCard from '$lib/features/discover/components/PickCard.svelte';
 	import PickCardSkeleton from '$lib/features/discover/components/PickCardSkeleton.svelte';
@@ -61,8 +60,7 @@
 	} from '$lib/features/discover/queries/week.svelte';
 	import {
 		createMarkLaterMutation,
-		createRemoveLaterMutation,
-		getLaterPileQuery
+		createRemoveLaterMutation
 	} from '$lib/features/discover/queries/later.svelte';
 	import {
 		createWeekDeck,
@@ -110,7 +108,6 @@
 	useDiscoverActivity(() => ({ feature: 'discover' }));
 
 	let playlistDiscoverOpen = $state(false);
-	let toldOpen = $state(false);
 	let whyOpen = $state(false);
 
 	// ---------- the week on the counter ----------
@@ -118,14 +115,12 @@
 	const discoverQuery = getDiscoverHomeV3Query();
 	const setEnabled = $derived(discoverQuery.data?.weekly_set_enabled ?? true);
 	const weekQuery = getWeekQuery(() => setEnabled);
-	const laterQuery = getLaterPileQuery();
 	const week = $derived(weekQuery.data ?? null);
 	const status = $derived(week?.status ?? null);
 	// The set on the counter: this week's, or last week's while it is kept.
 	const set = $derived(
 		status === 'ready' || status === 'kept_last_week' ? (week?.set ?? null) : null
 	);
-	const laterCount = $derived(laterQuery.data?.total ?? laterQuery.data?.items.length ?? 0);
 
 	const deck = createWeekDeck();
 	const allAnswered = $derived(!!set && deck.answered === set.picks.length);
@@ -779,13 +774,12 @@
 	<div class="dn-discover-col">
 		<WeekHeader
 			week={setEnabled ? week : null}
-			{laterCount}
 			{position}
 			spines={setEnabled ? spines : []}
 			current={current?.key ?? null}
 			onjump={jumpToBin}
-			ontold={() => (toldOpen = true)}
 		/>
+		<DiscoverTabs current="week" class="dn-discover__tabs" />
 
 		{#if setEnabled}
 			{#if weekQuery.error && !week}
@@ -839,13 +833,6 @@
 						<WeekReceipt {set} printing={arriving} />
 					{/snippet}
 				</Counter>
-
-				<DiscoverPageLinks
-					look="rows"
-					{laterCount}
-					ontold={() => (toldOpen = true)}
-					class="dn-discover__links"
-				/>
 			{/if}
 		{/if}
 	</div>
@@ -1128,7 +1115,6 @@
 {/snippet}
 
 <PlaylistDiscoveryModal bind:open={playlistDiscoverOpen} />
-<ToldDiscoverModal bind:open={toldOpen} {laterCount} />
 <WhyCard
 	bind:open={whyOpen}
 	mbid={current ? (albumOf(current).musicbrainz_id ?? null) : null}
@@ -1246,14 +1232,12 @@
 		text-transform: uppercase;
 	}
 
-	/* the phone's ways on, ruled rows under the bin */
-	.dn-discover-col :global(.dn-discover__links) {
-		display: none;
+	.dn-discover-col :global(.dn-discover__tabs) {
+		margin-bottom: 1.25rem;
 	}
 	@media (max-width: 639px) {
-		.dn-discover-col :global(.dn-discover__links) {
-			display: flex;
-			margin-top: 0.75rem;
+		.dn-discover-col :global(.dn-discover__tabs) {
+			margin-bottom: 0.75rem;
 		}
 	}
 

@@ -1,7 +1,7 @@
 <!--
 	Everything the person told Discover that is in effect, on the large
-	index card in a paper sheet, grouped by kind under ruled heads with a
-	count: artists you love (with the field to name more), not this artist,
+	index card, grouped by kind under ruled heads with a count: artists
+	you love (with the field to name more), not this artist,
 	more from this, less from this, that was a phase, not now, know it
 	already, no. A statement about a whole taste group is one row under the
 	group's name, listing its artists, and its Undo takes back all of it.
@@ -36,21 +36,15 @@
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
-	import Modal from '$lib/ui/Modal.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
+	import { getLaterPileQuery } from '$lib/features/discover/queries/later.svelte';
 
-	interface Props {
-		open: boolean;
-		/** Albums on the Later pile, for the foot's link. */
-		laterCount?: number;
-	}
-
-	let { open = $bindable(false), laterCount = 0 }: Props = $props();
-
-	const toldQuery = getDiscoverFeedbackV3Query(() => open);
-	const tuningsQuery = getTuningsQuery(() => open);
-	const statedQuery = getStatedArtistsQuery(() => open);
+	const toldQuery = getDiscoverFeedbackV3Query(() => true);
+	const tuningsQuery = getTuningsQuery(() => true);
+	const statedQuery = getStatedArtistsQuery();
+	const laterQuery = getLaterPileQuery();
+	const laterCount = $derived(laterQuery.data?.total ?? laterQuery.data?.items.length ?? 0);
 	const undo = createUndoDiscoverFeedbackMutation();
 	const undoTuning = createUndoTuningMutation();
 
@@ -130,78 +124,66 @@
 	</li>
 {/snippet}
 
-<Modal
-	bind:open
-	title="What you told Discover"
-	description="Undo any of it"
-	paper
-	bottomSheet
-	closeButton
-	size="lg"
->
-	<Card variant="index" size="lg" class="dn-told">
-		{#if nothing}
-			<p class="dn-told__nothing">Nothing yet.</p>
-		{/if}
-		{#if open}
-			<section>
-				{@render groupHead('Artists you love', statedQuery.data?.items.length ?? 0)}
-				<div class="dn-told__stated">
-					<StatedArtists />
-				</div>
-			</section>
-		{/if}
-		<QueryBoundary query={toldQuery} what="what you told Discover">
-			{#snippet children(data)}
-				{#each GROUPS.slice(0, 1) as group (group.kind)}
-					{@render feedbackGroup(group, data.items)}
-				{/each}
-			{/snippet}
-		</QueryBoundary>
-		<QueryBoundary query={tuningsQuery} what="how you tuned Discover">
-			{#snippet children(data)}
-				{@const lines = tuningLines(data.items)}
-				{#each ARTIST_TUNINGS as kind (kind)}
-					{@const rows = lines.filter((line) => line.kind === kind)}
-					{#if rows.length}
-						<section>
-							{@render groupHead(TUNING_WORDS[kind].head, rows.length)}
-							<ul>
-								{#each shown(kind, rows) as line (line.key)}
-									{@render row(
-										{ mbid: line.target, name: line.name, round: true },
-										line.name,
-										line.artists.join(', '),
-										'Until you undo it',
-										line.created_at,
-										undoLabel(kind, line.name),
-										() =>
-											undoTuning
-												.mutateAsync({ kind, target: line.target, group: line.group })
-												.catch(() => undefined)
-									)}
-								{/each}
-							</ul>
-							{@render more(kind, rows.length)}
-						</section>
-					{/if}
-				{/each}
-			{/snippet}
-		</QueryBoundary>
-		{#if toldQuery.data}
-			{#each GROUPS.slice(1) as group (group.kind)}
-				{@render feedbackGroup(group, toldQuery.data.items)}
+<Card variant="index" size="lg" class="dn-told">
+	<section>
+		{@render groupHead('Artists you love', statedQuery.data?.items.length ?? 0)}
+		<div class="dn-told__stated">
+			<StatedArtists />
+		</div>
+	</section>
+	{#if nothing}
+		<p class="dn-told__nothing">Nothing yet.</p>
+	{/if}
+	<QueryBoundary query={toldQuery} what="what you told Discover">
+		{#snippet children(data)}
+			{#each GROUPS.slice(0, 1) as group (group.kind)}
+				{@render feedbackGroup(group, data.items)}
 			{/each}
-		{/if}
+		{/snippet}
+	</QueryBoundary>
+	<QueryBoundary query={tuningsQuery} what="how you tuned Discover">
+		{#snippet children(data)}
+			{@const lines = tuningLines(data.items)}
+			{#each ARTIST_TUNINGS as kind (kind)}
+				{@const rows = lines.filter((line) => line.kind === kind)}
+				{#if rows.length}
+					<section>
+						{@render groupHead(TUNING_WORDS[kind].head, rows.length)}
+						<ul>
+							{#each shown(kind, rows) as line (line.key)}
+								{@render row(
+									{ mbid: line.target, name: line.name, round: true },
+									line.name,
+									line.artists.join(', '),
+									'Until you undo it',
+									line.created_at,
+									undoLabel(kind, line.name),
+									() =>
+										undoTuning
+											.mutateAsync({ kind, target: line.target, group: line.group })
+											.catch(() => undefined)
+								)}
+							{/each}
+						</ul>
+						{@render more(kind, rows.length)}
+					</section>
+				{/if}
+			{/each}
+		{/snippet}
+	</QueryBoundary>
+	{#if toldQuery.data}
+		{#each GROUPS.slice(1) as group (group.kind)}
+			{@render feedbackGroup(group, toldQuery.data.items)}
+		{/each}
+	{/if}
 
-		<p class="dn-told__foot">
-			Albums you put on Later are on their own page.
-			<Button variant="caps" size="xs" href={withBasePath('/discover/later')}>
-				Later ({laterCount})
-			</Button>
-		</p>
-	</Card>
-</Modal>
+	<p class="dn-told__foot">
+		Albums you put on Later are on their own page.
+		<Button variant="paper" size="xs" href={withBasePath('/discover/later')}>
+			Later ({laterCount})
+		</Button>
+	</p>
+</Card>
 
 {#snippet feedbackGroup(
 	group: { kind: FeedbackKind; head: string },

@@ -94,6 +94,7 @@ function server(groups: Group[]) {
 		[TUNINGS]: () => ({ items: said }),
 		[STATED]: { items: [], limit: 30 },
 		[FEEDBACK]: { items: [] },
+		'GET /api/v3/discover/later': { items: [], next_cursor: null, total: 0 },
 		[SAY]: ({ body }) => {
 			const asked = body as { kind: Tuning['kind']; target?: string; group_no?: number };
 			const group = groups.find((one) => one.group_no === asked.group_no);

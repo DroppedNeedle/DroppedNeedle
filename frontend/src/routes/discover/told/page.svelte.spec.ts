@@ -6,13 +6,15 @@ import { authStore } from '$lib/stores/authStore.svelte';
 import { apiError, fakeApi, type RouteData } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
 import { dayMonth, dayMonthYear } from '$lib/features/discover/state/weekWords';
-import ToldDiscoverModal from './ToldDiscoverModal.svelte';
+import ToldPage from './+page.svelte';
 
 const LIST = 'GET /api/v3/discover/feedback';
 const UNDO = 'DELETE /api/v3/discover/feedback/{target}/{mbid}';
 const TUNINGS = 'GET /api/v3/discover/tunings';
 const UNDO_TUNING = 'DELETE /api/v3/discover/tunings/{kind}/{target}';
 const STATED = 'GET /api/v3/discover/stated-artists';
+const LATER = 'GET /api/v3/discover/later';
+const PILE = { items: [], next_cursor: null, total: 3 };
 type Entry = RouteData<typeof LIST>['items'][number];
 type Tuning = RouteData<typeof TUNINGS>['items'][number];
 
@@ -59,7 +61,7 @@ const TUNED: Tuning[] = [
 	}
 ];
 
-describe('ToldDiscoverModal.svelte', () => {
+describe('the What you told Discover page', () => {
 	it('lists each kind of answer in words, when it lapses, and undoes one', async () => {
 		let items = ENTRIES;
 		let tunings = TUNED;
@@ -75,7 +77,8 @@ describe('ToldDiscoverModal.svelte', () => {
 			[STATED]: {
 				items: [{ artist_mbid: 'ar-9', artist_name: 'Thrice', stated_at: TOLD_AT }],
 				limit: 30
-			}
+			},
+			[LATER]: PILE
 		});
 		authStore.setUser(
 			toAuthUser({
@@ -89,22 +92,30 @@ describe('ToldDiscoverModal.svelte', () => {
 			})
 		);
 		// The undo's effect sweeps the app's own client.
-		await renderWithQuery(ToldDiscoverModal, { open: true }, { client: queryClient });
+		await renderWithQuery(ToldPage, {}, { client: queryClient });
 
-		const dialog = page.getByRole('dialog', { name: 'What you told Discover' });
-		await expect.element(dialog.getByRole('heading', { name: 'Artists you love 1' })).toBeVisible();
-		await expect.element(dialog.getByRole('button', { name: 'Remove Thrice' })).toBeVisible();
-		await expect.element(dialog.getByRole('heading', { name: 'Not this artist 1' })).toBeVisible();
-		await expect.element(dialog.getByRole('heading', { name: 'Less from this 1' })).toBeVisible();
-		await expect.element(dialog.getByRole('heading', { name: 'Not now 1' })).toBeVisible();
-		await expect.element(dialog.getByRole('heading', { name: 'Know it already 1' })).toBeVisible();
-		await expect.element(dialog.getByRole('heading', { name: 'No 2' })).toBeVisible();
-		await expect.element(dialog.getByText(`Back after ${day(BACK_AT)}`)).toBeVisible();
-		await expect.element(dialog.getByText(`Ends ${dayMonthYear(ENDS_AT * 1000)}`)).toBeVisible();
-		await expect.element(dialog.getByText(`Since ${day(TOLD_AT)}`).first()).toBeVisible();
-		await expect.element(dialog.getByText('Tides of Man')).toBeVisible();
+		const tabs = page.getByRole('navigation', { name: 'Discover pages' });
 		await expect
-			.element(dialog.getByText('Albums you put on Later are on their own page.'))
+			.element(tabs.getByRole('link', { name: 'What you told Discover' }))
+			.toHaveAttribute('aria-current', 'page');
+		await expect.element(tabs.getByRole('link', { name: 'Later 3' })).toBeVisible();
+		await expect
+			.element(tabs.getByRole('link', { name: 'This week' }))
+			.toHaveAttribute('href', '/discover');
+
+		await expect.element(page.getByRole('heading', { name: 'Artists you love 1' })).toBeVisible();
+		await expect.element(page.getByRole('button', { name: 'Remove Thrice' })).toBeVisible();
+		await expect.element(page.getByRole('heading', { name: 'Not this artist 1' })).toBeVisible();
+		await expect.element(page.getByRole('heading', { name: 'Less from this 1' })).toBeVisible();
+		await expect.element(page.getByRole('heading', { name: 'Not now 1' })).toBeVisible();
+		await expect.element(page.getByRole('heading', { name: 'Know it already 1' })).toBeVisible();
+		await expect.element(page.getByRole('heading', { name: 'No 2' })).toBeVisible();
+		await expect.element(page.getByText(`Back after ${day(BACK_AT)}`)).toBeVisible();
+		await expect.element(page.getByText(`Ends ${dayMonthYear(ENDS_AT * 1000)}`)).toBeVisible();
+		await expect.element(page.getByText(`Since ${day(TOLD_AT)}`).first()).toBeVisible();
+		await expect.element(page.getByText('Tides of Man')).toBeVisible();
+		await expect
+			.element(page.getByText('Albums you put on Later are on their own page.'))
 			.toBeVisible();
 
 		await page.getByRole('button', { name: 'Undo for Tides of Man' }).click();
@@ -137,14 +148,14 @@ describe('ToldDiscoverModal.svelte', () => {
 			[UNDO_TUNING]: ({ query }) => {
 				if (query.get('group') === 'true') tunings = [];
 			},
-			[STATED]: { items: [], limit: 30 }
+			[STATED]: { items: [], limit: 30 },
+			[LATER]: PILE
 		});
-		await renderWithQuery(ToldDiscoverModal, { open: true }, { client: queryClient });
+		await renderWithQuery(ToldPage, {}, { client: queryClient });
 
-		const dialog = page.getByRole('dialog', { name: 'What you told Discover' });
-		await expect.element(dialog.getByRole('heading', { name: 'That was a phase 1' })).toBeVisible();
-		await expect.element(dialog.getByText('Around Deep Purple')).toBeVisible();
-		await expect.element(dialog.getByText('Deep Purple, Cream')).toBeVisible();
+		await expect.element(page.getByRole('heading', { name: 'That was a phase 1' })).toBeVisible();
+		await expect.element(page.getByText('Around Deep Purple')).toBeVisible();
+		await expect.element(page.getByText('Deep Purple, Cream')).toBeVisible();
 
 		await page.getByRole('button', { name: 'Undo the phase for Around Deep Purple' }).click();
 		await expect.element(page.getByText('Around Deep Purple')).not.toBeInTheDocument();
@@ -157,9 +168,10 @@ describe('ToldDiscoverModal.svelte', () => {
 		fakeApi({
 			[LIST]: () => ({ items: ENTRIES.slice(0, 1) }),
 			[TUNINGS]: () => apiError(500, 'INTERNAL_ERROR'),
-			[STATED]: { items: [], limit: 30 }
+			[STATED]: { items: [], limit: 30 },
+			[LATER]: PILE
 		});
-		await renderWithQuery(ToldDiscoverModal, { open: true });
+		await renderWithQuery(ToldPage, {});
 
 		await expect.element(page.getByText('Dreamhouse')).toBeVisible();
 		await expect.element(page.getByText("how you tuned Discover didn't load")).toBeVisible();

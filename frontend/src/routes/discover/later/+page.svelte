@@ -1,7 +1,7 @@
 <script lang="ts">
+	import DiscoverTabs from '$lib/features/discover/components/DiscoverTabs.svelte';
 	import LaterPile from '$lib/features/discover/components/LaterPile.svelte';
 	import ListPageHeader from '$lib/ui/ListPageHeader.svelte';
-	import { withBasePath } from '$lib/utils/basePath';
 </script>
 
 <svelte:head>
@@ -12,10 +12,11 @@
 	title="Later"
 	ticket="DN / CC 3.2"
 	lede="Albums you put aside. Each one leaves by itself once it is in your library."
-	backHref={withBasePath('/discover')}
-	backLabel="Back to Discover"
-	backStyle="link"
-/>
+>
+	{#snippet below()}
+		<DiscoverTabs current="later" />
+	{/snippet}
+</ListPageHeader>
 
 <div class="dn-later-page">
 	<LaterPile />
