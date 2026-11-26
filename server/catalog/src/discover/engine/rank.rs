@@ -799,20 +799,40 @@ impl Walk {
     }
 }
 
-/// `candidates` in the pool's order: most support tilted at `depth` first,
-/// then by artist id, each artist's albums in the order they came; one row
-/// a release group, the first kept; at most [`proposed::POOL_MAX`].
-pub fn order(mut candidates: Vec<Candidate>, depth: Depth) -> Vec<Candidate> {
-    let median = median_count(
-        candidates
-            .iter()
-            .map(|candidate| candidate.artist_listeners),
-    );
-    candidates.sort_by(|a, b| {
-        tilted(b.support, b.artist_listeners, median, depth)
-            .total_cmp(&tilted(a.support, a.artist_listeners, median, depth))
+/// The pool's order at one depth: most support tilted at the depth first
+/// ([`tilted`], a count not known read as the median of the candidates it
+/// was made from), then by artist id. [`order`] sorts by it and the pool
+/// places its band links by it, so the two never disagree.
+pub struct PoolOrder {
+    median: Option<i64>,
+    depth: Depth,
+}
+
+impl PoolOrder {
+    /// The order of `candidates` at `depth`.
+    pub fn new(candidates: &[Candidate], depth: Depth) -> Self {
+        let median = median_count(
+            candidates
+                .iter()
+                .map(|candidate| candidate.artist_listeners),
+        );
+        Self { median, depth }
+    }
+
+    /// Whether `a` comes before, beside or after `b`.
+    pub fn cmp(&self, a: &Candidate, b: &Candidate) -> Ordering {
+        let key = |c: &Candidate| tilted(c.support, c.artist_listeners, self.median, self.depth);
+        key(b)
+            .total_cmp(&key(a))
             .then_with(|| a.artist_mbid.cmp(&b.artist_mbid))
-    });
+    }
+}
+
+/// `candidates` in the pool's order `by`, each artist's albums in the order
+/// they came; one row a release group, the first kept; at most
+/// [`proposed::POOL_MAX`].
+pub fn order(mut candidates: Vec<Candidate>, by: &PoolOrder) -> Vec<Candidate> {
+    candidates.sort_by(|a, b| by.cmp(a, b));
     let mut seen = HashSet::new();
     candidates.retain(|candidate| seen.insert(candidate.release_group_mbid.clone()));
     candidates.truncate(proposed::POOL_MAX);

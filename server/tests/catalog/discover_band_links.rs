@@ -12,14 +12,16 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use droppedneedle_catalog::discover::due::Due;
-use droppedneedle_catalog::discover::engine::weekly::{self, SetDay};
+use droppedneedle_catalog::discover::engine::weekly::{self, Depth, SetDay};
 use droppedneedle_catalog::discover::facts::KeptFacts;
 use droppedneedle_catalog::discover::facts::job::FactJobs;
 use droppedneedle_catalog::discover::listening::ListeningNetwork;
 use droppedneedle_catalog::discover::listening::band_links::{
     self, BandLink, BandLinkKind, LinkDirection,
 };
-use droppedneedle_catalog::discover::models::{EvidenceSource, FoundBy, PickReasonKind};
+use droppedneedle_catalog::discover::models::{
+    DiscoverPrefs, EvidenceSource, FoundBy, PickReasonKind,
+};
 use droppedneedle_catalog::discover::services::DiscoverDeps;
 use droppedneedle_kernel::clock::Clock as _;
 use droppedneedle_kernel::db::Db;
@@ -773,6 +775,65 @@ async fn a_band_link_pick_takes_a_set_slot_under_the_cap_per_seed() {
     assert!(
         set.contains(&(group(4), "Anthony Green of Circa Survive.".to_owned())),
         "{set:?}"
+    );
+}
+
+/// A band-link pick goes in where the pool's order puts it at the person's
+/// depth. Next door that is its support; far out the member's few
+/// listeners lift it as they lift any pick, past the co-listening pick of
+/// a far better known neighbour that leads it by support.
+#[tokio::test]
+async fn a_band_link_pick_goes_in_by_the_depths_order() {
+    let dir = crate::common::ScratchDir::new("band-links-depth");
+    let rig = AuthRig::new("band-links-depth").await;
+    let db = rig.platform.db.clone();
+    let at = rig.clock().now_ms() - DAY;
+    let (second, n1, n2, n3) = (id(1, 2), id(2, 1), id(2, 2), id(2, 3));
+    let group = |n: usize| id(3, n);
+
+    let mut rows = taste(
+        &[(CIRCA, "Circa Survive", 2.0), (&second, "Seed Two", 1.0)],
+        &[],
+        at,
+    );
+    rows += &neighbours(CIRCA, &[(n1.clone(), 100.0), (n2.clone(), 30.0)], at);
+    rows += &neighbours(&second, &[(n3.clone(), 100.0)], at);
+    rows += &links(CIRCA, &[member(GREEN, "Anthony Green")], at);
+    rows += &links(&second, &[], at);
+    rows += &links(GREEN, &[], at);
+    rows += &counted(GREEN, 300, at);
+    rows += &albums(&n1, "One", &[group(1)], at);
+    rows += &albums(&n2, "Two", &[group(2)], at);
+    rows += &albums(&n3, "Three", &[group(3)], at);
+    rows += &albums(GREEN, "Anthony Green", &[group(4)], at);
+    insert(&db, rows).await;
+    seen_now(&rig, "user-1").await;
+    let deps = deps(&rig, &dir, Arc::new(Script::default()));
+    let pool =
+        |db: &Db| -> Vec<String> { stored(db).into_iter().map(|(group, _)| group).collect() };
+
+    build(&deps).await;
+    assert_eq!(
+        pool(&db),
+        [group(1), group(3), group(4), group(2)],
+        "next door: by support"
+    );
+
+    deps.weekly
+        .save_prefs(
+            "user-1",
+            DiscoverPrefs {
+                set_day: SetDay::Friday,
+                depth: Depth::FarOut,
+            },
+        )
+        .await
+        .expect("the prefs are kept");
+    build(&deps).await;
+    assert_eq!(
+        pool(&db),
+        [group(1), group(4), group(3), group(2)],
+        "far out: the tilted order"
     );
 }
 

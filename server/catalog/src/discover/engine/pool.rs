@@ -22,9 +22,10 @@
 //! person's depth ([`rank::tilted`]); a new depth queues a build. A run is
 //! safe to repeat.
 //!
-//! Nothing reads the pool yet: Discover's surfaces move over to it in
-//! later work, through [`pool_store::ranked`] and [`select`](super::select).
+//! The weekly set is dealt from the kept pool, and the library gaps
+//! section reads it, both through [`pool_store::ranked`].
 
+use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -369,11 +370,16 @@ impl PoolJobs {
             fresh::candidates(&listed, &ranking.artists, &seeds, &gates),
         );
         candidates.retain(|candidate| !found_only_by(candidate, &refused));
-        let mut candidates = rank::order(candidates, depth);
+        let by = rank::PoolOrder::new(&candidates, depth);
+        let mut candidates = rank::order(candidates, &by);
         // The band links and the gaps join after the ranking's cut, so a
         // full pool never pushes them out: at most their 20 and 30 past
         // `POOL_MAX`.
-        place(&mut candidates, band_links::candidates(&linked, &gates));
+        place(
+            &mut candidates,
+            band_links::candidates(&linked, &gates),
+            &by,
+        );
         merge(&mut candidates, gaps::candidates(&gap_lists, &gates));
         incomplete |= !gap_lists.missing.is_empty() || !linked.missing.is_empty();
 
@@ -471,9 +477,9 @@ fn merge(candidates: &mut Vec<Candidate>, picks: Vec<Candidate>) {
 /// `threads` into the ranked `candidates`: one already there for the same
 /// release group takes the thread's paths as [`merge`] does, its support
 /// unchanged, unless it is a service's pick, which a set never deals and
-/// whose line stays the service's; the rest each go in at their place by
-/// support, then artist id, so the order of the others holds.
-fn place(candidates: &mut Vec<Candidate>, threads: Vec<Candidate>) {
+/// whose line stays the service's; the rest each go in at their place in
+/// the ranking's order `by`, so the order of the others holds.
+fn place(candidates: &mut Vec<Candidate>, threads: Vec<Candidate>, by: &rank::PoolOrder) {
     for thread in threads {
         if let Some(held) = candidates
             .iter()
@@ -486,11 +492,7 @@ fn place(candidates: &mut Vec<Candidate>, threads: Vec<Candidate>) {
         }
         let at = candidates
             .iter()
-            .position(|candidate| {
-                candidate.support < thread.support
-                    || (candidate.support == thread.support
-                        && candidate.artist_mbid > thread.artist_mbid)
-            })
+            .position(|candidate| by.cmp(candidate, &thread) == Ordering::Greater)
             .unwrap_or(candidates.len());
         candidates.insert(at, thread);
     }

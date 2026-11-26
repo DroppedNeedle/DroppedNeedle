@@ -300,7 +300,9 @@ pub fn select<'a>(
 #[cfg(test)]
 mod tests {
     use super::super::candidate::{CandidateKind, Link, Path, PathArtist, PathKind, PathSource};
-    use super::super::rank::{AlbumGates, AlbumList, ArtistGates, RankedArtist, Walk, order};
+    use super::super::rank::{
+        AlbumGates, AlbumList, ArtistGates, PoolOrder, RankedArtist, Walk, order,
+    };
     use super::*;
     use crate::discover::feedback::Feedback;
     use crate::discover::listening::{AlbumFacts, AlbumRow, RankedAlbum};
@@ -649,7 +651,8 @@ mod tests {
                 let artist = &artists[*at];
                 walk.step(artist, AlbumList::Found(&albums[&artist.mbid]), &gates);
             }
-            let pool = order(walk.candidates, Depth::NextDoor);
+            let by = PoolOrder::new(&walk.candidates, Depth::NextDoor);
+            let pool = order(walk.candidates, &by);
             let set = select(&pool, 8, &shares, &exposure, Floors::PROPOSED);
             assert_eq!(set.picks.len(), 8, "week {week}'s set is full");
             let mut answered: Vec<&Candidate> = set.picks.clone();
