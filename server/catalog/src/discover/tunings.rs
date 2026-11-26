@@ -2,8 +2,8 @@
 //! one row a person, kind and target, listed beside what they told
 //! Discover and undone there or on their taste page.
 //!
-//! Three kinds are taken today, each about one of their artists, and an
-//! artist holds at most one of them:
+//! Four kinds are taken today. Three are about one of their artists, and
+//! an artist holds at most one of them:
 //!
 //! - "Less from this" (`less_from_seed`) and "More from this"
 //!   (`more_from_seed`): the pool's ranking weighs the seed at a part, or a
@@ -16,11 +16,20 @@
 //!   chose (hearts, follows and the rest) still does. Saving or undoing one
 //!   queues the person's taste build, whose completion queues the pool.
 //!
+//! The fourth, "Not this source" (`not_this_source`), names a source a
+//! person turned off: Last.fm (`lastfm`) or ListenBrainz's picks and new
+//! releases for them (`listenbrainz`). The pool build leaves out every
+//! candidate only those sources found. Labs' co-listening lists find most
+//! picks, so turning them off would empty most people's Discover: they,
+//! and the sources that are not services (the library, MusicBrainz), are
+//! refused. Saving or undoing one queues the person's pool build.
+//!
 //! A statement about a whole taste group is one row for each artist the
 //! group holds as it stands, each keyed on the group's anchor artist and
-//! carrying its name, so it outlives the groups being worked out again; an artist already holding a
-//! statement of its own keeps it. The other kinds are declared with the
-//! table and refused until the work that gives them meaning. Every queue
+//! carrying its name, so it outlives the groups being worked out again; an
+//! artist already holding a statement of its own keeps it. The other kind,
+//! `less_of_kind`, is declared with the table and refused until the work
+//! that gives it meaning. Every queue
 //! is written in the same write, through [`Due::queue_now`].
 
 use std::collections::HashSet;
@@ -35,6 +44,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::discover::due::Due;
+use crate::discover::engine::candidate::PathSource;
 use crate::discover::engine::{jobs, pool, sql};
 use crate::discover::models::{DiscoverTuningEntry, DiscoverTuningRequest};
 use crate::discover::read_all;
@@ -55,8 +65,7 @@ pub enum TuningKind {
     /// Less of one kind of pick. Not taken yet: later work gives it its
     /// meaning.
     LessOfKind,
-    /// No picks from one source. Not taken yet: later work gives it its
-    /// meaning.
+    /// No picks found only by one source.
     NotThisSource,
 }
 
@@ -125,7 +134,7 @@ impl From<rusqlite::Error> for TuningError {
 
 /// `kind` checked: one taken today.
 fn taken(kind: TuningKind) -> Result<(), TuningError> {
-    if kind.about_artist() {
+    if kind.about_artist() || kind == TuningKind::NotThisSource {
         Ok(())
     } else {
         Err(TuningError::Invalid(format!(
@@ -135,11 +144,33 @@ fn taken(kind: TuningKind) -> Result<(), TuningError> {
     }
 }
 
+/// The name a source a person may turn off is listed under; `None` for
+/// one they may not.
+fn refusable(source: PathSource) -> Option<&'static str> {
+    match source {
+        PathSource::Lastfm => Some("Last.fm"),
+        PathSource::Listenbrainz => Some("ListenBrainz's picks"),
+        PathSource::ListenbrainzLabs
+        | PathSource::Musicbrainz
+        | PathSource::Library
+        | PathSource::DataFile => None,
+    }
+}
+
 /// `kind` and `target` checked: a kind taken today, and for each of them
-/// a MusicBrainz id, trimmed and lowercased.
+/// a MusicBrainz id, trimmed and lowercased, or for "Not this source" a
+/// source a person may turn off.
 fn checked(kind: TuningKind, target: &str) -> Result<String, TuningError> {
     taken(kind)?;
     let target = target.trim();
+    if kind == TuningKind::NotThisSource {
+        return match PathSource::parse(target).and_then(refusable) {
+            Some(_) => Ok(target.to_owned()),
+            None => Err(TuningError::Invalid(
+                "target must be lastfm or listenbrainz".to_owned(),
+            )),
+        };
+    }
     if !droppedneedle_providers::musicbrainz::is_valid_mbid(target) {
         return Err(TuningError::Invalid(
             "target must be a MusicBrainz id".to_owned(),
@@ -153,7 +184,7 @@ fn checked(kind: TuningKind, target: &str) -> Result<String, TuningError> {
 /// # Errors
 ///
 /// A kind that is not one, or not taken yet, or a target that is not a
-/// MusicBrainz id.
+/// MusicBrainz id or a source a person may turn off.
 pub fn checked_path(kind: &str, target: &str) -> Result<(TuningKind, String), TuningError> {
     let kind = TuningKind::parse(kind.trim())
         .ok_or_else(|| TuningError::Invalid("kind is not a tuning".to_owned()))?;
@@ -190,6 +221,23 @@ pub(crate) async fn less_from(db: &Db, user_id: &str) -> Result<HashSet<String>,
     of_kind(db, user_id, TuningKind::LessFromSeed).await
 }
 
+/// The sources `user_id` turned off.
+///
+/// # Errors
+///
+/// The read's failure.
+pub(crate) async fn refused_sources(
+    db: &Db,
+    user_id: &str,
+) -> Result<HashSet<PathSource>, DbError> {
+    Ok(of_kind(db, user_id, TuningKind::NotThisSource)
+        .await?
+        .iter()
+        .filter_map(|target| PathSource::parse(target))
+        .filter(|source| refusable(*source).is_some())
+        .collect())
+}
+
 /// What a person said about one target, of any kind.
 fn said_about(
     tx: &Transaction,
@@ -216,15 +264,16 @@ impl Tunings {
         Self { db, clock, due }
     }
 
-    /// Keep one tuning of `user_id`'s, about one of their artists or every
-    /// artist of one of their taste groups, and queue the build it makes
-    /// due in the same write. Answers the rows written.
+    /// Keep one tuning of `user_id`'s, about one of their artists, every
+    /// artist of one of their taste groups or one source, and queue the
+    /// build it makes due in the same write. Answers the rows written.
     ///
     /// # Errors
     ///
-    /// A kind not taken yet, a request naming neither or both of an artist
+    /// A kind not taken yet, a request naming neither or both of a target
     /// and a group, a target that is not an id or not one of their artists,
-    /// a group they do not have, or the write's failure.
+    /// a source they may not turn off, a group they do not have or a group
+    /// for a source, or the write's failure.
     pub async fn save(
         &self,
         user_id: &str,
@@ -234,18 +283,71 @@ impl Tunings {
         match (request.target.as_deref(), request.group_no) {
             (Some(target), None) => {
                 let target = checked(kind, target)?;
+                if kind == TuningKind::NotThisSource {
+                    return self.save_source(user_id, target).await.map(|row| vec![row]);
+                }
                 self.save_one(user_id, kind, target)
                     .await
                     .map(|row| vec![row])
             }
             (None, Some(group_no)) => {
                 taken(kind)?;
+                if !kind.about_artist() {
+                    return Err(TuningError::Invalid(
+                        "a group takes only a statement about artists".to_owned(),
+                    ));
+                }
                 self.save_group(user_id, kind, group_no).await
             }
             _ => Err(TuningError::Invalid(
                 "name either a target or a group_no".to_owned(),
             )),
         }
+    }
+
+    /// "Not this source" for `source`, one a person may turn off, listed
+    /// under its name.
+    async fn save_source(
+        &self,
+        user_id: &str,
+        source: String,
+    ) -> Result<DiscoverTuningEntry, TuningError> {
+        let kind = TuningKind::NotThisSource;
+        let name = PathSource::parse(&source)
+            .and_then(refusable)
+            .unwrap_or_default()
+            .to_owned();
+        let now_ms = self.clock.now_ms();
+        let (user, due) = (user_id.to_owned(), Arc::clone(&self.due));
+        self.db
+            .write(
+                Lane::Foreground,
+                "discover.tunings.save_source",
+                move |tx| {
+                    tx.execute(
+                        sql::TUNING_SAVE.text(),
+                        params![
+                            user,
+                            kind,
+                            source,
+                            name,
+                            Millis(now_ms),
+                            None::<String>,
+                            None::<String>
+                        ],
+                    )?;
+                    due.queue_now(tx, kind.rebuilds(), &user)?;
+                    Ok(DiscoverTuningEntry {
+                        kind,
+                        target: source,
+                        name,
+                        group_anchor_mbid: None,
+                        group_label: None,
+                        created_at: now_ms / 1000,
+                    })
+                },
+            )
+            .await
     }
 
     /// One statement about one artist, in place of any other the artist

@@ -1,6 +1,7 @@
 <!--
 	A row of counts: each a big Anton number over a mono caps label, split by
-	thin rules. Real counts only; a caller leaves out a count it does not
+	thin rules, one of them in the title colour where it is the count the row
+	is about. Real counts only; a caller leaves out a count it does not
 	have rather than show a zero it guessed. On a narrow screen the row keeps
 	its columns and the numbers step down; with `phoneRows` a row of more
 	than three counts goes into rows of three on a phone instead, so every
@@ -10,6 +11,8 @@
 	export interface Stat {
 		label: string;
 		value: number | string;
+		/** The number in the title colour: the one count the row is about. */
+		accent?: boolean;
 	}
 </script>
 
@@ -32,7 +35,7 @@
 		{#each stats as stat (stat.label)}
 			<div class="dn-stats__item">
 				<dt class="dn-stats__label">{stat.label}</dt>
-				<dd class="dn-stats__value">{stat.value}</dd>
+				<dd class="dn-stats__value" data-accent={stat.accent ? '' : undefined}>{stat.value}</dd>
 			</div>
 		{/each}
 	</dl>
@@ -67,6 +70,10 @@
 		color: var(--color-base-content);
 		font-variant-numeric: tabular-nums;
 		font-synthesis: none;
+	}
+
+	.dn-stats__value[data-accent] {
+		color: var(--color-title);
 	}
 
 	.dn-stats__label {

@@ -1003,9 +1003,14 @@ droppedneedle_kernel::sql! {
         plays: Option<i64>,
     }
     /// How many of person `?1`'s set picks before the week `?2` are in each
-    /// state, and the first arrival among them from the pick record.
+    /// state, from the pick record the first arrival among them, how many
+    /// were sampled, how many arrived at `?6` or before, and how many of
+    /// those were played after their first 30 days.
     pub(in crate::discover) PAST_WEEKS_RECORD = PAST_PICKS
-        + " SELECT g.state AS state, COUNT(*) AS picks, MIN(d.arrived_at) AS arrived_at \
+        + " SELECT g.state AS state, COUNT(*) AS picks, MIN(d.arrived_at) AS arrived_at, \
+         COUNT(d.sampled_at) AS sampled, \
+         COALESCE(SUM(d.arrived_at <= ?6), 0) AS month_on, \
+         COALESCE(SUM(d.arrived_at <= ?6 AND d.plays_90d > d.plays_30d), 0) AS still_played \
          FROM g LEFT JOIN catalog_discover_picks d ON d.user_id = ?1 \
            AND d.release_group_mbid_lower = g.release_group_mbid_lower \
          GROUP BY g.state";
@@ -1013,6 +1018,9 @@ droppedneedle_kernel::sql! {
         state: PickState,
         picks: i64,
         arrived_at: Option<Millis>,
+        sampled: i64,
+        month_on: i64,
+        still_played: i64,
     }
     /// Person `?1`'s set picks before the week `?2` in a state of the JSON
     /// list `?6`, one row an album (lowercased) with the first week it was

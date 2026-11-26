@@ -2,7 +2,8 @@
 //! reads back as it was shown, newest first, with each pick's state as the
 //! week reads it, a kept album's arrival and the person's own plays of it,
 //! a page of weeks at a time; the filters narrow the picks on the server;
-//! the record counts every set; "found" lists only what was kept; and
+//! the record counts every set, and what was sampled and still played a
+//! month on from the pick record; "found" lists only what was kept; and
 //! "Forget my history" empties both.
 
 use axum::Router;
@@ -171,8 +172,11 @@ async fn discover_weeks_reads_every_set_as_it_was_shown() {
         body["record"],
         json!({
             "picked": 8,
+            "sampled": 0,
             "answers": {"kept": 2, "later": 1, "known": 1, "passed": 1, "open": 3},
-            "counted_from_at": null
+            "counted_from_at": null,
+            "month_on": null,
+            "still_played": null
         }),
         "the record counts every set: {body}"
     );
@@ -286,4 +290,115 @@ async fn discover_weeks_reads_every_set_as_it_was_shown() {
     assert_eq!(body["record"]["picked"], 0);
     let found = get(&app, "/api/v3/discover/found").await;
     assert_eq!(found["items"], json!([]));
+}
+
+/// A request of `user`'s for album `n`, waiting.
+fn asked(user: &str, n: usize, at: i64) -> String {
+    format!(
+        "INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, artist_name, \
+         album_title, requested_at, status, user_id) VALUES ('{a}', '{a}', 'Artist {n}', \
+         'Album {n}', {at}, 'pending', '{user}') ON CONFLICT DO NOTHING; \
+         INSERT INTO request_history_requesters (user_id, musicbrainz_id_lower, \
+         requested_at) VALUES ('{user}', '{a}', {at});",
+        a = album(n)
+    )
+}
+
+/// `user`'s pick-record row for album `n`: sampled at `sampled`, arrived
+/// at `arrived`, with its plays in the first 30 and 90 days.
+fn record_row(
+    user: &str,
+    n: usize,
+    sampled: Option<i64>,
+    arrived: Option<i64>,
+    plays: (i64, i64),
+) -> String {
+    let at = |value: Option<i64>| value.map_or("NULL".to_owned(), |at| at.to_string());
+    format!(
+        "INSERT INTO catalog_discover_picks (user_id, release_group_mbid_lower, \
+         release_group_mbid, first_surface, first_offered_at, last_offered_at, evidence, \
+         sampled_at, arrived_at, plays_30d, plays_90d) VALUES ('{user}', '{a}', '{a}', \
+         'weekly_set', 0, 0, '{{}}', {sampled}, {arrived}, {p30}, {p90});",
+        a = album(n),
+        sampled = at(sampled),
+        arrived = at(arrived),
+        p30 = plays.0,
+        p90 = plays.1,
+    )
+}
+
+/// The record counts, over every set, the picks sampled, the kept ones a
+/// month past their arrival and those played again after that month, all
+/// from the pick record. The two month counts are null until a kept pick
+/// has had its month, a pick not kept never counts toward them, and one
+/// person's rows never change another's record.
+#[tokio::test]
+async fn discover_weeks_record_counts_what_was_still_played_a_month_on() {
+    let dir = crate::common::ScratchDir::new("discover-weeks-score");
+    let rig = AuthRig::new("discover-weeks-score").await;
+    let db = rig.platform.db.clone();
+    let now = rig.clock().now_ms();
+    let w2 = weekly::day_on_or_before(now, SetDay::Friday);
+    let w1 = w2 - 8 * WEEK_MS;
+    let ago = |days: i64| Some(now - days * DAY);
+
+    let mut rows = String::from(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('user-1', 'Ada', 'user', 0), ('user-2', 'Bob', 'user', 0);",
+    );
+    rows += &set("user-1", w1, &[1, 2, 3]);
+    rows += &set("user-1", w2, &[4, 5, 6]);
+    rows += &set("user-2", w2, &[1]);
+    for n in [1, 2, 3, 4] {
+        rows += &asked("user-1", n, w1);
+    }
+    rows += &asked("user-2", 1, w2);
+    // Kept, and only ten days past its arrival.
+    rows += &record_row("user-1", 3, None, ago(10), (1, 4));
+    insert(&db, rows).await;
+    let deps = discover_deps(&rig, &dir, Providers::closed(), |slot| {
+        *slot = std::sync::Arc::new(Script::default());
+    });
+    let app = discover_routes(deps);
+    let weeks = "/api/v3/discover/weeks";
+
+    let body = get(&app, weeks).await;
+    assert_eq!(
+        body["record"],
+        json!({
+            "picked": 6,
+            "sampled": 0,
+            "answers": {"kept": 4, "later": 0, "known": 0, "passed": 0, "open": 2},
+            "counted_from_at": now - 10 * DAY + 30 * DAY,
+            "month_on": null,
+            "still_played": null
+        }),
+        "no kept pick has had its month: {body}"
+    );
+
+    insert(
+        &db,
+        // Kept: a month on and played again; a month on and not; never
+        // arrived. Album 5 was not kept: its plays never count.
+        record_row("user-1", 1, ago(50), ago(40), (2, 5))
+            + &record_row("user-1", 2, None, ago(35), (3, 3))
+            + &record_row("user-1", 4, ago(20), None, (0, 0))
+            + &record_row("user-1", 5, ago(20), ago(45), (1, 6))
+            + &record_row("user-1", 6, ago(5), None, (0, 0))
+            + &record_row("user-2", 1, ago(30), ago(31), (0, 9)),
+    )
+    .await;
+    let body = get(&app, weeks).await;
+    assert_eq!(
+        body["record"],
+        json!({
+            "picked": 6,
+            "sampled": 4,
+            "answers": {"kept": 4, "later": 0, "known": 0, "passed": 0, "open": 2},
+            "counted_from_at": now - 40 * DAY + 30 * DAY,
+            "month_on": 2,
+            "still_played": 1
+        }),
+        "the hand-counted record: {body}"
+    );
 }

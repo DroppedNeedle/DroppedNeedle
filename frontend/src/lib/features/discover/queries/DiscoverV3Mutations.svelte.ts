@@ -47,6 +47,26 @@ export const createLessFromSeedMutation = () =>
 		onError: () => toastStore.show({ message: "Couldn't save that.", type: 'error' })
 	}));
 
+/** "Not this source": turns one source off for the caller's picks, or on again. */
+export const createNotThisSourceMutation = () =>
+	createAppMutation(() => ({
+		mutationFn: async ({ source, on }: { source: string; on: boolean }) => {
+			if (on)
+				await api.v3.DELETE(
+					v3('/api/v3/discover/tunings/{kind}/{target}', {
+						path: { kind: 'not_this_source', target: source }
+					})
+				);
+			else
+				await api.v3.POST(v3('/api/v3/discover/tunings'), {
+					kind: 'not_this_source',
+					target: source
+				});
+		},
+		effects: () => [tuningsChanged(authStore.user?.id)],
+		onError: () => toastStore.show({ message: "Couldn't save that.", type: 'error' })
+	}));
+
 /**
  * Takes back one way the caller tuned Discover, or with `group` the whole
  * statement about a taste group that it is part of.

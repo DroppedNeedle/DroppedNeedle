@@ -14728,7 +14728,10 @@ export interface components {
             group_label?: string | null;
             /** @description What the tuning is. */
             kind: components["schemas"]["TuningKind"];
-            /** @description The target's name, as the person's taste rows give it. */
+            /**
+             * @description The target's name, as the person's taste rows give it, or the
+             *     source's.
+             */
             name: string;
             /** @description What it is about, lowercased. */
             target: string;
@@ -14736,8 +14739,9 @@ export interface components {
         /**
          * @description One way a person tuned what Discover offers them, about one of their
          *     artists or every artist of one of their taste groups: exactly one of
-         *     `target` and `group_no`. `less_from_seed`, `more_from_seed` and `phase`
-         *     are taken today; the other kinds are refused.
+         *     `target` and `group_no`, or a source the person turns off.
+         *     `less_from_seed`, `more_from_seed`, `phase` and `not_this_source` are
+         *     taken today; `less_of_kind` is refused.
          */
         DiscoverTuningRequest: {
             /**
@@ -14748,7 +14752,10 @@ export interface components {
             group_no?: number | null;
             /** @description What the tuning is. */
             kind: components["schemas"]["TuningKind"];
-            /** @description The MusicBrainz id of one of the person's own artists. */
+            /**
+             * @description The MusicBrainz id of one of the person's own artists, or for
+             *     `not_this_source` the source: `lastfm` or `listenbrainz`.
+             */
             target?: string | null;
         };
         /** @description Every way a person tuned what Discover offers them, newest first. */
@@ -28380,9 +28387,25 @@ export interface components {
             counted_from_at?: number | null;
             /**
              * Format: int64
+             * @description Kept picks that arrived 30 days ago or more; null while none has.
+             */
+            month_on?: number | null;
+            /**
+             * Format: int64
              * @description Picks in every set.
              */
             picked: number;
+            /**
+             * Format: int64
+             * @description Of them, the ones the person sampled.
+             */
+            sampled: number;
+            /**
+             * Format: int64
+             * @description Of those, the ones played after their first 30 days (within the
+             *     first 90); null while `month_on` is.
+             */
+            still_played?: number | null;
         };
         /**
          * @description What the work does to the library.

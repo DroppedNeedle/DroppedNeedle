@@ -830,13 +830,15 @@ pub struct DiscoverFeedbackResponse {
 
 /// One way a person tuned what Discover offers them, about one of their
 /// artists or every artist of one of their taste groups: exactly one of
-/// `target` and `group_no`. `less_from_seed`, `more_from_seed` and `phase`
-/// are taken today; the other kinds are refused.
+/// `target` and `group_no`, or a source the person turns off.
+/// `less_from_seed`, `more_from_seed`, `phase` and `not_this_source` are
+/// taken today; `less_of_kind` is refused.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DiscoverTuningRequest {
     /// What the tuning is.
     pub kind: TuningKind,
-    /// The MusicBrainz id of one of the person's own artists.
+    /// The MusicBrainz id of one of the person's own artists, or for
+    /// `not_this_source` the source: `lastfm` or `listenbrainz`.
     #[serde(default)]
     pub target: Option<String>,
     /// One of the person's taste groups, by its number: the tuning is kept
@@ -852,7 +854,8 @@ pub struct DiscoverTuningEntry {
     pub kind: TuningKind,
     /// What it is about, lowercased.
     pub target: String,
-    /// The target's name, as the person's taste rows give it.
+    /// The target's name, as the person's taste rows give it, or the
+    /// source's.
     pub name: String,
     /// The taste group it was said for, by its anchor artist's MusicBrainz
     /// id (lowercased); null for a tuning about one artist.
@@ -1451,12 +1454,21 @@ pub struct PastWeek {
 pub struct WeeksRecord {
     /// Picks in every set.
     pub picked: i64,
+    /// Of them, the ones the person sampled.
+    pub sampled: i64,
     /// What the person did with them.
     pub answers: AnswerCounts,
     /// From when "still played a month on" can be counted: the first kept
     /// pick's arrival plus 30 days (unix ms); null while none has arrived.
     #[serde(default)]
     pub counted_from_at: Option<i64>,
+    /// Kept picks that arrived 30 days ago or more; null while none has.
+    #[serde(default)]
+    pub month_on: Option<i64>,
+    /// Of those, the ones played after their first 30 days (within the
+    /// first 90); null while `month_on` is.
+    #[serde(default)]
+    pub still_played: Option<i64>,
 }
 
 /// One page of past weeks, newest first; the first page also carries the

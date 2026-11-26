@@ -13,7 +13,9 @@
 //! artists they collect from those artists' kept lists ([`gaps`]). While a
 //! seed's list is missing the albums of the build before that still pass
 //! stay beside the new ones, so a bad night never empties a pool that was
-//! good. A run is safe to repeat.
+//! good. A candidate found only by sources the person turned off ("Not
+//! this source") is left out, and their playlist is not read while
+//! ListenBrainz's picks are off. A run is safe to repeat.
 //!
 //! Nothing reads the pool yet: Discover's surfaces move over to it in
 //! later work, through [`pool_store::ranked`] and [`select`](super::select).
@@ -28,7 +30,7 @@ use droppedneedle_kernel::jobs::BoxFuture;
 use droppedneedle_kernel::jobs::queue::{JobCtx, JobError, JobHandler, JobKind, KindSpec, Outcome};
 use rusqlite::Transaction;
 
-use super::candidate::{Candidate, CandidateKind, PathKind};
+use super::candidate::{Candidate, CandidateKind, PathKind, PathSource};
 use super::pool_store::{self, Counts, PoolBuild};
 use super::rank::{self, AlbumGates, AlbumList, ArtistGates, Ranking, Seed, Walk, proposed};
 use super::select::Exposure;
@@ -40,6 +42,7 @@ use crate::discover::facts::{FactKind, FactSource, Kept, Notes, WantOrder};
 use crate::discover::feedback::Feedback;
 use crate::discover::listening::ListeningData;
 use crate::discover::new_releases;
+use crate::discover::tunings;
 
 /// The pool job kind.
 pub const KIND: JobKind = JobKind::new("discover.pool");
@@ -208,6 +211,7 @@ impl PoolJobs {
         let seed_ids: Vec<String> = taste.seeds.iter().map(|seed| seed.mbid.clone()).collect();
         let library = pool_store::library(&self.db, &seed_ids).await?;
         let feedback = Feedback::load(&self.db, user_id, now_ms).await?;
+        let refused = tunings::refused_sources(&self.db, user_id).await?;
         let shown = pool_store::shown(&self.db, user_id, now_ms - proposed::REST_MS).await?;
         let exposure = Exposure::from_shown(&shown, now_ms);
         // The person's switches and keys, not the services' health: the
@@ -249,13 +253,14 @@ impl PoolJobs {
         .await?;
         // This week's playlist, once: while the picks kept from it are under
         // a week old it is not read again.
-        let picked = if accounts.listenbrainz.is_none() {
-            Some(Picked::Rows(Vec::new()))
-        } else if kept_picks.is_empty() {
-            Some(listenbrainz_picks::read(&self.listening, user_id, &accounts, now_ms).await)
-        } else {
-            None
-        };
+        let picked =
+            if accounts.listenbrainz.is_none() || refused.contains(&PathSource::Listenbrainz) {
+                Some(Picked::Rows(Vec::new()))
+            } else if kept_picks.is_empty() {
+                Some(listenbrainz_picks::read(&self.listening, user_id, &accounts, now_ms).await)
+            } else {
+                None
+            };
         // Ownership is read for the albums this build can reach: the kept
         // lists of the ranked artists, the playlist's albums and the rows
         // the build may keep.
@@ -347,6 +352,7 @@ impl PoolJobs {
             &mut candidates,
             fresh::candidates(&listed, &ranking.artists, &seeds, &gates),
         );
+        candidates.retain(|candidate| !found_only_by(candidate, &refused));
         let mut candidates = rank::order(candidates);
         // The gaps join after the ranking's cut, so a full pool never pushes
         // them out: at most their 30 past `POOL_MAX`.
@@ -447,6 +453,16 @@ fn still_admitted(candidate: &Candidate, gates: &AlbumGates<'_>) -> bool {
         && !gates.artists.refuses(artist)
         && !gates.exposure.rests_artist(artist)
         && gates.admits(&candidate.release_group_mbid, artist)
+}
+
+/// Whether every path of `candidate` comes from one of the `refused`
+/// sources.
+fn found_only_by(candidate: &Candidate, refused: &HashSet<PathSource>) -> bool {
+    !candidate.paths.is_empty()
+        && candidate
+            .paths
+            .iter()
+            .all(|path| refused.contains(&path.source))
 }
 
 /// Whether `candidate` came from a playlist made at `since` or later.

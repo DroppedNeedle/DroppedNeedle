@@ -105,3 +105,20 @@ export function tuningLines(items: TuningEntry[]): TuningLine[] {
 	}
 	return lines.sort((a, b) => b.created_at - a.created_at);
 }
+
+/** A source a person may turn off with "Not this source", as the page names it. */
+export interface SourceSwitch {
+	source: 'lastfm' | 'listenbrainz';
+	name: string;
+	about: string;
+}
+
+/** The sources a person may turn off, in the order the page lists them. */
+export const SOURCE_SWITCHES: readonly SourceSwitch[] = [
+	{ source: 'lastfm', name: "Last.fm's picks", about: 'Similar artists from Last.fm.' },
+	{
+		source: 'listenbrainz',
+		name: 'ListenBrainz weekly picks',
+		about: "ListenBrainz's own picks and new releases for you."
+	}
+];

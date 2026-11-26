@@ -28,7 +28,8 @@ use crate::discover::models::{
 pub const PAGE_DEFAULT: usize = 8;
 /// The most weeks a page holds.
 pub const PAGE_MAX: usize = 20;
-/// How long after its arrival a kept pick can be "still played".
+/// How long after its arrival a kept pick can be "still played": plays
+/// past it, within the pick record's 90 days, count.
 const MONTH_MS: i64 = 30 * 86_400_000;
 
 /// What narrows the picks of past weeks.
@@ -184,6 +185,7 @@ impl PastWeeks {
                             Millis(now_ms),
                             FeedbackTarget::Album,
                             FeedbackTarget::Artist,
+                            Millis(now_ms - MONTH_MS),
                         ],
                         sql::PastWeeksTally::read,
                     )?
@@ -193,19 +195,28 @@ impl PastWeeks {
             .await?;
         let mut answers = AnswerCounts::default();
         let mut first_arrival: Option<i64> = None;
+        let (mut month_on, mut still_played) = (0, 0);
         for row in &rows {
             let answer = PickAnswer::of(row.state);
             answers.add(answer, row.picks);
-            if answer == PickAnswer::Kept
-                && let Some(at) = row.arrived_at
-            {
-                first_arrival = Some(first_arrival.map_or(at.0, |first| first.min(at.0)));
+            if answer == PickAnswer::Kept {
+                month_on += row.month_on;
+                still_played += row.still_played;
+                if let Some(at) = row.arrived_at {
+                    first_arrival = Some(first_arrival.map_or(at.0, |first| first.min(at.0)));
+                }
             }
         }
+        // Unknown until a kept pick is a month past its arrival: never a
+        // zero standing for "not yet".
+        let month_on = Some(month_on).filter(|kept| *kept > 0);
         Ok(WeeksRecord {
             picked: rows.iter().map(|row| row.picks).sum(),
+            sampled: rows.iter().map(|row| row.sampled).sum(),
             answers,
             counted_from_at: first_arrival.map(|at| at + MONTH_MS),
+            month_on,
+            still_played: month_on.map(|_| still_played),
         })
     }
 

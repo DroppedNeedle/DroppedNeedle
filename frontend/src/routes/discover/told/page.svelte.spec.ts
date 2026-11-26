@@ -11,6 +11,7 @@ import ToldPage from './+page.svelte';
 const LIST = 'GET /api/v3/discover/feedback';
 const UNDO = 'DELETE /api/v3/discover/feedback/{target}/{mbid}';
 const TUNINGS = 'GET /api/v3/discover/tunings';
+const SAVE_TUNING = 'POST /api/v3/discover/tunings';
 const UNDO_TUNING = 'DELETE /api/v3/discover/tunings/{kind}/{target}';
 const STATED = 'GET /api/v3/discover/stated-artists';
 const LATER = 'GET /api/v3/discover/later';
@@ -162,6 +163,57 @@ describe('the What you told Discover page', () => {
 		expect(
 			api.calls(UNDO_TUNING).map((call) => [call.params.kind, call.query.get('group')])
 		).toEqual([['phase', 'true']]);
+	});
+
+	it('has a switch for each source, off since the day it was turned off', async () => {
+		let tunings: Tuning[] = [
+			{
+				kind: 'not_this_source',
+				target: 'lastfm',
+				name: 'Last.fm',
+				group_anchor_mbid: null,
+				group_label: null,
+				created_at: TOLD_AT
+			}
+		];
+		const api = fakeApi({
+			[LIST]: { items: [] },
+			[TUNINGS]: () => ({ items: tunings }),
+			[SAVE_TUNING]: ({ body }) => {
+				const saved = body as { kind: Tuning['kind']; target: string };
+				const entry = { ...tunings[0], ...saved, name: "ListenBrainz's picks" };
+				tunings = [...tunings, entry];
+				return { items: [entry] };
+			},
+			[UNDO_TUNING]: ({ params }) => {
+				tunings = tunings.filter((tuning) => tuning.target !== params.target);
+			},
+			[STATED]: { items: [], limit: 30 },
+			[LATER]: PILE
+		});
+		await renderWithQuery(ToldPage, {}, { client: queryClient });
+
+		await expect.element(page.getByRole('heading', { name: 'Not this source' })).toBeVisible();
+		const lastfm = page.getByRole('checkbox', { name: "Last.fm's picks" });
+		const listenbrainz = page.getByRole('checkbox', { name: 'ListenBrainz weekly picks' });
+		await expect.element(lastfm).not.toBeChecked();
+		await expect.element(page.getByText(`Off since ${day(TOLD_AT)}`)).toBeVisible();
+		await expect.element(listenbrainz).toBeChecked();
+		await expect
+			.element(page.getByText('Picks from people who play your artists always stay on.'))
+			.toBeVisible();
+
+		await listenbrainz.click();
+		await expect.element(listenbrainz).not.toBeChecked();
+		expect(api.calls(SAVE_TUNING).map((call) => call.body)).toEqual([
+			{ kind: 'not_this_source', target: 'listenbrainz' }
+		]);
+
+		await lastfm.click();
+		await expect.element(lastfm).toBeChecked();
+		expect(api.calls(UNDO_TUNING).map((call) => call.params)).toEqual([
+			{ kind: 'not_this_source', target: 'lastfm' }
+		]);
 	});
 
 	it('says when one of the two lists did not load, and keeps the other', async () => {

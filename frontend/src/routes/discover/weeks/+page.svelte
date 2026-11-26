@@ -53,11 +53,28 @@
 		record
 			? [
 					{ label: 'Picked', value: record.picked },
+					{ label: 'Sampled', value: record.sampled },
 					{ label: 'Kept', value: record.answers.kept },
 					{ label: 'You knew', value: record.answers.known },
 					{ label: 'Later', value: record.answers.later },
 					{ label: 'Passed', value: record.answers.passed },
 					{ label: 'Open', value: record.answers.open }
+				]
+			: []
+	);
+
+	// Left out until a kept pick is a month past its arrival: never a zero
+	// standing for "not known yet".
+	const monthOn = $derived(
+		record?.month_on != null && record.still_played != null
+			? { kept: record.month_on, played: record.still_played }
+			: null
+	);
+	const monthStats = $derived(
+		monthOn
+			? [
+					{ label: 'Kept a month on', value: monthOn.kept },
+					{ label: 'Still played', value: monthOn.played, accent: true }
 				]
 			: []
 	);
@@ -100,7 +117,14 @@
 		<section class="dn-weeks-page__record" aria-label="What your sets came to">
 			<span class="dn-weeks-page__caps">So far</span>
 			<StatRow {stats} label="Your picks so far" phoneRows class="dn-weeks-page__stats" />
-			{#if record.counted_from_at}
+			{#if monthOn}
+				<span class="dn-weeks-page__split" aria-hidden="true"></span>
+				<StatRow stats={monthStats} label="A month on" class="dn-weeks-page__stats" />
+				<p class="dn-weeks-page__line">
+					<strong>{monthOn.played} of {monthOn.kept}</strong>
+					kept {monthOn.kept === 1 ? 'album' : 'albums'} still played a month on.
+				</p>
+			{:else if record.counted_from_at}
 				<span class="dn-weeks-page__caps dn-weeks-page__note">
 					Still played a month on: counted from {dayMonth(record.counted_from_at)}
 				</span>
@@ -192,6 +216,21 @@
 		margin-left: auto;
 		color: var(--dn-muted);
 	}
+	.dn-weeks-page__split {
+		align-self: stretch;
+		width: 3px;
+		background: var(--dn-line);
+	}
+	.dn-weeks-page__line {
+		flex-basis: 100%;
+		margin: 0;
+		padding-top: 0.625rem;
+		border-top: 1px dashed var(--dn-line);
+		font-size: 0.9375rem;
+	}
+	.dn-weeks-page__line strong {
+		color: var(--color-title);
+	}
 	.dn-weeks-page__record :global(.dn-weeks-page__stats) {
 		flex: 0 1 auto;
 	}
@@ -225,6 +264,9 @@
 		}
 		.dn-weeks-page__note {
 			margin-left: 0;
+		}
+		.dn-weeks-page__split {
+			display: none;
 		}
 		.dn-weeks-page__record :global(.dn-weeks-page__stats) {
 			flex-basis: 100%;

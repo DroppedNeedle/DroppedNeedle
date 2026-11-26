@@ -6,13 +6,15 @@
 	already, no. A statement about a whole taste group is one row under the
 	group's name, listing its artists, and its Undo takes back all of it.
 	Each row says how long it lasts and since when, with Undo. A long group
-	shows its newest ten until asked for all. Later albums have their own
-	page, linked at the foot.
+	shows its newest ten until asked for all. Under them, "Not this source"
+	has a switch for each source a person may turn off. Later albums have
+	their own page, linked at the foot.
 -->
 <script lang="ts">
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import ArtistImage from '$lib/media/ArtistImage.svelte';
 	import {
+		createNotThisSourceMutation,
 		createUndoDiscoverFeedbackMutation,
 		createUndoTuningMutation
 	} from '$lib/features/discover/queries/DiscoverV3Mutations.svelte';
@@ -27,6 +29,7 @@
 	import { dayMonth, dayMonthYear } from '$lib/features/discover/state/weekWords';
 	import {
 		ARTIST_TUNINGS,
+		SOURCE_SWITCHES,
 		TUNING_WORDS,
 		tuningLines,
 		undoLabel
@@ -37,6 +40,7 @@
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
+	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { getLaterPileQuery } from '$lib/features/discover/queries/later.svelte';
 
@@ -47,6 +51,16 @@
 	const laterCount = $derived(laterQuery.data?.total ?? laterQuery.data?.items.length ?? 0);
 	const undo = createUndoDiscoverFeedbackMutation();
 	const undoTuning = createUndoTuningMutation();
+	const sourceSwitch = createNotThisSourceMutation();
+
+	/** When each source was turned off, unix seconds, by source. */
+	const offSince = $derived(
+		new Map(
+			(tuningsQuery.data?.items ?? [])
+				.filter((tuning) => tuning.kind === 'not_this_source')
+				.map((tuning) => [tuning.target, tuning.created_at])
+		)
+	);
 
 	/** A group longer than this shows its newest until asked for all. */
 	const SHOWN = 10;
@@ -177,6 +191,38 @@
 		{/each}
 	{/if}
 
+	{#if tuningsQuery.data}
+		<section>
+			<h3 class="dn-told__head"><span>Not this source</span></h3>
+			<p class="dn-told__lede">Turn one off and picks only it found stop, from your next set.</p>
+			<ul>
+				{#each SOURCE_SWITCHES as one (one.source)}
+					{@const since = offSince.get(one.source)}
+					<li class="dn-told__source">
+						<div class="dn-told__what">
+							<p class="dn-told__name">{one.name}</p>
+							<p class="dn-told__about">{one.about}</p>
+						</div>
+						<p class="dn-told__when">
+							<span>{since ? `Off since ${dayMonth(sec(since))}` : 'On'}</span>
+						</p>
+						<ToggleRow
+							bare
+							label={one.name}
+							disabled={sourceSwitch.isPending}
+							bind:checked={
+								() => since === undefined,
+								(on) =>
+									void sourceSwitch.mutateAsync({ source: one.source, on }).catch(() => undefined)
+							}
+						/>
+					</li>
+				{/each}
+			</ul>
+			<p class="dn-told__lede">Picks from people who play your artists always stay on.</p>
+		</section>
+	{/if}
+
 	<p class="dn-told__foot">
 		Albums you put on Later are on their own page.
 		<Button variant="paper" size="xs" href={withBasePath('/discover/later')}>
@@ -269,6 +315,24 @@
 		white-space: nowrap;
 		color: var(--dn-muted);
 	}
+	.dn-told__source {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto auto;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 0.625rem 0;
+		border-bottom: 1px solid var(--dn-paper-border);
+	}
+	.dn-told__about {
+		margin: 0.125rem 0 0;
+		font-size: 0.8125rem;
+		color: var(--dn-muted);
+	}
+	.dn-told__lede {
+		margin: 0.5rem 0 0;
+		font-size: 0.8125rem;
+		color: var(--dn-muted);
+	}
 	.dn-told__when {
 		display: flex;
 		flex-direction: column;
@@ -301,6 +365,12 @@
 			grid-column: 2;
 			grid-row: 2;
 			align-items: flex-start;
+		}
+		.dn-told__source {
+			grid-template-columns: minmax(0, 1fr) auto;
+		}
+		.dn-told__source .dn-told__when {
+			grid-column: 1;
 		}
 	}
 </style>

@@ -4,7 +4,8 @@
 //! the first twenty picks is read through its `why` route and checked
 //! against the rows it rests on. A pick whose named artist left their
 //! seeds has no reason and is not offered, no field of the evidence is a
-//! score, and "Less from this" moves the next pool and is undone.
+//! score, "Less from this" moves the next pool and is undone, and "Not
+//! this source" leaves out what only that source found until it is undone.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -341,11 +342,12 @@ impl Rig {
 }
 
 pub(crate) async fn rig(name: &str) -> Rig {
-    rig_with(name, "").await
+    rig_with(name, "", false).await
 }
 
-/// The rig, with `extra` rows in the database before the first build.
-async fn rig_with(name: &str, extra: &str) -> Rig {
+/// The rig, with `extra` rows in the database before the first build,
+/// and with `lastfm` her Last.fm key working.
+async fn rig_with(name: &str, extra: &str, lastfm: bool) -> Rig {
     let dir = crate::common::ScratchDir::new(name);
     let rig = AuthRig::new(name).await;
     let db = rig.platform.db.clone();
@@ -358,6 +360,7 @@ async fn rig_with(name: &str, extra: &str) -> Rig {
     let script = Arc::new(Script {
         user: UserMusic {
             listenbrainz: Some("ada".to_owned()),
+            lastfm,
             ..UserMusic::default()
         },
         weekly: Some(weekly.clone()),
@@ -662,7 +665,7 @@ fn guest(local_id: &str, mbid: &str, position: usize) -> String {
 async fn a_library_artist_without_an_album_is_never_a_candidate() {
     let (walked, (listed, ..)) = (artist(1), picked(1));
     let guests = guest("lib-walked", &walked, 1) + &guest("lib-listed", &listed, 2);
-    let rig = rig_with("discover-reasons-library-artist", &guests).await;
+    let rig = rig_with("discover-reasons-library-artist", &guests, false).await;
     let filed: Vec<(String, String)> = rig.db().rows(
         "SELECT artist_mbid, kind FROM catalog_discover_candidates WHERE user_id = 'user-1'",
         [],
@@ -770,7 +773,12 @@ async fn audit_less_from_this_moves_the_pool_and_undoes() {
         StatusCode::BAD_REQUEST,
         "not one of her artists: {body}"
     );
-    for (kind, target) in [("less_of_kind", seed(1)), ("not_this_source", seed(1))] {
+    for (kind, target) in [
+        ("less_of_kind", seed(1)),
+        ("not_this_source", seed(1)),
+        ("not_this_source", "listenbrainz_labs".to_owned()),
+        ("not_this_source", "library".to_owned()),
+    ] {
         let (status, body) = call(
             &rig.app,
             "POST",
@@ -803,4 +811,82 @@ async fn audit_less_from_this_moves_the_pool_and_undoes() {
     assert_eq!(listed["items"], json!([]));
     rig.build().await;
     assert_eq!(rig.ranked().await, before, "the order is back");
+}
+
+/// "Not this source" for Last.fm leaves out an album only Last.fm's list
+/// found and keeps one that labs' list also names; it is listed under
+/// Last.fm's name, its pool build is queued, and undoing it brings the
+/// album back. A group cannot be named for it.
+#[tokio::test]
+async fn audit_not_this_source_leaves_out_what_only_it_found() {
+    let rig = rig_with("discover-reasons-source", "", true).await;
+    // Last.fm's list for her first seed: a neighbour labs also names, and
+    // one only Last.fm names.
+    let at = rig.now() - DAY;
+    let lastfm_only = artist(21);
+    let mut rows = String::new();
+    for (rank, neighbour) in [artist(3), lastfm_only.clone()].iter().enumerate() {
+        rows += &format!(
+            "INSERT INTO catalog_artist_neighbours (artist_mbid, source, rank,              neighbour_mbid, neighbour_name, score) VALUES ('{seed}', 'lastfm', {rank},              '{neighbour}', 'Artist {short}', {score});",
+            seed = seed(1),
+            short = &neighbour[..8],
+            score = 1.0 - rank as f64 * 0.1,
+        );
+    }
+    rows += &counted(&lastfm_only, 10_000, at);
+    let credited = lastfm_only.clone();
+    rows += &albums(
+        &lastfm_only,
+        &[album(&group(21, 1), "Album", "[]", &[credited.as_str()])],
+        at,
+    );
+    insert(rig.db(), rows).await;
+    rig.build().await;
+    let before = rig.ranked().await;
+    let (only_lastfm, both) = (group(21, 1), group(3, 1));
+    assert!(before.contains(&only_lastfm), "{before:?}");
+    assert!(before.contains(&both), "{before:?}");
+    rig.pool_queued();
+
+    let tunings = "/api/v3/discover/tunings";
+    let (status, body) = call(
+        &rig.app,
+        "POST",
+        tunings,
+        Some(json!({"kind": "not_this_source", "group_no": 1})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "a group: {body}");
+    let (status, body) = call(
+        &rig.app,
+        "POST",
+        tunings,
+        Some(json!({"kind": "not_this_source", "target": "lastfm"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(rig.pool_queued(), "the write queued her pool");
+    let (_, listed) = call(&rig.app, "GET", tunings, None).await;
+    assert_eq!(
+        listed["items"],
+        json!([{"kind": "not_this_source", "target": "lastfm", "name": "Last.fm",
+            "group_anchor_mbid": null, "group_label": null, "created_at": rig.now() / 1000}]),
+        "{listed}"
+    );
+    rig.build().await;
+    let after = rig.ranked().await;
+    assert!(!after.contains(&only_lastfm), "{after:?}");
+    assert!(after.contains(&both), "labs names it too: {after:?}");
+
+    let (status, _) = call(
+        &rig.app,
+        "DELETE",
+        &format!("{tunings}/not_this_source/lastfm"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(rig.pool_queued(), "the undo queued her pool");
+    rig.build().await;
+    assert!(rig.ranked().await.contains(&only_lastfm), "it is back");
 }

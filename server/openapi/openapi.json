@@ -48305,7 +48305,7 @@
           },
           "name": {
             "type": "string",
-            "description": "The target's name, as the person's taste rows give it."
+            "description": "The target's name, as the person's taste rows give it, or the\nsource's."
           },
           "target": {
             "type": "string",
@@ -48315,7 +48315,7 @@
       },
       "DiscoverTuningRequest": {
         "type": "object",
-        "description": "One way a person tuned what Discover offers them, about one of their\nartists or every artist of one of their taste groups: exactly one of\n`target` and `group_no`. `less_from_seed`, `more_from_seed` and `phase`\nare taken today; the other kinds are refused.",
+        "description": "One way a person tuned what Discover offers them, about one of their\nartists or every artist of one of their taste groups: exactly one of\n`target` and `group_no`, or a source the person turns off.\n`less_from_seed`, `more_from_seed`, `phase` and `not_this_source` are\ntaken today; `less_of_kind` is refused.",
         "required": [
           "kind"
         ],
@@ -48337,7 +48337,7 @@
               "string",
               "null"
             ],
-            "description": "The MusicBrainz id of one of the person's own artists."
+            "description": "The MusicBrainz id of one of the person's own artists, or for\n`not_this_source` the source: `lastfm` or `listenbrainz`."
           }
         }
       },
@@ -78421,6 +78421,7 @@
         "description": "What every set of the person's came to, counts only.",
         "required": [
           "picked",
+          "sampled",
           "answers"
         ],
         "properties": {
@@ -78436,10 +78437,31 @@
             "format": "int64",
             "description": "From when \"still played a month on\" can be counted: the first kept\npick's arrival plus 30 days (unix ms); null while none has arrived."
           },
+          "month_on": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Kept picks that arrived 30 days ago or more; null while none has."
+          },
           "picked": {
             "type": "integer",
             "format": "int64",
             "description": "Picks in every set."
+          },
+          "sampled": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Of them, the ones the person sampled."
+          },
+          "still_played": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Of those, the ones played after their first 30 days (within the\nfirst 90); null while `month_on` is."
           }
         }
       },
