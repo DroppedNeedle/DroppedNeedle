@@ -259,14 +259,17 @@ Run from the repo root. `make help` lists every target.
   every value that changes the answer, so no settings save clears it, and a
   lookup that met any failure stores nothing.
 - A second exception: the provider facts Discover keeps (similar artists,
-  listener counts, album lists, in `catalog_artist_neighbours`,
-  `catalog_artist_listeners` and `catalog_artist_albums` with their
+  listener counts, album lists and band links, in
+  `catalog_artist_neighbours`, `catalog_artist_listeners`,
+  `catalog_artist_albums` and `catalog_band_links` with their
   `catalog_fact_fetches` rows) live in `library.db`, written only by
   `catalog/src/discover/facts/`. A reader at background priority reads their
   rows only and records what is missing as wanted; background reads for them
   go only through one job (`discover.facts`), and a reader a person waits on
-  may read one nobody has asked about and keep it. A failed read keeps the
-  rows. Clear provider data empties them; the read counter stays.
+  may read one nobody has asked about and keep it, except band links, which
+  only that job reads. A band-link read is identity-critical: a MusicBrainz
+  that does not answer is a failure, never "no links". A failed read keeps
+  the rows. Clear provider data empties them; the read counter stays.
 - All writes go through the single writer lane, one transaction per atomic
   change. No network calls inside one: writes run one at a time, so a slow
   one stalls the rest. The offline upgrade tool is the one exception: with
@@ -355,10 +358,10 @@ Run from the repo root. `make help` lists every target.
   (and when their first set began waiting) and their saved pages, by user id
   and safe to run again. It keeps plays, the library, requests and what the
   person chose themselves: their answers to Discover, their tunings, their
-  Later pile, the artists they named and their set day. Every table with a
-  column ending `user_id` is listed in `server/forget-coverage.txt` as
-  forgotten, kept (with its reason) or not personal, and `persist_schema.rs`
-  fails on one left out.
+  Later pile, the artists they named, their set day and how far their picks
+  go. Every table with a column ending `user_id` is listed in
+  `server/forget-coverage.txt` as forgotten, kept (with its reason) or not
+  personal, and `persist_schema.rs` fails on one left out.
 - A list on rotation is a `catalog_playlists` row named by its row in
   `catalog_rotation_lists`; only its refresh
   (`catalog/src/collections/rotation/`) writes its songs, it is read-only
@@ -940,11 +943,15 @@ Run from the repo root. `make help` lists every target.
   love (`catalog_stated_artists`) and the accounts they linked themselves
   (ListenBrainz's top artists only while their imported history is not
   current), and read from their taste build once it exists; the library only
-  tops up a short list. An artist is a seed at `MIN_WEIGHT`, or with
-  `SEED_PLAYS` plays and listens while its ratings do not count against it
-  (`Tally::is_seed`). A play the person also scrobbled to ListenBrainz
-  counts once, as the play (`SAME_PLAY_MS` in `engine/history.rs`). Discover
-  reads a media server only through the person's own link (`source_gates.rs`,
+  tops up a short list. An artist they said was a phase (a `phase` tuning)
+  gets nothing in `weigh` from its plays, imported listens or linked
+  accounts' listens; what they chose (hearts, ratings, follows, playlists,
+  requests, Later, naming it) still counts, and it stays an artist they
+  know. An artist is a seed at `MIN_WEIGHT`, or with `SEED_PLAYS` plays and
+  listens while its ratings do not count against it (`Tally::is_seed`). A
+  play the person also scrobbled to ListenBrainz counts once, as the play
+  (`SAME_PLAY_MS` in `engine/history.rs`). Discover reads a media server
+  only through the person's own link (`source_gates.rs`,
   `discover_never_resolves_a_shared_media_server_account`).
 - What a person tells Discover (No, Know it already, Not this artist, Not
   now) is one row per person and target in `catalog_discover_feedback`,
@@ -955,22 +962,38 @@ Run from the repo root. `make help` lists every target.
 - The candidate pool (`catalog/src/discover/engine/`) holds only albums the
   album gate offers (below) that the library does not hold and is not
   fetching, and that the person has not played, said no to, marked known or
-  put off. A new-artist candidate's artist is not one they know (their taste
-  rows, or any library artist with a MusicBrainz id, an album of theirs held
-  or not), not one they turned down and not a special-purpose id; its album
-  may credit a known artist beside it. Owned, fetching, the Later pile and
-  what they told Discover are checked again as the pool is read
+  put off. A candidate that only sources the person turned off found ("Not
+  this source": Last.fm, or ListenBrainz's picks) is left out; labs'
+  co-listening, the library and MusicBrainz cannot be turned off. A
+  new-artist candidate's artist is not one they know (their taste rows, or
+  any library artist with a MusicBrainz id, an album of theirs held or not),
+  not one they turned down and not a special-purpose id; its album may
+  credit a known artist beside it. Owned, fetching, the Later pile and what
+  they told Discover are checked again as the pool is read
   (`pool_store::ranked`). A selection (`engine/select.rs`) takes one album
   an artist and is never padded: a short one says why.
-- The pool's order (`engine/rank.rs`) is support, then artist id: nothing
-  random and no date. A candidate's support is the sum, over the person's
-  seeds whose kept similar-artists list names its artist, of the seed's
-  weight times the link's strength (co-listening with fame divided out, the
-  best 1.0). Where the person's Last.fm key works and Last.fm's list is
-  kept, it is a second opinion: a link both name is `AGREEMENT_BOOST` times
-  as strong, and a neighbour only Last.fm names counts with its match, fame
-  divided the same way. With two taste groups or more, an artist under
-  `HUB_SHARE` of whose support comes from one group is left out.
+- The pool's order (`engine/rank.rs`) is support tilted by the person's
+  depth, then artist id: nothing random and no date. A candidate's support
+  is the sum, over the person's seeds whose kept similar-artists list names
+  its artist, of the seed's weight times the link's strength (co-listening
+  with fame divided out, the best 1.0). Where the person's Last.fm key works
+  and Last.fm's list is kept, it is a second opinion: a link both name is
+  `AGREEMENT_BOOST` times as strong, and a neighbour only Last.fm names
+  counts with its match, fame divided the same way. With two taste groups
+  or more, an artist under `HUB_SHARE` of whose support comes from one group
+  is left out. The depth (`catalog_discover_prefs.depth`: home ground, next
+  door by default, or far out) tilts support by the artist's listeners only
+  in the ranking's sort and the pool's order (`rank::tilted`, by
+  `HOME_GROUND_TILT` or `FAR_OUT_TILT`; next door is support itself) and
+  sets the selection's floors (`Floors::for_depth`). It never changes
+  stored support, a reason, a link's strength or `FAME_EXPONENT`. A new
+  depth queues the person's pool build in the write that saves it.
+- A band-link candidate (kind `thread`, `engine/sources/band_links.rs`) is
+  an album by an artist new to the person that one of their seeds' kept
+  band links leads to: a member, a band of theirs, another name, or a band
+  sharing a member. Band links join the pool after the cut, so they never
+  push a co-listening candidate out, and a band link counts toward its seed
+  in `strongest_seed`, so `SEED_PICKS` caps a seed across both kinds.
 - What may be offered as an artist's album is one gate, `may_offer` in
   `catalog/src/discover/listening/gate.rs`, which every Discover read of an
   artist's albums passes (the pool and its sources, Discover's and Home's
@@ -991,16 +1014,19 @@ Run from the repo root. `make help` lists every target.
   built from stored rows only by the `discover.weekly_set` job, once a week:
   on their set day (Friday unless they chose another, from 00:00 server
   time) for anyone seen in 30 days, else on their first visit after it. It
-  holds up to eight new-artist picks from the pool: short, with its reason,
-  when the pool is complete, and nothing is written while the pool waits for
-  facts. A pool missing or older than the taste build is never dealt from;
-  for someone unseen in seven days it is rebuilt only by their visit, and an
-  incomplete one counts as final (`not_checked`). A linked person's first
-  set waits for their history import, at most six hours from their first
-  Discover visit. A kept set is a record: nothing rebuilds or changes it, a
-  pick's state is read from requests, the library, Later and feedback, and a
-  new set day counts from the next week. A set that cannot be built leaves
-  last week's, and the week answer says why.
+  holds up to eight picks from the pool by artists new to the person, which
+  their own artists lead to through co-listening or a band link, never a
+  service's pick: short, with its reason, when the pool is complete, and
+  nothing is written while the pool waits for facts. A pool missing, older
+  than the taste build or ordered at another depth than the person's is
+  never dealt from; for someone unseen in seven days it is rebuilt only by
+  their visit, and an incomplete one counts as final (`not_checked`). A
+  linked person's first set waits for their history import, at most six
+  hours from their first Discover visit. A kept set is a record: nothing
+  rebuilds or changes it, a pick's state is read from requests, the
+  library, Later and feedback, and a new set day counts from the next week.
+  A set that cannot be built leaves last week's, and the week answer says
+  why.
 - A Discover build never drops a section that was good: a section whose own
   reads failed keeps the one the saved page showed (same variant, under a
   week old) and says so in `section_states`.
@@ -1112,32 +1138,37 @@ Run from the repo root. `make help` lists every target.
   `TextAreaField`, `CodeField` (a CSS editor, CodeMirror loaded on first
   use), `ToggleRow` (`leading` puts the switch before its label, for a slim
   row), `RadioCards`, `SegmentedChoice` (two or three short options side by
-  side, one radio group), `StatusChip`, `SectionHead` (a shelf's title row),
-  `ListPageHeader` (a browse page's title, count, lede or a hub's tagline,
-  ticket and record, with an optional brush stroke after the title;
-  `backStyle="link"` puts a mono caps back link over the title,
-  `compact` suits a working page), `SaveBar`, `AsyncButton`,
-  `QueryBoundary`, `RatingStars` (`quiet` in list rows), `StatRow` (counts
-  split by rules), `JumpTabs` (a page's sticky section strip; `look="pills"`
+  side, one radio group; `look="caps"` in mono capitals, for a page header),
+  `StatusChip`, `SectionHead` (a shelf's title row), `ListPageHeader` (a
+  browse page's title, count, lede or a hub's tagline, ticket and record,
+  with an optional brush stroke after the title; `backStyle="link"` puts a
+  mono caps back link over the title, `compact` suits a working page,
+  `facts` puts a figure and two lines on the ticket, which a phone leaves
+  out), `SaveBar`, `AsyncButton`, `QueryBoundary`, `RatingStars` (`quiet`
+  in list rows), `StatRow` (counts split by rules, an `accent` one in the
+  title colour), `JumpTabs` (a page's sticky section strip; `look="pills"`
   fills the current link, `actions` sit at its end, `look="rail"` stands it
   in a left column with icons, `onjump` opens a folded section first),
-  `HalftonePhoto` (a photo printed as a fading halftone), `FillText` (text
-  that fills its flex parent's height and fades where it is cut), `Knob` (a
-  rotary slider: a dial over a dotted scale), `SideDrawer` (a panel from the
-  right over a dimmed page, with `Tabs`' `caps` look for its tabs),
-  `PageShell`, `Toaster`, `CoverPlaceholder`, `UnsavedChangesGuard`, `Logo`,
+  `PageTabs` (a strip of links between sibling pages, the current one
+  filled, scrolling sideways on a narrow screen), `HalftonePhoto` (a photo
+  printed as a fading halftone), `FillText` (text that fills its flex
+  parent's height and fades where it is cut), `Knob` (a rotary slider: a
+  dial over a dotted scale), `SideDrawer` (a panel from the right over a
+  dimmed page, with `Tabs`' `caps` look for its tabs), `PageShell`,
+  `Toaster`, `CoverPlaceholder`, `UnsavedChangesGuard`, `Logo`,
   `PaperPanel` (the light island), `Card`'s `torn` paper, `acid` torn sheet
   and `note` callout (a hint beside a page's main actions), `Modal`'s and
   `ConfirmDialog`'s `paper` stock (a confirm that starts a write),
   `Button`'s condensed caps sizes (`display`, `display-sm`), `paper` outline
-  (a button on a paper card) and `danger-outline` (a red outline beside
-  outline buttons), `AuthFrame` and `AuthCard` (a signed-out page's frame
-  and its torn paper card with folder tabs), the `dn-toolbar` and
-  `dn-list-grid` classes for a list's controls and grid, and the decoration
-  `FritFrame` (the page's dot frame, mounted once by the shell and once by
-  `AuthFrame`), `FritEdge`, `VinylSleeve`, `VinylRecord`, `BarcodeOrnament`,
-  `BarcodeTicket`, `Illustration` (turntable, dripping heart, folder
-  sticker, and the halftone prints record crate, tag boxes and fingerprint),
+  (a button on a paper card, filled while `active`, a pressed toggle) and
+  `danger-outline` (a red outline beside outline buttons), `AuthFrame` and
+  `AuthCard` (a signed-out page's frame and its torn paper card with folder
+  tabs), the `dn-toolbar` and `dn-list-grid` classes for a list's controls
+  and grid, and the decoration `FritFrame` (the page's dot frame, mounted
+  once by the shell and once by `AuthFrame`), `FritEdge`, `VinylSleeve`,
+  `VinylRecord`, `BarcodeOrnament`, `BarcodeTicket`, `Illustration`
+  (turntable, dripping heart, folder sticker, and the halftone prints record
+  crate, tag boxes and fingerprint),
   `HalftoneArt` (a record, crowd or map printed in dots, for an empty card's
   corner), the Counter's pieces `Tape` (a torn tape label: `acid`, `ink`,
   `warn` with its warning sign, `embossed` for a pick found by sound),
@@ -1158,8 +1189,10 @@ Run from the repo root. `make help` lists every target.
   ink, `Knob`'s `xs` size, `caption` (`beside`, `none`) and `lit="sound"`,
   `VinylSleeve`'s `playing` (the record slides out and its `label` turns),
   `StatRow`'s `phoneRows` and `Tabs`' `scroll` (one line that scrolls
-  sideways); in `src/lib/media` the one album and artist tile, `MediaTile`
-  (`wrapName` in a dense artist grid) and `MediaTileSkeleton`): do not
+  sideways) and `folder` look (paper divider tabs over a paper panel, the
+  current one joined to it); in `src/lib/media` the one album and artist
+  tile, `MediaTile` (`wrapName` in a dense artist grid) and
+  `MediaTileSkeleton`): do not
   hand-write a button, a card, a text input, a modal, a confirm, a form row,
   a `<dialog>` or a query's loading, error and empty branches (lint refuses
   a `<dialog>` outside `src/lib/ui` and any `confirm()`). Lint refuses a raw
@@ -1182,6 +1215,10 @@ Run from the repo root. `make help` lists every target.
   would answer 404; the web UI asks for no cover a view marks missing.
 - Navigation destinations live in `lib/shell/navItems.ts`; the
   sidebar, the bottom bar and the More sheet all render from it.
+- Discover's pages are one list, `DISCOVER_PAGES` in
+  `lib/features/discover/state/discoverPages.ts`, which `DiscoverTabs` draws
+  as one strip under the title on Discover and each of its pages; a new
+  Discover page joins that list.
 - In the web player, moving from one track to the next goes through
   `player/playback/transition.ts`: it alone starts the next deck, schedules
   gains and ends a tail. The two `<audio>` decks are handed out only by
