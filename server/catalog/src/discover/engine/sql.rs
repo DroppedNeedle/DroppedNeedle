@@ -10,7 +10,7 @@ use droppedneedle_kernel::db::time::Millis;
 use droppedneedle_library::owns_group;
 use droppedneedle_media::history::HistoryImportState;
 
-use super::candidate::{CandidateKind, PathKind, PathSource};
+use super::candidate::{BandLinkRole, CandidateKind, PathKind, PathSource};
 use super::taste::Trend;
 use super::weekly::{SetDay, ShortReason};
 use crate::discover::facts::FactSource;
@@ -346,15 +346,15 @@ droppedneedle_kernel::sql! {
     pub(in crate::discover) POOL_PATHS = "SELECT release_group_mbid_lower, kind, source, \
          fetched_at, artist_mbid, artist_name, artist_plays, artist_weight, \
          artist_albums_owned, link_strength, link_rank, link_of, named_by_labs, \
-         named_by_lastfm, link_closest_new, known_credit_mbid \
-         FROM catalog_discover_candidate_paths \
+         named_by_lastfm, link_closest_new, known_credit_mbid, fact_role, via_mbid, \
+         via_name, fact_artist_name FROM catalog_discover_candidate_paths \
          WHERE user_id = ?1 ORDER BY release_group_mbid_lower, path_no";
     /// One of a person's candidates' paths (`?2`, lowercased), in order.
     pub(in crate::discover) POOL_CANDIDATE_PATHS = "SELECT release_group_mbid_lower, kind, \
          source, fetched_at, artist_mbid, artist_name, artist_plays, artist_weight, \
          artist_albums_owned, link_strength, link_rank, link_of, named_by_labs, \
-         named_by_lastfm, link_closest_new, known_credit_mbid \
-         FROM catalog_discover_candidate_paths \
+         named_by_lastfm, link_closest_new, known_credit_mbid, fact_role, via_mbid, \
+         via_name, fact_artist_name FROM catalog_discover_candidate_paths \
          WHERE user_id = ?1 AND release_group_mbid_lower = ?2 ORDER BY path_no";
     pub(in crate::discover) row PoolPath for [POOL_PATHS, POOL_CANDIDATE_PATHS] {
         release_group_mbid_lower: String,
@@ -373,6 +373,10 @@ droppedneedle_kernel::sql! {
         named_by_lastfm: bool,
         link_closest_new: bool,
         known_credit_mbid: Option<String>,
+        fact_role: Option<BandLinkRole>,
+        via_mbid: Option<String>,
+        via_name: Option<String>,
+        fact_artist_name: Option<String>,
     }
     /// A person's pool build row.
     pub(in crate::discover) POOL_BUILD_DELETE = "DELETE FROM catalog_discover_pool_builds \
@@ -401,9 +405,9 @@ droppedneedle_kernel::sql! {
          (user_id, release_group_mbid_lower, path_no, kind, source, fetched_at, artist_mbid, \
           artist_name, artist_plays, artist_weight, artist_albums_owned, link_strength, \
           link_rank, link_of, named_by_labs, named_by_lastfm, known_credit_mbid, \
-          link_closest_new) \
+          link_closest_new, fact_role, via_mbid, via_name, fact_artist_name) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, \
-          ?18)";
+          ?18, ?19, ?20, ?21, ?22)";
 
     /// A person's seeds, by MusicBrainz id, lowercased.
     pub(in crate::discover) POOL_SEED_IDS = "SELECT artist_mbid_lower \
@@ -549,16 +553,17 @@ droppedneedle_kernel::sql! {
 
     /// Of the people in the JSON list `?1` with a taste build, the ones due
     /// a pool build: none yet, one built before their latest taste build,
-    /// or one built waiting for album facts of which at least one has
-    /// arrived since: an artist's album list (kind `?2` from `?3`) or its
-    /// albums' counts (kind `?4` from `?5`).
+    /// or one built waiting for facts of which at least one has arrived
+    /// since: an artist's album list (kind `?2` from `?3`), its albums'
+    /// counts (kind `?4` from `?5`) or its band links (kind `?6` from `?7`).
     pub(in crate::discover) POOL_DUE = "SELECT u.value FROM json_each(?1) u \
          JOIN catalog_taste_builds t ON t.user_id = u.value \
          LEFT JOIN catalog_discover_pool_builds b ON b.user_id = u.value \
          WHERE b.user_id IS NULL OR b.built_at < t.built_at \
           OR (b.incomplete = 1 AND EXISTS (SELECT 1 FROM json_each(b.waiting_for) w \
            JOIN catalog_fact_fetches f ON f.artist_mbid = w.value \
-           WHERE ((f.kind = ?2 AND f.source = ?3) OR (f.kind = ?4 AND f.source = ?5)) \
+           WHERE ((f.kind = ?2 AND f.source = ?3) OR (f.kind = ?4 AND f.source = ?5) \
+             OR (f.kind = ?6 AND f.source = ?7)) \
              AND f.fetched_at > b.built_at))";
 
     // -- gaps and the person's own shelves ----------------------------------------

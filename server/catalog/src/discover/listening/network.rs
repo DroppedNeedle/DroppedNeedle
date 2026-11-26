@@ -14,6 +14,7 @@ use droppedneedle_providers::listenbrainz::{
 };
 
 use super::ListeningResult;
+use super::band_links::BandLink;
 use super::rows::{
     ArtistRow, FreshRow, JellyfinList, LastFmAlbum, LastFmChartAlbum, LastFmFacts, ListenedAlbum,
     LovedTrack, PlayedArtist, ReleaseGroupFacts, ScoredArtist, SourceContext, StatsRange, TagAlbum,
@@ -101,6 +102,15 @@ pub trait ListeningNetwork: Send + Sync {
         artist_mbid: &'a str,
         priority: RequestPriority,
     ) -> Read<'a, Option<Vec<ReleaseGroupItem>>>;
+    /// One artist's band links from the install's MusicBrainz source: its
+    /// members, bands, founders, subgroups, collaborations and other names.
+    /// `None` when MusicBrainz has no such artist; a MusicBrainz that does
+    /// not answer is an error, never `None`.
+    fn band_links<'a>(
+        &'a self,
+        artist_mbid: &'a str,
+        priority: RequestPriority,
+    ) -> Read<'a, Option<Vec<BandLink>>>;
     /// Listen and listener counts for release groups (a popularity read),
     /// sent with no token.
     fn release_group_counts<'a>(

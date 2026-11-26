@@ -1,0 +1,479 @@
+{
+  "name": "Wu‐Tang Clan",
+  "gender": null,
+  "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+  "isnis": [
+    "0000000121612813"
+  ],
+  "area": {
+    "type": null,
+    "sort-name": "United States",
+    "name": "United States",
+    "type-id": null,
+    "disambiguation": "",
+    "id": "489ce91b-6658-3307-9877-795b68554c98",
+    "iso-3166-1-codes": [
+      "US"
+    ]
+  },
+  "disambiguation": "",
+  "begin-area": {
+    "type-id": null,
+    "sort-name": "Staten Island",
+    "type": null,
+    "name": "Staten Island",
+    "disambiguation": "",
+    "id": "a8c1d0e2-0837-454c-afa9-4190b3fe4d92"
+  },
+  "end-area": null,
+  "gender-id": null,
+  "type": "Group",
+  "sort-name": "Wu‐Tang Clan",
+  "relations": [
+    {
+      "type-id": "6ed4bfc4-0a0d-44c0-b025-b7fc4d900b67",
+      "begin": null,
+      "target-credit": "",
+      "target-type": "artist",
+      "ended": false,
+      "source-credit": "",
+      "attribute-values": {},
+      "direction": "forward",
+      "type": "founder",
+      "artist": {
+        "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+        "disambiguation": "collective affiliated with Wu‐Tang Clan",
+        "id": "244f660e-5e68-47d7-8184-46dc204ee326",
+        "name": "Wu‐Tang Killa Bees",
+        "type": "Group",
+        "sort-name": "Wu‐Tang Killa Bees",
+        "country": "US"
+      },
+      "attributes": [],
+      "attribute-ids": {},
+      "end": null
+    },
+    {
+      "begin": null,
+      "target-credit": "",
+      "type-id": "ed6a7891-ce70-4e08-9839-1f2f62270497",
+      "ended": false,
+      "target-type": "artist",
+      "direction": "backward",
+      "source-credit": "",
+      "attribute-values": {},
+      "end": null,
+      "attribute-ids": {},
+      "artist": {
+        "type": "Person",
+        "sort-name": "Ballard, Tony",
+        "name": "Tony Ballard",
+        "country": null,
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "disambiguation": "",
+        "id": "d8f332c9-f6bd-49bb-af27-fdfdc83cc0cb"
+      },
+      "type": "instrumental supporting musician",
+      "attributes": []
+    },
+    {
+      "type-id": "ed6a7891-ce70-4e08-9839-1f2f62270497",
+      "begin": null,
+      "target-credit": "",
+      "target-type": "artist",
+      "ended": false,
+      "source-credit": "",
+      "attribute-values": {},
+      "direction": "backward",
+      "artist": {
+        "disambiguation": "",
+        "id": "88c5b6b7-2e04-4aee-89eb-65dc6dc70f55",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "country": null,
+        "sort-name": "James Nalls, Trou",
+        "type": "Person",
+        "name": "Troy James Nalls"
+      },
+      "type": "instrumental supporting musician",
+      "attribute-credits": {},
+      "attributes": [
+        "drums (drum set)"
+      ],
+      "end": null,
+      "attribute-ids": {
+        "drums (drum set)": "12092505-6ee1-46af-a15a-b5b468b6b155"
+      }
+    },
+    {
+      "begin": null,
+      "target-credit": "",
+      "type-id": "ed6a7891-ce70-4e08-9839-1f2f62270497",
+      "ended": false,
+      "target-type": "artist",
+      "direction": "backward",
+      "source-credit": "",
+      "attribute-values": {},
+      "attribute-ids": {
+        "guitar": "63021302-86cd-4aee-80df-2270d54f4978"
+      },
+      "end": null,
+      "attribute-credits": {},
+      "type": "instrumental supporting musician",
+      "artist": {
+        "name": "Cody Nierstedt",
+        "type": "Person",
+        "sort-name": "Nierstedt, Cody",
+        "country": null,
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "id": "ce2f48e3-57eb-4ce0-aac3-77b7932f665e",
+        "disambiguation": ""
+      },
+      "attributes": [
+        "guitar"
+      ]
+    },
+    {
+      "end": "2004-11-13",
+      "attribute-ids": {
+        "original": "4fd3b255-a7d7-4424-9a63-40fa543b601c"
+      },
+      "type": "member of band",
+      "artist": {
+        "id": "d50548a0-3cfd-4d7a-964b-0aef6545d819",
+        "disambiguation": "Wu‐Tang founder, NYC rapper/producer",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "country": "US",
+        "type": "Person",
+        "sort-name": "Ol’ Dirty Bastard",
+        "name": "Ol’ Dirty Bastard"
+      },
+      "attributes": [
+        "original"
+      ],
+      "direction": "backward",
+      "source-credit": "",
+      "attribute-values": {},
+      "ended": true,
+      "target-type": "artist",
+      "begin": "1992",
+      "target-credit": "",
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821"
+    },
+    {
+      "artist": {
+        "disambiguation": "",
+        "id": "3b39abeb-0064-4eed-9ddd-ee47a45c54cb",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "country": "US",
+        "sort-name": "Ghostface Killah",
+        "type": "Person",
+        "name": "Ghostface Killah"
+      },
+      "type": "member of band",
+      "attributes": [
+        "original"
+      ],
+      "attribute-ids": {
+        "original": "4fd3b255-a7d7-4424-9a63-40fa543b601c"
+      },
+      "end": null,
+      "source-credit": "",
+      "attribute-values": {},
+      "direction": "backward",
+      "target-type": "artist",
+      "ended": false,
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "begin": "1992",
+      "target-credit": ""
+    },
+    {
+      "attributes": [
+        "original"
+      ],
+      "artist": {
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "id": "550cb78b-4995-4873-baea-76ef265531f5",
+        "disambiguation": "Wu‐Tang Clan",
+        "name": "GZA/Genius",
+        "sort-name": "GZA/Genius",
+        "type": "Person",
+        "country": "US"
+      },
+      "type": "member of band",
+      "attribute-ids": {
+        "original": "4fd3b255-a7d7-4424-9a63-40fa543b601c"
+      },
+      "end": null,
+      "attribute-values": {},
+      "source-credit": "",
+      "direction": "backward",
+      "target-type": "artist",
+      "ended": false,
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "target-credit": "",
+      "begin": "1992"
+    },
+    {
+      "end": null,
+      "attribute-ids": {
+        "original": "4fd3b255-a7d7-4424-9a63-40fa543b601c"
+      },
+      "attributes": [
+        "original"
+      ],
+      "artist": {
+        "disambiguation": "east coast hip hop",
+        "id": "a6b90dc0-e22e-44e1-890b-87900bd9aca6",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "country": "US",
+        "name": "Inspectah Deck",
+        "sort-name": "Inspectah Deck",
+        "type": "Person"
+      },
+      "type": "member of band",
+      "direction": "backward",
+      "attribute-values": {},
+      "source-credit": "",
+      "ended": false,
+      "target-type": "artist",
+      "target-credit": "",
+      "begin": "1992",
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821"
+    },
+    {
+      "end": null,
+      "attribute-ids": {
+        "original": "4fd3b255-a7d7-4424-9a63-40fa543b601c"
+      },
+      "artist": {
+        "country": "US",
+        "name": "Masta Killa",
+        "sort-name": "Masta Killa",
+        "type": "Person",
+        "id": "43ffac1a-f46a-4bd0-88f9-7715e104a122",
+        "disambiguation": "",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df"
+      },
+      "type": "member of band",
+      "attributes": [
+        "original"
+      ],
+      "direction": "backward",
+      "source-credit": "",
+      "attribute-values": {},
+      "ended": false,
+      "target-type": "artist",
+      "begin": "1992",
+      "target-credit": "",
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821"
+    },
+    {
+      "attributes": [
+        "original"
+      ],
+      "artist": {
+        "country": "US",
+        "type": "Person",
+        "sort-name": "Method Man",
+        "name": "Method Man",
+        "disambiguation": "of the Wu‐Tang Clan",
+        "id": "94dbfe2e-ca48-4e08-a5a8-e1e74136c63d",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df"
+      },
+      "type": "member of band",
+      "attribute-ids": {
+        "original": "4fd3b255-a7d7-4424-9a63-40fa543b601c"
+      },
+      "end": null,
+      "attribute-values": {},
+      "source-credit": "",
+      "direction": "backward",
+      "target-type": "artist",
+      "ended": false,
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "target-credit": "",
+      "begin": "1992"
+    },
+    {
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "target-credit": "",
+      "begin": "1992",
+      "target-type": "artist",
+      "ended": false,
+      "attribute-values": {},
+      "source-credit": "",
+      "direction": "backward",
+      "attributes": [
+        "original"
+      ],
+      "type": "member of band",
+      "artist": {
+        "sort-name": "Raekwon",
+        "type": "Person",
+        "name": "Raekwon",
+        "country": "US",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "id": "4e954b02-fae2-4bd7-9547-e055a6ac0527",
+        "disambiguation": "US rapper, Wu‐Tang Clan"
+      },
+      "attribute-ids": {
+        "original": "4fd3b255-a7d7-4424-9a63-40fa543b601c"
+      },
+      "end": null
+    },
+    {
+      "begin": "1992",
+      "target-credit": "",
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "ended": false,
+      "target-type": "artist",
+      "direction": "backward",
+      "source-credit": "",
+      "attribute-values": {},
+      "end": null,
+      "attribute-ids": {
+        "original": "4fd3b255-a7d7-4424-9a63-40fa543b601c"
+      },
+      "artist": {
+        "sort-name": "RZA",
+        "type": "Person",
+        "name": "RZA",
+        "country": "US",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "id": "29c28ac3-27c5-4822-8eb6-0af89a3a7240",
+        "disambiguation": "American rapper and actor"
+      },
+      "type": "member of band",
+      "attributes": [
+        "original"
+      ]
+    },
+    {
+      "ended": false,
+      "target-type": "artist",
+      "begin": "1992",
+      "target-credit": "",
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "attribute-ids": {
+        "original": "4fd3b255-a7d7-4424-9a63-40fa543b601c"
+      },
+      "end": null,
+      "artist": {
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "disambiguation": "",
+        "id": "29edaca5-7e7d-4391-b137-ff1c94a4d262",
+        "name": "U‐God",
+        "sort-name": "U‐God",
+        "type": "Person",
+        "country": "US"
+      },
+      "type": "member of band",
+      "attributes": [
+        "original"
+      ],
+      "direction": "backward",
+      "source-credit": "",
+      "attribute-values": {}
+    },
+    {
+      "ended": false,
+      "target-type": "artist",
+      "begin": "2007",
+      "target-credit": "",
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "attribute-ids": {},
+      "end": null,
+      "artist": {
+        "id": "20292c32-1fe2-4e5d-82c8-7e04e6b8cf73",
+        "disambiguation": "",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "country": "US",
+        "type": "Person",
+        "sort-name": "Cappadonna",
+        "name": "Cappadonna"
+      },
+      "type": "member of band",
+      "attributes": [],
+      "direction": "backward",
+      "source-credit": "",
+      "attribute-values": {}
+    },
+    {
+      "type-id": "7802f96b-d995-4ce9-8f70-6366faad758e",
+      "target-credit": "",
+      "begin": null,
+      "target-type": "artist",
+      "ended": false,
+      "attribute-values": {},
+      "source-credit": "",
+      "direction": "backward",
+      "attributes": [],
+      "type": "subgroup",
+      "artist": {
+        "country": "US",
+        "name": "Method Man & Redman",
+        "sort-name": "Method Man & Redman",
+        "type": "Group",
+        "disambiguation": "",
+        "id": "c03e2388-9e1b-4b78-8194-28c0d6ca19a0",
+        "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b"
+      },
+      "end": null,
+      "attribute-ids": {}
+    },
+    {
+      "direction": "backward",
+      "source-credit": "",
+      "attribute-values": {},
+      "end": null,
+      "attribute-ids": {},
+      "artist": {
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "disambiguation": "American disc jockey",
+        "id": "a32f6464-f72d-45a6-8fee-4cd7b04520dd",
+        "name": "DJ Symphony",
+        "sort-name": "DJ Symphony",
+        "type": "Person",
+        "country": "US"
+      },
+      "type": "supporting musician",
+      "attributes": [],
+      "begin": null,
+      "target-credit": "",
+      "type-id": "88562a60-2550-48f0-8e8e-f54d95c7369a",
+      "ended": false,
+      "target-type": "artist"
+    },
+    {
+      "artist": {
+        "disambiguation": "Wu‐Tang affiliated producer & DJ",
+        "id": "dd6b6f44-85ea-4904-b98e-646e2ca9c782",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "country": "US",
+        "sort-name": "Mathematics",
+        "type": "Person",
+        "name": "Mathematics"
+      },
+      "type": "supporting musician",
+      "attributes": [],
+      "attribute-ids": {},
+      "end": null,
+      "source-credit": "",
+      "attribute-values": {},
+      "direction": "backward",
+      "target-type": "artist",
+      "ended": false,
+      "type-id": "88562a60-2550-48f0-8e8e-f54d95c7369a",
+      "begin": null,
+      "target-credit": ""
+    }
+  ],
+  "country": "US",
+  "ipis": [],
+  "id": "0febdcf7-4e1f-4661-9493-b40427de2c13",
+  "life-span": {
+    "begin": "1992",
+    "ended": false,
+    "end": null
+  }
+}

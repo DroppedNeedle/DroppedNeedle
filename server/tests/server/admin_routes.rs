@@ -241,13 +241,17 @@ async fn clearing_provider_data_empties_the_kept_facts_but_not_the_read_count() 
                      fetched_at, due_at, read_at)
                      VALUES ('a', 'neighbours', 'listenbrainz_labs', 'found', 1, 2, 1),
                             ('b', 'listeners', 'listenbrainz', 'found', 1, 2, 1),
-                            ('a', 'albums', 'musicbrainz', 'found', 1, 2, 1);
+                            ('a', 'albums', 'musicbrainz', 'found', 1, 2, 1),
+                            ('a', 'band_links', 'musicbrainz', 'found', 1, 2, 1);
                  INSERT INTO catalog_artist_neighbours (artist_mbid, source, rank,
                      neighbour_mbid, score) VALUES ('a', 'listenbrainz_labs', 0, 'b', 5.0);
                  INSERT INTO catalog_artist_listeners (artist_mbid, listeners, listens)
                      VALUES ('b', 10, 100);
                  INSERT INTO catalog_artist_albums (artist_mbid, release_group_mbid, position,
                      title, artist_name, secondary_types) VALUES ('a', 'g', 0, 'T', 'A', '[]');
+                 INSERT INTO catalog_band_links (artist_mbid, position, kind, direction,
+                     linked_mbid, linked_name, ended)
+                     VALUES ('a', 0, 'member_of_band', 'backward', 'm', 'M', 0);
                  INSERT INTO catalog_background_read_days (day, source, reads)
                      VALUES (1, 'listenbrainz_labs', 7);",
             )?;
@@ -258,7 +262,7 @@ async fn clearing_provider_data_empties_the_kept_facts_but_not_the_read_count() 
 
     let (status, stats) = call(rig.admin_app(), "GET", "/api/v3/admin/cache/stats", None).await;
     assert_eq!(status, StatusCode::OK, "{stats}");
-    assert_eq!(stats["kept_facts"], 3);
+    assert_eq!(stats["kept_facts"], 4);
 
     let (status, body) = call(
         rig.admin_app(),
@@ -274,6 +278,7 @@ async fn clearing_provider_data_empties_the_kept_facts_but_not_the_read_count() 
         "catalog_artist_neighbours",
         "catalog_artist_listeners",
         "catalog_artist_albums",
+        "catalog_band_links",
     ] {
         let rows: i64 = db.one(&format!("SELECT COUNT(*) FROM {table}"), []);
         assert_eq!(rows, 0, "{table} is emptied");

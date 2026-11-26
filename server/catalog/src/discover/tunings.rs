@@ -150,10 +150,7 @@ fn refusable(source: PathSource) -> Option<&'static str> {
     match source {
         PathSource::Lastfm => Some("Last.fm"),
         PathSource::Listenbrainz => Some("ListenBrainz's picks"),
-        PathSource::ListenbrainzLabs
-        | PathSource::Musicbrainz
-        | PathSource::Library
-        | PathSource::DataFile => None,
+        PathSource::ListenbrainzLabs | PathSource::Musicbrainz | PathSource::Library => None,
     }
 }
 

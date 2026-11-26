@@ -34,14 +34,14 @@ pub fn ceiling(seen: usize) -> u64 {
 }
 
 /// The kinds the job may read: ListenBrainz's only while its reads are on,
-/// album lists only while the MusicBrainz settings read.
+/// album lists and band links only while the MusicBrainz settings read.
 pub(crate) fn kinds(listenbrainz_on: bool, musicbrainz_on: bool) -> Vec<FactKind> {
     let mut kinds = Vec::new();
     if listenbrainz_on {
         kinds.extend([FactKind::Neighbours, FactKind::Listeners]);
     }
     if musicbrainz_on {
-        kinds.push(FactKind::Albums);
+        kinds.extend([FactKind::Albums, FactKind::BandLinks]);
     }
     if listenbrainz_on {
         kinds.push(FactKind::AlbumCounts);

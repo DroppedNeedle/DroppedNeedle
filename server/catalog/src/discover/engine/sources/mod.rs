@@ -10,10 +10,13 @@
 //!   from their artists (`fresh` candidates).
 //! - [`gaps`]: albums missing from the artists they play that the library
 //!   collects (`gap` candidates).
+//! - [`band_links`]: albums by the members, bands and other names their
+//!   seeds are linked to by MusicBrainz (`thread` candidates).
 //! - [`shelves`]: their own albums played a lot but not lately, and the
 //!   ones they asked for and never played; owned albums, read for the page
 //!   and never put in the pool.
 
+pub(crate) mod band_links;
 pub(crate) mod fresh;
 pub(crate) mod gaps;
 pub(crate) mod listenbrainz_picks;

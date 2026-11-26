@@ -5,6 +5,8 @@
 //! later work first writes included, since their stored CHECKs cannot
 //! change without rebuilding a table.
 
+use super::rank::proposed;
+
 /// How a candidate came into the pool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CandidateKind {
@@ -19,8 +21,9 @@ pub enum CandidateKind {
     Shelf,
     /// A new release by one of the person's artists, or one close to theirs.
     Fresh,
-    /// An album along a thread of credits or labels. Not written yet: the
-    /// threads write it.
+    /// An album by an artist one of the person's artists is linked to by
+    /// its band: a member, a band of theirs, another name or a member's
+    /// other band.
     Thread,
 }
 
@@ -44,8 +47,8 @@ pub enum PathKind {
     Library,
     /// The album is a new release.
     Fresh,
-    /// A credit or label leads to the album. Not written yet: the threads
-    /// write it.
+    /// A band link leads to the album's artist from one of the person's
+    /// artists.
     Fact,
 }
 
@@ -68,12 +71,10 @@ pub enum PathSource {
     /// releases.
     Listenbrainz,
     /// The install's MusicBrainz source: the new releases its follow poll
-    /// found.
+    /// found, and band links.
     Musicbrainz,
     /// The library.
     Library,
-    /// The project's data file. Not written yet: the threads write it.
-    DataFile,
 }
 
 droppedneedle_kernel::spelled!(PathSource {
@@ -82,8 +83,63 @@ droppedneedle_kernel::spelled!(PathSource {
     Listenbrainz => "listenbrainz",
     Musicbrainz => "musicbrainz",
     Library => "library",
-    DataFile => "data_file",
 });
+
+/// What a band-link pick's artist is to the person's artist it was found
+/// through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BandLinkRole {
+    /// A person in that band (a member, its founder, a collaborator in
+    /// that project).
+    Member,
+    /// A band that artist is in.
+    Band,
+    /// That artist under another name.
+    OtherName,
+    /// A band sharing a member with it, or a subgroup of it.
+    SharedMember,
+}
+
+droppedneedle_kernel::spelled!(BandLinkRole {
+    Member => "member",
+    Band => "band",
+    OtherName => "other_name",
+    SharedMember => "shared_member",
+});
+
+impl BandLinkRole {
+    /// How strong a link of this role is: a direct one
+    /// ([`proposed::DIRECT_LINK`]) or one through a member
+    /// ([`proposed::SHARED_MEMBER`]).
+    pub fn strength(self) -> f64 {
+        match self {
+            Self::Member | Self::Band | Self::OtherName => proposed::DIRECT_LINK,
+            Self::SharedMember => proposed::SHARED_MEMBER,
+        }
+    }
+}
+
+/// The member a band link runs through.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Via {
+    /// Its MusicBrainz id, lowercased.
+    pub mbid: String,
+    /// Its name.
+    pub name: String,
+}
+
+/// The band link behind a fact path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FactLink {
+    /// What the pick's artist is to the person's artist.
+    pub role: BandLinkRole,
+    /// The member it runs through, when it is one member; none for a
+    /// subgroup or a band sharing several.
+    pub via: Option<Via>,
+    /// The linked artist's own name, as the link names it; an album's
+    /// credit may name another.
+    pub artist_name: Option<String>,
+}
 
 /// One of the person's artists a path runs through.
 #[derive(Debug, Clone, PartialEq)]
@@ -136,14 +192,18 @@ pub struct Path {
     /// A known artist credited on the album beside the candidate's own,
     /// lowercased: the album is offered all the same.
     pub known_credit: Option<String>,
+    /// The band link, for a fact path.
+    pub fact: Option<FactLink>,
 }
 
 impl Path {
     /// What this path puts behind its candidate: its artist's weight times
-    /// the link's strength; nothing for a path with no link.
+    /// the link's strength, or times its band link's role's strength;
+    /// nothing for a path with neither.
     pub fn support(&self) -> f64 {
-        match (&self.artist, &self.link) {
-            (Some(artist), Some(link)) => artist.weight * link.strength,
+        match (&self.artist, &self.link, &self.fact) {
+            (Some(artist), Some(link), _) => artist.weight * link.strength,
+            (Some(artist), None, Some(fact)) => artist.weight * fact.role.strength(),
             _ => 0.0,
         }
     }
@@ -184,11 +244,15 @@ pub struct Candidate {
 }
 
 impl Candidate {
-    /// The person's artist behind its strongest seed path, if it has one;
-    /// the first of equals.
+    /// The person's artist behind its strongest seed or band-link path, if
+    /// it has one; the first of equals.
     pub fn strongest_seed(&self) -> Option<&str> {
         let mut strongest: Option<&Path> = None;
-        for path in self.paths.iter().filter(|path| path.kind == PathKind::Seed) {
+        for path in self
+            .paths
+            .iter()
+            .filter(|path| matches!(path.kind, PathKind::Seed | PathKind::Fact))
+        {
             if strongest.is_none_or(|best| path.support() > best.support()) {
                 strongest = Some(path);
             }

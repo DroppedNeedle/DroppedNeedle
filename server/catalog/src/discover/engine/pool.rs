@@ -9,8 +9,11 @@
 //! person's own weekly ListenBrainz playlist, the cached read the Discover
 //! page makes ([`listenbrainz_picks`]), and only while no pick from a
 //! playlist under a week old is kept. The person's new releases come from
-//! the kept fresh releases ([`fresh`]), and the albums missing from the
-//! artists they collect from those artists' kept lists ([`gaps`]). While a
+//! the kept fresh releases ([`fresh`]), the albums missing from the
+//! artists they collect from those artists' kept lists ([`gaps`]), and the
+//! albums of the artists their seeds' bands link to ([`band_links`]),
+//! placed by their support among the ranked ones once the ranking is cut,
+//! so they never push one out. While a
 //! seed's list is missing the albums of the build before that still pass
 //! stay beside the new ones, so a bad night never empties a pool that was
 //! good. A candidate found only by sources the person turned off ("Not
@@ -35,7 +38,7 @@ use super::pool_store::{self, Counts, PoolBuild};
 use super::rank::{self, AlbumGates, AlbumList, ArtistGates, Ranking, Seed, Walk, proposed};
 use super::select::Exposure;
 use super::sources::listenbrainz_picks::{self, Picked};
-use super::sources::{fresh, gaps, neighbours};
+use super::sources::{band_links, fresh, gaps, neighbours};
 use super::taste_store::Kept as Written;
 use crate::discover::cache::ForgetCounts;
 use crate::discover::facts::{FactKind, FactSource, Kept, Notes, WantOrder};
@@ -251,6 +254,13 @@ impl PoolJobs {
             gaps::artists(&self.db, user_id).await?,
         )
         .await?;
+        let linked = band_links::read(
+            self.listening.facts(),
+            &seeds,
+            (&artist_gates, &exposure),
+            self.listening.listenbrainz_on(),
+        )
+        .await?;
         // This week's playlist, once: while the picks kept from it are under
         // a week old it is not read again.
         let picked =
@@ -280,6 +290,7 @@ impl PoolJobs {
                 .filter_map(|row| row.album.musicbrainz_id.clone()),
         );
         reachable.extend(gap_lists.groups());
+        reachable.extend(linked.groups());
         reachable.extend(
             kept_new
                 .iter()
@@ -354,14 +365,17 @@ impl PoolJobs {
         );
         candidates.retain(|candidate| !found_only_by(candidate, &refused));
         let mut candidates = rank::order(candidates);
-        // The gaps join after the ranking's cut, so a full pool never pushes
-        // them out: at most their 30 past `POOL_MAX`.
+        // The band links and the gaps join after the ranking's cut, so a
+        // full pool never pushes them out: at most their 20 and 30 past
+        // `POOL_MAX`.
+        place(&mut candidates, band_links::candidates(&linked, &gates));
         merge(&mut candidates, gaps::candidates(&gap_lists, &gates));
-        incomplete |= !gap_lists.missing.is_empty();
+        incomplete |= !gap_lists.missing.is_empty() || !linked.missing.is_empty();
 
         let mut waiting_for = walk.pending.clone();
         waiting_for.extend(uncounted);
         waiting_for.extend(gap_lists.missing);
+        waiting_for.extend(linked.missing);
         let mut seen = HashSet::new();
         waiting_for.retain(|artist| seen.insert(artist.clone()));
         let counts = Counts {
@@ -373,11 +387,12 @@ impl PoolJobs {
             artists_without_album: walk.without_album,
         };
         let kinds = |kind: CandidateKind| candidates.iter().filter(|c| c.kind == kind).count();
-        let (new_artist, source_pick, fresh, gap) = (
+        let (new_artist, source_pick, fresh, gap, thread) = (
             kinds(CandidateKind::NewArtist),
             kinds(CandidateKind::SourcePick),
             kinds(CandidateKind::Fresh),
             kinds(CandidateKind::Gap),
+            kinds(CandidateKind::Thread),
         );
         let wanted = waiting_for.len();
         let build = PoolBuild {
@@ -413,6 +428,7 @@ impl PoolJobs {
             source_pick,
             fresh,
             gap,
+            thread,
             wanted,
             incomplete,
             "discover pool built"
@@ -443,6 +459,34 @@ fn merge(candidates: &mut Vec<Candidate>, picks: Vec<Candidate>) {
             }
             None => candidates.push(pick),
         }
+    }
+}
+
+/// `threads` into the ranked `candidates`: one already there for the same
+/// release group takes the thread's paths as [`merge`] does, its support
+/// unchanged, unless it is a service's pick, which a set never deals and
+/// whose line stays the service's; the rest each go in at their place by
+/// support, then artist id, so the order of the others holds.
+fn place(candidates: &mut Vec<Candidate>, threads: Vec<Candidate>) {
+    for thread in threads {
+        if let Some(held) = candidates
+            .iter()
+            .find(|candidate| candidate.release_group_mbid == thread.release_group_mbid)
+        {
+            if held.kind != CandidateKind::SourcePick {
+                merge(candidates, vec![thread]);
+            }
+            continue;
+        }
+        let at = candidates
+            .iter()
+            .position(|candidate| {
+                candidate.support < thread.support
+                    || (candidate.support == thread.support
+                        && candidate.artist_mbid > thread.artist_mbid)
+            })
+            .unwrap_or(candidates.len());
+        candidates.insert(at, thread);
     }
 }
 

@@ -1,0 +1,308 @@
+{
+  "area": {
+    "name": "United States",
+    "iso-3166-1-codes": [
+      "US"
+    ],
+    "type": null,
+    "sort-name": "United States",
+    "disambiguation": "",
+    "id": "489ce91b-6658-3307-9877-795b68554c98",
+    "type-id": null
+  },
+  "end-area": {
+    "id": "116e3eb1-2b14-42c9-91a1-7a2510dcc4b3",
+    "type-id": null,
+    "name": "Leeds",
+    "type": null,
+    "disambiguation": "",
+    "sort-name": "Leeds"
+  },
+  "country": "US",
+  "life-span": {
+    "ended": true,
+    "end": "2020-10-31",
+    "begin": "1971-07-13"
+  },
+  "id": "188711ed-c99b-439c-844a-ca831f63a727",
+  "gender": "Male",
+  "relations": [
+    {
+      "type-id": "dd9886f2-1dfe-4270-97db-283f6839a666",
+      "target-credit": "",
+      "type": "is person",
+      "direction": "backward",
+      "ended": false,
+      "attribute-values": {},
+      "source-credit": "The Super Villain",
+      "attribute-ids": {},
+      "artist": {
+        "country": "US",
+        "id": "21cb44eb-3f6b-4f55-9a0d-c36a517f8d36",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "name": "Daniel Dumile",
+        "type": "Person",
+        "sort-name": "Dumile, Daniel",
+        "disambiguation": "MF DOOM"
+      },
+      "target-type": "artist",
+      "attributes": [],
+      "end": null,
+      "begin": null
+    },
+    {
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "type": "member of band",
+      "target-credit": "",
+      "source-credit": "",
+      "attribute-values": {},
+      "ended": false,
+      "direction": "forward",
+      "end": null,
+      "begin": null,
+      "attributes": [],
+      "target-type": "artist",
+      "artist": {
+        "type": "Group",
+        "name": "Madvillain",
+        "sort-name": "Madvillain",
+        "disambiguation": "underground hip‐hop duo Madlib and MF DOOM",
+        "country": "US",
+        "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+        "id": "4e024037-14b7-4aea-99ad-c6ace63b9620"
+      },
+      "attribute-ids": {}
+    },
+    {
+      "type": "member of band",
+      "target-credit": "",
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "end": null,
+      "begin": null,
+      "attributes": [],
+      "target-type": "artist",
+      "attribute-ids": {},
+      "artist": {
+        "name": "DANGERDOOM",
+        "type": "Group",
+        "disambiguation": "",
+        "sort-name": "DANGERDOOM",
+        "country": "US",
+        "id": "be0cb2f2-71c3-4e95-a584-c19248951ff4",
+        "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b"
+      },
+      "source-credit": "",
+      "attribute-values": {},
+      "ended": false,
+      "direction": "forward"
+    },
+    {
+      "attributes": [],
+      "target-type": "artist",
+      "attribute-ids": {},
+      "artist": {
+        "country": "US",
+        "id": "edc0f73d-6290-4d11-ae34-6b447f850162",
+        "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+        "name": "JJ DOOM",
+        "type": "Group",
+        "disambiguation": "hip hop duo of Jneiro Jarel and DOOM",
+        "sort-name": "JJ DOOM"
+      },
+      "begin": null,
+      "end": null,
+      "ended": false,
+      "direction": "forward",
+      "source-credit": "",
+      "attribute-values": {},
+      "target-credit": "",
+      "type": "member of band",
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821"
+    },
+    {
+      "type": "member of band",
+      "target-credit": "",
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "end": null,
+      "begin": null,
+      "attribute-ids": {},
+      "artist": {
+        "country": "US",
+        "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+        "id": "d37ba334-7141-4a16-9e27-4c511143ac72",
+        "type": "Group",
+        "name": "NehruvianDOOM",
+        "disambiguation": "",
+        "sort-name": "NehruvianDOOM"
+      },
+      "attributes": [],
+      "target-type": "artist",
+      "attribute-values": {},
+      "source-credit": "",
+      "direction": "forward",
+      "ended": false
+    },
+    {
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "type": "member of band",
+      "target-credit": "",
+      "source-credit": "",
+      "attribute-values": {},
+      "ended": false,
+      "direction": "forward",
+      "begin": null,
+      "end": null,
+      "target-type": "artist",
+      "attributes": [],
+      "artist": {
+        "name": "DOOMSTARKS",
+        "type": "Group",
+        "disambiguation": "MF DOOM & Ghostface Killah",
+        "sort-name": "DOOMSTARKS",
+        "country": "US",
+        "id": "6dbb06aa-c710-478a-ac96-c4fd5373470f",
+        "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b"
+      },
+      "attribute-ids": {}
+    },
+    {
+      "direction": "forward",
+      "ended": false,
+      "attribute-values": {},
+      "source-credit": "",
+      "attribute-ids": {},
+      "artist": {
+        "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+        "id": "ff598b59-2868-42d2-906c-435278d59ac4",
+        "country": null,
+        "sort-name": "MA Doom",
+        "disambiguation": "",
+        "type": "Group",
+        "name": "MA Doom"
+      },
+      "target-type": "artist",
+      "attributes": [],
+      "begin": null,
+      "end": null,
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "target-credit": "",
+      "type": "member of band"
+    },
+    {
+      "target-credit": "",
+      "type": "member of band",
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "artist": {
+        "type": "Group",
+        "name": "Monsta Island Czars",
+        "disambiguation": "",
+        "sort-name": "Monsta Island Czars",
+        "country": "US",
+        "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+        "id": "cf0dd27a-c552-49cd-8b47-a17229f33f55"
+      },
+      "attribute-ids": {},
+      "attributes": [],
+      "target-type": "artist",
+      "end": null,
+      "begin": null,
+      "direction": "forward",
+      "ended": false,
+      "attribute-values": {},
+      "source-credit": ""
+    },
+    {
+      "source-credit": "",
+      "attribute-values": {},
+      "ended": false,
+      "direction": "forward",
+      "end": null,
+      "begin": null,
+      "target-type": "artist",
+      "attributes": [],
+      "attribute-ids": {},
+      "artist": {
+        "id": "b295f7df-d796-46ca-8486-283dd92c03c0",
+        "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+        "country": null,
+        "disambiguation": "",
+        "sort-name": "WestsideDoom",
+        "name": "WestsideDoom",
+        "type": "Group"
+      },
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "type": "member of band",
+      "target-credit": ""
+    },
+    {
+      "direction": "forward",
+      "ended": false,
+      "attribute-values": {},
+      "source-credit": "",
+      "attribute-ids": {},
+      "artist": {
+        "id": "bb637e2e-64a8-4ecb-81ac-bf492fb48f04",
+        "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+        "country": "US",
+        "sort-name": "Madvillainz",
+        "disambiguation": "Madlib, MF DOOM, and (allegedly) Kanye West",
+        "name": "Madvillainz",
+        "type": "Group"
+      },
+      "target-type": "artist",
+      "attributes": [],
+      "end": null,
+      "begin": null,
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "target-credit": "",
+      "type": "member of band"
+    },
+    {
+      "type": "named after artist",
+      "target-credit": "",
+      "type-id": "1af24726-5b1f-4b07-826e-5351723f504b",
+      "begin": null,
+      "end": null,
+      "attributes": [],
+      "target-type": "artist",
+      "attribute-ids": {},
+      "artist": {
+        "disambiguation": "",
+        "sort-name": "Metal Face Terrorists",
+        "type": null,
+        "name": "Metal Face Terrorists",
+        "type-id": null,
+        "id": "957b61e4-bf66-48f3-9089-574c15c9c238",
+        "country": null
+      },
+      "source-credit": "",
+      "attribute-values": {},
+      "ended": false,
+      "direction": "backward"
+    }
+  ],
+  "isnis": [
+    "0000000120807221",
+    "0000000120861578",
+    "0000000357409619",
+    "0000000465656561"
+  ],
+  "sort-name": "MF DOOM",
+  "ipis": [],
+  "type": "Person",
+  "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+  "gender-id": "36d3d30a-839d-3eda-8cb3-29be4384e4a9",
+  "disambiguation": "",
+  "begin-area": {
+    "name": "Hounslow",
+    "disambiguation": "",
+    "type-id": null,
+    "id": "58019cb6-8fbe-4bd4-bd56-3b2e71128d07",
+    "type": null,
+    "iso-3166-2-codes": [
+      "GB-HNS"
+    ],
+    "sort-name": "Hounslow"
+  },
+  "name": "MF DOOM"
+}

@@ -556,6 +556,44 @@ fn audit(rig: &Rig, group: &str, why: &Value) -> String {
                 "{group}: the playlist's date"
             );
         }
+        Some("fact") => {
+            assert_eq!(why["found_by"], "band_link", "{group}");
+            assert_eq!(why["source"], "musicbrainz", "{group}");
+            assert!(
+                why["seeds"].as_array().is_some_and(Vec::is_empty),
+                "{group}: no co-listening seed"
+            );
+            let named = why["reason"]["artists"].as_array().expect("artists");
+            assert_eq!(named.len(), 1, "{group}");
+            let seed = named[0]["artist_mbid"].as_str().expect("an id");
+            let is_seed: i64 = db.one(
+                "SELECT COUNT(*) FROM catalog_taste_artists WHERE user_id = 'user-1' \
+                 AND artist_mbid_lower = ?1 AND is_seed = 1",
+                [seed],
+            );
+            assert_eq!(is_seed, 1, "{group}: {seed} is one of her seeds");
+            assert!(line.contains(named[0]["name"].as_str().expect("a name")));
+            let linked: i64 = db.one(
+                "SELECT COUNT(*) FROM catalog_band_links l WHERE l.artist_mbid = ?1 \
+                 AND (l.linked_mbid = ?2 OR EXISTS (SELECT 1 FROM catalog_band_links m \
+                   WHERE m.artist_mbid = l.linked_mbid AND m.linked_mbid = ?2))",
+                [seed, artist.as_str()],
+            );
+            assert!(
+                linked > 0,
+                "{group}: a kept band link joins {seed} to {artist}"
+            );
+            let fetched: i64 = db.one(
+                "SELECT fetched_at FROM catalog_fact_fetches WHERE artist_mbid = ?1 \
+                 AND kind = 'band_links' AND source = 'musicbrainz'",
+                [seed],
+            );
+            assert_eq!(
+                why["source_read_at"],
+                json!(fetched),
+                "{group}: when the links were read"
+            );
+        }
         other => panic!("{group}: no reason kind {other:?}"),
     }
     line
@@ -640,6 +678,35 @@ async fn audit_a_pick_whose_seed_left_has_no_reason() {
     assert_eq!(status, StatusCode::NOT_FOUND, "not in her pool");
     let (status, _) = rig.why("not-an-mbid").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// A pick found through the first seed's band, its member's album, says
+/// so first and traces to its rows: the kept link from that seed, the seed
+/// row and when the links were read, with no co-listening seed to rank.
+#[tokio::test]
+async fn audit_a_band_link_reason_traces_to_its_rows() {
+    let (member, group) = (id(10, 1), id(10, 11));
+    let extra = format!(
+        "INSERT INTO catalog_band_links (artist_mbid, position, kind, direction, linked_mbid, \
+         linked_name, ended) VALUES ('{seed}', 0, 'member_of_band', 'backward', '{member}', \
+         'Member One', 0); \
+         INSERT INTO catalog_artist_albums (artist_mbid, release_group_mbid, position, title, \
+         artist_name, primary_type, secondary_types, first_release_date, \
+         credited_artist_mbids, listeners, listens) VALUES ('{member}', '{group}', 0, \
+         'Solo', 'Member One', 'Album', '[]', '2016', '[\"{member}\"]', 500, 500); \
+         INSERT INTO catalog_fact_fetches (artist_mbid, kind, source, outcome, fetched_at, \
+         failures, due_at, read_at) VALUES ('{seed}', 'band_links', 'musicbrainz', 'found', \
+         1000, 0, 9000, 1000), ('{member}', 'band_links', 'musicbrainz', 'none', 1000, 0, \
+         9000, 1000), ('{member}', 'albums', 'musicbrainz', 'found', 1000, 0, 9000, 1000), \
+         ('{member}', 'album_counts', 'listenbrainz', 'found', 1000, 0, 9000, 1000);",
+        seed = seed(1)
+    );
+    let rig = rig_with("discover-reasons-band-link", &extra, false).await;
+    let (status, why) = rig.why(&group).await;
+    assert_eq!(status, StatusCode::OK, "{why}");
+    let line = audit(&rig, &group, &why);
+    assert_eq!(line, format!("Member One of {}.", seed_name(1)));
+    assert_eq!(why["reason"]["kind"], "fact");
 }
 
 /// A library artist `local_id` with the MusicBrainz id `mbid` and no album

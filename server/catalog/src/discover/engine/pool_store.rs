@@ -14,7 +14,7 @@ use droppedneedle_kernel::jobs::queue::JobError;
 use droppedneedle_library::identify::artist_links::placeholder;
 use rusqlite::{Connection, Transaction, params};
 
-use super::candidate::{Candidate, CandidateKind, Link, Path, PathArtist};
+use super::candidate::{Candidate, CandidateKind, FactLink, Link, Path, PathArtist, Via};
 use super::rank;
 use super::reason;
 use super::select::Shown;
@@ -297,6 +297,15 @@ fn path_of(row: sql::PoolPath) -> Path {
         lastfm: row.named_by_lastfm,
         closest_new: row.link_closest_new,
     });
+    let via = match (row.via_mbid, row.via_name) {
+        (Some(mbid), Some(name)) => Some(Via { mbid, name }),
+        _ => None,
+    };
+    let fact = row.fact_role.map(|role| FactLink {
+        role,
+        via,
+        artist_name: row.fact_artist_name,
+    });
     Path {
         kind: row.kind,
         source: row.source,
@@ -304,6 +313,7 @@ fn path_of(row: sql::PoolPath) -> Path {
         artist,
         link,
         known_credit: row.known_credit_mbid,
+        fact,
     }
 }
 
@@ -509,6 +519,8 @@ fn insert(tx: &Transaction, user: &str, build: &PoolBuild) -> rusqlite::Result<(
         for (no, path) in candidate.paths.iter().enumerate() {
             let artist = path.artist.as_ref();
             let link = path.link.as_ref();
+            let fact = path.fact.as_ref();
+            let via = fact.and_then(|fact| fact.via.as_ref());
             paths.execute(params![
                 user,
                 candidate.release_group_mbid,
@@ -528,6 +540,10 @@ fn insert(tx: &Transaction, user: &str, build: &PoolBuild) -> rusqlite::Result<(
                 link.is_some_and(|link| link.lastfm),
                 path.known_credit,
                 link.is_some_and(|link| link.closest_new),
+                fact.map(|fact| fact.role),
+                via.map(|via| &via.mbid),
+                via.map(|via| &via.name),
+                fact.and_then(|fact| fact.artist_name.as_ref()),
             ])?;
         }
     }

@@ -138,3 +138,42 @@ various-artists compilations, one in a group with no primary type, _A
 Night at the Opera_ twice, a 1975 single and a Queen compilation), each
 kept as it came. A second probe, a title search, was refused with 503 and
 not retried.
+
+# Band links
+
+`artist_rels_*.json` are recorded answers to artist lookups with
+`inc=artist-rels`, fetched read-only on 2026-11-26 from BrainzMash
+(`https://api.brainzmash.cc/ws/2`) with the app's User-Agent and
+`fmt=json`, one request at a time, four seconds apart. Each is HTTP 200,
+5 to 10 KB in about a second, re-indented and otherwise unchanged.
+
+- `artist_rels_circa_survive.json`: `artist/a2496a3c-8f42-4b98-b780-6f8d64f56441`
+  (Circa Survive, a group). Eight `member of band` relations, all
+  `backward` and not ended; Nick Beard, Steve Clifford and Colin
+  Frangicetto each come twice (one relation an instrument).
+- `artist_rels_anthony_green.json`: `artist/eba4c290-2ce6-42c9-affd-5b1ffab84a8f`
+  (Anthony Green, a person). `member of band` relations `forward` to
+  Circa Survive, Saosin (twice, both ended), The Sound of Animals
+  Fighting, High and Driving, Audience of One, Fuckin Whatever and L.S.
+  Dunes, and one `married`.
+- `artist_rels_wu_tang_clan.json`: `artist/0febdcf7-4e1f-4661-9493-b40427de2c13`
+  (Wu-Tang Clan). `member of band` `backward`, `founder` `forward` (to
+  Wu-Tang Killa Bees), `subgroup` `backward` (Method Man & Redman), and
+  `supporting musician` and `instrumental supporting musician`.
+- `artist_rels_mf_doom.json`: `artist/188711ed-c99b-439c-844a-ca831f63a727`
+  (MF DOOM). `is person` `backward` (Daniel Dumile), `member of band`
+  `forward` to nine groups, and `named after artist`.
+- `artist_rels_ffs.json`: `artist/6b4fbe0d-c8ea-451c-9fe1-afcb90f5e605`
+  (FFS). `collaboration` `backward` and ended (Franz Ferdinand, Sparks),
+  and six `member of band` `backward`.
+
+Every relation carries `type`, `type-id`, `direction`, `ended` (a bool),
+`target-type` `artist`, and `artist` with `id` and `name`. The five kinds a
+band link reads, by `type-id`: member of band
+`5be4c609-9afa-4ea0-910b-12ffb71e3821`, subgroup
+`7802f96b-d995-4ce9-8f70-6366faad758e`, founder
+`6ed4bfc4-0a0d-44c0-b025-b7fc4d900b67`, is person
+`dd9886f2-1dfe-4270-97db-283f6839a666` and collaboration
+`75c09861-6857-4ec0-9729-84eefde7fc86`. `direction` is read from the artist
+looked up: `forward` when it is the one in the band, the founder, the
+collaborator or the person behind the name.

@@ -1,0 +1,276 @@
+{
+  "isnis": [
+    "0000000097032869"
+  ],
+  "relations": [
+    {
+      "attributes": [
+        "background vocals"
+      ],
+      "target-type": "artist",
+      "end": null,
+      "begin": "2004",
+      "direction": "backward",
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "target-credit": "",
+      "type": "member of band",
+      "attribute-ids": {
+        "background vocals": "75052401-7340-4e5b-a71d-ea024a128849"
+      },
+      "artist": {
+        "disambiguation": "",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "sort-name": "Beard, Nick",
+        "id": "e52823fb-9030-4426-bb0f-606cb391d88e",
+        "type": "Person",
+        "country": "US",
+        "name": "Nick Beard"
+      },
+      "attribute-credits": {},
+      "ended": false,
+      "source-credit": "",
+      "attribute-values": {}
+    },
+    {
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "direction": "backward",
+      "type": "member of band",
+      "target-credit": "",
+      "target-type": "artist",
+      "attributes": [
+        "bass guitar"
+      ],
+      "end": null,
+      "begin": "2004",
+      "attribute-credits": {},
+      "ended": false,
+      "source-credit": "",
+      "attribute-values": {},
+      "attribute-ids": {
+        "bass guitar": "17f9f065-2312-4a24-8309-6f6dd63e2e33"
+      },
+      "artist": {
+        "disambiguation": "",
+        "name": "Nick Beard",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "sort-name": "Beard, Nick",
+        "id": "e52823fb-9030-4426-bb0f-606cb391d88e",
+        "country": "US",
+        "type": "Person"
+      }
+    },
+    {
+      "end": null,
+      "begin": "2004",
+      "attributes": [
+        "percussion"
+      ],
+      "target-type": "artist",
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "direction": "backward",
+      "target-credit": "",
+      "type": "member of band",
+      "artist": {
+        "name": "Steve Clifford",
+        "country": "US",
+        "type": "Person",
+        "id": "aa479d98-7b82-4ecd-bf2f-97137321c44b",
+        "sort-name": "Clifford, Steve",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "disambiguation": ""
+      },
+      "attribute-ids": {
+        "percussion": "8e9abdf1-0afc-4544-b201-c6fa768d01f4"
+      },
+      "ended": false,
+      "source-credit": "",
+      "attribute-values": {},
+      "attribute-credits": {}
+    },
+    {
+      "ended": false,
+      "source-credit": "",
+      "attribute-values": {},
+      "attribute-credits": {},
+      "artist": {
+        "disambiguation": "",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "sort-name": "Clifford, Steve",
+        "id": "aa479d98-7b82-4ecd-bf2f-97137321c44b",
+        "country": "US",
+        "type": "Person",
+        "name": "Steve Clifford"
+      },
+      "attribute-ids": {
+        "drums (drum set)": "12092505-6ee1-46af-a15a-b5b468b6b155"
+      },
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "direction": "backward",
+      "type": "member of band",
+      "target-credit": "",
+      "end": null,
+      "begin": "2004",
+      "target-type": "artist",
+      "attributes": [
+        "drums (drum set)"
+      ]
+    },
+    {
+      "source-credit": "",
+      "ended": false,
+      "attribute-values": {},
+      "attribute-credits": {
+        "guitar": "lead guitar"
+      },
+      "artist": {
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "sort-name": "Ekstrom, Brendan",
+        "id": "68b0ba33-406f-440f-9623-4979a3bdff55",
+        "country": "US",
+        "type": "Person",
+        "name": "Brendan Ekstrom",
+        "disambiguation": ""
+      },
+      "attribute-ids": {
+        "guitar": "63021302-86cd-4aee-80df-2270d54f4978"
+      },
+      "direction": "backward",
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "target-credit": "",
+      "type": "member of band",
+      "end": null,
+      "begin": "2004",
+      "attributes": [
+        "guitar"
+      ],
+      "target-type": "artist"
+    },
+    {
+      "direction": "backward",
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "target-credit": "",
+      "type": "member of band",
+      "attributes": [
+        "background vocals",
+        "original"
+      ],
+      "target-type": "artist",
+      "end": null,
+      "begin": "2004",
+      "attribute-credits": {},
+      "ended": false,
+      "source-credit": "",
+      "attribute-values": {},
+      "attribute-ids": {
+        "original": "4fd3b255-a7d7-4424-9a63-40fa543b601c",
+        "background vocals": "75052401-7340-4e5b-a71d-ea024a128849"
+      },
+      "artist": {
+        "id": "45377bb8-31ec-43bf-9840-b33bf5bdc2fb",
+        "country": "US",
+        "type": "Person",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "sort-name": "Frangicetto, Colin",
+        "name": "Colin Frangicetto",
+        "disambiguation": ""
+      }
+    },
+    {
+      "ended": false,
+      "source-credit": "",
+      "attribute-values": {},
+      "attribute-credits": {
+        "guitar": "rhythm guitar"
+      },
+      "artist": {
+        "sort-name": "Frangicetto, Colin",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "type": "Person",
+        "country": "US",
+        "id": "45377bb8-31ec-43bf-9840-b33bf5bdc2fb",
+        "name": "Colin Frangicetto",
+        "disambiguation": ""
+      },
+      "attribute-ids": {
+        "original": "4fd3b255-a7d7-4424-9a63-40fa543b601c",
+        "guitar": "63021302-86cd-4aee-80df-2270d54f4978"
+      },
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "direction": "backward",
+      "type": "member of band",
+      "target-credit": "",
+      "end": null,
+      "begin": "2004",
+      "target-type": "artist",
+      "attributes": [
+        "guitar",
+        "original"
+      ]
+    },
+    {
+      "direction": "backward",
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "type": "member of band",
+      "target-credit": "",
+      "end": null,
+      "begin": "2004",
+      "attributes": [
+        "lead vocals",
+        "original"
+      ],
+      "target-type": "artist",
+      "source-credit": "",
+      "ended": false,
+      "attribute-values": {},
+      "attribute-credits": {},
+      "artist": {
+        "id": "eba4c290-2ce6-42c9-affd-5b1ffab84a8f",
+        "country": "US",
+        "type": "Person",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "sort-name": "Green, Anthony",
+        "name": "Anthony Green",
+        "disambiguation": "frontman of Circa Survive"
+      },
+      "attribute-ids": {
+        "lead vocals": "8e2a3255-87c2-4809-a174-98cb3704f1a5",
+        "original": "4fd3b255-a7d7-4424-9a63-40fa543b601c"
+      }
+    }
+  ],
+  "id": "a2496a3c-8f42-4b98-b780-6f8d64f56441",
+  "country": "US",
+  "type": "Group",
+  "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+  "name": "Circa Survive",
+  "disambiguation": "",
+  "end-area": null,
+  "life-span": {
+    "end": null,
+    "ended": false,
+    "begin": "2004"
+  },
+  "gender-id": null,
+  "gender": null,
+  "sort-name": "Circa Survive",
+  "ipis": [],
+  "begin-area": {
+    "id": "0eeb01c2-6e31-46ad-96b8-319749f731d2",
+    "type": null,
+    "type-id": null,
+    "sort-name": "Philadelphia",
+    "disambiguation": "",
+    "name": "Philadelphia"
+  },
+  "area": {
+    "disambiguation": "",
+    "name": "United States",
+    "iso-3166-1-codes": [
+      "US"
+    ],
+    "id": "489ce91b-6658-3307-9877-795b68554c98",
+    "type": null,
+    "type-id": null,
+    "sort-name": "United States"
+  }
+}

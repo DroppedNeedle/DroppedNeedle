@@ -164,6 +164,7 @@ pub(crate) fn candidates(lists: &Lists, gates: &AlbumGates<'_>) -> Vec<Candidate
             }),
             link: None,
             known_credit: None,
+            fact: None,
         };
         for row in rows.into_iter().take(PER_ARTIST) {
             found.push(rank::album_candidate(

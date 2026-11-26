@@ -97,6 +97,7 @@ pub(crate) fn candidates(
                 }),
                 link: None,
                 known_credit: None,
+                fact: None,
             };
             let mut paths = vec![fresh];
             paths.extend(seed_paths);

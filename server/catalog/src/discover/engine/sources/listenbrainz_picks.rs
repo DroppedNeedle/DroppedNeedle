@@ -165,6 +165,7 @@ pub(crate) fn candidates(
                     artist: None,
                     link: None,
                     known_credit: None,
+                    fact: None,
                 };
                 rank::album_candidate(
                     &album,

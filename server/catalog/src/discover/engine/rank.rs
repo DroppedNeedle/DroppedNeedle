@@ -74,6 +74,29 @@ pub mod proposed {
     /// How many times its weight a seed weighs once the person asked for
     /// more from it.
     pub const MORE_FROM_SEED: f64 = 1.5;
+
+    // -- band links ------------------------------------------------------------
+
+    /// How many of the person's heaviest seeds have their band links read.
+    pub const BAND_SEEDS: usize = 10;
+    /// How many of a seed band's members have their own links read.
+    pub const MEMBERS_PER_BAND: usize = 3;
+    /// The most members' links one build reads.
+    pub const MEMBER_READS: usize = 10;
+    /// A band with more member links than this is a collective: its
+    /// members' other bands are not followed.
+    pub const BAND_HUB: usize = 12;
+    /// A member in more bands than this gives none of them.
+    pub const MEMBER_HUB: usize = 8;
+    /// How many linked artists give albums, strongest first.
+    pub const LINKED_ARTISTS: usize = 10;
+    /// The most of them one seed gives.
+    pub const LINKED_PER_SEED: usize = 3;
+    /// The strength of a direct band link: a member, a band of theirs or
+    /// another name.
+    pub const DIRECT_LINK: f64 = 0.5;
+    /// The strength of a band sharing a member, or a subgroup.
+    pub const SHARED_MEMBER: f64 = 0.25;
 }
 
 /// What the person asked of one seed.
@@ -404,6 +427,7 @@ pub fn rank(
                         ..link.link.clone()
                     }),
                     known_credit: None,
+                    fact: None,
                 },
             ));
         }
@@ -577,7 +601,7 @@ pub struct Walk {
 
 /// `rows` most listeners first, then by listens; the uncounted after them,
 /// newest first. Ties keep the list's order.
-fn by_listeners(rows: &[RankedAlbum]) -> Vec<&RankedAlbum> {
+pub(crate) fn by_listeners(rows: &[RankedAlbum]) -> Vec<&RankedAlbum> {
     let mut rows: Vec<&RankedAlbum> = rows.iter().collect();
     rows.sort_by(|a, b| {
         let (a_facts, b_facts) = (&a.album.facts, &b.album.facts);

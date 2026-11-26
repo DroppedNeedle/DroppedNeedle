@@ -17,6 +17,7 @@ use axum::{
 use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_catalog::discover::facts::KeptFacts;
+use droppedneedle_catalog::discover::listening::band_links::BandLink;
 use droppedneedle_catalog::discover::listening::{
     AlbumRow, ArtistRow, Ask, FreshRow, JellyfinList, LastFmAlbum, LastFmChartAlbum, LastFmFacts,
     ListenedAlbum, ListeningData, ListeningError, ListeningNetwork, LovedTrack, PlayedArtist,
@@ -57,7 +58,9 @@ fn group(n: u8) -> String {
 /// list was asked for are recorded in order. An artist's
 /// discography is its rows in `artist_albums`, each counted with its listen
 /// count as both its listens and, unless its facts name some, its
-/// listeners; those reads are recorded too.
+/// listeners; those reads are recorded too. An artist's band links are its
+/// rows in `band_links` (none for one not there), each read recorded; they
+/// fail while `band_links_down` is set.
 #[derive(Default)]
 pub(crate) struct Script {
     pub user: UserMusic,
@@ -105,6 +108,11 @@ pub(crate) struct Script {
     pub discography_reads: Mutex<Vec<String>>,
     /// The release groups of each album count read.
     pub count_reads: Mutex<Vec<Vec<String>>>,
+    /// MusicBrainz's band links, by artist MBID.
+    pub band_links: HashMap<String, Vec<BandLink>>,
+    /// The artists whose band links were read, one entry a read.
+    pub band_link_reads: Mutex<Vec<String>>,
+    pub band_links_down: AtomicBool,
     /// The user's Jellyfin artists.
     pub jellyfin_artists: Vec<ArtistRow>,
     pub genres: Vec<(String, i64)>,
@@ -243,6 +251,24 @@ impl ListeningNetwork for Script {
             .iter()
             .filter_map(|id| Some((id.clone(), *self.listeners.get(id)?)))
             .collect())
+    }
+    fn band_links<'a>(
+        &'a self,
+        artist: &'a str,
+        _p: RequestPriority,
+    ) -> Answer<'a, Option<Vec<BandLink>>> {
+        self.band_link_reads.lock().unwrap().push(artist.to_owned());
+        if self.band_links_down.load(Ordering::SeqCst) {
+            return Box::pin(async {
+                Err(ListeningError::Provider(ProviderError::Unavailable {
+                    provider: "musicbrainz",
+                    retry_after: None,
+                }))
+            });
+        }
+        ok(Some(
+            self.band_links.get(artist).cloned().unwrap_or_default(),
+        ))
     }
     fn discography<'a>(
         &'a self,

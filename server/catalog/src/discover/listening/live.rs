@@ -10,6 +10,7 @@ use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use super::band_links::{self, BandLink};
 use super::network::{ListeningNetwork, Read};
 use super::rows::{
     ArtistRow, FreshRow, JellyfinList, LastFmAlbum, LastFmChartAlbum, LastFmFacts, ListenSource,
@@ -882,6 +883,31 @@ impl ListeningNetwork for LiveNetwork {
                     .resolve_release_to_release_group(release_mbid, Criticality::IdentityCritical)
                     .await,
             )
+        })
+    }
+
+    fn band_links<'a>(
+        &'a self,
+        artist_mbid: &'a str,
+        priority: RequestPriority,
+    ) -> Read<'a, Option<Vec<BandLink>>> {
+        Box::pin(async move {
+            if !is_valid_mbid(artist_mbid) {
+                return Ok(None);
+            }
+            // Identity-critical: a best-effort lookup answers a MusicBrainz
+            // that is down with "no such artist", kept as "no links". Only
+            // a 404 is no such artist; a refusal fails and backs off.
+            let found = match self
+                .musicbrainz(priority)
+                .lookup_artist(artist_mbid, &["artist-rels"], Criticality::IdentityCritical)
+                .await
+            {
+                Ok(found) => found,
+                Err(ProviderError::NotFound { .. }) => None,
+                Err(error) => return Err(ListeningError::Provider(error)),
+            };
+            Ok(found.map(|lookup| band_links::links(artist_mbid, &lookup.entity.relations)))
         })
     }
 

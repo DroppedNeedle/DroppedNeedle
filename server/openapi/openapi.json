@@ -51696,7 +51696,8 @@
         "description": "A service a pick's facts came from.",
         "enum": [
           "listenbrainz",
-          "lastfm"
+          "lastfm",
+          "musicbrainz"
         ]
       },
       "ExampleAlbum": {
@@ -52341,7 +52342,8 @@
         "description": "How a pick was found.",
         "enum": [
           "co_listening",
-          "source_pick"
+          "source_pick",
+          "band_link"
         ]
       },
       "FoundFolder": {
@@ -63665,7 +63667,7 @@
             "items": {
               "$ref": "#/components/schemas/EvidenceSeed"
             },
-            "description": "The person's artists that led to it, strongest first."
+            "description": "The person's artists that led to it through co-listening, strongest\nfirst; none for a pick found otherwise."
           },
           "source": {
             "$ref": "#/components/schemas/EvidenceSource",
@@ -63734,7 +63736,8 @@
         "description": "What a pick's reason rests on.",
         "enum": [
           "your_artists",
-          "source"
+          "source",
+          "fact"
         ]
       },
       "PickRequest": {

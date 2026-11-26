@@ -1,6 +1,6 @@
 //! Kept facts: the similar-artist lists, listener counts and album lists
 //! Discover keeps in the database, the job that reads them in the
-//! background, and the daily ceiling on those reads.
+//! background, and the daily ceiling on those reads, band links included.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -11,6 +11,7 @@ use droppedneedle_catalog::discover::facts::job::FactJobs;
 use droppedneedle_catalog::discover::facts::{KeptFacts, plan};
 use droppedneedle_catalog::discover::listening::{
     AlbumRow, ArtistRow, Ask, ListeningData, ListeningNetwork, RankedAlbum, ScoredArtist,
+    SourceContext,
 };
 use droppedneedle_kernel::clock::Clock as _;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
@@ -589,4 +590,79 @@ async fn reads_turned_down_while_labs_rests_are_not_counted() {
         [],
     );
     assert_eq!(failed, 1, "only the list that was asked for failed");
+}
+
+/// Band links are one MusicBrainz lookup an artist. Off the official
+/// service they are not counted; on it each is, and they stop at the day's
+/// ceiling with every other read. While the MusicBrainz settings do not
+/// read none is made, and the next day the official service reads the one
+/// left.
+#[tokio::test]
+async fn band_links_are_counted_on_official_only_and_stop_at_the_ceiling() {
+    let rig = AuthRig::new("kept-facts-band-links").await;
+    let db = &rig.platform.db;
+    let clock = rig.platform.clock.clone();
+    seen(db, USER, rig.clock().now_ms()).await;
+    let want = |artists: &[String]| {
+        let now = rig.clock().now_ms();
+        for artist in artists {
+            db.exec(
+                "INSERT INTO catalog_fact_fetches (artist_mbid, kind, source, due_at, \
+                 wanted_at, want_order, read_at) VALUES (?1, 'band_links', 'musicbrainz', ?2, \
+                 ?2, 1, ?2)",
+                rusqlite::params![artist, now],
+            );
+        }
+    };
+    let reading = |mode: Option<SourceContext>| {
+        let script = Arc::new(Script {
+            source: mode,
+            ..Script::default()
+        });
+        let jobs = FactJobs::new(KeptFacts::new(db.clone(), clock.clone()), script.clone());
+        (jobs, script)
+    };
+    let reads = |script: &Script| script.band_link_reads.lock().unwrap().len();
+    let counted = |db: &Db| -> i64 {
+        db.one(
+            "SELECT COALESCE(SUM(reads), 0) FROM catalog_background_read_days \
+             WHERE source = 'musicbrainz'",
+            [],
+        )
+    };
+
+    want(&[mbid('a', 1), mbid('a', 2)]);
+    let (mirror, script) = reading(Some(SourceContext {
+        mode: "community".to_owned(),
+        id: "mirror".to_owned(),
+        generation: 0,
+    }));
+    assert_eq!(mirror.run_once(&|| false).await.unwrap(), 2);
+    assert_eq!(reads(&script), 2);
+    assert_eq!(counted(db), 0, "not counted off the official service");
+
+    let today = rig.clock().now_ms().div_euclid(DAY_MS);
+    db.exec(
+        "INSERT INTO catalog_background_read_days (day, source, reads) \
+         VALUES (?1, 'listenbrainz', 89)",
+        [today],
+    );
+    want(&[mbid('a', 3), mbid('a', 4)]);
+    let (official, script) = reading(None);
+    assert_eq!(
+        official.run_once(&|| false).await.unwrap(),
+        1,
+        "one read left"
+    );
+    assert_eq!(reads(&script), 1);
+    assert_eq!(counted(db), 1, "counted on the official service");
+
+    rig.clock().advance(DAY_MS);
+    seen(db, USER, rig.clock().now_ms()).await;
+    let (unreadable, script) = reading(Some(SourceContext::unreadable()));
+    assert_eq!(unreadable.run_once(&|| false).await.unwrap(), 0);
+    assert_eq!(reads(&script), 0, "none while the settings do not read");
+    let (official, script) = reading(None);
+    assert_eq!(official.run_once(&|| false).await.unwrap(), 1);
+    assert_eq!(reads(&script), 1, "the one left, the next day");
 }

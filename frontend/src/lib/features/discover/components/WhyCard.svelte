@@ -31,7 +31,11 @@
 	const evidence = getPickEvidenceQuery(() => (open ? mbid : null));
 	const less = createLessFromSeedMutation();
 
-	const SOURCES = { listenbrainz: 'ListenBrainz', lastfm: 'Last.fm' } as const;
+	const SOURCES = {
+		listenbrainz: 'ListenBrainz',
+		lastfm: 'Last.fm',
+		musicbrainz: 'MusicBrainz'
+	} as const;
 
 	function newToYou(found: PickEvidenceV3): string {
 		const said = [];
@@ -41,9 +45,14 @@
 	}
 
 	function foundBy(found: PickEvidenceV3): string {
-		return found.found_by === 'co_listening'
-			? 'People who play your artists also play this.'
-			: `A pick from ${SOURCES[found.source]}.`;
+		switch (found.found_by) {
+			case 'co_listening':
+				return 'People who play your artists also play this.';
+			case 'band_link':
+				return 'Band members, from MusicBrainz.';
+			default:
+				return `A pick from ${SOURCES[found.source]}.`;
+		}
 	}
 </script>
 

@@ -311,7 +311,9 @@ impl TasteDue {
                             FactKind::Albums,
                             FactSource::MusicBrainz,
                             FactKind::AlbumCounts,
-                            FactSource::ListenBrainz
+                            FactSource::ListenBrainz,
+                            FactKind::BandLinks,
+                            FactSource::MusicBrainz
                         ],
                         |row| row.get(0),
                     )?

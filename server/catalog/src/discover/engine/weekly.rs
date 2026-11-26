@@ -438,8 +438,9 @@ impl WeeklySets {
     }
 
     /// Deal up to [`SET_SIZE`] picks from `user_id`'s pool at `now_ms`, as
-    /// the engine selects them. Only albums found through the person's own
-    /// artists go in a set: a service's picks, and any other kind, are left
+    /// the engine selects them. Only albums by artists new to the person
+    /// that their own artists lead to go in a set: through co-listening, or
+    /// through a band link. A service's picks, and any other kind, are left
     /// to dig further, so they never fill a slot. An album an earlier set
     /// held in the last twelve weeks is left out.
     async fn deal(&self, user_id: &str, now_ms: i64) -> Result<Dealt, DbError> {
@@ -448,8 +449,10 @@ impl WeeklySets {
             .pool
             .into_iter()
             .filter(|candidate| {
-                candidate.kind == CandidateKind::NewArtist
-                    && !memory.held.contains(&candidate.release_group_mbid)
+                matches!(
+                    candidate.kind,
+                    CandidateKind::NewArtist | CandidateKind::Thread
+                ) && !memory.held.contains(&candidate.release_group_mbid)
             })
             .collect();
         let selection = select::select(

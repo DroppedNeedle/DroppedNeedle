@@ -164,6 +164,7 @@ catalog_artist_skiddle_ids
 catalog_artist_skiddle_resolutions
 catalog_artist_tm_attractions
 catalog_background_read_days
+catalog_band_links
 catalog_cached_pages
 catalog_discover_activity
 catalog_discover_candidate_paths

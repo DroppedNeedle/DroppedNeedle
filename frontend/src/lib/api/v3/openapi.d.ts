@@ -16383,7 +16383,7 @@ export interface components {
          * @description A service a pick's facts came from.
          * @enum {string}
          */
-        EvidenceSource: "listenbrainz" | "lastfm";
+        EvidenceSource: "listenbrainz" | "lastfm" | "musicbrainz";
         /**
          * @description The built-in example albums a script is shown against: one disc, two
          *     discs with an edition note, and an album artist whose name another
@@ -16650,7 +16650,7 @@ export interface components {
          * @description How a pick was found.
          * @enum {string}
          */
-        FoundBy: "co_listening" | "source_pick";
+        FoundBy: "co_listening" | "source_pick" | "band_link";
         /** @description One folder the setup guide found. */
         FoundFolder: {
             /**
@@ -21772,7 +21772,10 @@ export interface components {
             reason: components["schemas"]["PickReason"];
             /** @description MusicBrainz release-group id, lowercased. */
             release_group_mbid: string;
-            /** @description The person's artists that led to it, strongest first. */
+            /**
+             * @description The person's artists that led to it through co-listening, strongest
+             *     first; none for a pick found otherwise.
+             */
             seeds: components["schemas"]["EvidenceSeed"][];
             /** @description The service the finding fact came from. */
             source: components["schemas"]["EvidenceSource"];
@@ -21810,7 +21813,7 @@ export interface components {
          * @description What a pick's reason rests on.
          * @enum {string}
          */
-        PickReasonKind: "your_artists" | "source";
+        PickReasonKind: "your_artists" | "source" | "fact";
         /** @description Pick one candidate. */
         PickRequest: {
             /** @description `candidate_index` of the candidate to download. */

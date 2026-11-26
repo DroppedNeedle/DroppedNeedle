@@ -4,6 +4,7 @@
 mod common;
 
 mod concerts;
+mod discover_band_links;
 mod discover_forget;
 mod discover_health;
 mod discover_later;

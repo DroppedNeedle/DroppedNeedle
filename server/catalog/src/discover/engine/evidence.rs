@@ -10,7 +10,7 @@ use droppedneedle_kernel::db::{Db, DbError};
 use rusqlite::params;
 
 use super::candidate::{Candidate, PathKind, PathSource};
-use super::reason::{reason, seed_paths};
+use super::reason::{fact_path, reason, seed_paths};
 use super::{pool_store, sql, weekly_store};
 use crate::discover::models::{
     EvidenceSeed, EvidenceSource, FoundBy, NewToYou, PickEvidence, PickReason, PickReasonKind,
@@ -24,7 +24,8 @@ fn service(source: PathSource) -> Option<EvidenceSource> {
             Some(EvidenceSource::Listenbrainz)
         }
         PathSource::Lastfm => Some(EvidenceSource::Lastfm),
-        PathSource::Musicbrainz | PathSource::Library | PathSource::DataFile => None,
+        PathSource::Musicbrainz => Some(EvidenceSource::Musicbrainz),
+        PathSource::Library => None,
     }
 }
 
@@ -36,6 +37,7 @@ fn found(
 ) -> Option<(FoundBy, EvidenceSource, Option<i64>)> {
     let (found_by, path) = match reason.kind {
         PickReasonKind::YourArtists => (FoundBy::CoListening, *seed_paths(candidate).first()?),
+        PickReasonKind::Fact => (FoundBy::BandLink, fact_path(candidate)?),
         PickReasonKind::Source => (
             FoundBy::SourcePick,
             candidate

@@ -1,10 +1,12 @@
 //! Kept facts: the provider answers Discover keeps in the database, so a
 //! page build reads local rows and never waits on a provider for them.
 //!
-//! Three kinds, shared by everyone and nobody's listening: an artist's
+//! Four kinds, shared by everyone and nobody's listening: an artist's
 //! similar artists (ListenBrainz labs' list, kept per source with the raw
 //! score and rank; the order is worked out when read), an artist's
-//! listener counts, and an artist's album list with each group's counts.
+//! listener counts, an artist's album list with each group's counts, and
+//! an artist's band links (its MusicBrainz relationships to its members,
+//! its bands, founders, subgroups, collaborations and other names).
 //! Each fact has one fetch row: when it last answered, how its last read
 //! went, when it is next due and when a reader last read or wanted it.
 //!
@@ -14,8 +16,8 @@
 //!   asked about and keeps the answer.
 //! - A found answer replaces that fact's rows in one write. A clean "none"
 //!   is asked again after a day (an album list with nothing to offer after
-//!   14). A failed read keeps the rows, backs the next try off and records
-//!   when the fact first failed.
+//!   14, an artist with no band links after 30). A failed read keeps the
+//!   rows, backs the next try off and records when the fact first failed.
 //! - One job kind ([`job::KIND`]) does the background reads: wanted facts
 //!   first, then the oldest kept ones past their age that someone read in
 //!   the last seven days, under the daily ceiling of [`plan::ceiling`].
@@ -100,6 +102,8 @@ pub enum FactKind {
     Albums,
     /// The listener counts of an artist's albums.
     AlbumCounts,
+    /// An artist's links to its members, bands and other names.
+    BandLinks,
 }
 
 droppedneedle_kernel::spelled!(FactKind {
@@ -107,6 +111,7 @@ droppedneedle_kernel::spelled!(FactKind {
     Listeners => "listeners",
     Albums => "albums",
     AlbumCounts => "album_counts",
+    BandLinks => "band_links",
 });
 
 /// Where a fact is read from.
@@ -118,7 +123,7 @@ pub enum FactSource {
     LastFm,
     /// ListenBrainz's popularity counts.
     ListenBrainz,
-    /// The install's MusicBrainz source (discographies).
+    /// The install's MusicBrainz source (discographies and band links).
     MusicBrainz,
 }
 

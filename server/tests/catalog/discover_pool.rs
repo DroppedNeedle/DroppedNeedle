@@ -124,7 +124,8 @@ pub(crate) fn album<'a>(
 }
 
 /// user-1's taste build: `seeds` (id, weight, group), `groups` (number,
-/// share) and the other artists they know.
+/// share) and the other artists they know. Each seed's band links are kept
+/// as none.
 fn taste(seeds: &[(&str, f64, i64)], groups: &[(i64, f64)], known: &[&str], at: i64) -> String {
     let mut rows = format!(
         "INSERT INTO catalog_taste_builds (user_id, built_at, plays_counted, \
@@ -146,6 +147,7 @@ fn taste(seeds: &[(&str, f64, i64)], groups: &[(i64, f64)], known: &[&str], at: 
              VALUES ('user-1', '{seed}', '{seed}', 'Seed {}', 5, 0, 1, {weight}, 1, {group});",
             &seed[..8]
         );
+        rows += &fetched(seed, "band_links", "musicbrainz", "none", at);
     }
     for artist in known {
         rows += &format!(

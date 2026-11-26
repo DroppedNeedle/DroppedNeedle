@@ -11,13 +11,14 @@
 //! days. Listener counts go in one read of up to 500 artists, album counts
 //! in one of up to 347 groups across artists. Each read that goes out is
 //! counted, and a failed one marks its fact failed, so it backs off; one
-//! the client turns down unsent is not counted. While labs rests after a
-//! failure no list is asked for: the job plans no list, and the
-//! tick queues nothing for lists alone. Unread facts are dropped once a UTC
+//! the client turns down unsent is not counted. An artist's band links are
+//! one MusicBrainz lookup, counted only on the official service. While
+//! labs rests after a failure no list is asked for: the job plans no list,
+//! and the tick queues nothing for lists alone. Unread facts are dropped once a UTC
 //! day. With nobody seen in seven days it reads nothing; with
 //! ListenBrainz reads off it reads nothing from ListenBrainz; with the
-//! MusicBrainz settings unreadable it reads no album list. A run is safe
-//! to repeat.
+//! MusicBrainz settings unreadable it reads no album list and no band
+//! links. A run is safe to repeat.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -35,6 +36,7 @@ use droppedneedle_providers::listenbrainz::{
 use super::plan::{self, RUN_READS};
 use super::{DAY_MS, FactKind, FactRef, KeptFacts, MeteredSource, ReadError};
 use crate::discover::listening::albums::{self, AlbumReads};
+use crate::discover::listening::band_links::{self, BandLink, BandLinkReads};
 use crate::discover::listening::similar::{self, SimilarReads};
 use crate::discover::listening::{ListeningError, ListeningNetwork, SourceContext};
 use crate::discover::ports::BoxFuture;
@@ -139,6 +141,25 @@ impl AlbumReads for CountedReads {
     }
 }
 
+impl BandLinkReads for CountedReads {
+    type Error = ListeningError;
+
+    fn band_links<'a>(
+        &'a self,
+        artist_mbid: &'a str,
+        priority: RequestPriority,
+    ) -> BoxFuture<'a, Result<Option<Vec<BandLink>>, ListeningError>> {
+        Box::pin(async move {
+            let read = self.network.band_links(artist_mbid, priority).await;
+            if self.musicbrainz_metered {
+                self.counted(MeteredSource::MusicBrainz, read).await
+            } else {
+                read
+            }
+        })
+    }
+}
+
 /// When labs reads stop resting, unix ms: set from the client's own
 /// answer while it rests after a failure. Shared by the job and the tick.
 type LabsRest = Arc<Mutex<i64>>;
@@ -150,8 +171,8 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 /// The kinds the job may read now: none of ListenBrainz's while its reads
-/// are off, no list while labs rests, no album list while the MusicBrainz
-/// settings do not read.
+/// are off, no list while labs rests, no album list or band links while
+/// the MusicBrainz settings do not read.
 fn kinds(
     network: &dyn ListeningNetwork,
     facts: &KeptFacts,
@@ -391,6 +412,18 @@ impl FactJobs {
                         albums::fetch_list(&self.facts, reads, &fact.artist, PRIORITY).await
                     {
                         tracing::debug!(%error, "an album list unread; asked again later");
+                    }
+                }
+                FactKind::BandLinks => {
+                    done.insert(at);
+                    if !budget.take(reads.musicbrainz_metered) {
+                        continue;
+                    }
+                    made += 1;
+                    if let Err(error) =
+                        band_links::fetch(&self.facts, reads, &fact.artist, PRIORITY).await
+                    {
+                        tracing::debug!(%error, "band links unread; asked again later");
                     }
                 }
                 FactKind::AlbumCounts => {

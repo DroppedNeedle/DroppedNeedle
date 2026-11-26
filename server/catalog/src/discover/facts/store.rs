@@ -11,6 +11,7 @@ use droppedneedle_kernel::jobs::queue::JobError;
 use rusqlite::{Connection, params};
 
 use super::{DAY_MS, FactKind, FactSource, ListSource, MeteredSource, Outcome, WantOrder};
+use crate::discover::listening::band_links::BandLink;
 use crate::discover::listening::{AlbumFacts, AlbumRow, RankedAlbum};
 use crate::discover::sql;
 
@@ -23,6 +24,10 @@ const COUNT_AGE_MS: i64 = 30 * DAY_MS;
 const NONE_AGE_MS: i64 = DAY_MS;
 /// How long an artist with no album to offer stands.
 const NO_ALBUMS_AGE_MS: i64 = 14 * DAY_MS;
+/// How long found band links are kept: a band's members change over years.
+const LINKS_AGE_MS: i64 = 90 * DAY_MS;
+/// How long an artist with no band links stands.
+const NO_LINKS_AGE_MS: i64 = 30 * DAY_MS;
 /// The first retry after a failure; each one in a row doubles it.
 const RETRY_MS: i64 = 30 * 60_000;
 /// The longest a failing fact waits for its next try.
@@ -50,6 +55,8 @@ pub(crate) enum Kept<T> {
 pub(crate) struct Looked<T> {
     /// What is kept.
     pub kept: Kept<T>,
+    /// When it last answered, unix ms.
+    pub fetched_at: Option<i64>,
     read_at: Option<i64>,
     wanted_at: Option<i64>,
 }
@@ -58,6 +65,7 @@ impl<T> Looked<T> {
     pub(crate) fn missing() -> Self {
         Self {
             kept: Kept::Missing,
+            fetched_at: None,
             read_at: None,
             wanted_at: None,
         }
@@ -179,6 +187,7 @@ fn looked<T>(fetch: Option<&sql::FactFetchColumns>, rows: Option<T>) -> Looked<T
     };
     Looked {
         kept,
+        fetched_at: fetch.fetched_at.map(|at| at.0),
         read_at: Some(fetch.read_at.0),
         wanted_at: fetch.wanted_at.map(|at| at.0),
     }
@@ -353,6 +362,44 @@ impl KeptFacts {
             .await
     }
 
+    /// The kept band links of `artists` (lowercased), by artist.
+    pub(crate) async fn links(
+        &self,
+        artists: &[String],
+    ) -> Result<HashMap<String, Looked<Vec<BandLink>>>, DbError> {
+        let list = json(artists);
+        let asked = artists.to_vec();
+        self.db
+            .read("discover.facts.band_links", move |conn| {
+                // One snapshot, as for the lists.
+                let fetches =
+                    fetch_rows(conn, FactKind::BandLinks, FactSource::MusicBrainz, &list)?;
+                let mut links: HashMap<String, Vec<BandLink>> = HashMap::new();
+                let rows = conn
+                    .prepare_cached(sql::KEPT_BAND_LINKS.text())?
+                    .query_map([&list], sql::KeptBandLinkColumns::read)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                for row in rows {
+                    links.entry(row.artist_mbid).or_default().push(BandLink {
+                        mbid: row.linked_mbid,
+                        name: row.linked_name,
+                        kind: row.kind,
+                        direction: row.direction,
+                        ended: row.ended,
+                    });
+                }
+                Ok(asked
+                    .into_iter()
+                    .map(|artist| {
+                        let rows = links.remove(&artist);
+                        let found = looked(fetches.get(&artist), rows);
+                        (artist, found)
+                    })
+                    .collect())
+            })
+            .await
+    }
+
     /// The groups of `artists`' kept albums.
     pub(crate) async fn album_groups(&self, artists: &[String]) -> Result<Vec<String>, DbError> {
         let list = json(artists);
@@ -485,16 +532,23 @@ impl KeptFacts {
     ) -> Result<(), DbError> {
         let now = self.now();
         let artist = artist.to_owned();
-        let age = if kind == FactKind::Albums {
-            NO_ALBUMS_AGE_MS
-        } else {
-            NONE_AGE_MS
+        let age = match kind {
+            FactKind::Albums => NO_ALBUMS_AGE_MS,
+            FactKind::BandLinks => NO_LINKS_AGE_MS,
+            _ => NONE_AGE_MS,
         };
         self.db
             .write(Lane::Background, "discover.facts.none", move |tx| {
-                if kind == FactKind::Albums {
-                    tx.prepare_cached(sql::ALBUMS_DROPPED.text())?
-                        .execute(params![artist, "[]"])?;
+                match kind {
+                    FactKind::Albums => {
+                        tx.prepare_cached(sql::ALBUMS_DROPPED.text())?
+                            .execute(params![artist, "[]"])?;
+                    }
+                    FactKind::BandLinks => {
+                        tx.prepare_cached(sql::BAND_LINKS_DROPPED.text())?
+                            .execute([&artist])?;
+                    }
+                    _ => {}
                 }
                 answered_tx(tx, (kind, source), &artist, Outcome::None, (now, age))?;
                 Ok::<_, DbError>(())
@@ -643,6 +697,43 @@ impl KeptFacts {
             .await
     }
 
+    /// Keep `artist`'s band links, in answer order: they replace the links
+    /// kept, in one write. None is "nothing there".
+    pub(crate) async fn keep_band_links(
+        &self,
+        artist: &str,
+        links: Vec<BandLink>,
+    ) -> Result<(), DbError> {
+        if links.is_empty() {
+            return self
+                .keep_none(FactKind::BandLinks, FactSource::MusicBrainz, artist)
+                .await;
+        }
+        let now = self.now();
+        let artist = artist.to_owned();
+        self.db
+            .write(Lane::Background, "discover.facts.band_links", move |tx| {
+                tx.prepare_cached(sql::BAND_LINKS_DROPPED.text())?
+                    .execute([&artist])?;
+                let mut keep = tx.prepare_cached(sql::BAND_LINK_KEPT.text())?;
+                for (position, link) in links.iter().enumerate() {
+                    keep.execute(params![
+                        artist,
+                        position as i64,
+                        link.kind,
+                        link.direction,
+                        link.mbid,
+                        link.name,
+                        link.ended
+                    ])?;
+                }
+                let what = (FactKind::BandLinks, FactSource::MusicBrainz);
+                answered_tx(tx, what, &artist, Outcome::Found, (now, LINKS_AGE_MS))?;
+                Ok::<_, DbError>(())
+            })
+            .await
+    }
+
     /// Keep the counts of `artists`' albums as read in one answer: `found`
     /// holds each counted group's listeners and listens.
     pub(crate) async fn keep_album_counts(
@@ -736,6 +827,7 @@ impl KeptFacts {
                         sql::UNREAD_NEIGHBOURS_DROPPED,
                         sql::UNREAD_LISTENERS_DROPPED,
                         sql::UNREAD_ALBUMS_DROPPED,
+                        sql::UNREAD_BAND_LINKS_DROPPED,
                         sql::UNREAD_FETCHES_DROPPED,
                     ] {
                         tx.prepare_cached(statement.text())?.execute([&before])?;
@@ -812,6 +904,7 @@ pub(super) async fn clear(db: &Db) -> Result<u64, DbError> {
             sql::ALL_NEIGHBOURS_DROPPED,
             sql::ALL_LISTENERS_DROPPED,
             sql::ALL_ALBUMS_DROPPED,
+            sql::ALL_BAND_LINKS_DROPPED,
         ] {
             cleared += tx.execute(statement.text(), [])? as u64;
         }

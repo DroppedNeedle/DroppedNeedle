@@ -2,16 +2,18 @@
 //! paths and nothing else.
 //!
 //! A new release says so first, naming its artist and, for an artist close
-//! to theirs, the one of theirs it is closest to. Then the person's
-//! artists, then a gap in an artist they collect (how many of the artist's
-//! albums the library holds), then a service's pick. A line names up to
-//! three of their artists, strongest first. A pick whose line would name
-//! an artist that is no longer one of their seeds has no reason, and is not
-//! offered. No score, share or rank is ever part of a line.
+//! to theirs, the one of theirs it is closest to. Then a band link, naming
+//! the person's artist it runs through (and the member, for a band sharing
+//! one). Then the person's artists, then a gap in an artist they collect
+//! (how many of the artist's albums the library holds), then a service's
+//! pick. A line names up to three of their artists, strongest first. A
+//! pick whose line would name an artist that is no longer one of their
+//! seeds has no reason, and is not offered. No score, share or rank is ever
+//! part of a line.
 
 use std::collections::HashSet;
 
-use super::candidate::{Candidate, Path, PathKind, PathSource};
+use super::candidate::{BandLinkRole, Candidate, Path, PathKind, PathSource};
 use crate::discover::models::{PickReason, PickReasonArtist, PickReasonKind};
 
 /// The most of the person's artists a line names.
@@ -46,6 +48,34 @@ pub(crate) fn gap_line(owned: i64) -> String {
     }
 }
 
+/// The strongest band-link path of `candidate`, with its artist and band
+/// link.
+pub(crate) fn fact_path(candidate: &Candidate) -> Option<&Path> {
+    let mut strongest: Option<&Path> = None;
+    for path in candidate
+        .paths
+        .iter()
+        .filter(|path| path.kind == PathKind::Fact && path.artist.is_some() && path.fact.is_some())
+    {
+        if strongest.is_none_or(|best| path.support() > best.support()) {
+            strongest = Some(path);
+        }
+    }
+    strongest
+}
+
+/// The line of a band link from the person's `seed` to `artist`, the
+/// pick's, in `role`, through `via` when one member.
+pub(crate) fn band_line(artist: &str, seed: &str, role: BandLinkRole, via: Option<&str>) -> String {
+    match (role, via) {
+        (BandLinkRole::Member, _) => format!("{artist} of {seed}."),
+        (BandLinkRole::Band, _) => format!("With {seed}."),
+        (BandLinkRole::OtherName, _) => format!("{seed} under another name."),
+        (BandLinkRole::SharedMember, Some(via)) => format!("With {via} of {seed}."),
+        (BandLinkRole::SharedMember, None) => format!("With members of {seed}."),
+    }
+}
+
 /// The line naming `names` (one to three).
 fn close_to(names: &[&str], closest_new: bool) -> String {
     match names {
@@ -68,6 +98,9 @@ pub fn reason(candidate: &Candidate, seeds: &HashSet<String>) -> Option<PickReas
         .any(|path| path.kind == PathKind::Fresh)
     {
         return fresh_reason(candidate, &paths, seeds);
+    }
+    if let Some(found) = fact_path(candidate).and_then(|path| fact_reason(candidate, path, seeds)) {
+        return Some(found);
     }
     if !paths.is_empty() {
         let named: Vec<&Path> = paths.iter().take(NAMED_MAX).copied().collect();
@@ -132,6 +165,37 @@ pub fn reason(candidate: &Candidate, seeds: &HashSet<String>) -> Option<PickReas
             }),
             _ => None,
         })
+}
+
+/// The line of a band link `path`, whose artist must still be one of
+/// `seeds`.
+fn fact_reason(candidate: &Candidate, path: &Path, seeds: &HashSet<String>) -> Option<PickReason> {
+    let seed = path.artist.as_ref()?;
+    let fact = path.fact.as_ref()?;
+    // The linked artist by its own name: the album may credit another.
+    let artist = fact
+        .artist_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or(candidate.artist_name.trim());
+    let name = seed.name.trim();
+    if artist.is_empty() || name.is_empty() || !seeds.contains(&seed.mbid) {
+        return None;
+    }
+    let via = fact
+        .via
+        .as_ref()
+        .map(|via| via.name.trim())
+        .filter(|via| !via.is_empty());
+    Some(PickReason {
+        kind: PickReasonKind::Fact,
+        line: band_line(artist, name, fact.role, via),
+        artists: vec![PickReasonArtist {
+            artist_mbid: seed.mbid.clone(),
+            name: name.to_owned(),
+        }],
+    })
 }
 
 /// The line of a new release: by an artist close to theirs, naming the

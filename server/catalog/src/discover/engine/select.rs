@@ -308,6 +308,7 @@ mod tests {
                 closest_new: false,
             }),
             known_credit: None,
+            fact: None,
         }
     }
 

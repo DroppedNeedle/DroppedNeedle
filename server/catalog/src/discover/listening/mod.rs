@@ -19,8 +19,9 @@
 //!   and [`SourcePolicy`] lets Last.fm stand in.
 //! - the build cap: an [`Ask`] made for a build lets at most
 //!   [`BUILD_CAP`] of its provider calls run at once.
-//! - the kept facts ([`KeptFacts`]): similar artists, listener counts and
-//!   album lists are read from the database, never fetched for a build.
+//! - the kept facts ([`KeptFacts`]): similar artists, listener counts,
+//!   album lists and band links are read from the database, never fetched
+//!   for a build.
 //! - the background read meter: every read made at background priority to
 //!   ListenBrainz or the official MusicBrainz service is counted by day,
 //!   for the daily ceiling ([`crate::discover::facts::plan`]).
@@ -28,6 +29,7 @@
 //!   kept under one shared key, never read for a build.
 
 pub(crate) mod albums;
+pub mod band_links;
 pub mod fresh;
 pub mod gate;
 mod live;

@@ -1,0 +1,227 @@
+{
+  "begin-area": {
+    "sort-name": "Glasgow",
+    "type-id": null,
+    "id": "c279f805-01f8-46f5-99cf-51f165a1adad",
+    "iso-3166-2-codes": [
+      "GB-GLG"
+    ],
+    "name": "Glasgow",
+    "disambiguation": "",
+    "type": null
+  },
+  "name": "FFS",
+  "ipis": [],
+  "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+  "sort-name": "FFS",
+  "end-area": null,
+  "relations": [
+    {
+      "type": "collaboration",
+      "target-credit": "",
+      "direction": "backward",
+      "attributes": [],
+      "begin": "2014",
+      "target-type": "artist",
+      "end": "2015",
+      "source-credit": "",
+      "ended": true,
+      "artist": {
+        "country": "GB",
+        "id": "aa7a2827-f74b-473c-bd79-03d065835cf7",
+        "sort-name": "Franz Ferdinand",
+        "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+        "disambiguation": "Scottish rock band",
+        "type": "Group",
+        "name": "Franz Ferdinand"
+      },
+      "attribute-ids": {},
+      "type-id": "75c09861-6857-4ec0-9729-84eefde7fc86",
+      "attribute-values": {}
+    },
+    {
+      "target-type": "artist",
+      "begin": "2014",
+      "attributes": [],
+      "target-credit": "",
+      "type": "collaboration",
+      "direction": "backward",
+      "type-id": "75c09861-6857-4ec0-9729-84eefde7fc86",
+      "attribute-ids": {},
+      "attribute-values": {},
+      "artist": {
+        "name": "Sparks",
+        "type": "Group",
+        "disambiguation": "US rock and pop duo, The Mael Brothers",
+        "id": "f319b57a-a494-40f6-a467-3d196d3484e6",
+        "country": "US",
+        "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+        "sort-name": "Sparks"
+      },
+      "ended": true,
+      "end": "2015",
+      "source-credit": ""
+    },
+    {
+      "target-type": "artist",
+      "begin": null,
+      "attributes": [],
+      "direction": "backward",
+      "target-credit": "",
+      "type": "member of band",
+      "attribute-values": {},
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "attribute-ids": {},
+      "artist": {
+        "type": "Person",
+        "disambiguation": "bassist for Franz Ferdinand",
+        "name": "Bob Hardy",
+        "country": "GB",
+        "id": "6797e740-b6a5-4019-9369-dd49e1381ff6",
+        "sort-name": "Hardy, Bob",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df"
+      },
+      "ended": false,
+      "source-credit": "",
+      "end": null
+    },
+    {
+      "begin": null,
+      "target-type": "artist",
+      "direction": "backward",
+      "type": "member of band",
+      "target-credit": "",
+      "attributes": [],
+      "artist": {
+        "name": "Alex Kapranos",
+        "type": "Person",
+        "disambiguation": "lead singer and guitarist in Franz Ferdinand",
+        "id": "262b08bd-539c-43b4-9dbf-1d85d25e79b8",
+        "country": "GB",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "sort-name": "Kapranos, Alex"
+      },
+      "attribute-values": {},
+      "attribute-ids": {},
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "source-credit": "",
+      "end": null,
+      "ended": false
+    },
+    {
+      "direction": "backward",
+      "target-credit": "",
+      "type": "member of band",
+      "attributes": [],
+      "target-type": "artist",
+      "begin": null,
+      "source-credit": "",
+      "end": null,
+      "ended": false,
+      "artist": {
+        "name": "Ron Mael",
+        "disambiguation": "",
+        "type": "Person",
+        "id": "66280221-4f4f-442d-91e3-1f622e8b7713",
+        "country": "US",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "sort-name": "Mael, Ron"
+      },
+      "attribute-values": {},
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "attribute-ids": {}
+    },
+    {
+      "attributes": [],
+      "target-credit": "",
+      "type": "member of band",
+      "direction": "backward",
+      "target-type": "artist",
+      "begin": null,
+      "ended": false,
+      "end": null,
+      "source-credit": "",
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "attribute-ids": {},
+      "attribute-values": {},
+      "artist": {
+        "id": "200f3ed8-1ce7-48a1-bba7-f06651351c45",
+        "country": "US",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "sort-name": "Mael, Russell",
+        "name": "Russell Mael",
+        "disambiguation": "",
+        "type": "Person"
+      }
+    },
+    {
+      "artist": {
+        "name": "Nick McCarthy",
+        "disambiguation": "",
+        "type": "Person",
+        "id": "deaf2729-cc2b-4a84-8acb-0cea2e5fee49",
+        "country": "GB",
+        "sort-name": "McCarthy, Nick",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df"
+      },
+      "attribute-values": {},
+      "attribute-ids": {},
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "source-credit": "",
+      "end": null,
+      "ended": false,
+      "begin": null,
+      "target-type": "artist",
+      "direction": "backward",
+      "type": "member of band",
+      "target-credit": "",
+      "attributes": []
+    },
+    {
+      "attributes": [],
+      "type": "member of band",
+      "target-credit": "",
+      "direction": "backward",
+      "begin": null,
+      "target-type": "artist",
+      "ended": false,
+      "end": null,
+      "source-credit": "",
+      "attribute-ids": {},
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "attribute-values": {},
+      "artist": {
+        "country": "GB",
+        "id": "72ee22fc-938b-45f8-8e9f-8870d7639805",
+        "sort-name": "Thomson, Paul",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "type": "Person",
+        "disambiguation": "Scottish musician, was in Franz Ferdinand",
+        "name": "Paul Thomson"
+      }
+    }
+  ],
+  "area": {
+    "type": null,
+    "disambiguation": "",
+    "name": "United States",
+    "iso-3166-1-codes": [
+      "US"
+    ],
+    "id": "489ce91b-6658-3307-9877-795b68554c98",
+    "type-id": null,
+    "sort-name": "United States"
+  },
+  "life-span": {
+    "begin": "2014",
+    "ended": true,
+    "end": "2015"
+  },
+  "gender-id": null,
+  "type": "Group",
+  "disambiguation": "Franz Ferdinand & Sparks",
+  "gender": null,
+  "id": "6b4fbe0d-c8ea-451c-9fe1-afcb90f5e605",
+  "country": "US",
+  "isnis": []
+}

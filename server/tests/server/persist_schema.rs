@@ -72,7 +72,7 @@ fn schema_rows(connection: &Connection) -> Vec<(String, String, String, Option<S
 fn fresh_migrate_marks_version_and_seeds() {
     let connection = migrated();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), latest_version());
-    assert_eq!(table_names(&connection).len(), 207);
+    assert_eq!(table_names(&connection).len(), 208);
     assert_eq!(
         scalar(
             &connection,
@@ -493,6 +493,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0180_tuning_statements.sql",
         "5be94c62f5adee547e372b77983123bd6fbae88c9fa95a735b4b1a10a0cd4555",
+    ),
+    (
+        "0181_band_links.sql",
+        "2c428dfdaba9a07d89da84511d8ecff53037389a53e4ce96d01632dc120027c4",
     ),
 ];
 
@@ -4946,6 +4950,176 @@ fn tuning_statements_upgrade_carries_every_row() {
     );
 }
 
+/// 0181 rebuilds the kept facts' fetch rows with band links among their
+/// kinds and the pool's paths with what a band-link path holds, and adds
+/// the band links table, empty. Every fetch row and path carries across,
+/// rowid and all, the fetch rows' indexes are made again and nothing else
+/// changes. A band link and a band-link path are stored; a kind, direction,
+/// role or source outside its list, and a member with no name, are
+/// refused; an account's paths still go with it, and only its own.
+#[test]
+fn band_links_upgrade_carries_every_fetch_row_and_path() {
+    let dir = ScratchDir::new("band-links-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 181)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, created_at)
+                 VALUES ('u1', 'One', 1), ('u2', 'Two', 1);
+             INSERT INTO catalog_fact_fetches (artist_mbid, kind, source, outcome, fetched_at,
+                 failing_since_at, failures, due_at, wanted_at, want_order, read_at)
+                 VALUES ('a', 'neighbours', 'listenbrainz_labs', 'found', 1, NULL, 0, 9, NULL,
+                     NULL, 1),
+                        ('a', 'albums', 'musicbrainz', 'failed', NULL, 3, 2, 7, 3, 1, 3),
+                        ('b', 'album_counts', 'listenbrainz', NULL, NULL, NULL, 0, 4, 4, 0, 4);
+             INSERT INTO catalog_discover_candidates (user_id, release_group_mbid_lower,
+                 rank, kind, title, artist_mbid, artist_name, credited_artist_mbids, support,
+                 group_no, group_support)
+                 VALUES ('u1', 'rg', 0, 'new_artist', 'T', 'a', 'A', '[]', 1.0, 0, 1.0),
+                        ('u2', 'rg', 0, 'source_pick', 'T', 'a', 'A', '[]', 0.0, NULL, 0.0);
+             INSERT INTO catalog_discover_candidate_paths (user_id, release_group_mbid_lower,
+                 path_no, kind, source, fetched_at, artist_mbid, artist_name, artist_plays,
+                 artist_weight, artist_albums_owned, link_strength, link_rank, link_of,
+                 named_by_labs, named_by_lastfm, known_credit_mbid, link_closest_new)
+                 VALUES ('u1', 'rg', 0, 'seed', 'listenbrainz_labs', 5, 's', 'S', 3, 1.5, 1,
+                     0.5, 1, 100, 1, 1, 'k', 1),
+                        ('u2', 'rg', 0, 'source', 'listenbrainz', 6, NULL, NULL, NULL, NULL,
+                     NULL, NULL, NULL, NULL, 0, 0, NULL, 0);",
+        )
+        .unwrap();
+    let path_columns = "rowid, user_id, release_group_mbid_lower, path_no, kind, source, \
+        fetched_at, artist_mbid, artist_name, artist_plays, artist_weight, artist_albums_owned, \
+        link_strength, link_rank, link_of, named_by_labs, named_by_lastfm, known_credit_mbid, \
+        link_closest_new";
+    let fetches = table_rows(&connection, "catalog_fact_fetches", "rowid, *");
+    let paths = table_rows(
+        &connection,
+        "catalog_discover_candidate_paths",
+        path_columns,
+    );
+    let rebuilt = ["catalog_fact_fetches", "catalog_discover_candidate_paths"];
+    let mut before_schema = schema_rows(&connection);
+    before_schema.retain(|(_, _, table, _)| !rebuilt.contains(&table.as_str()));
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 181);
+    assert_eq!(
+        table_rows(&connection, "catalog_fact_fetches", "rowid, *"),
+        fetches,
+        "every fetch row carries across"
+    );
+    assert_eq!(
+        table_rows(
+            &connection,
+            "catalog_discover_candidate_paths",
+            path_columns
+        ),
+        paths,
+        "every path carries across"
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT COUNT(*) FROM catalog_discover_candidate_paths \
+             WHERE fact_role IS NOT NULL OR via_mbid IS NOT NULL OR via_name IS NOT NULL \
+             OR fact_artist_name IS NOT NULL"
+        ),
+        0,
+        "no path was a band link"
+    );
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT name FROM sqlite_master WHERE type = 'index' \
+             AND tbl_name = 'catalog_fact_fetches' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+            []
+        ),
+        ["catalog_fact_fetches_due", "catalog_fact_fetches_read"]
+    );
+    assert_eq!(
+        scalar(&connection, "SELECT COUNT(*) FROM catalog_band_links"),
+        0
+    );
+    let added = "catalog_band_links";
+    let mut after_schema = schema_rows(&connection);
+    for (_, name, table, sql) in &after_schema {
+        if (rebuilt.contains(&table.as_str()) || table == added) && name == table {
+            assert!(
+                sql.as_deref().is_some_and(|sql| sql.ends_with("STRICT")),
+                "{name}: {sql:?}"
+            );
+        }
+    }
+    after_schema.retain(|(_, _, table, _)| !rebuilt.contains(&table.as_str()) && table != added);
+    assert_eq!(after_schema, before_schema, "nothing else changes");
+
+    connection
+        .execute_batch(
+            "PRAGMA foreign_keys = ON;
+             INSERT INTO catalog_fact_fetches (artist_mbid, kind, source, outcome, fetched_at,
+                 due_at, read_at) VALUES ('a', 'band_links', 'musicbrainz', 'found', 8, 9, 8);
+             INSERT INTO catalog_band_links (artist_mbid, position, kind, direction,
+                 linked_mbid, linked_name, ended)
+                 VALUES ('a', 0, 'member_of_band', 'backward', 'm', 'M', 0),
+                        ('a', 1, 'subgroup', 'forward', 'g', 'G', 1);
+             INSERT INTO catalog_discover_candidate_paths (user_id, release_group_mbid_lower,
+                 path_no, kind, source, fetched_at, artist_mbid, artist_name, artist_plays,
+                 artist_weight, artist_albums_owned, named_by_labs, named_by_lastfm,
+                 fact_role, via_mbid, via_name, fact_artist_name)
+                 VALUES ('u1', 'rg', 1, 'fact', 'musicbrainz', 8, 's', 'S', 3, 1.5, 1, 0, 0,
+                     'shared_member', 'm', 'M', 'A'),
+                        ('u2', 'rg', 1, 'fact', 'musicbrainz', 8, 's', 'S', 3, 1.5, 1, 0, 0,
+                     'member', NULL, NULL, 'A');",
+        )
+        .expect("band links and their paths are stored");
+    for refused in [
+        "INSERT INTO catalog_fact_fetches (artist_mbid, kind, source, due_at, read_at) \
+         VALUES ('a', 'labels', 'musicbrainz', 1, 1)",
+        "INSERT INTO catalog_band_links (artist_mbid, position, kind, direction, linked_mbid, \
+         linked_name, ended) VALUES ('a', 2, 'married', 'forward', 'x', 'X', 0)",
+        "INSERT INTO catalog_band_links (artist_mbid, position, kind, direction, linked_mbid, \
+         linked_name, ended) VALUES ('a', 2, 'founder', 'up', 'x', 'X', 0)",
+        "INSERT INTO catalog_band_links (artist_mbid, position, kind, direction, linked_mbid, \
+         linked_name, ended) VALUES ('a', 2, 'founder', 'forward', 'x', 'X', 2)",
+        "INSERT INTO catalog_discover_candidate_paths (user_id, release_group_mbid_lower, \
+         path_no, kind, source, named_by_labs, named_by_lastfm, fact_role) \
+         VALUES ('u1', 'rg', 2, 'fact', 'musicbrainz', 0, 0, 'friend')",
+        "INSERT INTO catalog_discover_candidate_paths (user_id, release_group_mbid_lower, \
+         path_no, kind, source, named_by_labs, named_by_lastfm) \
+         VALUES ('u1', 'rg', 2, 'fact', 'data_file', 0, 0)",
+        "INSERT INTO catalog_discover_candidate_paths (user_id, release_group_mbid_lower, \
+         path_no, kind, source, named_by_labs, named_by_lastfm, fact_role, via_mbid) \
+         VALUES ('u1', 'rg', 2, 'fact', 'musicbrainz', 0, 0, 'shared_member', 'm')",
+        "INSERT INTO catalog_discover_candidate_paths (user_id, release_group_mbid_lower, \
+         path_no, kind, source, named_by_labs, named_by_lastfm) \
+         VALUES ('u1', 'none', 0, 'fact', 'musicbrainz', 0, 0)",
+    ] {
+        assert!(connection.execute_batch(refused).is_err(), "{refused}");
+    }
+    connection
+        .execute("DELETE FROM auth_users WHERE id = 'u1'", [])
+        .unwrap();
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT user_id || ' ' || kind FROM catalog_discover_candidate_paths ORDER BY kind",
+            []
+        ),
+        ["u2 fact", "u2 source"],
+        "an account's paths go with it, and only its own"
+    );
+}
+
 /// Every foreign key and what deleting its parent does. A rebuild that
 /// drops or changes a key's action, or adds a key, fails here: the list
 /// changes in the same commit, on purpose.
@@ -5572,7 +5746,8 @@ fn state_columns() -> Vec<StateColumn> {
     use droppedneedle_catalog::concerts::models::{ConcertStatus, EventSource};
     use droppedneedle_catalog::concerts::store::CheckOutcome;
     use droppedneedle_catalog::discover::cache::PageKind;
-    use droppedneedle_catalog::discover::engine::candidate::{CandidateKind, PathKind, PathSource};
+    use droppedneedle_catalog::discover::engine::candidate::{BandLinkRole, CandidateKind, PathKind, PathSource};
+    use droppedneedle_catalog::discover::listening::band_links::{BandLinkKind, LinkDirection};
     use droppedneedle_catalog::discover::engine::taste::Trend;
     use droppedneedle_catalog::discover::feedback::{FeedbackKind, FeedbackTarget};
     use droppedneedle_catalog::discover::facts::{FactKind, FactSource, ListSource, MeteredSource, Outcome};
@@ -5661,9 +5836,12 @@ fn state_columns() -> Vec<StateColumn> {
         state("catalog_artist_event_checks", "last_status", &CheckOutcome::ALL, CheckOutcome::as_str),
         state("catalog_artist_neighbours", "source", &ListSource::ALL, ListSource::as_str),
         state("catalog_background_read_days", "source", &MeteredSource::ALL, MeteredSource::as_str),
+        state("catalog_band_links", "direction", &LinkDirection::ALL, LinkDirection::as_str),
+        state("catalog_band_links", "kind", &BandLinkKind::ALL, BandLinkKind::as_str),
         state("catalog_artist_tm_attractions", "match_basis", &TmBasis::ALL, TmBasis::as_str),
         state("catalog_cached_pages", "page", &PageKind::ALL, PageKind::as_str),
         state("catalog_discover_activity", "feature", &Feature::ALL, Feature::as_str),
+        state("catalog_discover_candidate_paths", "fact_role", &BandLinkRole::ALL, BandLinkRole::as_str),
         state("catalog_discover_candidate_paths", "kind", &PathKind::ALL, PathKind::as_str),
         state("catalog_discover_candidate_paths", "source", &PathSource::ALL, PathSource::as_str),
         state("catalog_discover_candidates", "kind", &CandidateKind::ALL, CandidateKind::as_str),

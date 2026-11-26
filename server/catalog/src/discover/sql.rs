@@ -11,6 +11,7 @@ use droppedneedle_kernel::db::time::Millis;
 
 use super::facts::{FactKind, FactSource};
 use super::feedback::{FeedbackKind, FeedbackTarget};
+use super::listening::band_links::{BandLinkKind, LinkDirection};
 
 use crate::artwork::local::art_tracks_column;
 use crate::local::sql::{
@@ -1053,6 +1054,19 @@ droppedneedle_kernel::sql! {
         listeners: Option<i64>,
         listens: Option<i64>,
     }
+    /// The kept band links of the artists in the JSON list ?1, each
+    /// artist's in answer order.
+    pub(super) KEPT_BAND_LINKS = "SELECT artist_mbid, linked_mbid, linked_name, kind, \
+         direction, ended FROM catalog_band_links \
+         WHERE artist_mbid IN (SELECT value FROM json_each(?1)) ORDER BY artist_mbid, position";
+    pub(super) row KeptBandLinkColumns for [KEPT_BAND_LINKS] {
+        artist_mbid: String,
+        linked_mbid: String,
+        linked_name: String,
+        kind: BandLinkKind,
+        direction: LinkDirection,
+        ended: bool,
+    }
     /// The groups of the kept albums of the artists in the JSON list ?1.
     pub(super) KEPT_ALBUM_GROUPS = "SELECT DISTINCT release_group_mbid \
          FROM catalog_artist_albums WHERE artist_mbid IN (SELECT value FROM json_each(?1)) \
@@ -1111,6 +1125,12 @@ droppedneedle_kernel::sql! {
     /// ?2 at rank ?3.
     pub(super) NEIGHBOUR_KEPT = "INSERT INTO catalog_artist_neighbours (artist_mbid, source, \
          rank, neighbour_mbid, neighbour_name, score) VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
+    /// Drop artist ?1's kept band links.
+    pub(super) BAND_LINKS_DROPPED = "DELETE FROM catalog_band_links WHERE artist_mbid = ?1";
+    /// Keep artist ?1's band link at ?2: kind ?3, direction ?4, to artist ?5
+    /// named ?6, ended ?7.
+    pub(super) BAND_LINK_KEPT = "INSERT INTO catalog_band_links (artist_mbid, position, kind, \
+         direction, linked_mbid, linked_name, ended) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
     /// Keep artist ?1's counts: ?2 listeners, ?3 listens.
     pub(super) LISTENERS_KEPT = "INSERT INTO catalog_artist_listeners (artist_mbid, listeners, \
          listens) VALUES (?1, ?2, ?3) ON CONFLICT (artist_mbid) DO UPDATE SET \
@@ -1169,18 +1189,26 @@ droppedneedle_kernel::sql! {
     pub(super) UNREAD_ALBUMS_DROPPED = "DELETE FROM catalog_artist_albums \
          WHERE artist_mbid IN (SELECT artist_mbid FROM catalog_fact_fetches \
            WHERE read_at < ?1 AND kind = 'albums')";
+    /// Drop the kept band links last read before ?1, found from their fetch
+    /// rows.
+    pub(super) UNREAD_BAND_LINKS_DROPPED = "DELETE FROM catalog_band_links \
+         WHERE artist_mbid IN (SELECT artist_mbid FROM catalog_fact_fetches \
+           WHERE read_at < ?1 AND kind = 'band_links')";
     /// Drop the fetch rows last read before ?1.
     pub(super) UNREAD_FETCHES_DROPPED = "DELETE FROM catalog_fact_fetches WHERE read_at < ?1";
     /// Every kept fact row.
     pub(super) KEPT_FACT_ROWS = "SELECT (SELECT COUNT(*) FROM catalog_artist_neighbours) \
          + (SELECT COUNT(*) FROM catalog_artist_listeners) \
-         + (SELECT COUNT(*) FROM catalog_artist_albums)";
+         + (SELECT COUNT(*) FROM catalog_artist_albums) \
+         + (SELECT COUNT(*) FROM catalog_band_links)";
     /// Drop every kept similar artist.
     pub(super) ALL_NEIGHBOURS_DROPPED = "DELETE FROM catalog_artist_neighbours";
     /// Drop every kept count.
     pub(super) ALL_LISTENERS_DROPPED = "DELETE FROM catalog_artist_listeners";
     /// Drop every kept album list.
     pub(super) ALL_ALBUMS_DROPPED = "DELETE FROM catalog_artist_albums";
+    /// Drop every kept band link.
+    pub(super) ALL_BAND_LINKS_DROPPED = "DELETE FROM catalog_band_links";
     /// Drop every fetch row.
     pub(super) ALL_FETCHES_DROPPED = "DELETE FROM catalog_fact_fetches";
     /// Count ?3 background reads to ?2 on UTC day ?1.

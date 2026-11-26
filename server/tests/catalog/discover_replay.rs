@@ -26,10 +26,6 @@
 //!   `listens/*/*.jsonl` are the person's history. Without it the listens
 //!   the copy imported are.
 //! - `DN_REPLAY_WINDOW_WEEKS`: the window after each cut, 8 by default.
-//! - `DN_REPLAY_DATAFILE`: for cuts, a trimmed MusicBrainz data file
-//!   (format 1), opened read-only. With it each cut also counts the artists
-//!   label and people threads would reach from the cut's seeds and library
-//!   (see [`Datafile`]); without it the output is as before.
 //!
 //! At each cut the copy is put back to that date as far as it can be: the
 //! person's listens, plays, hearts, ratings, follows, playlist entries,
@@ -55,7 +51,7 @@
 //! clients, go to a scripted wire that answers nothing, and fail the run
 //! the same way.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -64,6 +60,7 @@ use droppedneedle_catalog::discover::engine::candidate::{Candidate, PathKind};
 use droppedneedle_catalog::discover::engine::pool_store;
 use droppedneedle_catalog::discover::engine::reason::reason;
 use droppedneedle_catalog::discover::engine::select::{self, Exposure, Floors, Share, Shown};
+use droppedneedle_catalog::discover::listening::band_links::BandLink;
 use droppedneedle_catalog::discover::listening::{
     ArtistRow, FreshRow, JellyfinList, LastFmAlbum, LastFmChartAlbum, LastFmFacts, ListenSource,
     ListenedAlbum, ListeningError, ListeningNetwork, LovedTrack, PlayedArtist, Read,
@@ -78,13 +75,11 @@ use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{DbConfig, DbRuntime, LaneLimits, open_runtime};
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::test_support::ManualClock;
-use droppedneedle_library::identify::artist_links::placeholder;
 use droppedneedle_providers::listenbrainz::{
     ArtistPopularity, ReleaseGroupCounts, ScoredSimilarArtist,
 };
 use droppedneedle_providers::test_support::ScriptedWire;
 use droppedneedle_providers::{ProviderEndpoints, Providers, RequestPriority};
-use rusqlite::OptionalExtension;
 use serde::Deserialize;
 
 use crate::common::auth::AuthRig;
@@ -248,6 +243,13 @@ impl ListeningNetwork for Replay {
         _: RequestPriority,
     ) -> Read<'a, Option<Vec<ReleaseGroupItem>>> {
         self.refuse(format!("discography {artist_mbid}"))
+    }
+    fn band_links<'a>(
+        &'a self,
+        artist_mbid: &'a str,
+        _: RequestPriority,
+    ) -> Read<'a, Option<Vec<BandLink>>> {
+        self.refuse(format!("band_links {artist_mbid}"))
     }
     fn release_group_counts<'a>(
         &'a self,
@@ -451,7 +453,6 @@ struct Env {
     cuts: Option<String>,
     timeline: Option<PathBuf>,
     window: i64,
-    datafile: Option<PathBuf>,
 }
 
 impl Env {
@@ -475,7 +476,6 @@ impl Env {
             cuts: std::env::var("DN_REPLAY_CUTS").ok(),
             timeline: path("DN_REPLAY_TIMELINE"),
             window: window * WEEK_MS,
-            datafile: path("DN_REPLAY_DATAFILE"),
         }
     }
 }
@@ -1142,276 +1142,6 @@ fn wanted(db: &impl Probe) -> Vec<String> {
         .collect()
 }
 
-// -- the data file's threads -------------------------------------------------
-
-/// The data file format the replay reads.
-const DATAFILE_FORMAT: &str = "1";
-/// A label is a thread once the library held this many of its albums at
-/// the cut (S3-03's proposal).
-const LABEL_LIBRARY_ALBUMS: i64 = 3;
-/// A label with more release groups than this is a hub, never a thread
-/// (S3-03's proposal).
-const LABEL_HUB_GROUPS: i64 = 2_000;
-/// The links that make a people thread, by MusicBrainz link type name, as
-/// the data file's `artist_links.kind` holds them ("is person" is
-/// "performs as").
-const PEOPLE_LINKS: [&str; 5] = [
-    "member of band",
-    "subgroup",
-    "founder",
-    "is person",
-    "collaboration",
-];
-/// The link that names a band's members, whose other bands a thread follows.
-const MEMBER_OF_BAND: &str = "member of band";
-/// Where an adopted artist was when no kept list named it.
-const NO_LIST: &str = "in no seed's kept list";
-/// The same, when a thread reaches it.
-const NO_LIST_THREAD: &str = "in no seed's kept list, reached by a thread";
-
-/// A trimmed MusicBrainz data file (S3-01's format 1), read only through
-/// [`Probe`] on read-only connections.
-struct Datafile(PathBuf);
-
-impl Probe for Datafile {
-    fn file(&self) -> &Path {
-        &self.0
-    }
-
-    fn connect(&self) -> rusqlite::Connection {
-        rusqlite::Connection::open_with_flags(&self.0, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .unwrap_or_else(|error| panic!("{} opens: {error}", self.0.display()))
-    }
-}
-
-/// What a cut gives the threads: its seeds and library, and what its gates
-/// leave out.
-struct ThreadInputs<'a> {
-    seeds: Vec<String>,
-    /// The release groups the library held at the cut.
-    owned: &'a HashSet<String>,
-    known: &'a HashSet<String>,
-    library_artists: &'a HashSet<String>,
-    cut: i64,
-}
-
-/// Every artist the threads reach past the cut's gates, by its id in the
-/// file, with each way it was reached.
-#[derive(Default)]
-struct Reach {
-    ways: BTreeMap<String, Vec<String>>,
-    label: BTreeSet<String>,
-    people: BTreeSet<String>,
-}
-
-/// One cut's reach, against its adopted artists and its pool.
-#[derive(Debug, Default, PartialEq)]
-struct CutReach {
-    adopted: usize,
-    in_pool: usize,
-    by_thread: usize,
-    either: usize,
-    pool_artists: usize,
-    /// Artists a thread reaches that the pool does not hold: in all, by a
-    /// label, by people.
-    added: usize,
-    added_label: usize,
-    added_people: usize,
-    /// Each adopted artist a thread reaches, with how.
-    found: Vec<(String, Vec<String>)>,
-}
-
-impl Datafile {
-    /// The file at `path`, when it is format 1.
-    fn open(path: &Path) -> Result<Self, String> {
-        if !path.is_file() {
-            return Err(format!(
-                "DN_REPLAY_DATAFILE: {} is not a file",
-                path.display()
-            ));
-        }
-        let file = Self(path.to_owned());
-        let format: Option<String> = file
-            .connect()
-            .query_row(
-                "SELECT CAST(value AS TEXT) FROM meta WHERE key = 'format'",
-                [],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(|error| {
-                format!(
-                    "DN_REPLAY_DATAFILE: {} is not a data file: {error}",
-                    path.display()
-                )
-            })?;
-        match format.as_deref() {
-            Some(DATAFILE_FORMAT) => Ok(file),
-            Some(other) => Err(format!(
-                "DN_REPLAY_DATAFILE: {} is format {other}; the replay reads format \
-                 {DATAFILE_FORMAT}",
-                path.display()
-            )),
-            None => Err(format!(
-                "DN_REPLAY_DATAFILE: {} names no format in meta",
-                path.display()
-            )),
-        }
-    }
-
-    /// The file's own id for each of `mbids` it knows, through its
-    /// redirects.
-    fn canonical(&self, mbids: &[&str]) -> HashMap<String, String> {
-        let ids = serde_json::to_string(mbids).expect("ids");
-        let rows: Vec<(String, String)> = self.rows(
-            "SELECT j.value, a.mbid FROM json_each(?1) j JOIN artists a ON a.mbid = j.value \
-             UNION SELECT j.value, a.mbid FROM json_each(?1) j \
-             JOIN artist_redirects r ON r.old_mbid = j.value JOIN artists a ON a.id = r.artist_id",
-            [ids],
-        );
-        rows.into_iter().collect()
-    }
-
-    /// The artists the label and people threads reach from `inputs`, past
-    /// the cut's gates: not known, not a library artist, not a
-    /// special-purpose id, and with an album or EP first released by the cut.
-    fn threads(&self, inputs: &ThreadInputs<'_>) -> Reach {
-        let seeds = serde_json::to_string(&inputs.seeds).expect("ids");
-        let owned: Vec<&str> = inputs.owned.iter().map(String::as_str).collect();
-        let owned = serde_json::to_string(&owned).expect("ids");
-        let links = serde_json::to_string(&PEOPLE_LINKS).expect("kinds");
-        let mut found: Vec<(String, String, bool)> = Vec::new();
-
-        let labels: Vec<(String, String, Option<String>)> = self.rows(
-            "WITH owned(id) AS (SELECT g.id FROM json_each(?1) j \
-             JOIN release_groups g ON g.mbid = j.value UNION SELECT r.release_group_id \
-             FROM json_each(?1) j JOIN release_group_redirects r ON r.old_mbid = j.value), \
-             held(label_id) AS (SELECT l.label_id FROM release_group_labels l \
-             JOIN owned o ON o.id = l.release_group_id GROUP BY l.label_id \
-             HAVING COUNT(DISTINCT l.release_group_id) >= ?2) \
-             SELECT DISTINCT a.mbid, lb.name, g.first_date FROM held h \
-             JOIN labels lb ON lb.id = h.label_id AND lb.release_group_count <= ?3 \
-             JOIN release_group_labels l ON l.label_id = h.label_id \
-             JOIN release_groups g ON g.id = l.release_group_id \
-             AND g.primary_type IN ('Album', 'EP') \
-             JOIN artist_release_groups ar ON ar.release_group_id = g.id \
-             JOIN artists a ON a.id = ar.artist_id \
-             WHERE g.id NOT IN (SELECT id FROM owned)",
-            rusqlite::params![owned, LABEL_LIBRARY_ALBUMS, LABEL_HUB_GROUPS],
-        );
-        for (artist, label, date) in labels {
-            if !replay::released_after(date.as_deref(), inputs.cut) {
-                found.push((artist, format!("label: {label}"), true));
-            }
-        }
-
-        let seeded = "WITH seeds(id, name) AS (SELECT a.id, a.name FROM json_each(?1) j \
-             JOIN artists a ON a.mbid = j.value UNION SELECT a.id, a.name FROM json_each(?1) j \
-             JOIN artist_redirects r ON r.old_mbid = j.value JOIN artists a ON a.id = r.artist_id) ";
-        let linked: Vec<(String, String, String)> = self.rows(
-            &format!(
-                "{seeded}SELECT a.mbid, l.kind, s.name FROM artist_links l \
-                 JOIN seeds s ON s.id = l.other_artist_id JOIN artists a ON a.id = l.artist_id \
-                 WHERE l.kind IN (SELECT value FROM json_each(?2)) \
-                 UNION SELECT a.mbid, l.kind, s.name FROM artist_links l \
-                 JOIN seeds s ON s.id = l.artist_id JOIN artists a ON a.id = l.other_artist_id \
-                 WHERE l.kind IN (SELECT value FROM json_each(?2))"
-            ),
-            rusqlite::params![seeds, links],
-        );
-        for (artist, kind, seed) in linked {
-            found.push((artist, format!("{kind}, with {seed}"), false));
-        }
-        let bands: Vec<(String, String, String)> = self.rows(
-            &format!(
-                "{seeded}SELECT a.mbid, p.name, s.name FROM seeds s \
-                 JOIN artist_links m ON m.other_artist_id = s.id AND m.kind = ?2 \
-                 JOIN artist_links o ON o.artist_id = m.artist_id AND o.kind = ?2 \
-                 AND o.other_artist_id <> s.id \
-                 JOIN artists p ON p.id = m.artist_id JOIN artists a ON a.id = o.other_artist_id"
-            ),
-            rusqlite::params![seeds, MEMBER_OF_BAND],
-        );
-        for (artist, member, band) in bands {
-            found.push((
-                artist,
-                format!("another band of {member}, member of {band}"),
-                false,
-            ));
-        }
-
-        let reached: BTreeSet<&str> = found.iter().map(|(artist, ..)| artist.as_str()).collect();
-        let reached = serde_json::to_string(&reached).expect("ids");
-        let dates: Vec<(String, Option<String>)> = self.rows(
-            "SELECT a.mbid, g.first_date FROM json_each(?1) j JOIN artists a ON a.mbid = j.value \
-             JOIN artist_release_groups ar ON ar.artist_id = a.id \
-             JOIN release_groups g ON g.id = ar.release_group_id \
-             AND g.primary_type IN ('Album', 'EP')",
-            [reached],
-        );
-        let dated: HashSet<String> = dates
-            .into_iter()
-            .filter(|(_, date)| !replay::released_after(date.as_deref(), inputs.cut))
-            .map(|(artist, _)| artist)
-            .collect();
-
-        let mut reach = Reach::default();
-        for (artist, way, by_label) in found {
-            if inputs.known.contains(&artist)
-                || inputs.library_artists.contains(&artist)
-                || placeholder(&artist)
-                || !dated.contains(&artist)
-            {
-                continue;
-            }
-            let ways = reach.ways.entry(artist.clone()).or_default();
-            if !ways.contains(&way) {
-                ways.push(way);
-            }
-            if by_label {
-                reach.label.insert(artist);
-            } else {
-                reach.people.insert(artist);
-            }
-        }
-        reach
-    }
-
-    /// The threads' reach at one cut: of `adopted`, how many the pool
-    /// (`pool`, its artists) holds, a thread reaches, or either does, and
-    /// how many artists the threads add beside the pool.
-    fn reach(
-        &self,
-        inputs: &ThreadInputs<'_>,
-        adopted: &BTreeSet<String>,
-        pool: &HashSet<&str>,
-    ) -> CutReach {
-        let reach = self.threads(inputs);
-        let adopted_ids: Vec<&str> = adopted.iter().map(String::as_str).collect();
-        let canonical = self.canonical(&adopted_ids);
-        let mut cut = CutReach {
-            adopted: adopted.len(),
-            pool_artists: pool.len(),
-            ..CutReach::default()
-        };
-        for artist in adopted {
-            let in_pool = pool.contains(artist.as_str());
-            let ways = canonical.get(artist).and_then(|id| reach.ways.get(id));
-            cut.in_pool += usize::from(in_pool);
-            cut.by_thread += usize::from(ways.is_some());
-            cut.either += usize::from(in_pool || ways.is_some());
-            if let Some(ways) = ways {
-                cut.found.push((artist.clone(), ways.clone()));
-            }
-        }
-        let outside = |artist: &&String| !pool.contains(artist.as_str());
-        cut.added = reach.ways.keys().filter(outside).count();
-        cut.added_label = reach.label.iter().filter(outside).count();
-        cut.added_people = reach.people.iter().filter(outside).count();
-        cut
-    }
-}
-
 // -- now --------------------------------------------------------------------
 
 /// One pick's lines in a printed set.
@@ -1781,8 +1511,10 @@ struct CutScore {
     repeats: Vec<Option<f64>>,
     reachable: usize,
     stages: Vec<(String, &'static str)>,
-    /// The threads' reach, with a data file.
-    reach: Option<CutReach>,
+    /// Artists the pool holds through a band link.
+    linked: usize,
+    /// Adopted artists the pool holds through a band link.
+    adopted_linked: usize,
 }
 
 /// The four sets at one moment: the engine's, then the baselines'.
@@ -1808,7 +1540,6 @@ struct Replayed<'a> {
     kept: &'a [KeptAlbum],
     requests: &'a [Request],
     window: i64,
-    datafile: Option<&'a Datafile>,
 }
 
 impl Replayed<'_> {
@@ -1917,28 +1648,20 @@ impl Replayed<'_> {
             .iter()
             .filter(|artist| pool_artists.contains(artist.as_str()))
             .count();
-        let reach = self.datafile.map(|file| {
-            let inputs = ThreadInputs {
-                seeds: taste.seeds.iter().map(|seed| seed.0.clone()).collect(),
-                owned: &at.owned,
-                known: &at.known,
-                library_artists: &at.library_artists,
-                cut,
-            };
-            file.reach(&inputs, &adopted, &pool_artists)
-        });
+        let linked_artists: HashSet<&str> = now
+            .dated
+            .iter()
+            .filter(|c| c.paths.iter().any(|path| path.kind == PathKind::Fact))
+            .map(|c| c.artist_mbid.as_str())
+            .collect();
+        let adopted_linked = adopted
+            .iter()
+            .filter(|artist| linked_artists.contains(artist.as_str()))
+            .count();
         let stages: Vec<(String, &'static str)> = adopted
             .iter()
             .map(|artist| {
                 let found = stage(artist, &now.sets[0], pool_all, &now.dated, &at);
-                let threaded = reach
-                    .as_ref()
-                    .is_some_and(|reach| reach.found.iter().any(|(id, _)| id == artist));
-                let found = if found == NO_LIST && threaded {
-                    NO_LIST_THREAD
-                } else {
-                    found
-                };
                 (artist.clone(), found)
             })
             .collect();
@@ -1985,23 +1708,13 @@ impl Replayed<'_> {
             pool_all.len(),
             pool_all.len() - now.dated.len()
         );
-        if let Some(reach) = &reach {
-            println!(
-                "threads read the data file as it is today: a label or relationship dated after \
-                 the cut cannot be removed"
-            );
-            println!(
-                "threads: {} artists not in the pool of {} (label {}, people {})",
-                reach.added, reach.pool_artists, reach.added_label, reach.added_people
-            );
-            println!(
-                "reach: of {} adopted, {} in the pool, {} reached by a thread, {} by either",
-                reach.adopted, reach.in_pool, reach.by_thread, reach.either
-            );
-            for (artist, ways) in &reach.found {
-                println!("  {}: {}", name(artist), ways.join("; "));
-            }
-        }
+        println!(
+            "band links: {} artists in the pool through one; of {} adopted, {reachable} in the \
+             pool, {adopted_linked} through a band link (kept links are today's: one made after \
+             the cut cannot be removed)",
+            linked_artists.len(),
+            adopted.len()
+        );
         if at.seeds_without_list > 0 {
             println!("{} seeds have no kept similar list", at.seeds_without_list);
         }
@@ -2033,7 +1746,8 @@ impl Replayed<'_> {
             repeats,
             reachable,
             stages,
-            reach,
+            linked: linked_artists.len(),
+            adopted_linked,
         }
     }
 }
@@ -2165,41 +1879,18 @@ fn print_table(cuts: &[CutScore]) {
     for (stage, count) in lost {
         println!("  {count:>3}  {stage}");
     }
-    let reaches: Vec<&CutReach> = cuts.iter().filter_map(|cut| cut.reach.as_ref()).collect();
-    if !reaches.is_empty() {
-        let sum = |count: fn(&CutReach) -> usize| reaches.iter().copied().map(count).sum::<usize>();
-        println!(
-            "reach over all cuts: of {adopted} adopted, {} in the pool, {} reached by a thread, \
-             {} by either",
-            sum(|r| r.in_pool),
-            sum(|r| r.by_thread),
-            sum(|r| r.either)
-        );
-        println!(
-            "threads added over all cuts: {} artists beside pools of {} (label {}, people {})",
-            sum(|r| r.added),
-            sum(|r| r.pool_artists),
-            sum(|r| r.added_label),
-            sum(|r| r.added_people)
-        );
-        println!(
-            "threads read the data file as it is today: a label or relationship dated after a \
-             cut cannot be removed"
-        );
-    }
+    println!(
+        "band links over all cuts: {} artists in the pools through one; of {adopted} adopted, \
+         {} through a band link",
+        cuts.iter().map(|cut| cut.linked).sum::<usize>(),
+        cuts.iter().map(|cut| cut.adopted_linked).sum::<usize>()
+    );
     let windows: Vec<String> = cuts.iter().map(|cut| replay::day(cut.cut)).collect();
     println!("cuts: {}", windows.join(", "));
 }
 
 /// Score the engine and the baselines at every cut `spec` names.
-async fn cuts(
-    env: &Env,
-    base: &Path,
-    person: &Person,
-    network: Arc<Replay>,
-    spec: &str,
-    datafile: Option<&Datafile>,
-) {
+async fn cuts(env: &Env, base: &Path, person: &Person, network: Arc<Replay>, spec: &str) {
     let (mut timeline, source) = match &env.timeline {
         Some(path) => (
             Timeline::from_export(path).expect("the export reads"),
@@ -2249,14 +1940,6 @@ async fn cuts(
         "accounts: {}; settings sections holding a sealed value at their defaults",
         person.describe()
     );
-    if datafile.is_some() {
-        println!(
-            "data file: format {DATAFILE_FORMAT}; label threads at {LABEL_LIBRARY_ALBUMS}+ \
-             library albums and at most {LABEL_HUB_GROUPS} release groups; people threads by \
-             {}",
-            PEOPLE_LINKS.join(", ")
-        );
-    }
     let albums = library(base, &timeline);
     let kept = kept_albums(base);
     let requests = requests(base, &person.id);
@@ -2270,7 +1953,6 @@ async fn cuts(
         kept: &kept,
         requests: &requests,
         window: env.window,
-        datafile,
     };
     let mut scores = Vec::new();
     for cut in cut_days {
@@ -2286,10 +1968,6 @@ async fn cuts(
 #[ignore = "a replay of a person's own data, run by hand: cargo test --test catalog discover_replay -- --ignored --nocapture, with DN_REPLAY_DB and DN_REPLAY_USER set (see the module docs)"]
 async fn discover_replay_on_a_database_copy() {
     let env = Env::read();
-    let datafile = env
-        .datafile
-        .as_deref()
-        .map(|path| Datafile::open(path).unwrap_or_else(|message| panic!("{message}")));
     let scratch = ScratchDir::new("discover-replay");
     let base = scratch.join("base.db");
     backup(&env.db, &base);
@@ -2315,16 +1993,11 @@ async fn discover_replay_on_a_database_copy() {
         wire: Arc::new(ScriptedWire::new()),
     });
     match env.cuts.as_deref() {
-        None => {
-            if datafile.is_some() {
-                println!("the data file is read only for cuts");
-            }
-            now(&scratch.join("app"), &base, &person, network).await;
-        }
+        None => now(&scratch.join("app"), &base, &person, network).await,
         Some(_) if env.lastfm.is_some() => {
             panic!("the Last.fm-only person has no history to cut")
         }
-        Some(spec) => cuts(&env, &base, &person, network, spec, datafile.as_ref()).await,
+        Some(spec) => cuts(&env, &base, &person, network, spec).await,
     }
 }
 
@@ -2415,211 +2088,4 @@ fn discover_replay_scoring_counts_what_the_person_went_on_to_play() {
     let ids: Vec<Option<&str>> = lastfm.iter().map(|row| row.mbid.as_deref()).collect();
     assert_eq!(ids[2], None, "a blank id is none");
     assert_eq!(lastfm[0].listen_count, Some(120));
-}
-
-// -- the threads, on a made-up data file ------------------------------------
-
-/// A made-up artist or release group id.
-fn made_up(n: u32) -> String {
-    format!("00000000-0000-4000-8000-{n:012x}")
-}
-
-/// A data file of `format` at `path`, in S3-01's tables: two seeds (Seed
-/// Two named through a redirect), a band's member with another band, a
-/// collaborator, a label the library holds three albums on and a hub
-/// label it holds three on, a single, a label album out after the cut, a
-/// Various Artists album, and links to a known and to a library artist.
-fn made_up_datafile(path: &Path, format: &str) {
-    let connection = rusqlite::Connection::open(path).expect("the data file creates");
-    connection
-        .execute_batch(
-            "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
-             CREATE TABLE artists (id INTEGER PRIMARY KEY, mbid TEXT NOT NULL UNIQUE,
-                 name TEXT NOT NULL, disambiguation TEXT, type TEXT) STRICT;
-             CREATE TABLE artist_redirects (old_mbid TEXT PRIMARY KEY,
-                 artist_id INTEGER NOT NULL) STRICT;
-             CREATE TABLE release_groups (id INTEGER PRIMARY KEY, mbid TEXT NOT NULL UNIQUE,
-                 title TEXT NOT NULL, primary_type TEXT NOT NULL, secondary_types INTEGER NOT NULL,
-                 first_date TEXT) STRICT;
-             CREATE TABLE release_group_redirects (old_mbid TEXT PRIMARY KEY,
-                 release_group_id INTEGER NOT NULL) STRICT;
-             CREATE TABLE artist_release_groups (artist_id INTEGER NOT NULL,
-                 release_group_id INTEGER NOT NULL, position INTEGER NOT NULL) STRICT;
-             CREATE TABLE labels (id INTEGER PRIMARY KEY, mbid TEXT NOT NULL UNIQUE,
-                 name TEXT NOT NULL, type TEXT, release_group_count INTEGER NOT NULL) STRICT;
-             CREATE TABLE release_group_labels (release_group_id INTEGER NOT NULL,
-                 label_id INTEGER NOT NULL) STRICT;
-             CREATE TABLE artist_links (artist_id INTEGER NOT NULL,
-                 other_artist_id INTEGER NOT NULL, kind TEXT NOT NULL,
-                 ended INTEGER NOT NULL) STRICT;",
-        )
-        .expect("the schema");
-    connection
-        .execute("INSERT INTO meta VALUES ('format', ?1)", [format])
-        .expect("meta");
-    let artists = [
-        (1, "Seed Band"),
-        (2, "Seed Two"),
-        (3, "Member"),
-        (4, "Other Band"),
-        (5, "Label Find"),
-        (6, "Hub Find"),
-        (7, "Pool Pick"),
-        (8, "Library Artist"),
-        (9, "Single Only"),
-        (10, "Known Friend"),
-        (11, "Late Label"),
-        (12, "Collaborator"),
-    ];
-    for (id, name) in artists {
-        connection
-            .execute(
-                "INSERT INTO artists (id, mbid, name) VALUES (?1, ?2, ?3)",
-                rusqlite::params![id, made_up(id), name],
-            )
-            .expect("an artist");
-    }
-    connection
-        .execute(
-            "INSERT INTO artists (id, mbid, name) VALUES (13, ?1, 'Various Artists')",
-            ["89ad4ac3-39f7-470e-963a-56509c546377"],
-        )
-        .expect("Various Artists");
-    connection
-        .execute(
-            "INSERT INTO artist_redirects VALUES (?1, 2)",
-            [made_up(0x22)],
-        )
-        .expect("a redirect");
-    connection
-        .execute_batch(
-            "INSERT INTO labels VALUES (1, 'label-small', 'Small Label', NULL, 8),
-                 (2, 'label-hub', 'Hub Label', NULL, 2001);
-             INSERT INTO artist_links VALUES (3, 1, 'member of band', 0),
-                 (3, 4, 'member of band', 1), (10, 2, 'is person', 0),
-                 (2, 12, 'collaboration', 0), (8, 1, 'founder', 0);
-             INSERT INTO release_groups VALUES (999, 'known-friends-album', 'Theirs', 'Album',
-                 0, '2019');
-             INSERT INTO artist_release_groups VALUES (10, 999, 1);",
-        )
-        .expect("labels and links");
-    // Group, artist, type, first date, label.
-    let groups: [(u32, u32, &str, &str, Option<i64>); 15] = [
-        (0x101, 8, "Album", "2010", Some(1)),
-        (0x102, 8, "Album", "2011", Some(1)),
-        (0x103, 8, "Album", "2012", Some(1)),
-        (0x104, 5, "Album", "2015-03", Some(1)),
-        (0x105, 8, "Album", "2016", Some(1)),
-        (0x106, 9, "Single", "2017", Some(1)),
-        (0x107, 11, "Album", "2026-06-01", Some(1)),
-        (0x108, 13, "Album", "2018", Some(1)),
-        (0x201, 8, "Album", "2001", Some(2)),
-        (0x202, 8, "Album", "2002", Some(2)),
-        (0x203, 8, "Album", "2003", Some(2)),
-        (0x204, 6, "EP", "2004", Some(2)),
-        (0x301, 3, "Album", "2020", None),
-        (0x302, 4, "EP", "2021-05-05", None),
-        (0x303, 12, "Album", "2019", None),
-    ];
-    for (group, artist, kind, date, label) in groups {
-        connection
-            .execute(
-                "INSERT INTO release_groups VALUES (?1, ?2, 'An album', ?3, 0, ?4)",
-                rusqlite::params![group, made_up(group), kind, date],
-            )
-            .expect("a group");
-        connection
-            .execute(
-                "INSERT INTO artist_release_groups VALUES (?1, ?2, 1)",
-                rusqlite::params![artist, group],
-            )
-            .expect("an album list row");
-        if let Some(label) = label {
-            connection
-                .execute(
-                    "INSERT INTO release_group_labels VALUES (?1, ?2)",
-                    rusqlite::params![group, label],
-                )
-                .expect("a label row");
-        }
-    }
-    drop(connection);
-    let mut permissions = std::fs::metadata(path)
-        .expect("the file is there")
-        .permissions();
-    permissions.set_readonly(true);
-    std::fs::set_permissions(path, permissions).expect("the file goes read-only");
-}
-
-/// The threads at a cut on 2026-02-01, from Seed Band and Seed Two (named
-/// by an old id), with the library holding three albums on each label.
-/// The small label reaches Label Find, never the hub's Hub Find, the
-/// single's artist, its album out after the cut, Various Artists or the
-/// library's own artist; Seed Band reaches its member and the member's
-/// other band, Seed Two its collaborator and not the known friend. Of the
-/// adopted Member, Label Find, Hub Find and Pool Pick, the pool holds Pool
-/// Pick and a thread reaches Member and Label Find, three by either; the
-/// threads add three artists the pool lacks (Other Band is in it). A file
-/// of another format is refused.
-#[test]
-fn discover_replay_threads_count_what_a_data_file_reaches() {
-    let dir = ScratchDir::new("discover-replay-threads");
-    let path = dir.join("datafile.db");
-    made_up_datafile(&path, "1");
-    let datafile = Datafile::open(&path).expect("format 1 opens");
-
-    let owned: HashSet<String> = [0x101, 0x102, 0x103, 0x201, 0x202, 0x203]
-        .into_iter()
-        .map(made_up)
-        .collect();
-    let known: HashSet<String> = [1, 2, 10].into_iter().map(made_up).collect();
-    let library_artists: HashSet<String> = HashSet::from([made_up(8)]);
-    let inputs = ThreadInputs {
-        seeds: vec![made_up(1), made_up(0x22)],
-        owned: &owned,
-        known: &known,
-        library_artists: &library_artists,
-        cut: replay::parse_day("2026-02-01").expect("a day"),
-    };
-    let reach = datafile.threads(&inputs);
-    let reached: Vec<&str> = reach.ways.keys().map(String::as_str).collect();
-    assert_eq!(
-        reached,
-        [made_up(3), made_up(4), made_up(5), made_up(12)],
-        "Member, Other Band, Label Find, Collaborator"
-    );
-    assert_eq!(
-        reach.ways[&made_up(4)],
-        ["another band of Member, member of Seed Band"]
-    );
-    assert_eq!(reach.ways[&made_up(12)], ["collaboration, with Seed Two"]);
-
-    let adopted: BTreeSet<String> = [3, 5, 6, 7].into_iter().map(made_up).collect();
-    let in_pool = [made_up(7), made_up(4)];
-    let pool: HashSet<&str> = in_pool.iter().map(String::as_str).collect();
-    assert_eq!(
-        datafile.reach(&inputs, &adopted, &pool),
-        CutReach {
-            adopted: 4,
-            in_pool: 1,
-            by_thread: 2,
-            either: 3,
-            pool_artists: 2,
-            added: 3,
-            added_label: 1,
-            added_people: 2,
-            found: vec![
-                (
-                    made_up(3),
-                    vec!["member of band, with Seed Band".to_owned()]
-                ),
-                (made_up(5), vec!["label: Small Label".to_owned()]),
-            ],
-        }
-    );
-
-    let other = dir.join("format-2.db");
-    made_up_datafile(&other, "2");
-    let refused = Datafile::open(&other).err().expect("format 2 is refused");
-    assert!(refused.contains("is format 2"), "{refused}");
 }

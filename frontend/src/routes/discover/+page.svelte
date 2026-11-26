@@ -175,7 +175,11 @@
 		entry.kind === 'pick' ? entry.pick.album : entry.extra.album;
 	const reasonOf = (entry: DeckEntry) =>
 		entry.kind === 'pick' ? entry.pick.reason : entry.extra.reason;
-	const TAPES = { your_artists: 'New to you', source: 'ListenBrainz pick' } as const;
+	const TAPES = {
+		your_artists: 'New to you',
+		fact: 'New to you',
+		source: 'ListenBrainz pick'
+	} as const;
 
 	function tapesOf(entry: DeckEntry): [string, string?] {
 		const first = linked ? TAPES[reasonOf(entry).kind] : 'Picked from your shelves';

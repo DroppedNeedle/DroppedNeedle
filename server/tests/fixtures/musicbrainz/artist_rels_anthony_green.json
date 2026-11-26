@@ -1,0 +1,277 @@
+{
+  "relations": [
+    {
+      "source-credit": "",
+      "attribute-values": {},
+      "ended": false,
+      "direction": "backward",
+      "end": null,
+      "begin": null,
+      "attributes": [],
+      "target-type": "artist",
+      "artist": {
+        "id": "852304a0-b6b5-4501-8dee-570352af60c7",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "country": "US",
+        "disambiguation": "",
+        "sort-name": "Green, Meredith",
+        "name": "Meredith Green",
+        "type": "Person"
+      },
+      "attribute-ids": {},
+      "type-id": "b2bf7a5d-2da6-4742-baf4-e38d8a7ad029",
+      "type": "married",
+      "target-credit": ""
+    },
+    {
+      "type": "member of band",
+      "attribute-credits": {},
+      "target-credit": "",
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "end": "2004",
+      "begin": "2003",
+      "target-type": "artist",
+      "attributes": [
+        "lead vocals",
+        "original"
+      ],
+      "artist": {
+        "sort-name": "Saosin",
+        "disambiguation": "US post-hardcore",
+        "type": "Group",
+        "name": "Saosin",
+        "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+        "id": "47b8b42a-96e8-46fa-9ea6-70c5136ae971",
+        "country": "US"
+      },
+      "attribute-ids": {
+        "lead vocals": "8e2a3255-87c2-4809-a174-98cb3704f1a5",
+        "original": "4fd3b255-a7d7-4424-9a63-40fa543b601c"
+      },
+      "source-credit": "",
+      "attribute-values": {},
+      "ended": true,
+      "direction": "forward"
+    },
+    {
+      "attribute-values": {},
+      "source-credit": "",
+      "direction": "forward",
+      "ended": false,
+      "begin": "2004",
+      "end": null,
+      "artist": {
+        "id": "a2496a3c-8f42-4b98-b780-6f8d64f56441",
+        "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+        "country": "US",
+        "sort-name": "Circa Survive",
+        "disambiguation": "",
+        "name": "Circa Survive",
+        "type": "Group"
+      },
+      "attribute-ids": {
+        "original": "4fd3b255-a7d7-4424-9a63-40fa543b601c",
+        "lead vocals": "8e2a3255-87c2-4809-a174-98cb3704f1a5"
+      },
+      "target-type": "artist",
+      "attributes": [
+        "lead vocals",
+        "original"
+      ],
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "attribute-credits": {},
+      "type": "member of band",
+      "target-credit": ""
+    },
+    {
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "target-credit": "",
+      "attribute-credits": {},
+      "type": "member of band",
+      "direction": "forward",
+      "ended": true,
+      "attribute-values": {},
+      "source-credit": "",
+      "attribute-ids": {
+        "lead vocals": "8e2a3255-87c2-4809-a174-98cb3704f1a5"
+      },
+      "artist": {
+        "name": "Saosin",
+        "type": "Group",
+        "disambiguation": "US post-hardcore",
+        "sort-name": "Saosin",
+        "country": "US",
+        "id": "47b8b42a-96e8-46fa-9ea6-70c5136ae971",
+        "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b"
+      },
+      "target-type": "artist",
+      "attributes": [
+        "lead vocals"
+      ],
+      "end": "2023",
+      "begin": "2014"
+    },
+    {
+      "attribute-values": {},
+      "source-credit": "",
+      "direction": "forward",
+      "ended": false,
+      "end": null,
+      "begin": null,
+      "artist": {
+        "name": "The Sound of Animals Fighting",
+        "type": "Group",
+        "disambiguation": "",
+        "sort-name": "Sound of Animals Fighting, The",
+        "country": "US",
+        "id": "9f492774-4cdb-4735-b299-5b6affafe4d4",
+        "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b"
+      },
+      "attribute-ids": {},
+      "target-type": "artist",
+      "attributes": [],
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "type": "member of band",
+      "target-credit": ""
+    },
+    {
+      "ended": false,
+      "direction": "forward",
+      "source-credit": "",
+      "attribute-values": {},
+      "attributes": [],
+      "target-type": "artist",
+      "artist": {
+        "id": "1efad620-d275-4f4a-8642-1b83f00d57ce",
+        "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+        "country": "US",
+        "sort-name": "High and Driving",
+        "disambiguation": "",
+        "name": "High and Driving",
+        "type": "Group"
+      },
+      "attribute-ids": {},
+      "end": null,
+      "begin": null,
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "target-credit": "",
+      "type": "member of band"
+    },
+    {
+      "source-credit": "",
+      "attribute-values": {},
+      "ended": false,
+      "direction": "forward",
+      "end": null,
+      "begin": null,
+      "attributes": [],
+      "target-type": "artist",
+      "attribute-ids": {},
+      "artist": {
+        "name": "Audience of One",
+        "type": "Group",
+        "sort-name": "Audience of One",
+        "disambiguation": "Anthony Green's band",
+        "country": "US",
+        "id": "d972ee28-ca32-4bd2-976e-4c8acbed35e9",
+        "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b"
+      },
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "type": "member of band",
+      "target-credit": ""
+    },
+    {
+      "type": "member of band",
+      "target-credit": "",
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+      "begin": null,
+      "end": null,
+      "target-type": "artist",
+      "attributes": [],
+      "attribute-ids": {},
+      "artist": {
+        "type": "Group",
+        "name": "Fuckin Whatever",
+        "disambiguation": "",
+        "sort-name": "Fuckin Whatever",
+        "country": "US",
+        "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+        "id": "a707e757-128f-4c6a-898f-bdab422c3ab5"
+      },
+      "source-credit": "",
+      "attribute-values": {},
+      "ended": false,
+      "direction": "forward"
+    },
+    {
+      "begin": null,
+      "end": null,
+      "target-type": "artist",
+      "attributes": [
+        "lead vocals",
+        "original"
+      ],
+      "attribute-ids": {
+        "original": "4fd3b255-a7d7-4424-9a63-40fa543b601c",
+        "lead vocals": "8e2a3255-87c2-4809-a174-98cb3704f1a5"
+      },
+      "artist": {
+        "disambiguation": "",
+        "sort-name": "L.S. Dunes",
+        "type": "Group",
+        "name": "L.S. Dunes",
+        "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+        "id": "5bd58bb8-7afc-4664-9b7e-77a687e00137",
+        "country": "US"
+      },
+      "source-credit": "",
+      "attribute-values": {},
+      "ended": false,
+      "direction": "forward",
+      "type": "member of band",
+      "attribute-credits": {},
+      "target-credit": "",
+      "type-id": "5be4c609-9afa-4ea0-910b-12ffb71e3821"
+    }
+  ],
+  "id": "eba4c290-2ce6-42c9-affd-5b1ffab84a8f",
+  "gender": "Male",
+  "life-span": {
+    "ended": false,
+    "begin": "1982-04-15",
+    "end": null
+  },
+  "end-area": null,
+  "area": {
+    "id": "489ce91b-6658-3307-9877-795b68554c98",
+    "type-id": null,
+    "iso-3166-1-codes": [
+      "US"
+    ],
+    "name": "United States",
+    "type": null,
+    "disambiguation": "",
+    "sort-name": "United States"
+  },
+  "country": "US",
+  "disambiguation": "frontman of Circa Survive",
+  "begin-area": {
+    "type": null,
+    "name": "Doylestown",
+    "disambiguation": "",
+    "sort-name": "Doylestown",
+    "type-id": null,
+    "id": "3c9c0781-4365-41d0-a3e9-847e2020a699"
+  },
+  "gender-id": "36d3d30a-839d-3eda-8cb3-29be4384e4a9",
+  "name": "Anthony Green",
+  "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+  "sort-name": "Green, Anthony",
+  "ipis": [
+    "00528518733"
+  ],
+  "type": "Person",
+  "isnis": [
+    "0000000114771576"
+  ]
+}

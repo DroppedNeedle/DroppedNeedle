@@ -1007,6 +1007,8 @@ pub enum PickReasonKind {
     YourArtists,
     /// A service picked it for the person.
     Source,
+    /// A fact about one of the person's artists leads to it: its band.
+    Fact,
 }
 
 /// One of the person's own artists a reason names.
@@ -1039,6 +1041,9 @@ pub enum FoundBy {
     CoListening,
     /// A service named it for the person.
     SourcePick,
+    /// One of the person's artists' bands, members or other names, as
+    /// MusicBrainz links them.
+    BandLink,
 }
 
 /// A service a pick's facts came from.
@@ -1049,6 +1054,8 @@ pub enum EvidenceSource {
     Listenbrainz,
     /// Last.fm.
     Lastfm,
+    /// MusicBrainz.
+    Musicbrainz,
 }
 
 /// One of the person's artists that led to a pick.
@@ -1091,7 +1098,8 @@ pub struct PickEvidence {
     pub artist_name: String,
     /// The line shown on the pick.
     pub reason: PickReason,
-    /// The person's artists that led to it, strongest first.
+    /// The person's artists that led to it through co-listening, strongest
+    /// first; none for a pick found otherwise.
     pub seeds: Vec<EvidenceSeed>,
     /// Whether its artist is new to the person.
     pub new_to_you: NewToYou,
