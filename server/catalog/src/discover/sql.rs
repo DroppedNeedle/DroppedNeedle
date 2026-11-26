@@ -809,6 +809,41 @@ droppedneedle_kernel::sql! {
         name: String,
     }
 
+    // -- artists a person named as ones they love ------------------------------
+
+    /// Name artist ?2 (lowercased) for person ?1 as ?3 at ?4,
+    /// while they exist. An artist already named keeps its row.
+    pub(super) STATED_ADD = "INSERT INTO catalog_stated_artists (user_id, \
+             artist_mbid_lower, artist_mbid, artist_name, stated_at) \
+         SELECT ?1, lower(?2), ?2, ?3, ?4 \
+         WHERE EXISTS (SELECT 1 FROM auth_users WHERE id = ?1) \
+         ON CONFLICT(user_id, artist_mbid_lower) DO NOTHING";
+    /// Take artist ?2 (lowercased) off person ?1's list.
+    pub(super) STATED_REMOVE = "DELETE FROM catalog_stated_artists \
+         WHERE user_id = ?1 AND artist_mbid_lower = ?2";
+    /// How many artists person ?1 named.
+    pub(super) STATED_COUNT = "SELECT COUNT(*) FROM catalog_stated_artists \
+         WHERE user_id = ?1";
+    /// Person ?1's named artists, in the order they named them; only
+    /// artist ?2 (lowercased) when one is named.
+    pub(super) STATED_LIST = "SELECT artist_mbid_lower, artist_mbid, artist_name, stated_at \
+         FROM catalog_stated_artists WHERE user_id = ?1 \
+         AND (?2 IS NULL OR artist_mbid_lower = ?2) \
+         ORDER BY stated_at, artist_mbid_lower";
+    pub(super) row StatedRow for [STATED_LIST] {
+        artist_mbid_lower: String,
+        artist_mbid: String,
+        artist_name: String,
+        stated_at: Millis,
+    }
+    /// Person ?1's named artists, for their seeds.
+    pub(super) SEED_STATED = "SELECT artist_mbid_lower AS mbid, artist_name AS name \
+         FROM catalog_stated_artists WHERE user_id = ?1";
+    pub(super) row SeedStated for [SEED_STATED] {
+        mbid: String,
+        name: String,
+    }
+
     /// Known release to release-group answers.
     family RESOLUTIONS = resolutions;
     pub(super) row ResolutionColumns for family [resolutions] {

@@ -28,8 +28,8 @@ use super::{
         FoundOnDiscover, GenreDetailResponse, HomeResponse, IntegrationStatus, LaterAlbum,
         LaterRequest, ListenSource, NewRelease, PastWeeksPage, PickAnswer, PickEvidence,
         PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, RadioPlanRequest,
-        RadioPlanResponse, RadioRequest, StatsRange, TrackPreviewResponse, TuningKind,
-        WeekResponse, YouTubeSearchResponse,
+        RadioPlanResponse, RadioRequest, StatedArtist, StatedArtistRequest, StatedArtistsResponse,
+        StatsRange, TrackPreviewResponse, TuningKind, WeekResponse, YouTubeSearchResponse,
     },
     new_releases,
     services::{self, DiscoverDeps},
@@ -794,6 +794,85 @@ pub async fn list_tunings(
         .map_err(ApiError::from)
 }
 
+/// The artists the caller named as ones they love, in the order they named
+/// them, and the most they may name.
+#[utoipa::path(
+    get,
+    tag = "discover",
+    path = "/api/v3/discover/stated-artists",
+    responses(
+        (status = 200, description = "The caller's named artists", body = StatedArtistsResponse),
+        (status = 401, description = "Not authenticated"),
+        (status = 500, description = "The list could not be read"),
+    )
+)]
+pub async fn list_stated_artists(
+    State(deps): State<DiscoverDeps>,
+    User(user): User,
+) -> Result<Json<StatedArtistsResponse>, ApiError> {
+    services::list_stated(&deps, user.user_id())
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+/// Name one artist the caller loves, for Discover to grow from. It is not
+/// a follow: nothing is watched or requested. Naming it again changes
+/// nothing. Their taste is built again.
+#[utoipa::path(
+    put,
+    tag = "discover",
+    path = "/api/v3/discover/stated-artists/{artist_mbid}",
+    params(
+        ("artist_mbid" = String, Path, description = "The artist's MusicBrainz id"),
+    ),
+    request_body = StatedArtistRequest,
+    responses(
+        (status = 200, description = "The artist as stored", body = StatedArtist),
+        (status = 400, description = "Bad request body, not a MusicBrainz artist id, a special-purpose id, or the list is full"),
+        (status = 401, description = "Not authenticated"),
+        (status = 500, description = "The change could not be saved"),
+    )
+)]
+pub async fn name_stated_artist(
+    State(deps): State<DiscoverDeps>,
+    User(user): User,
+    Path(artist_mbid): Path<String>,
+    ValidJson(body): ValidJson<StatedArtistRequest>,
+) -> Result<Json<StatedArtist>, ApiError> {
+    services::name_stated(&deps, user.user_id(), &artist_mbid, &body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+/// Take one artist off the caller's list. Their taste is built again.
+/// Answers the same when it was not there.
+#[utoipa::path(
+    delete,
+    tag = "discover",
+    path = "/api/v3/discover/stated-artists/{artist_mbid}",
+    params(
+        ("artist_mbid" = String, Path, description = "The artist's MusicBrainz id"),
+    ),
+    responses(
+        (status = 204, description = "The artist is not on the list"),
+        (status = 400, description = "Not a MusicBrainz artist id"),
+        (status = 401, description = "Not authenticated"),
+        (status = 500, description = "The change could not be saved"),
+    )
+)]
+pub async fn remove_stated_artist(
+    State(deps): State<DiscoverDeps>,
+    User(user): User,
+    Path(artist_mbid): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    services::remove_stated(&deps, user.user_id(), &artist_mbid)
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(ApiError::from)
+}
+
 /// Take back one way the caller tuned Discover. Their pool is built again.
 /// Answers the same when there was no such tuning.
 #[utoipa::path(
@@ -1153,6 +1232,9 @@ pub fn routes() -> Routes<DiscoverDeps> {
         .user(routes!(mark_later))
         .user(routes!(remove_later))
         .user(routes!(list_later))
+        .user(routes!(list_stated_artists))
+        .user(routes!(name_stated_artist))
+        .user(routes!(remove_stated_artist))
         .user(routes!(list_new_releases))
         .user(routes!(get_week))
         .user(routes!(week_more))

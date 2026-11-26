@@ -5,6 +5,7 @@
 	Replaces the hand-written `input`, `input-sm` and `input-soft` inputs.
 	`borderless` drops the box for a search field laid over its own panel,
 	which then shows the focus (a `focus-within` style on the panel).
+	`paper` draws the box in a paper card's ink, for a field on paper.
 -->
 <script lang="ts">
 	import type { HTMLInputAttributes } from 'svelte/elements';
@@ -19,6 +20,8 @@
 		borderless?: boolean;
 		/** Monospace, for URLs, paths and ids. */
 		mono?: boolean;
+		/** In a paper card's ink, for a field on paper. */
+		paper?: boolean;
 		error?: boolean;
 		/** Shown inside the start of the box. */
 		icon?: KitIcon;
@@ -32,6 +35,7 @@
 		size = 'md',
 		borderless = false,
 		mono = false,
+		paper = false,
 		error = false,
 		icon: Icon,
 		ref = $bindable(null),
@@ -44,6 +48,7 @@
 		[
 			borderless ? 'w-full bg-transparent outline-none' : sizes[size],
 			mono ? 'font-mono text-sm' : '',
+			paper && !borderless ? 'dn-input-paper' : '',
 			error ? 'input-error' : '',
 			className
 		]

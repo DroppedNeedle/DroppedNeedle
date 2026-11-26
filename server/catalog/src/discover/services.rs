@@ -24,8 +24,8 @@ use crate::discover::{
         IntegrationStatus, LaterAlbum, LaterRequest, ListenSource, NewRelease, PastWeeksPage,
         PickAnswer, PickEvidence, PickState, PlaylistSuggestionsRequest,
         PlaylistSuggestionsResponse, QueueBuildStatus, RadioPlanRequest, RadioPlanResponse,
-        RadioRequest, RadioSeedKind, StatsRange, TrackPreviewResponse, WeekResponse, WeekStatus,
-        YouTubeSearchResponse,
+        RadioRequest, RadioSeedKind, StatedArtist, StatedArtistRequest, StatedArtistsResponse,
+        StatsRange, TrackPreviewResponse, WeekResponse, WeekStatus, YouTubeSearchResponse,
     },
     new_releases::{NewReleaseLists, ReleaseKey},
     ports::{ProviderFailure, RadioFailure},
@@ -33,6 +33,7 @@ use crate::discover::{
     radio::LiveRadio,
     record::{EventError, PickRecord},
     scheduler::{ArtistDetail, Feature},
+    stated::{self, StatedArtists, StatedError},
     tunings::{self, TuningError, Tunings},
     youtube::LiveYouTube,
 };
@@ -128,6 +129,8 @@ pub struct DiscoverDeps {
     pub tunings: Tunings,
     /// Each person's Later pile.
     pub later: LaterPile,
+    /// The artists each person named as ones they love.
+    pub stated: StatedArtists,
     /// Each person's new releases from their artists.
     pub new_releases: NewReleaseLists,
     /// Each person's weekly sets: the job kind and the routes' answers.
@@ -542,6 +545,59 @@ pub async fn later_page(
         .page(user_id, paging, only)
         .await
         .map_err(later_failure)
+}
+
+fn stated_failure(error: StatedError) -> ServiceError {
+    match error {
+        StatedError::Invalid(reason) => ServiceError::InvalidInput(reason),
+        StatedError::Full => {
+            ServiceError::InvalidInput(format!("You can name at most {} artists", stated::LIMIT))
+        }
+        StatedError::Store(error) => ServiceError::Internal(format!("stated artists: {error}")),
+    }
+}
+
+/// The artists the user named as ones they love, in the order they named
+/// them.
+pub async fn list_stated(
+    deps: &DiscoverDeps,
+    user_id: &str,
+) -> Result<StatedArtistsResponse, ServiceError> {
+    let items = deps
+        .stated
+        .list(user_id)
+        .await
+        .map_err(|error| ServiceError::Internal(format!("stated artists read: {error}")))?;
+    Ok(StatedArtistsResponse {
+        items,
+        limit: stated::LIMIT,
+    })
+}
+
+/// Name one artist the user loves; their taste is built again.
+pub async fn name_stated(
+    deps: &DiscoverDeps,
+    user_id: &str,
+    artist_mbid: &str,
+    body: &StatedArtistRequest,
+) -> Result<StatedArtist, ServiceError> {
+    check_name(&body.artist_name, "artist_name")?;
+    deps.stated
+        .name(user_id, artist_mbid, &body.artist_name)
+        .await
+        .map_err(stated_failure)
+}
+
+/// Take one artist off the user's list; their taste is built again.
+pub async fn remove_stated(
+    deps: &DiscoverDeps,
+    user_id: &str,
+    artist_mbid: &str,
+) -> Result<(), ServiceError> {
+    deps.stated
+        .remove(user_id, artist_mbid)
+        .await
+        .map_err(stated_failure)
 }
 
 /// One page of the user's new releases from their artists.

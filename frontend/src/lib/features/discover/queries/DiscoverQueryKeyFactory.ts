@@ -29,6 +29,8 @@ export const DiscoverQueryKeyFactory = {
 		later: (userId: DiscoverV3UserId) => [...root(userId), 'later'] as const,
 		laterAlbum: (userId: DiscoverV3UserId, releaseGroupMbid: string) =>
 			[...root(userId), 'later', 'album', releaseGroupMbid] as const,
+		// The artists the caller named as ones they love.
+		statedArtists: (userId: DiscoverV3UserId) => [...root(userId), 'stated-artists'] as const,
 		// The week's set, and "dig further" past it, under the week's prefix.
 		week: (userId: DiscoverV3UserId) => [...root(userId), 'week'] as const,
 		weekMore: (userId: DiscoverV3UserId) => [...root(userId), 'week', 'more'] as const,

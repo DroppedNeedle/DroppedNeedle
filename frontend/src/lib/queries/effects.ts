@@ -187,6 +187,15 @@ export const EFFECTS = {
 		{ key: DiscoverQueryKeyFactory.v3.week(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.pastWeeks(userId) }
 	],
+	/**
+	 * The caller named an artist they love or took one off: the list, and
+	 * their week and Discover page, which grow from it.
+	 */
+	statedArtistsChanged: (userId: UserId): Sweep[] => [
+		{ key: DiscoverQueryKeyFactory.v3.statedArtists(userId) },
+		{ key: DiscoverQueryKeyFactory.v3.week(userId) },
+		{ key: DiscoverQueryKeyFactory.v3.home(userId) }
+	],
 	/** The caller heard a pick's sample: their week, which marks it heard. */
 	pickHeard: (userId: UserId): Sweep[] => [{ key: DiscoverQueryKeyFactory.v3.week(userId) }],
 	/** The caller chose their set day: the day, and the week that shows it. */
@@ -627,6 +636,7 @@ export const wantedChanged = fact('wantedChanged');
 export const recommendationsChanged = fact('recommendationsChanged');
 export const tuningsChanged = fact('tuningsChanged');
 export const laterChanged = fact('laterChanged');
+export const statedArtistsChanged = fact('statedArtistsChanged');
 export const pickHeard = fact('pickHeard');
 export const discoverPrefsChanged = fact('discoverPrefsChanged');
 export const artistDuplicatesChanged = fact('artistDuplicatesChanged');

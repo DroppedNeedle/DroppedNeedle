@@ -12,6 +12,7 @@ const LIST = 'GET /api/v3/discover/feedback';
 const UNDO = 'DELETE /api/v3/discover/feedback/{target}/{mbid}';
 const TUNINGS = 'GET /api/v3/discover/tunings';
 const UNDO_TUNING = 'DELETE /api/v3/discover/tunings/{kind}/{target}';
+const STATED = 'GET /api/v3/discover/stated-artists';
 type Entry = RouteData<typeof LIST>['items'][number];
 type Tuning = RouteData<typeof TUNINGS>['items'][number];
 
@@ -63,6 +64,10 @@ describe('ToldDiscoverModal.svelte', () => {
 			[TUNINGS]: () => ({ items: tunings }),
 			[UNDO_TUNING]: ({ params }) => {
 				tunings = tunings.filter((tuning) => tuning.target !== params.target);
+			},
+			[STATED]: {
+				items: [{ artist_mbid: 'ar-9', artist_name: 'Thrice', stated_at: TOLD_AT }],
+				limit: 30
 			}
 		});
 		authStore.setUser(
@@ -80,6 +85,8 @@ describe('ToldDiscoverModal.svelte', () => {
 		await renderWithQuery(ToldDiscoverModal, { open: true }, { client: queryClient });
 
 		const dialog = page.getByRole('dialog', { name: 'What you told Discover' });
+		await expect.element(dialog.getByRole('heading', { name: 'Artists you love 1' })).toBeVisible();
+		await expect.element(dialog.getByRole('button', { name: 'Remove Thrice' })).toBeVisible();
 		await expect.element(dialog.getByRole('heading', { name: 'Not this artist 1' })).toBeVisible();
 		await expect.element(dialog.getByRole('heading', { name: 'Less from this 1' })).toBeVisible();
 		await expect.element(dialog.getByRole('heading', { name: 'Not now 1' })).toBeVisible();
@@ -110,7 +117,8 @@ describe('ToldDiscoverModal.svelte', () => {
 	it('says when one of the two lists did not load, and keeps the other', async () => {
 		fakeApi({
 			[LIST]: () => ({ items: ENTRIES.slice(0, 1) }),
-			[TUNINGS]: () => apiError(500, 'INTERNAL_ERROR')
+			[TUNINGS]: () => apiError(500, 'INTERNAL_ERROR'),
+			[STATED]: { items: [], limit: 30 }
 		});
 		await renderWithQuery(ToldDiscoverModal, { open: true });
 

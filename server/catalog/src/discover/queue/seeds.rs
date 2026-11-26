@@ -2,11 +2,11 @@
 //!
 //! Every input is that person's own: their plays, hearts and ratings in
 //! the app, the artists they follow, their own playlists, the albums they
-//! asked for or put on their Later pile, and the accounts they linked
-//! themselves (ListenBrainz, Last.fm, their own Jellyfin login, never a
-//! shared one). Each statement is filtered by their id, so nobody else's
-//! rows ever count. What the library holds, which is shared, only tops up a
-//! list that came out too short.
+//! asked for or put on their Later pile, the artists they named as ones they
+//! love, and the accounts they linked themselves (ListenBrainz, Last.fm,
+//! their own Jellyfin login, never a shared one). Each statement is
+//! filtered by their id, so nobody else's rows ever count. What the library
+//! holds, which is shared, only tops up a list that came out too short.
 //!
 //! Artists are keyed by MusicBrainz id alone. A row without one,
 //! Various Artists and MusicBrainz's other special-purpose ids are dropped,
@@ -75,6 +75,13 @@ const LINKED_SCALE: f64 = 0.5;
 const JELLYFIN_FAVORITE: f64 = HEART_ARTIST;
 /// The library's albums of the artist weigh `ln(1 + albums)` times this.
 const LIBRARY_SCALE: f64 = 0.25;
+/// An artist the person named as one they love, while they have no other
+/// seed; with others it starts at the median weight of the seeds they did
+/// not name, and never under [`MIN_WEIGHT`], so it is a seed by itself.
+const STATED: f64 = FOLLOW;
+/// A named artist's weight halves for every this many of its plays and
+/// listens, so what a person plays soon outweighs what they said.
+const STATED_HALVING_PLAYS: i64 = 50;
 /// The weight that makes an artist a seed by itself: a heart on
 /// the artist or an album, a follow, or two plays in the last three weeks.
 pub(in crate::discover) const MIN_WEIGHT: f64 = 1.0;
@@ -121,6 +128,8 @@ pub(crate) enum SeedInput {
     Requests,
     /// The albums on their Later pile.
     Later,
+    /// The artists they named as ones they love.
+    Stated,
     /// An account they linked: ListenBrainz, Last.fm or their Jellyfin.
     Linked,
     /// What the library holds.
@@ -218,6 +227,24 @@ impl Tallies {
 
     fn seeds(&self) -> usize {
         self.0.values().filter(|tally| tally.is_seed()).count()
+    }
+
+    /// The median weight of the seeds so far, those in `leaving_out` left
+    /// out; none without one.
+    fn median_seed_weight(&self, leaving_out: &HashSet<&str>) -> Option<f64> {
+        let mut weights: Vec<f64> = self
+            .0
+            .iter()
+            .filter(|(mbid, tally)| tally.is_seed() && !leaving_out.contains(mbid.as_str()))
+            .map(|(_, tally)| tally.weight)
+            .collect();
+        weights.sort_by(f64::total_cmp);
+        let middle = weights.len() / 2;
+        match weights.len() {
+            0 => None,
+            n if n % 2 == 1 => Some(weights[middle]),
+            _ => Some(f64::midpoint(weights[middle - 1], weights[middle])),
+        }
     }
 
     /// Every artist named, by id.
@@ -361,7 +388,8 @@ async fn top_up(ctx: &BuildContext<'_>, tallies: &mut Tallies) {
 /// Every artist the person's own rows and accounts name, weighed: their
 /// plays and imported listens in `history`, hearts, ratings, follows,
 /// playlists, requests, the albums they said they know already or put on
-/// their Later pile, and the accounts they linked. ListenBrainz's top
+/// their Later pile, the accounts they linked, and the artists they named
+/// as ones they love, weighed last. ListenBrainz's top
 /// artists are read only when `read_listenbrainz` says so. What the library
 /// holds is not added.
 pub(in crate::discover) async fn weigh(
@@ -373,7 +401,7 @@ pub(in crate::discover) async fn weigh(
     read_listenbrainz: bool,
 ) -> Tallies {
     let id = || (user_id.to_owned(),);
-    let (hearts, known, ratings, follows, playlists, requests, later, linked) = tokio::join!(
+    let (hearts, known, ratings, follows, playlists, requests, later, stated, linked) = tokio::join!(
         rows(
             ctx,
             "discover.seeds.hearts",
@@ -426,6 +454,13 @@ pub(in crate::discover) async fn weigh(
             sql::SEED_LATER.text(),
             id(),
             sql::SeedLater::read
+        ),
+        rows(
+            ctx,
+            "discover.seeds.stated",
+            sql::SEED_STATED.text(),
+            id(),
+            sql::SeedStated::read
         ),
         linked_artists(ctx, user_id, user, source, read_listenbrainz),
     );
@@ -530,7 +565,30 @@ pub(in crate::discover) async fn weigh(
             }
         }
     }
+    // What they said starts at what their other seeds weigh and gives way
+    // to what they play.
+    let named: HashSet<&str> = stated.iter().map(|row| row.mbid.as_str()).collect();
+    let start = tallies
+        .median_seed_weight(&named)
+        .unwrap_or(STATED)
+        .max(MIN_WEIGHT);
+    for row in stated {
+        let plays = tallies.0.get(&row.mbid).map_or(0, |tally| tally.history);
+        tallies.add(
+            Some(&row.mbid),
+            &row.name,
+            SeedInput::Stated,
+            stated_weight(start, plays),
+        );
+    }
     tallies
+}
+
+/// A named artist's weight from `start`, halved for every
+/// [`STATED_HALVING_PLAYS`] of its `plays` and listens.
+fn stated_weight(start: f64, plays: i64) -> f64 {
+    let halvings = i32::try_from(plays.max(0) / STATED_HALVING_PLAYS).unwrap_or(i32::MAX);
+    start * 0.5_f64.powi(halvings)
 }
 
 /// What the person's own linked accounts name.

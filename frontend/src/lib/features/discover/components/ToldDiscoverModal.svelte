@@ -1,7 +1,8 @@
 <!--
 	Everything the person told Discover that is in effect, on the large
 	index card in a paper sheet, grouped by kind under ruled heads with a
-	count: not this artist, less from this, not now, know it already, no.
+	count: artists you love (with the field to name more), not this artist,
+	less from this, not now, know it already, no.
 	Each row says how long it lasts and since when, with Undo. A long group
 	shows its newest ten until asked for all. Later albums have their own
 	page, linked at the foot.
@@ -22,6 +23,8 @@
 		FeedbackKind
 	} from '$lib/features/discover/queries/feedback';
 	import { dayMonth, dayMonthYear } from '$lib/features/discover/state/weekWords';
+	import { getStatedArtistsQuery } from '$lib/features/discover/queries/statedArtists.svelte';
+	import StatedArtists from '$lib/features/discover/components/StatedArtists.svelte';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
@@ -39,6 +42,7 @@
 
 	const toldQuery = getDiscoverFeedbackV3Query(() => open);
 	const tuningsQuery = getTuningsQuery(() => open);
+	const statedQuery = getStatedArtistsQuery(() => open);
 	const undo = createUndoDiscoverFeedbackMutation();
 	const undoTuning = createUndoTuningMutation();
 
@@ -46,9 +50,11 @@
 	const SHOWN = 10;
 	let showAll = $state<Record<string, boolean>>({});
 
-	// Both reads answered, and neither holds anything.
+	// Every read answered, and none holds anything.
 	const nothing = $derived(
-		toldQuery.data?.items.length === 0 && tuningsQuery.data?.items.length === 0
+		toldQuery.data?.items.length === 0 &&
+			tuningsQuery.data?.items.length === 0 &&
+			statedQuery.data?.items.length === 0
 	);
 
 	const GROUPS: { kind: FeedbackKind; head: string }[] = [
@@ -128,6 +134,14 @@
 	<Card variant="index" size="lg" class="dn-told">
 		{#if nothing}
 			<p class="dn-told__nothing">Nothing yet.</p>
+		{/if}
+		{#if open}
+			<section>
+				{@render groupHead('Artists you love', statedQuery.data?.items.length ?? 0)}
+				<div class="dn-told__stated">
+					<StatedArtists />
+				</div>
+			</section>
 		{/if}
 		<QueryBoundary query={toldQuery} what="what you told Discover">
 			{#snippet children(data)}
@@ -211,6 +225,9 @@
 {/snippet}
 
 <style>
+	.dn-told__stated {
+		padding: 0.75rem 0 0.25rem;
+	}
 	.dn-told__nothing {
 		padding: 1.5rem 0;
 		text-align: center;

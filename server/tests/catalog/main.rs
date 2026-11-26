@@ -15,6 +15,7 @@ mod discover_reasons;
 mod discover_record;
 mod discover_replay;
 mod discover_shelves;
+mod discover_stated;
 mod discover_taste;
 mod discover_week;
 mod discover_weeks;

@@ -884,6 +884,33 @@ pub struct LaterAlbum {
     pub added_at: i64,
 }
 
+/// An artist the caller names as one they love, named as it was shown.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct StatedArtistRequest {
+    /// The artist's name.
+    pub artist_name: String,
+}
+
+/// One artist the caller named as one they love.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct StatedArtist {
+    /// The artist's MusicBrainz id, lowercased.
+    pub artist_mbid: String,
+    /// The artist's name, as it was shown.
+    pub artist_name: String,
+    /// When it was named (unix seconds).
+    pub stated_at: i64,
+}
+
+/// The artists the caller named as ones they love.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct StatedArtistsResponse {
+    /// The artists, in the order they were named.
+    pub items: Vec<StatedArtist>,
+    /// The most one person may name.
+    pub limit: u32,
+}
+
 /// What a pick's reason rests on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]

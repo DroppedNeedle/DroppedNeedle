@@ -2138,6 +2138,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/discover/stated-artists": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The artists the caller named as ones they love, in the order they named
+         *     them, and the most they may name.
+         */
+        get: operations["list_stated_artists"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/stated-artists/{artist_mbid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Name one artist the caller loves, for Discover to grow from. It is not
+         *     a follow: nothing is watched or requested. Naming it again changes
+         *     nothing. Their taste is built again.
+         */
+        put: operations["name_stated_artist"];
+        post?: never;
+        /**
+         * Take one artist off the caller's list. Their taste is built again.
+         *     Answers the same when it was not there.
+         */
+        delete: operations["remove_stated_artist"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/discover/track-preview": {
         parameters: {
             query?: never;
@@ -26438,6 +26483,33 @@ export interface components {
             /** @description Optional absolute origin the OAuth redirect URI is built from. */
             spotify_redirect_origin: string;
         };
+        /** @description One artist the caller named as one they love. */
+        StatedArtist: {
+            /** @description The artist's MusicBrainz id, lowercased. */
+            artist_mbid: string;
+            /** @description The artist's name, as it was shown. */
+            artist_name: string;
+            /**
+             * Format: int64
+             * @description When it was named (unix seconds).
+             */
+            stated_at: number;
+        };
+        /** @description An artist the caller names as one they love, named as it was shown. */
+        StatedArtistRequest: {
+            /** @description The artist's name. */
+            artist_name: string;
+        };
+        /** @description The artists the caller named as ones they love. */
+        StatedArtistsResponse: {
+            /** @description The artists, in the order they were named. */
+            items: components["schemas"]["StatedArtist"][];
+            /**
+             * Format: int32
+             * @description The most one person may name.
+             */
+            limit: number;
+        };
         /**
          * @description A listening-statistics window: the chart pages' `range`, and the
          *     ListenBrainz statistics range.
@@ -33593,6 +33665,146 @@ export interface operations {
             };
             /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_stated_artists: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's named artists */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatedArtistsResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The list could not be read */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    name_stated_artist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The artist's MusicBrainz id */
+                artist_mbid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StatedArtistRequest"];
+            };
+        };
+        responses: {
+            /** @description The artist as stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatedArtist"];
+                };
+            };
+            /** @description Bad request body, not a MusicBrainz artist id, a special-purpose id, or the list is full */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The change could not be saved */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    remove_stated_artist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The artist's MusicBrainz id */
+                artist_mbid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The artist is not on the list */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not a MusicBrainz artist id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The change could not be saved */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

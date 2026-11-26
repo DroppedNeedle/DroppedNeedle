@@ -657,6 +657,8 @@ const CALLER_KEYED_OPERATIONS: &[(&str, &str)] = &[
     ("DELETE", "/api/v3/discover/tunings/{kind}/{target}"),
     ("PUT", "/api/v3/discover/later/{release_group_mbid}"),
     ("DELETE", "/api/v3/discover/later/{release_group_mbid}"),
+    ("PUT", "/api/v3/discover/stated-artists/{artist_mbid}"),
+    ("DELETE", "/api/v3/discover/stated-artists/{artist_mbid}"),
     ("PUT", "/api/v3/library/albums/{album_id}/looks-wrong"),
     ("GET", "/api/v3/me/year-in-review/{year}"),
 ];
@@ -2075,6 +2077,47 @@ async fn caller_keyed_state_stays_with_its_caller() {
         "B's and the admin's changes took A's: {body}"
     );
     assert_eq!(body["total"], json!(1), "{body}");
+
+    // The artists A named as ones A loves: B and an admin see none of
+    // them, and naming or removing the same artist touches only their own.
+    let stated = "/api/v3/discover/stated-artists";
+    let stated_artist = format!("{stated}/{seed_artist}");
+    let artist_named = json!({"artist_name": "Seed"});
+    let (status, body) = call(
+        &app,
+        &ada,
+        "PUT",
+        &stated_artist,
+        Some(artist_named.clone()),
+    )
+    .await;
+    ok(status, &body, "A names an artist");
+    for (who, what) in [(&bob, "B"), (&admin, "an admin")] {
+        let (status, body) = call(&app, who, "GET", stated, None).await;
+        ok(status, &body, &format!("{what} reads their named artists"));
+        assert_eq!(
+            body["items"],
+            json!([]),
+            "{what} sees only their own: {body}"
+        );
+        let (status, body) = call(&app, who, "DELETE", &stated_artist, None).await;
+        ok(
+            status,
+            &body,
+            &format!("{what} removes their own, of which there is none"),
+        );
+    }
+    let (status, body) = call(&app, &bob, "PUT", &stated_artist, Some(artist_named)).await;
+    ok(status, &body, "B names the same artist");
+    let (status, body) = call(&app, &bob, "DELETE", &stated_artist, None).await;
+    ok(status, &body, "B removes it again");
+    let (status, body) = call(&app, &ada, "GET", stated, None).await;
+    ok(status, &body, "A reads A's named artists");
+    assert_eq!(
+        body["items"][0]["artist_mbid"],
+        json!(seed_artist),
+        "B's and the admin's changes took A's: {body}"
+    );
 
     // A's weekly set and set day: B and an admin read no set, no "dig
     // further" and no evidence of A's pick, and choosing their own day

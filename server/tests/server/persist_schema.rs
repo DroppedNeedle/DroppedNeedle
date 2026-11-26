@@ -72,7 +72,7 @@ fn schema_rows(connection: &Connection) -> Vec<(String, String, String, Option<S
 fn fresh_migrate_marks_version_and_seeds() {
     let connection = migrated();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), latest_version());
-    assert_eq!(table_names(&connection).len(), 206);
+    assert_eq!(table_names(&connection).len(), 207);
     assert_eq!(
         scalar(
             &connection,
@@ -477,6 +477,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0176_rotation_lists.sql",
         "50d97def1285f6d22d736f10aeac057815816ff725a2b13bef80d505325a1174",
+    ),
+    (
+        "0177_stated_artists.sql",
+        "85f708b264e0467d214f294671edceae3401d87c217eae98132c68646bc1a5a5",
     ),
 ];
 
@@ -4539,6 +4543,87 @@ fn rotation_lists_upgrade_adds_two_empty_tables() {
     }
 }
 
+/// 0177 adds the artists people named as ones they love, empty, and
+/// changes nothing else. A second row for one person and artist, or a row
+/// for no account, is refused, and an account's list goes with it.
+#[test]
+fn stated_artists_upgrade_adds_one_empty_table() {
+    let dir = ScratchDir::new("stated-artists-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 177)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 176);
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, created_at)
+                 VALUES ('u1', 'One', 1), ('u2', 'Two', 1);",
+        )
+        .unwrap();
+    let before_schema = schema_rows(&connection);
+    let users = table_rows(&connection, "auth_users", "rowid, *");
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 177);
+    assert_eq!(table_rows(&connection, "auth_users", "rowid, *"), users);
+    let mut after_schema = schema_rows(&connection);
+    let added = "catalog_stated_artists";
+    let table_sql = after_schema
+        .iter()
+        .find(|(_, name, _, _)| name == added)
+        .and_then(|(_, _, _, sql)| sql.clone());
+    assert!(
+        table_sql
+            .as_deref()
+            .is_some_and(|sql| sql.ends_with("STRICT")),
+        "{table_sql:?}"
+    );
+    assert_eq!(
+        scalar(&connection, "SELECT COUNT(*) FROM catalog_stated_artists"),
+        0,
+        "the list starts empty"
+    );
+    after_schema.retain(|(_, _, table, _)| table != added);
+    assert_eq!(after_schema, before_schema, "nothing else changes");
+
+    connection
+        .execute_batch(
+            "PRAGMA foreign_keys = ON;
+             INSERT INTO catalog_stated_artists (user_id, artist_mbid_lower, artist_mbid,
+                 artist_name, stated_at)
+                 VALUES ('u1', 'a', 'A', 'Someone', 1), ('u2', 'a', 'A', 'Someone', 1);",
+        )
+        .expect("the list is stored");
+    for refused in [
+        "INSERT INTO catalog_stated_artists (user_id, artist_mbid_lower, artist_mbid, \
+         artist_name, stated_at) VALUES ('u1', 'a', 'A', 'Someone', 2)",
+        "INSERT INTO catalog_stated_artists (user_id, artist_mbid_lower, artist_mbid, \
+         artist_name, stated_at) VALUES ('nobody', 'a', 'A', 'Someone', 1)",
+    ] {
+        assert!(connection.execute_batch(refused).is_err(), "{refused}");
+    }
+    connection
+        .execute("DELETE FROM auth_users WHERE id = 'u1'", [])
+        .unwrap();
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT user_id FROM catalog_stated_artists",
+            []
+        ),
+        ["u2"],
+        "an account's list goes with it, and only its own"
+    );
+}
+
 /// Every foreign key and what deleting its parent does. A rebuild that
 /// drops or changes a key's action, or adds a key, fails here: the list
 /// changes in the same commit, on purpose.
@@ -4592,6 +4677,7 @@ const FOREIGN_KEYS: &[(&str, &str, &str, &str)] = &[
     ("catalog_rotation_lists", "playlist_id", "catalog_playlists", "SET NULL"),
     ("catalog_rotation_lists", "user_id", "auth_users", "CASCADE"),
     ("catalog_rotation_prefs", "user_id", "auth_users", "CASCADE"),
+    ("catalog_stated_artists", "user_id", "auth_users", "CASCADE"),
     ("catalog_taste_artists", "user_id", "auth_users", "CASCADE"),
     ("catalog_taste_builds", "user_id", "auth_users", "CASCADE"),
     ("catalog_taste_groups", "user_id", "auth_users", "CASCADE"),

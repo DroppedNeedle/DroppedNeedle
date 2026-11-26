@@ -101,6 +101,12 @@
 		--btn-fg: var(--dn-paper-content);
 		--btn-border: var(--dn-paper-content);
 	}
+	/* a field on a paper card, in the paper's ink */
+	.dn-input-paper {
+		border-color: var(--dn-paper-content);
+		background-color: var(--dn-paper-white);
+		color: var(--dn-paper-content);
+	}
 	.dn-btn-danger-outline {
 		--btn-color: var(--color-base-200);
 		--btn-fg: var(--color-error);

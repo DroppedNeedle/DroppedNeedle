@@ -12,7 +12,7 @@ use crate::discover::listening::{ListeningData, ListeningNetwork, LiveNetwork};
 use crate::discover::services::DiscoverDeps;
 use crate::discover::{
     cache, charts, content, due, engine, facts, feedback, forget, home, later, page, previews,
-    queue, radio, record, scheduler, tunings, youtube,
+    queue, radio, record, scheduler, stated, tunings, youtube,
 };
 use crate::metadata::library::LocalCatalog;
 use crate::metadata::ports::{NoDetails, NoFollows, NoPurchaseLinks};
@@ -259,8 +259,13 @@ fn deps_with(
         taste,
         pool,
         evidence: engine::evidence::Evidence::new(inputs.db.clone()),
-        tunings: tunings::Tunings::new(inputs.db.clone(), Arc::clone(&inputs.clock), due),
+        tunings: tunings::Tunings::new(
+            inputs.db.clone(),
+            Arc::clone(&inputs.clock),
+            Arc::clone(&due),
+        ),
         later: later::LaterPile::new(inputs.db.clone(), Arc::clone(&inputs.clock)),
+        stated: stated::StatedArtists::new(inputs.db.clone(), Arc::clone(&inputs.clock), due),
         new_releases,
         weekly,
         past_weeks: engine::archive::PastWeeks::new(inputs.db.clone(), Arc::clone(&inputs.clock)),

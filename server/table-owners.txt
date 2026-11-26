@@ -190,6 +190,7 @@ catalog_playlist_tracks
 catalog_playlists
 catalog_rotation_lists
 catalog_rotation_prefs
+catalog_stated_artists
 catalog_taste_artists
 catalog_taste_builds
 catalog_taste_groups

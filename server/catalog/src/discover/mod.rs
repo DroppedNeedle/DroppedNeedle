@@ -37,6 +37,7 @@ pub mod scheduler;
 pub mod sections;
 pub mod services;
 pub(crate) mod sql;
+pub mod stated;
 pub mod tunings;
 pub mod wiring;
 pub mod youtube;

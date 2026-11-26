@@ -92,6 +92,7 @@ function routes(week: Week | (() => Week)): FakeRoutes {
 			refreshing: false
 		}),
 		'GET /api/v3/discover/later': () => ({ items: [], next_cursor: null, total: 0 }),
+		'GET /api/v3/discover/stated-artists': () => ({ items: [], limit: 30 }),
 		'GET /api/v3/me/section-prefs': () => ({ pages: {} }),
 		'POST /api/v3/discover/activity': () => ({
 			source_mode: 'official',
@@ -280,7 +281,7 @@ describe('the Discover page', () => {
 			} as Week,
 			'ListenBrainz has not answered since'
 		],
-		['nothing_yet', { status: 'nothing_yet' } as Week, 'Nothing here yet.']
+		['nothing_yet', { status: 'nothing_yet' } as Week, 'Name a few artists you love']
 	])('shows the %s state and no album from elsewhere', async (_name, week, said) => {
 		fakeApi(routes(week));
 		await renderWithQuery(Discover, {}, { client: queryClient });

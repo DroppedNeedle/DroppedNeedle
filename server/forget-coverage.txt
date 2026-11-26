@@ -34,6 +34,7 @@ catalog_discover_feedback kept: what the person told Discover, listed and undone
 catalog_discover_prefs kept: the day their weekly set comes out, which they chose; when their first set began waiting is cleared
 catalog_discover_tunings kept: how the person tuned Discover, listed and undone by them
 catalog_later_albums kept: albums the person put on their Later pile, listed and removed by them
+catalog_stated_artists kept: artists the person named as ones they love, listed and removed by them
 
 # Plays and play counts.
 library_play_history kept: plays in the app, which play counts and statistics come from

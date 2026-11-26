@@ -50,6 +50,8 @@
 	import PastWeeksRow from '$lib/features/discover/components/PastWeeksRow.svelte';
 	import GapsShelf from '$lib/features/discover/components/GapsShelf.svelte';
 	import FromYourShelves from '$lib/features/discover/components/FromYourShelves.svelte';
+	import StatedArtists from '$lib/features/discover/components/StatedArtists.svelte';
+	import { getStatedArtistsQuery } from '$lib/features/discover/queries/statedArtists.svelte';
 	import { getDiscoverHomeV3Query } from '$lib/features/discover/queries/DiscoverV3Queries.svelte';
 	import { createPickEventMutation } from '$lib/features/discover/queries/DiscoverV3Mutations.svelte';
 	import { useDiscoverActivity } from '$lib/features/discover/queries/DiscoverDemand.svelte';
@@ -147,6 +149,24 @@
 		deck.entries
 			.filter((entry) => entry.kind === 'pick')
 			.map((entry) => ({ key: entry.key, title: titleOf(entry), look: looks.get(entry.key) }))
+	);
+
+	// ---------- naming artists on the empty counter ----------
+
+	/** Named artists a first set needs. */
+	const FIRST_SET = 3;
+	const statedQuery = getStatedArtistsQuery();
+	const statedCount = $derived(statedQuery.data?.items.length ?? 0);
+	// Once the empty card has shown the picker it stays until three are
+	// named, though the first name already has the week being set out.
+	let naming = $state(false);
+	$effect(() => {
+		if (status === 'nothing_yet') naming = true;
+	});
+	const holdPicker = $derived(
+		!set &&
+			(status === 'nothing_yet' ||
+				(status === 'being_set_out' && naming && statedCount < FIRST_SET))
 	);
 
 	const pad = (n: number) => String(n).padStart(2, '0');
@@ -877,10 +897,25 @@
 	</Card>
 {/snippet}
 
+{#snippet startHere()}
+	<Card variant="torn" padding="none" class="dn-discover__blank">
+		<div class="dn-discover__blank-ink">
+			<Tape>Start here</Tape>
+			<h2 class="dn-discover__blank-title">Name a few artists you love</h2>
+			<p class="dn-discover__start-line">
+				Nothing here yet. Play, heart or follow a few artists, or name three you love.
+			</p>
+			<StatedArtists first />
+		</div>
+	</Card>
+{/snippet}
+
 {#snippet pickPlace()}
 	<div class="dn-discover__pick">
 		{#if !week}
 			<PickCardSkeleton label="Loading this week's set" />
+		{:else if holdPicker}
+			{@render startHere()}
 		{:else if status === 'being_set_out'}
 			{@const found = week.found_so_far ?? 0}
 			{@render blankCard(
@@ -1165,6 +1200,10 @@
 		margin: 0;
 		font-size: 1.0625rem;
 		color: var(--dn-muted);
+	}
+	/* the card's paragraphs grow by default; this one leaves the picker under it */
+	.dn-discover__blank-ink .dn-discover__start-line {
+		flex-grow: 0;
 	}
 	.dn-discover__blank-title {
 		margin: 0;

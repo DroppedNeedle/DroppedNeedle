@@ -6761,6 +6761,193 @@
         ]
       }
     },
+    "/api/v3/discover/stated-artists": {
+      "get": {
+        "tags": [
+          "discover"
+        ],
+        "summary": "The artists the caller named as ones they love, in the order they named\nthem, and the most they may name.",
+        "operationId": "list_stated_artists",
+        "responses": {
+          "200": {
+            "description": "The caller's named artists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatedArtistsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The list could not be read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/discover/stated-artists/{artist_mbid}": {
+      "put": {
+        "tags": [
+          "discover"
+        ],
+        "summary": "Name one artist the caller loves, for Discover to grow from. It is not\na follow: nothing is watched or requested. Naming it again changes\nnothing. Their taste is built again.",
+        "operationId": "name_stated_artist",
+        "parameters": [
+          {
+            "name": "artist_mbid",
+            "in": "path",
+            "description": "The artist's MusicBrainz id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StatedArtistRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The artist as stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatedArtist"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request body, not a MusicBrainz artist id, a special-purpose id, or the list is full",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The change could not be saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "discover"
+        ],
+        "summary": "Take one artist off the caller's list. Their taste is built again.\nAnswers the same when it was not there.",
+        "operationId": "remove_stated_artist",
+        "parameters": [
+          {
+            "name": "artist_mbid",
+            "in": "path",
+            "description": "The artist's MusicBrainz id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The artist is not on the list"
+          },
+          "400": {
+            "description": "Not a MusicBrainz artist id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The change could not be saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/discover/track-preview": {
       "get": {
         "tags": [
@@ -73884,6 +74071,66 @@
           "spotify_redirect_origin": {
             "type": "string",
             "description": "Optional absolute origin the OAuth redirect URI is built from."
+          }
+        }
+      },
+      "StatedArtist": {
+        "type": "object",
+        "description": "One artist the caller named as one they love.",
+        "required": [
+          "artist_mbid",
+          "artist_name",
+          "stated_at"
+        ],
+        "properties": {
+          "artist_mbid": {
+            "type": "string",
+            "description": "The artist's MusicBrainz id, lowercased."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "The artist's name, as it was shown."
+          },
+          "stated_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it was named (unix seconds)."
+          }
+        }
+      },
+      "StatedArtistRequest": {
+        "type": "object",
+        "description": "An artist the caller names as one they love, named as it was shown.",
+        "required": [
+          "artist_name"
+        ],
+        "properties": {
+          "artist_name": {
+            "type": "string",
+            "description": "The artist's name."
+          }
+        }
+      },
+      "StatedArtistsResponse": {
+        "type": "object",
+        "description": "The artists the caller named as ones they love.",
+        "required": [
+          "items",
+          "limit"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StatedArtist"
+            },
+            "description": "The artists, in the order they were named."
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The most one person may name.",
+            "minimum": 0
           }
         }
       },
