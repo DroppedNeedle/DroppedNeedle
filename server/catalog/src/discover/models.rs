@@ -1122,7 +1122,7 @@ pub struct PickEvidence {
 // The weekly set
 // ---------------------------------------------------------------------------
 
-pub use super::engine::weekly::{SetDay, ShortReason};
+pub use super::engine::weekly::{Depth, SetDay, ShortReason};
 
 /// Where the person's week stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -1332,6 +1332,10 @@ pub struct DiscoverPrefs {
     /// The day their set comes out, from 00:00 server time. Friday unless
     /// they chose another; a new day counts from the next week.
     pub set_day: SetDay,
+    /// How far from what they know their picks go. Next door unless they
+    /// chose another; a new depth rebuilds their pool, and this week's set
+    /// stays as it is.
+    pub depth: Depth,
 }
 
 // ---------------------------------------------------------------------------

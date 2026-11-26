@@ -2246,10 +2246,20 @@ async fn caller_keyed_state_stays_with_its_caller() {
             StatusCode::NOT_FOUND,
             "{what} read A's set pick: {body}"
         );
-        let (status, body) =
-            call(&app, who, "PUT", prefs, Some(json!({"set_day": "monday"}))).await;
-        ok(status, &body, &format!("{what} chooses their own day"));
+        let chosen = json!({"set_day": "monday", "depth": "far_out"});
+        let (status, body) = call(&app, who, "PUT", prefs, Some(chosen)).await;
+        ok(
+            status,
+            &body,
+            &format!("{what} chooses their own day and depth"),
+        );
     }
+    let (status, body) = call(&app, &bob, "PUT", prefs, Some(json!({"set_day": "monday"}))).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "a day without a depth is refused: {body}"
+    );
     let (status, body) = call(&app, &ada, "GET", week, None).await;
     ok(status, &body, "A reads A's week");
     assert_eq!(
@@ -2263,8 +2273,9 @@ async fn caller_keyed_state_stays_with_its_caller() {
     let (status, body) = call(&app, &ada, "GET", prefs, None).await;
     ok(status, &body, "A reads A's set day");
     assert_eq!(
-        body["set_day"], "friday",
-        "B's and the admin's days left A's: {body}"
+        (&body["set_day"], &body["depth"]),
+        (&json!("friday"), &json!("next_door")),
+        "B's and the admin's choices left A's: {body}"
     );
 
     // A's new releases, from an artist A follows: B's and an admin's lists

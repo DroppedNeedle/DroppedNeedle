@@ -654,7 +654,7 @@ pub async fn found_on_discover(
         .map_err(|error| ServiceError::Internal(format!("found on discover: {error}")))
 }
 
-/// The user's set day.
+/// The user's set day and depth.
 pub async fn discover_prefs(
     deps: &DiscoverDeps,
     user_id: &str,
@@ -665,7 +665,7 @@ pub async fn discover_prefs(
         .map_err(|error| ServiceError::Internal(format!("discover prefs: {error}")))
 }
 
-/// Keep the user's set day; the week running keeps its set.
+/// Keep the user's set day and depth; the week running keeps its set.
 pub async fn save_discover_prefs(
     deps: &DiscoverDeps,
     user_id: &str,

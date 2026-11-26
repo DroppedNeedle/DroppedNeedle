@@ -29,6 +29,8 @@
 //!    (a singer they play, say) is known; its paths name that credit.
 //! 6. Order ([`order`]): by support, then artist id, each artist's albums
 //!    in the order chosen. Nothing random, no date.
+//! 7. Depth: the ranking's sort and the order read support tilted by the
+//!    person's [`Depth`] ([`tilted`]); next door is support itself.
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
@@ -36,7 +38,8 @@ use std::collections::{HashMap, HashSet};
 use droppedneedle_library::identify::artist_links::placeholder;
 
 use super::candidate::{Candidate, CandidateKind, Link, Path, PathArtist, PathKind, PathSource};
-use super::select::Exposure;
+use super::select::{Exposure, Floors};
+use super::weekly::Depth;
 use crate::discover::feedback::Feedback;
 use crate::discover::listening::similar::FAME_EXPONENT;
 use crate::discover::listening::{RankedAlbum, gate};
@@ -97,6 +100,46 @@ pub mod proposed {
     pub const DIRECT_LINK: f64 = 0.5;
     /// The strength of a band sharing a member, or a subgroup.
     pub const SHARED_MEMBER: f64 = 0.25;
+
+    // -- depth -----------------------------------------------------------------
+
+    /// The pool order's tilt at home ground: an artist's support times its
+    /// listeners over the floor to the minus this, so more listeners lead.
+    pub const HOME_GROUND_TILT: f64 = -0.15;
+    /// The pool order's tilt far out: fewer listeners lead.
+    pub const FAR_OUT_TILT: f64 = 0.15;
+    /// How many times the floors home ground holds to, and the part of
+    /// them far out holds to (never zero).
+    pub const DEPTH_FLOOR_STEP: i64 = 2;
+}
+
+/// The key the pool is ordered by at `depth`: `support` times `listeners`
+/// over the depth's artist floor, to the minus the depth's tilt. A count
+/// under the floor counts as the floor, so an artist the floor would refuse
+/// never leads for its want of listeners; a count not known reads as
+/// `median`, the middle count of the ones being ordered (`median_count`),
+/// so it neither leads nor sinks. Next door it is `support` itself. Stored
+/// support, reasons and link strengths never carry it.
+pub fn tilted(support: f64, listeners: Option<i64>, median: Option<i64>, depth: Depth) -> f64 {
+    let tilt = match depth {
+        Depth::NextDoor => return support,
+        Depth::HomeGround => proposed::HOME_GROUND_TILT,
+        Depth::FarOut => proposed::FAR_OUT_TILT,
+    };
+    let floor = Floors::for_depth(depth).artist_listeners.max(1);
+    let count = listeners.or(median).unwrap_or(floor).max(floor);
+    support * (count as f64 / floor as f64).powf(-tilt)
+}
+
+/// The middle of the known `counts` (the lower of the two middle ones for
+/// an even number); `None` when none is known.
+fn median_count(counts: impl Iterator<Item = Option<i64>>) -> Option<i64> {
+    let mut known: Vec<i64> = counts.flatten().collect();
+    if known.is_empty() {
+        return None;
+    }
+    let mid = (known.len() - 1) / 2;
+    Some(*known.select_nth_unstable(mid).1)
 }
 
 /// What the person asked of one seed.
@@ -373,13 +416,15 @@ fn bucket_order(a: Option<i64>, b: Option<i64>) -> Ordering {
 
 /// Rank the artists `lists` point at (one entry a seed, in `seeds`' order),
 /// for a person with `groups` taste groups, through `gates`. `listeners`
-/// holds the counted artists' listeners.
+/// holds the counted artists' listeners. The artists are sorted by their
+/// support tilted at `depth`.
 pub fn rank(
     seeds: &[Seed],
     lists: &[Vec<SeedLink>],
     listeners: &HashMap<String, i64>,
     groups: usize,
     gates: &ArtistGates<'_>,
+    depth: Depth,
 ) -> Ranking {
     struct Pointed {
         name: Option<String>,
@@ -482,9 +527,10 @@ pub fn rank(
             paths,
         });
     }
+    let median = median_count(ranking.artists.iter().map(|artist| artist.listeners));
     ranking.artists.sort_by(|a, b| {
-        b.support
-            .total_cmp(&a.support)
+        tilted(b.support, b.listeners, median, depth)
+            .total_cmp(&tilted(a.support, a.listeners, median, depth))
             .then_with(|| a.mbid.cmp(&b.mbid))
     });
     ranking
@@ -753,13 +799,18 @@ impl Walk {
     }
 }
 
-/// `candidates` in the pool's order: most support first, then by artist
-/// id, each artist's albums in the order they came; one row a release
-/// group, the first kept; at most [`proposed::POOL_MAX`].
-pub fn order(mut candidates: Vec<Candidate>) -> Vec<Candidate> {
+/// `candidates` in the pool's order: most support tilted at `depth` first,
+/// then by artist id, each artist's albums in the order they came; one row
+/// a release group, the first kept; at most [`proposed::POOL_MAX`].
+pub fn order(mut candidates: Vec<Candidate>, depth: Depth) -> Vec<Candidate> {
+    let median = median_count(
+        candidates
+            .iter()
+            .map(|candidate| candidate.artist_listeners),
+    );
     candidates.sort_by(|a, b| {
-        b.support
-            .total_cmp(&a.support)
+        tilted(b.support, b.artist_listeners, median, depth)
+            .total_cmp(&tilted(a.support, a.artist_listeners, median, depth))
             .then_with(|| a.artist_mbid.cmp(&b.artist_mbid))
     });
     let mut seen = HashSet::new();
@@ -810,7 +861,7 @@ mod tests {
             library: &library,
             feedback: &feedback,
         };
-        rank(seeds, lists, listeners, groups, &gates)
+        rank(seeds, lists, listeners, groups, &gates, Depth::NextDoor)
     }
 
     fn names(ranking: &Ranking) -> Vec<&str> {

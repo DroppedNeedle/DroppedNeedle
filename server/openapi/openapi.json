@@ -6350,11 +6350,11 @@
         "tags": [
           "discover"
         ],
-        "summary": "The caller's set day.",
+        "summary": "The caller's set day and depth.",
         "operationId": "get_discover_prefs",
         "responses": {
           "200": {
-            "description": "The caller's set day",
+            "description": "The caller's set day and depth",
             "content": {
               "application/json": {
                 "schema": {
@@ -6374,7 +6374,7 @@
             }
           },
           "500": {
-            "description": "The set day could not be read",
+            "description": "The set day and depth could not be read",
             "content": {
               "application/json": {
                 "schema": {
@@ -6396,7 +6396,7 @@
         "tags": [
           "discover"
         ],
-        "summary": "Keep the caller's set day. This week's set stays as it is; the new day\ncounts from the first such day after it.",
+        "summary": "Keep the caller's set day and depth. This week's set stays as it is; a new\nday counts from the first such day after it, and a new depth rebuilds\ntheir pool for dig further and the next set.",
         "operationId": "save_discover_prefs",
         "requestBody": {
           "content": {
@@ -6410,7 +6410,7 @@
         },
         "responses": {
           "200": {
-            "description": "The set day as kept",
+            "description": "The set day and depth as kept",
             "content": {
               "application/json": {
                 "schema": {
@@ -6440,7 +6440,7 @@
             }
           },
           "500": {
-            "description": "The set day could not be saved",
+            "description": "The set day and depth could not be saved",
             "content": {
               "application/json": {
                 "schema": {
@@ -47356,6 +47356,15 @@
           }
         }
       },
+      "Depth": {
+        "type": "string",
+        "description": "How far from what a person knows their picks go. Next door is the\ndefault and ranks and selects as the engine always has; home ground\nleans toward artists more people play and raises the floors, far out\nleans toward artists fewer people play and lowers them.",
+        "enum": [
+          "home_ground",
+          "next_door",
+          "far_out"
+        ]
+      },
       "DeviceSessionMint": {
         "type": "object",
         "description": "Mint a named companion token.",
@@ -48088,9 +48097,14 @@
         "type": "object",
         "description": "How the person's weekly set is made.",
         "required": [
-          "set_day"
+          "set_day",
+          "depth"
         ],
         "properties": {
+          "depth": {
+            "$ref": "#/components/schemas/Depth",
+            "description": "How far from what they know their picks go. Next door unless they\nchose another; a new depth rebuilds their pool, and this week's set\nstays as it is."
+          },
           "set_day": {
             "$ref": "#/components/schemas/SetDay",
             "description": "The day their set comes out, from 00:00 server time. Friday unless\nthey chose another; a new day counts from the next week."

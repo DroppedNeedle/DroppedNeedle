@@ -498,6 +498,10 @@ const SHIPPED: &[(&str, &str)] = &[
         "0181_band_links.sql",
         "2c428dfdaba9a07d89da84511d8ecff53037389a53e4ce96d01632dc120027c4",
     ),
+    (
+        "0182_discover_depth.sql",
+        "55f852492e310599672bb3b172ad1c38bacd8c83cb1a35d0cc42cdc4098dc97a",
+    ),
 ];
 
 /// Upgrading an instance keeps existing sessions valid and outside the
@@ -5120,6 +5124,113 @@ fn band_links_upgrade_carries_every_fetch_row_and_path() {
     );
 }
 
+/// 0182 adds a person's Discover depth and the depth a pool was ordered and
+/// a set dealt at. Everyone kept reads as next door and every pool build and
+/// set kept has none; a value outside the three is refused, and nothing
+/// else changes.
+#[test]
+fn discover_depth_upgrade_reads_everyone_as_next_door() {
+    let dir = ScratchDir::new("discover-depth-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 182)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, created_at)
+                 VALUES ('u1', 'One', 1), ('u2', 'Two', 1);
+             INSERT INTO catalog_discover_prefs (user_id, set_day, updated_at)
+                 VALUES ('u1', 'monday', 5);
+             INSERT INTO catalog_weekly_sets (user_id, week_start_at, built_at, short_reason,
+                 plays_counted, seeds, shelf_artists, shelf_albums, linked, tastes)
+                 VALUES ('u1', 1, 2, NULL, 3, 1, 0, 0, 0, '{}'),
+                        ('u2', 1, 2, 'rest_known', 3, 1, 0, 0, 0, '{}');
+             INSERT INTO catalog_discover_pool_builds (user_id, built_at, incomplete,
+                 waiting_for, seeds_used, neighbours_found, known_left_out, hubs_left_out,
+                 artists_ranked, artists_without_album, new_artist_candidates,
+                 source_pick_candidates, gap_candidates, shelf_candidates, fresh_candidates,
+                 thread_candidates)
+                 VALUES ('u1', 7, 0, '[]', 1, 1, 0, NULL, 1, 0, 1, 0, 0, 0, 0, 0);",
+        )
+        .unwrap();
+    let prefs = table_rows(&connection, "catalog_discover_prefs", "rowid, *");
+    let sets = table_rows(&connection, "catalog_weekly_sets", "rowid, *");
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 182);
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT user_id || ' ' || set_day || ' ' || depth FROM catalog_discover_prefs",
+            []
+        ),
+        ["u1 monday next_door"],
+        "a kept person reads as next door"
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT COUNT(*) FROM catalog_weekly_sets WHERE depth IS NULL"
+        ),
+        2,
+        "a kept set has no depth"
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT COUNT(*) FROM catalog_discover_pool_builds WHERE depth IS NULL"
+        ),
+        1,
+        "a kept pool build has no depth"
+    );
+    let columns = "rowid, user_id, set_day, updated_at, history_wait_from_at";
+    assert_eq!(
+        table_rows(&connection, "catalog_discover_prefs", columns),
+        prefs,
+        "the prefs carry across"
+    );
+    let columns = "rowid, user_id, week_start_at, built_at, short_reason, plays_counted, \
+         history_from_at, history_to_at, seeds, neighbours_found, known_left_out, hubs_left_out, \
+         shelf_artists, shelf_albums, linked, tastes";
+    assert_eq!(
+        table_rows(&connection, "catalog_weekly_sets", columns),
+        sets,
+        "the sets carry across"
+    );
+    connection
+        .execute_batch(
+            "INSERT INTO catalog_discover_prefs (user_id, updated_at) VALUES ('u2', 1);
+             UPDATE catalog_discover_prefs SET depth = 'far_out' WHERE user_id = 'u1';
+             UPDATE catalog_weekly_sets SET depth = 'home_ground' WHERE user_id = 'u2';",
+        )
+        .expect("the three depths are stored");
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT depth FROM catalog_discover_prefs ORDER BY user_id",
+            []
+        ),
+        ["far_out", "next_door"],
+        "no depth chosen is next door"
+    );
+    for refused in [
+        "UPDATE catalog_discover_prefs SET depth = 'deeper'",
+        "UPDATE catalog_discover_prefs SET depth = NULL",
+        "UPDATE catalog_weekly_sets SET depth = 'deeper'",
+        "UPDATE catalog_discover_pool_builds SET depth = 'deeper'",
+    ] {
+        assert!(connection.execute_batch(refused).is_err(), "{refused}");
+    }
+}
+
 /// Every foreign key and what deleting its parent does. A rebuild that
 /// drops or changes a key's action, or adds a key, fails here: the list
 /// changes in the same commit, on purpose.
@@ -5753,7 +5864,7 @@ fn state_columns() -> Vec<StateColumn> {
     use droppedneedle_catalog::discover::facts::{FactKind, FactSource, ListSource, MeteredSource, Outcome};
     use droppedneedle_catalog::discover::record::MadeFrom;
     use droppedneedle_catalog::discover::tunings::TuningKind;
-    use droppedneedle_catalog::discover::engine::weekly::{SetDay, ShortReason};
+    use droppedneedle_catalog::discover::engine::weekly::{Depth, SetDay, ShortReason};
     use droppedneedle_catalog::discover::scheduler::Feature;
     use droppedneedle_compat::jellyfin::ids::IdKind;
     use droppedneedle_kernel::jobs::queue::State as QueueState;
@@ -5851,6 +5962,8 @@ fn state_columns() -> Vec<StateColumn> {
         state("catalog_discover_picks", "feedback_kind", &FeedbackKind::ALL, FeedbackKind::as_str),
         state("catalog_discover_picks", "first_surface", &MadeFrom::ALL, MadeFrom::as_str),
         state("catalog_discover_picks", "requested_from", &MadeFrom::ALL, MadeFrom::as_str),
+        state("catalog_discover_pool_builds", "depth", &Depth::ALL, Depth::as_str),
+        state("catalog_discover_prefs", "depth", &Depth::ALL, Depth::as_str),
         state("catalog_discover_prefs", "set_day", &SetDay::ALL, SetDay::as_str),
         state("catalog_discover_tunings", "kind", &TuningKind::ALL, TuningKind::as_str),
         state("catalog_fact_fetches", "kind", &FactKind::ALL, FactKind::as_str),
@@ -5866,6 +5979,7 @@ fn state_columns() -> Vec<StateColumn> {
         state("catalog_taste_groups", "trend", &Trend::ALL, Trend::as_str),
         state("catalog_user_favorites", "item_kind", &FavoriteKind::ALL, FavoriteKind::as_str),
         state("catalog_user_ratings", "item_kind", &RatedKind::ALL, RatedKind::as_str),
+        state("catalog_weekly_sets", "depth", &Depth::ALL, Depth::as_str),
         state("catalog_weekly_sets", "short_reason", &ShortReason::ALL, ShortReason::as_str),
         // compat
         state("compat_jellyfin_ids", "kind", &IdKind::ALL, IdKind::as_str),

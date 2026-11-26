@@ -20,6 +20,7 @@ use super::reason;
 use super::select::Shown;
 use super::sql;
 use super::taste_store::Kept;
+use super::weekly::Depth;
 use crate::discover::cache::ForgetCounts;
 use crate::discover::feedback::Feedback;
 use crate::discover::later;
@@ -456,6 +457,8 @@ pub(crate) struct PoolBuild {
     pub waiting_for: Vec<String>,
     /// Its counts.
     pub counts: Counts,
+    /// The depth it was ordered at.
+    pub depth: Depth,
     /// The pool, in order.
     pub candidates: Vec<Candidate>,
 }
@@ -494,6 +497,7 @@ fn insert(tx: &Transaction, user: &str, build: &PoolBuild) -> rusqlite::Result<(
             by_kind(CandidateKind::Shelf),
             by_kind(CandidateKind::Fresh),
             by_kind(CandidateKind::Thread),
+            build.depth,
         ],
     )?;
     let mut candidates = tx.prepare_cached(sql::POOL_CANDIDATE_INSERT.text())?;

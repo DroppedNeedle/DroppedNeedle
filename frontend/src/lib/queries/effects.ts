@@ -205,7 +205,10 @@ export const EFFECTS = {
 	],
 	/** The caller heard a pick's sample: their week, which marks it heard. */
 	pickHeard: (userId: UserId): Sweep[] => [{ key: DiscoverQueryKeyFactory.v3.week(userId) }],
-	/** The caller chose their set day: the day, and the week that shows it. */
+	/**
+	 * The caller chose their set day or depth: the choices, and the week that
+	 * shows them, dig further (under the week's prefix) taking the new floors.
+	 */
 	discoverPrefsChanged: (userId: UserId): Sweep[] => [
 		{ key: DiscoverQueryKeyFactory.v3.prefs(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.week(userId) }

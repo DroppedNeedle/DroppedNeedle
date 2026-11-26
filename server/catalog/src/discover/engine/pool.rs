@@ -18,7 +18,9 @@
 //! stay beside the new ones, so a bad night never empties a pool that was
 //! good. A candidate found only by sources the person turned off ("Not
 //! this source") is left out, and their playlist is not read while
-//! ListenBrainz's picks are off. A run is safe to repeat.
+//! ListenBrainz's picks are off. The ranking and the order follow the
+//! person's depth ([`rank::tilted`]); a new depth queues a build. A run is
+//! safe to repeat.
 //!
 //! Nothing reads the pool yet: Discover's surfaces move over to it in
 //! later work, through [`pool_store::ranked`] and [`select`](super::select).
@@ -40,6 +42,7 @@ use super::select::Exposure;
 use super::sources::listenbrainz_picks::{self, Picked};
 use super::sources::{band_links, fresh, gaps, neighbours};
 use super::taste_store::Kept as Written;
+use super::weekly_store;
 use crate::discover::cache::ForgetCounts;
 use crate::discover::facts::{FactKind, FactSource, Kept, Notes, WantOrder};
 use crate::discover::feedback::Feedback;
@@ -217,6 +220,7 @@ impl PoolJobs {
         let refused = tunings::refused_sources(&self.db, user_id).await?;
         let shown = pool_store::shown(&self.db, user_id, now_ms - proposed::REST_MS).await?;
         let exposure = Exposure::from_shown(&shown, now_ms);
+        let depth = weekly_store::depth(&self.db, user_id).await?;
         // The person's switches and keys, not the services' health: the
         // build reads kept rows, so a service resting changes nothing here.
         let accounts = self.listening.accounts(user_id).await;
@@ -246,6 +250,7 @@ impl PoolJobs {
             &found.listeners,
             taste.groups.len(),
             &artist_gates,
+            depth,
         );
         let (kept_new, kept_picks) = self.previous(user_id, now_ms).await?;
         let listed = new_releases::list(&self.db, &self.listening, user_id).await?;
@@ -364,7 +369,7 @@ impl PoolJobs {
             fresh::candidates(&listed, &ranking.artists, &seeds, &gates),
         );
         candidates.retain(|candidate| !found_only_by(candidate, &refused));
-        let mut candidates = rank::order(candidates);
+        let mut candidates = rank::order(candidates, depth);
         // The band links and the gaps join after the ranking's cut, so a
         // full pool never pushes them out: at most their 20 and 30 past
         // `POOL_MAX`.
@@ -400,6 +405,7 @@ impl PoolJobs {
             incomplete,
             waiting_for,
             counts: counts.clone(),
+            depth,
             candidates,
         };
         let written = pool_store::rebuild(

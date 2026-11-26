@@ -26,8 +26,10 @@
 	const setDay = $derived(chosen ?? prefsQuery.data?.set_day ?? 'friday');
 
 	function choose(day: SetDay) {
+		const prefs = prefsQuery.data;
+		if (!prefs) return;
 		chosen = day;
-		save.mutate({ set_day: day }, { onSettled: () => (chosen = null) });
+		save.mutate({ ...prefs, set_day: day }, { onSettled: () => (chosen = null) });
 	}
 </script>
 

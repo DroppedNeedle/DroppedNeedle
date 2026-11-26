@@ -31,7 +31,7 @@ media_playback_events forgotten
 
 # What the person told Discover.
 catalog_discover_feedback kept: what the person told Discover, listed and undone by them
-catalog_discover_prefs kept: the day their weekly set comes out, which they chose; when their first set began waiting is cleared
+catalog_discover_prefs kept: the day their weekly set comes out and how far its picks go, which they chose; when their first set began waiting is cleared
 catalog_discover_tunings kept: how the person tuned Discover, listed and undone by them
 catalog_later_albums kept: albums the person put on their Later pile, listed and removed by them
 catalog_stated_artists kept: artists the person named as ones they love, listed and removed by them

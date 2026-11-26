@@ -782,6 +782,7 @@
 			spines={setEnabled ? spines : []}
 			current={current?.key ?? null}
 			onjump={jumpToBin}
+			depth={setEnabled}
 		/>
 		<DiscoverTabs current="week" class="dn-discover__tabs" />
 

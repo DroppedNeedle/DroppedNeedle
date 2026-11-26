@@ -19,7 +19,7 @@ use super::candidate::Candidate;
 use super::select::Shown;
 use super::sql;
 use super::taste_store::Kept;
-use super::weekly::{SetDay, ShortReason};
+use super::weekly::{Depth, SetDay, ShortReason};
 use crate::discover::cache::ForgetCounts;
 use crate::discover::facts::{FactSource, Outcome};
 use crate::discover::feedback::FeedbackTarget;
@@ -60,6 +60,8 @@ pub(crate) struct PoolRow {
     pub known_left_out: i64,
     /// The hubs left out; `None` when the rule did not run.
     pub hubs_left_out: Option<i64>,
+    /// The depth it was ordered at; next door for a build before it was kept.
+    pub depth: Depth,
 }
 
 /// What a person's set is built from and when.
@@ -67,6 +69,8 @@ pub(crate) struct PoolRow {
 pub(crate) struct Context {
     /// Their set day.
     pub set_day: SetDay,
+    /// Their depth.
+    pub depth: Depth,
     /// When their first set began waiting for their history, unix ms.
     pub wait_from_at: Option<i64>,
     /// When their newest set's week starts, unix ms.
@@ -97,6 +101,7 @@ pub(crate) async fn context(db: &Db, user_id: &str) -> Result<Option<Context>, D
         .await?;
     Ok(row.map(|row| Context {
         set_day: row.set_day.unwrap_or(SetDay::DEFAULT),
+        depth: row.depth.unwrap_or(Depth::DEFAULT),
         wait_from_at: row.wait_from_at.map(|at| at.0),
         last_week_at: row.last_week_at.map(|at| at.0),
         taste: row.taste_built_at.map(|built| TasteRow {
@@ -117,6 +122,7 @@ pub(crate) async fn context(db: &Db, user_id: &str) -> Result<Option<Context>, D
             neighbours_found: row.neighbours_found.unwrap_or(0),
             known_left_out: row.known_left_out.unwrap_or(0),
             hubs_left_out: row.hubs_left_out,
+            depth: row.pool_depth.unwrap_or(Depth::DEFAULT),
         }),
         import_state: row.import_state,
     }))
@@ -253,6 +259,8 @@ pub(crate) struct NewSet {
     pub built_at: i64,
     /// Why it is short, when it is.
     pub short_reason: Option<ShortReason>,
+    /// The depth it was dealt at.
+    pub depth: Depth,
     /// What it was made from.
     pub counts: SetCounts,
     /// The tastes its picks are filed under.
@@ -297,10 +305,11 @@ pub(crate) async fn keep(
         })
         .collect();
     let (forgets, user) = (forgets.clone(), user_id.to_owned());
-    let (week, built, short, counts) = (
+    let (week, built, short, depth, counts) = (
         Millis(set.week_start_at),
         Millis(set.built_at),
         set.short_reason,
+        set.depth,
         set.counts,
     );
     db.write(Lane::Background, "discover.weekly.keep", move |tx| {
@@ -327,6 +336,7 @@ pub(crate) async fn keep(
                 counts.shelf_albums,
                 counts.linked,
                 tastes,
+                depth,
             ],
         )?;
         if added == 1 {
@@ -507,38 +517,72 @@ pub(crate) async fn stored_evidence(
     }))
 }
 
-/// `user_id`'s set day; `None` while they have not chosen one.
+/// `user_id`'s set day and depth; `None` while they have chosen neither.
 ///
 /// # Errors
 ///
 /// The read's failure.
-pub(crate) async fn set_day(db: &Db, user_id: &str) -> Result<Option<SetDay>, DbError> {
+pub(crate) async fn prefs(db: &Db, user_id: &str) -> Result<Option<(SetDay, Depth)>, DbError> {
     let user = user_id.to_owned();
-    db.read("discover.weekly.set_day", move |conn| {
-        conn.prepare_cached(sql::PREFS_SET_DAY.text())?
-            .query_map([user], |row| row.get(0))?
+    db.read("discover.weekly.prefs", move |conn| {
+        conn.prepare_cached(sql::PREFS_READ.text())?
+            .query_map([user], sql::PrefsRow::read)?
             .next()
             .transpose()
+            .map(|row| row.map(|row| (row.set_day, row.depth)))
             .map_err(DbError::from)
     })
     .await
 }
 
-/// Keep `user_id`'s set day `day`, chosen at `now_ms`.
+/// `user_id`'s depth, [`Depth::DEFAULT`] while they have not chosen one.
 ///
 /// # Errors
 ///
-/// The write's failure.
-pub(crate) async fn save_set_day(
+/// The read's failure.
+pub(crate) async fn depth(db: &Db, user_id: &str) -> Result<Depth, DbError> {
+    let user = user_id.to_owned();
+    let depth = db
+        .read("discover.weekly.depth", move |conn| {
+            conn.prepare_cached(sql::PREFS_DEPTH.text())?
+                .query_map([user], |row| row.get(0))?
+                .next()
+                .transpose()
+                .map_err(DbError::from)
+        })
+        .await?;
+    Ok(depth.unwrap_or(Depth::DEFAULT))
+}
+
+/// Keep `user_id`'s set day `day` and depth `depth`, chosen at `now_ms`;
+/// when the depth is not the one kept before, `changed` runs in the same
+/// write.
+///
+/// # Errors
+///
+/// The write's or `changed`'s failure.
+pub(crate) async fn save_prefs(
     db: &Db,
     user_id: &str,
-    day: SetDay,
+    (day, depth): (SetDay, Depth),
     now_ms: i64,
-) -> Result<(), DbError> {
+    changed: impl FnOnce(&Transaction) -> Result<(), JobError> + Send + 'static,
+) -> Result<(), JobError> {
     let user = user_id.to_owned();
-    db.write(Lane::Foreground, "discover.weekly.save_day", move |tx| {
-        tx.execute(sql::PREFS_SAVE.text(), params![user, day, Millis(now_ms)])?;
-        Ok::<_, DbError>(())
+    db.write(Lane::Foreground, "discover.weekly.save_prefs", move |tx| {
+        let before: Option<Depth> = tx
+            .prepare_cached(sql::PREFS_DEPTH.text())?
+            .query_map([&user], |row| row.get(0))?
+            .next()
+            .transpose()?;
+        tx.execute(
+            sql::PREFS_SAVE.text(),
+            params![user, day, depth, Millis(now_ms)],
+        )?;
+        if before.unwrap_or(Depth::DEFAULT) != depth {
+            changed(tx)?;
+        }
+        Ok(())
     })
     .await
 }

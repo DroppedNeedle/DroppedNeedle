@@ -627,15 +627,15 @@ pub async fn found_on_discover(
         .map_err(ApiError::from)
 }
 
-/// The caller's set day.
+/// The caller's set day and depth.
 #[utoipa::path(
     get,
     tag = "discover",
     path = "/api/v3/discover/prefs",
     responses(
-        (status = 200, description = "The caller's set day", body = DiscoverPrefs),
+        (status = 200, description = "The caller's set day and depth", body = DiscoverPrefs),
         (status = 401, description = "Not authenticated"),
-        (status = 500, description = "The set day could not be read"),
+        (status = 500, description = "The set day and depth could not be read"),
     )
 )]
 pub async fn get_discover_prefs(
@@ -648,18 +648,19 @@ pub async fn get_discover_prefs(
         .map_err(ApiError::from)
 }
 
-/// Keep the caller's set day. This week's set stays as it is; the new day
-/// counts from the first such day after it.
+/// Keep the caller's set day and depth. This week's set stays as it is; a new
+/// day counts from the first such day after it, and a new depth rebuilds
+/// their pool for dig further and the next set.
 #[utoipa::path(
     put,
     tag = "discover",
     path = "/api/v3/discover/prefs",
     request_body = DiscoverPrefs,
     responses(
-        (status = 200, description = "The set day as kept", body = DiscoverPrefs),
+        (status = 200, description = "The set day and depth as kept", body = DiscoverPrefs),
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
-        (status = 500, description = "The set day could not be saved"),
+        (status = 500, description = "The set day and depth could not be saved"),
     )
 )]
 pub async fn save_discover_prefs(

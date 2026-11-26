@@ -12,8 +12,9 @@
 //!   short set with its [`ShortReason`], never padded. Fewer while the pool
 //!   still waits for facts: nothing is written, and the job runs again once
 //!   the pool is built again ([`schedule`](super::schedule) sees the new
-//!   build). A pool missing or older than the taste build is never dealt
-//!   from: it is queued first for someone seen in the last seven days.
+//!   build). A pool missing, older than the taste build or built at another
+//!   depth than the person's is never dealt from: it is queued first for
+//!   someone seen in the last seven days.
 //!   Someone away longer gets no pool build from here (a pool run may read
 //!   ListenBrainz): an out-of-date pool waits for their visit, and an
 //!   incomplete one is final for them, giving a short set.
@@ -137,6 +138,33 @@ impl SetDay {
             Self::Sunday => 6,
         }
     }
+}
+
+// The order follows `rank::tilted` and the floors `Floors::for_depth`.
+/// How far from what a person knows their picks go. Next door is the
+/// default and ranks and selects as the engine always has; home ground
+/// leans toward artists more people play and raises the floors, far out
+/// leans toward artists fewer people play and lowers them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Depth {
+    /// Close to what they play.
+    HomeGround,
+    /// The default.
+    NextDoor,
+    /// Further from what they know.
+    FarOut,
+}
+
+droppedneedle_kernel::spelled!(Depth {
+    HomeGround => "home_ground",
+    NextDoor => "next_door",
+    FarOut => "far_out",
+});
+
+impl Depth {
+    /// The depth with no choice made.
+    pub const DEFAULT: Self = Self::NextDoor;
 }
 
 /// Why a set holds fewer than [`SET_SIZE`] picks.
@@ -438,12 +466,12 @@ impl WeeklySets {
     }
 
     /// Deal up to [`SET_SIZE`] picks from `user_id`'s pool at `now_ms`, as
-    /// the engine selects them. Only albums by artists new to the person
-    /// that their own artists lead to go in a set: through co-listening, or
-    /// through a band link. A service's picks, and any other kind, are left
-    /// to dig further, so they never fill a slot. An album an earlier set
-    /// held in the last twelve weeks is left out.
-    async fn deal(&self, user_id: &str, now_ms: i64) -> Result<Dealt, DbError> {
+    /// the engine selects them at `depth`. Only albums by artists new to the
+    /// person that their own artists lead to go in a set: through
+    /// co-listening, or through a band link. A service's picks, and any other
+    /// kind, are left to dig further, so they never fill a slot. An album an
+    /// earlier set held in the last twelve weeks is left out.
+    async fn deal(&self, user_id: &str, now_ms: i64, depth: Depth) -> Result<Dealt, DbError> {
         let memory = self.memory(user_id, now_ms).await?;
         let pool: Vec<Candidate> = memory
             .pool
@@ -460,7 +488,7 @@ impl WeeklySets {
             SET_SIZE,
             &memory.shares,
             &memory.exposure,
-            Floors::PROPOSED,
+            Floors::for_depth(depth),
         );
         let picks = selection
             .picks
@@ -526,11 +554,12 @@ impl WeeklySets {
         // pool run may read ListenBrainz.
         let lately = self.seen_lately(user_id, now_ms).await?;
         let pool = match context.pool.as_ref() {
-            Some(pool) if pool.built_at >= taste.built_at => pool,
-            // Never dealt: its groups belong to the taste build before.
+            Some(pool) if pool.built_at >= taste.built_at && pool.depth == context.depth => pool,
+            // Never dealt: its groups belong to the taste build before, or
+            // its order to a depth the person has left.
             _ => return self.finish(user_id, lately, complete).await,
         };
-        let dealt = self.deal(user_id, now_ms).await?;
+        let dealt = self.deal(user_id, now_ms, context.depth).await?;
 
         let mut picks = Vec::with_capacity(dealt.picks.len());
         for (candidate, reason) in &dealt.picks {
@@ -631,6 +660,7 @@ impl WeeklySets {
             week_start_at,
             built_at: now_ms,
             short_reason,
+            depth: context.depth,
             counts,
             tastes,
             picks: new_picks,
@@ -742,7 +772,7 @@ impl WeeklySets {
         let current = context
             .pool
             .as_ref()
-            .filter(|pool| pool.built_at >= taste.built_at);
+            .filter(|pool| pool.built_at >= taste.built_at && pool.depth == context.depth);
         if current.is_none() && !lately {
             // Away a while: the set waits for their next visit.
             let status = if latest.is_some() {
@@ -755,7 +785,7 @@ impl WeeklySets {
         let waiting = current.is_none_or(|pool| pool.incomplete && lately);
         // A pool older than the taste build is never dealt from.
         let found = match current {
-            Some(_) => self.deal(user_id, now_ms).await?.picks.len(),
+            Some(_) => self.deal(user_id, now_ms, context.depth).await?.picks.len(),
             None => 0,
         };
         if waiting {
@@ -790,7 +820,8 @@ impl WeeklySets {
     }
 
     /// One page of "dig further": `user_id`'s ranked pool past their newest
-    /// set, in the pool's order: the floors, one album an artist and none by
+    /// set, in the pool's order: the floors of their depth, one album an
+    /// artist and none by
     /// the set's artists, and what they were shown and passed over resting.
     /// Every kind of pick is included, and no seed is held to two albums.
     ///
@@ -805,6 +836,7 @@ impl WeeklySets {
         let now_ms = self.clock.now_ms();
         let in_set = weekly_store::latest_picks(&self.db, user_id).await?;
         let memory = self.memory(user_id, now_ms).await?;
+        let floors = Floors::for_depth(weekly_store::depth(&self.db, user_id).await?);
         let groups: HashSet<&str> = in_set.iter().map(|(group, _)| group.as_str()).collect();
         let mut artists: HashSet<&str> = in_set.iter().map(|(_, artist)| artist.as_str()).collect();
         let (exposure, seeds) = (&memory.exposure, &memory.seeds);
@@ -813,7 +845,7 @@ impl WeeklySets {
             .iter()
             .filter(|candidate| {
                 !groups.contains(candidate.release_group_mbid.as_str())
-                    && Floors::PROPOSED.clears(candidate)
+                    && floors.clears(candidate)
                     && !exposure.rests(candidate)
             })
             .filter_map(|candidate| {
@@ -845,21 +877,23 @@ impl WeeklySets {
         Ok(Page::at_offset(items, offset, limit, total))
     }
 
-    /// `user_id`'s set day.
+    /// `user_id`'s set day and depth.
     ///
     /// # Errors
     ///
     /// The read's failure.
     pub async fn prefs(&self, user_id: &str) -> Result<DiscoverPrefs, DbError> {
-        Ok(DiscoverPrefs {
-            set_day: weekly_store::set_day(&self.db, user_id)
-                .await?
-                .unwrap_or(SetDay::DEFAULT),
-        })
+        let (set_day, depth) = weekly_store::prefs(&self.db, user_id)
+            .await?
+            .unwrap_or((SetDay::DEFAULT, Depth::DEFAULT));
+        Ok(DiscoverPrefs { set_day, depth })
     }
 
-    /// Keep `user_id`'s set day. The set of the week running stays; the new
-    /// day counts from the first such day after it.
+    /// Keep `user_id`'s set day and depth. The set of the week running
+    /// stays; a new day counts from the first such day after it. A new
+    /// depth queues their pool build in the same write: dig further takes
+    /// its floors at once and its order once the pool is built, and the
+    /// next set is dealt at it.
     ///
     /// # Errors
     ///
@@ -868,8 +902,16 @@ impl WeeklySets {
         &self,
         user_id: &str,
         prefs: DiscoverPrefs,
-    ) -> Result<DiscoverPrefs, DbError> {
-        weekly_store::save_set_day(&self.db, user_id, prefs.set_day, self.clock.now_ms()).await?;
+    ) -> Result<DiscoverPrefs, JobError> {
+        let (due, user) = (Arc::clone(&self.due), user_id.to_owned());
+        weekly_store::save_prefs(
+            &self.db,
+            user_id,
+            (prefs.set_day, prefs.depth),
+            self.clock.now_ms(),
+            move |tx| due.queue_now(tx, pool::KIND, &user),
+        )
+        .await?;
         Ok(prefs)
     }
 }

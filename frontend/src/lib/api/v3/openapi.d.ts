@@ -2053,11 +2053,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The caller's set day. */
+        /** The caller's set day and depth. */
         get: operations["get_discover_prefs"];
         /**
-         * Keep the caller's set day. This week's set stays as it is; the new day
-         *     counts from the first such day after it.
+         * Keep the caller's set day and depth. This week's set stays as it is; a new
+         *     day counts from the first such day after it, and a new depth rebuilds
+         *     their pool for dig further and the next set.
          */
         put: operations["save_discover_prefs"];
         post?: never;
@@ -14402,6 +14403,14 @@ export interface components {
             /** @description Source that degraded (`listenbrainz`, `lastfm`). */
             source: string;
         };
+        /**
+         * @description How far from what a person knows their picks go. Next door is the
+         *     default and ranks and selects as the engine always has; home ground
+         *     leans toward artists more people play and raises the floors, far out
+         *     leans toward artists fewer people play and lowers them.
+         * @enum {string}
+         */
+        Depth: "home_ground" | "next_door" | "far_out";
         /** @description Mint a named companion token. */
         DeviceSessionMint: {
             /** @description Device label, 1-80 chars. Reminting a label revokes the prior token. */
@@ -14625,6 +14634,12 @@ export interface components {
         };
         /** @description How the person's weekly set is made. */
         DiscoverPrefs: {
+            /**
+             * @description How far from what they know their picks go. Next door unless they
+             *     chose another; a new depth rebuilds their pool, and this week's set
+             *     stays as it is.
+             */
+            depth: components["schemas"]["Depth"];
             /**
              * @description The day their set comes out, from 00:00 server time. Friday unless
              *     they chose another; a new day counts from the next week.
@@ -33549,7 +33564,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The caller's set day */
+            /** @description The caller's set day and depth */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -33567,7 +33582,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description The set day could not be read */
+            /** @description The set day and depth could not be read */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -33591,7 +33606,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The set day as kept */
+            /** @description The set day and depth as kept */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -33618,7 +33633,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description The set day could not be saved */
+            /** @description The set day and depth could not be saved */
             500: {
                 headers: {
                     [name: string]: unknown;

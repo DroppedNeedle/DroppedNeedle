@@ -23,6 +23,7 @@ export type SetPick = components['schemas']['SetPick'];
 export type DigFurtherPick = components['schemas']['DigFurtherPick'];
 export type DiscoverPrefs = components['schemas']['DiscoverPrefs'];
 export type SetDay = components['schemas']['SetDay'];
+export type Depth = components['schemas']['Depth'];
 
 /** "Dig further" albums one page asks for. */
 export const MORE_PAGE = 20;
@@ -59,7 +60,7 @@ export const getWeekMoreQuery = (getEnabled: Getter<boolean> = () => true) =>
 			lastPage.next_cursor ?? undefined
 	}));
 
-/** The caller's set day. */
+/** The caller's set day and depth. */
 export const getDiscoverPrefsQuery = () =>
 	createQuery(() => ({
 		enabled: Boolean(authStore.user?.id),
@@ -67,12 +68,15 @@ export const getDiscoverPrefsQuery = () =>
 		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/discover/prefs'), { signal })
 	}));
 
-/** Keeps the caller's set day; this week's set stays as it is. */
+/**
+ * Keeps the caller's set day and depth, both sent; this week's set stays as
+ * it is, and a new depth rebuilds their pool.
+ */
 export const createSaveDiscoverPrefsMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (prefs: DiscoverPrefs) => api.v3.PUT(v3('/api/v3/discover/prefs'), prefs),
 		effects: () => [discoverPrefsChanged(authStore.user?.id)],
-		onError: () => toastStore.show({ message: "Couldn't save your set day.", type: 'error' })
+		onError: () => toastStore.show({ message: "Couldn't save that change.", type: 'error' })
 	}));
 
 export type IntakeResponse = components['schemas']['IntakeResponse'];

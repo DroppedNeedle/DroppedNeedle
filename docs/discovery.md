@@ -105,6 +105,12 @@ The set is built on your set day if you used the app in the last 30 days, or on 
 
 Once built, a set holds still: a new build of your list, something you told Discover or a new set day does not change it. What changes is what you did with each pick. Past the eight, dig further deals the rest of your list the same way, in its order, one album an artist and none by the set's artists. Every week's set is kept until you forget your history.
 
+### How far
+
+How far, in the Discover header, sets how far from what you know your picks go. Next door is the default. Home ground leans toward artists more people listen to, and a pick needs twice the listeners it needs next door. Far out leans toward artists fewer people listen to, and a pick needs half as many. Every rule of what a pick may be still holds at each, and Far out never fills a set from the charts.
+
+A new choice builds your list again in its new order from what the server keeps; artists it reaches whose albums are not kept yet are read in the background, within the daily limit, and going back to a choice you had before reads nothing new. Dig further takes the new choice at once, and your next set is dealt with it. This week's set stays as it is.
+
 ## Genres
 
 Genre tiles on Home and Discover use covers from your own albums in that genre: up to four, picked from different artists, and only art your library actually has (a cover image in the album folder or one embedded in the files). Genres you have nothing in get a plain color. Click a genre to see the artists and albums you own in it next to the popular ones on MusicBrainz. Your own show their first rows, with "View all" for the rest. The popular ones show three rows; "View more" opens the rest and then pages through them. While you look, the server fetches pictures for those popular artists and albums in the background, slowly, so the page is quicker next time.
@@ -145,7 +151,7 @@ To add your ListenBrainz history from a file instead, download an export of your
 
 Discover works from a picture of your taste that the server keeps and rebuilds by itself, about once a day while you use the app and soon after your history changes. It weighs every artist you played here or in your ListenBrainz history, with the hearts, ratings, follows, playlists, requests and links that make seed artists, and groups your seed artists by the similar artists the server keeps, each group named "Around" its heaviest artist. Every artist your plays, marks and links name counts as known to you, and so does every album you played here; when your set is chosen, every artist your library has counts as known too. While your ListenBrainz history here is up to date, your top artists and albums are no longer read from ListenBrainz.
 
-To forget it, choose Forget my history under Profile > Scrobbling & Discovery and confirm. It removes the record of the albums Discover offered you, the copy of your ListenBrainz history, how your plays ended, the note of the pages you opened, the picture of your taste, your weekly sets and past weeks, and your saved Discover page and home shelves, which are built again. Your plays and play counts, your library, your requests and discovery batches, what you told Discover, the artists you named, your Later pile and your set day stay. If something stops it part way, choosing it again finishes the rest. Nothing is imported from ListenBrainz again until you add a file or choose Import again. A backup made earlier still holds what it held. Deleting your account removes all of it.
+To forget it, choose Forget my history under Profile > Scrobbling & Discovery and confirm. It removes the record of the albums Discover offered you, the copy of your ListenBrainz history, how your plays ended, the note of the pages you opened, the picture of your taste, your weekly sets and past weeks, and your saved Discover page and home shelves, which are built again. Your plays and play counts, your library, your requests and discovery batches, what you told Discover, the artists you named, your Later pile, your set day and how far your picks go stay. If something stops it part way, choosing it again finishes the rest. Nothing is imported from ListenBrainz again until you add a file or choose Import again. A backup made earlier still holds what it held. Deleting your account removes all of it.
 
 ## Radio
 

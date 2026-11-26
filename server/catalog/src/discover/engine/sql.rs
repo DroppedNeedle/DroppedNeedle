@@ -12,7 +12,7 @@ use droppedneedle_media::history::HistoryImportState;
 
 use super::candidate::{BandLinkRole, CandidateKind, PathKind, PathSource};
 use super::taste::Trend;
-use super::weekly::{SetDay, ShortReason};
+use super::weekly::{Depth, SetDay, ShortReason};
 use crate::discover::facts::FactSource;
 use crate::discover::models::PickState;
 use crate::discover::tunings::TuningKind;
@@ -387,13 +387,13 @@ droppedneedle_kernel::sql! {
     /// A person's candidates.
     pub(in crate::discover) POOL_CANDIDATES_DELETE = "DELETE FROM catalog_discover_candidates \
          WHERE user_id = ?1";
-    /// Keep a person's pool build row.
+    /// Keep a person's pool build row, with the depth it was built at.
     pub(in crate::discover) POOL_BUILD_INSERT = "INSERT INTO catalog_discover_pool_builds \
          (user_id, built_at, incomplete, waiting_for, seeds_used, neighbours_found, \
           known_left_out, hubs_left_out, artists_ranked, artists_without_album, \
           new_artist_candidates, source_pick_candidates, gap_candidates, shelf_candidates, \
-          fresh_candidates, thread_candidates) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)";
+          fresh_candidates, thread_candidates, depth) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)";
     /// Keep one of a person's candidates.
     pub(in crate::discover) POOL_CANDIDATE_INSERT = "INSERT INTO catalog_discover_candidates \
          (user_id, release_group_mbid_lower, rank, kind, title, artist_mbid, artist_name, \
@@ -701,11 +701,11 @@ droppedneedle_kernel::sql! {
 
     // -- the weekly set ----------------------------------------------------------
 
-    /// What a person's weekly set is built from and when: their set day and
-    /// when their first set began waiting for their history, their newest
-    /// set's week, their taste build's counts, their pool build's, and
-    /// their history import's state. No row for no account.
-    pub(in crate::discover) WEEK_CONTEXT = "SELECT p.set_day AS set_day, \
+    /// What a person's weekly set is built from and when: their set day,
+    /// depth and when their first set began waiting for their history, their
+    /// newest set's week, their taste build's counts, their pool build's (with
+    /// its depth), and their history import's state. No row for no account.
+    pub(in crate::discover) WEEK_CONTEXT = "SELECT p.set_day AS set_day, p.depth AS depth, \
          p.history_wait_from_at AS wait_from_at, \
          (SELECT MAX(s.week_start_at) FROM catalog_weekly_sets s WHERE s.user_id = a.id) \
            AS last_week_at, \
@@ -715,7 +715,7 @@ droppedneedle_kernel::sql! {
          t.seeds AS seeds, b.built_at AS pool_built_at, b.incomplete AS pool_incomplete, \
          b.waiting_for AS waiting_for, b.neighbours_found AS neighbours_found, \
          b.known_left_out AS known_left_out, b.hubs_left_out AS hubs_left_out, \
-         i.state AS import_state \
+         b.depth AS pool_depth, i.state AS import_state \
          FROM auth_users a LEFT JOIN catalog_discover_prefs p ON p.user_id = a.id \
          LEFT JOIN catalog_taste_builds t ON t.user_id = a.id \
          LEFT JOIN catalog_discover_pool_builds b ON b.user_id = a.id \
@@ -723,6 +723,7 @@ droppedneedle_kernel::sql! {
          WHERE a.id = ?1";
     pub(in crate::discover) row WeekContext for [WEEK_CONTEXT] {
         set_day: Option<SetDay>,
+        depth: Option<Depth>,
         wait_from_at: Option<Millis>,
         last_week_at: Option<Millis>,
         taste_built_at: Option<Millis>,
@@ -736,6 +737,7 @@ droppedneedle_kernel::sql! {
         neighbours_found: Option<i64>,
         known_left_out: Option<i64>,
         hubs_left_out: Option<i64>,
+        pool_depth: Option<Depth>,
         import_state: Option<HistoryImportState>,
     }
     /// Of the people in the JSON list `?1` with an account, each one's set
@@ -770,14 +772,22 @@ droppedneedle_kernel::sql! {
          ON CONFLICT (user_id) DO UPDATE SET \
            history_wait_from_at = excluded.history_wait_from_at \
          WHERE catalog_discover_prefs.history_wait_from_at IS NULL";
-    /// A person's set day; no row while they have not chosen one.
-    pub(in crate::discover) PREFS_SET_DAY = "SELECT set_day FROM catalog_discover_prefs \
+    /// A person's set day and depth; no row while they have chosen
+    /// neither.
+    pub(in crate::discover) PREFS_READ = "SELECT set_day, depth FROM catalog_discover_prefs \
          WHERE user_id = ?1";
-    /// Keep person `?1`'s set day `?2`, chosen at `?3`.
+    pub(in crate::discover) row PrefsRow for [PREFS_READ] {
+        set_day: SetDay,
+        depth: Depth,
+    }
+    /// A person's depth; no row while they have not chosen one.
+    pub(in crate::discover) PREFS_DEPTH = "SELECT depth FROM catalog_discover_prefs \
+         WHERE user_id = ?1";
+    /// Keep person `?1`'s set day `?2` and depth `?3`, chosen at `?4`.
     pub(in crate::discover) PREFS_SAVE = "INSERT INTO catalog_discover_prefs \
-         (user_id, set_day, updated_at) VALUES (?1, ?2, ?3) \
+         (user_id, set_day, depth, updated_at) VALUES (?1, ?2, ?3, ?4) \
          ON CONFLICT (user_id) DO UPDATE SET set_day = excluded.set_day, \
-           updated_at = excluded.updated_at";
+           depth = excluded.depth, updated_at = excluded.updated_at";
     /// A person's taste groups with their anchors and shares.
     pub(in crate::discover) SET_TASTE_GROUPS = "SELECT group_no, anchor_artist_mbid, \
          anchor_name, share FROM catalog_taste_groups WHERE user_id = ?1 ORDER BY group_no";
@@ -833,12 +843,13 @@ droppedneedle_kernel::sql! {
         source: FactSource,
         since: Millis,
     }
-    /// Keep a person's set for a week, unless that week has one.
+    /// Keep a person's set for a week, with the depth it was dealt at,
+    /// unless that week has one.
     pub(in crate::discover) SET_INSERT = "INSERT INTO catalog_weekly_sets (user_id, \
          week_start_at, built_at, short_reason, plays_counted, history_from_at, history_to_at, \
          seeds, neighbours_found, known_left_out, hubs_left_out, shelf_artists, shelf_albums, \
-         linked, tastes) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, \
-         ?15) ON CONFLICT (user_id, week_start_at) DO NOTHING";
+         linked, tastes, depth) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, \
+         ?14, ?15, ?16) ON CONFLICT (user_id, week_start_at) DO NOTHING";
     /// Keep one pick of a person's set.
     pub(in crate::discover) SET_PICK_INSERT = "INSERT INTO catalog_weekly_set_picks (user_id, \
          week_start_at, pick_no, release_group_mbid_lower, release_group_mbid, title, \

@@ -4,7 +4,8 @@
 	strip of Discover's pages under it. While a service is not answering,
 	an amber tape takes the lines' place. On a phone the title and the
 	week's spines, which jump to the bin, share the first row, with where
-	the person is in the week on one line under it.
+	the person is in the week on one line under it. The depth switch sits at
+	the header's end, and on a phone on a row of its own under the rest.
 -->
 <script lang="ts">
 	import BarcodeTicket from '$lib/ui/BarcodeTicket.svelte';
@@ -12,6 +13,7 @@
 	import type { WeekResponse } from '$lib/features/discover/queries/week.svelte';
 	import { clockTime, dayDate, longDayDate } from '$lib/features/discover/state/weekWords';
 	import WeekSpines, { type Spine } from './WeekSpines.svelte';
+	import DepthSwitch from './DepthSwitch.svelte';
 
 	interface Props {
 		week: WeekResponse | null;
@@ -20,9 +22,11 @@
 		spines: Spine[];
 		current: string | null;
 		onjump: () => void;
+		/** Whether the header holds the depth switch. */
+		depth?: boolean;
 	}
 
-	let { week, position, spines, current, onjump }: Props = $props();
+	let { week, position, spines, current, onjump, depth = false }: Props = $props();
 
 	const SOURCES = { listenbrainz: 'ListenBrainz', musicbrainz: 'MusicBrainz', lastfm: 'Last.fm' };
 
@@ -79,6 +83,10 @@
 			<WeekSpines {spines} {current} {onjump} />
 		{/if}
 	</div>
+
+	{#if depth}
+		<DepthSwitch />
+	{/if}
 </header>
 
 <style>

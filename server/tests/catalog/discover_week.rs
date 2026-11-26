@@ -13,7 +13,7 @@ use axum::http::StatusCode;
 use serde_json::json;
 
 use droppedneedle_catalog::discover::due::Due;
-use droppedneedle_catalog::discover::engine::weekly::{self, SetDay, ShortReason, WEEK_MS};
+use droppedneedle_catalog::discover::engine::weekly::{self, Depth, SetDay, ShortReason, WEEK_MS};
 use droppedneedle_catalog::discover::facts::KeptFacts;
 use droppedneedle_catalog::discover::facts::job::FactJobs;
 use droppedneedle_catalog::discover::listening::UserMusic;
@@ -316,6 +316,7 @@ async fn discover_week_the_set_day_builds_one_set_that_holds_still() {
             "user-1",
             DiscoverPrefs {
                 set_day: SetDay::Monday,
+                depth: Depth::NextDoor,
             },
         )
         .await

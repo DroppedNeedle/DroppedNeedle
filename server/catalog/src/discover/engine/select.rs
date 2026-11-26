@@ -1,8 +1,9 @@
 //! Choosing picks from a pool, pure: [`select`] answers up to `n`.
 //!
 //! - Floors are applied here, not when the pool is built, so the depth
-//!   control can move them: an artist needs [`proposed::ARTIST_FLOOR`]
-//!   listeners and an album [`proposed::ALBUM_FLOOR`]. A count not known
+//!   control moves them at once ([`Floors::for_depth`]): next door, an
+//!   artist needs [`proposed::ARTIST_FLOOR`] listeners and an album
+//!   [`proposed::ALBUM_FLOOR`]. A count not known
 //!   passes, as every unknown fact does.
 //! - Proportion: slots go to the taste groups by share, the largest
 //!   remainder first, at most [`proposed::FIRST_PASS_CAP`] a group on the
@@ -20,6 +21,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::candidate::Candidate;
 use super::rank::proposed;
+use super::weekly::Depth;
 use crate::discover::models::SectionCondition;
 
 /// The most picks one seed is the strongest path of.
@@ -100,6 +102,24 @@ impl Floors {
         artist_listeners: proposed::ARTIST_FLOOR,
         album_listeners: proposed::ALBUM_FLOOR,
     };
+
+    /// The floors at `depth`: [`proposed::DEPTH_FLOOR_STEP`] times
+    /// [`Floors::PROPOSED`] at home ground, that part of them far out (never
+    /// zero), and those floors next door.
+    pub fn for_depth(depth: Depth) -> Self {
+        let step = proposed::DEPTH_FLOOR_STEP;
+        match depth {
+            Depth::HomeGround => Self {
+                artist_listeners: proposed::ARTIST_FLOOR * step,
+                album_listeners: proposed::ALBUM_FLOOR * step,
+            },
+            Depth::NextDoor => Self::PROPOSED,
+            Depth::FarOut => Self {
+                artist_listeners: (proposed::ARTIST_FLOOR / step).max(1),
+                album_listeners: (proposed::ALBUM_FLOOR / step).max(1),
+            },
+        }
+    }
 
     /// Whether `candidate` clears both; a count not known clears its floor.
     pub fn clears(&self, candidate: &Candidate) -> bool {
@@ -629,7 +649,7 @@ mod tests {
                 let artist = &artists[*at];
                 walk.step(artist, AlbumList::Found(&albums[&artist.mbid]), &gates);
             }
-            let pool = order(walk.candidates);
+            let pool = order(walk.candidates, Depth::NextDoor);
             let set = select(&pool, 8, &shares, &exposure, Floors::PROPOSED);
             assert_eq!(set.picks.len(), 8, "week {week}'s set is full");
             let mut answered: Vec<&Candidate> = set.picks.clone();
