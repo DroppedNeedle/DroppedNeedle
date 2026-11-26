@@ -22,9 +22,9 @@
 	// following artists does not fill
 	const OWN_SHELVES: ReadonlySet<SectionKey> = new Set([
 		'anniversaries',
-		'missing_essentials',
+		'gaps_in_your_artists',
 		'genre_list',
-		'rediscover',
+		'from_your_shelves',
 		'lastfm_recent_scrobbles',
 		'lastfm_weekly_artist_chart',
 		'lastfm_weekly_album_chart'

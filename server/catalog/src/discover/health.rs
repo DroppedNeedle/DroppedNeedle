@@ -106,6 +106,30 @@ fn cards(content: &SectionContent) -> Vec<Card<'_>> {
                 })
             })
             .collect(),
+        SectionContent::Gaps { gaps } => gaps
+            .iter()
+            .filter_map(|gap| {
+                let id = known(gap.album.musicbrainz_id.as_ref())?;
+                Some(Card {
+                    id,
+                    album: Some(id),
+                    artist: known(gap.album.artist_id.as_ref()),
+                })
+            })
+            .collect(),
+        SectionContent::OwnShelves { own_shelves } => own_shelves
+            .played_a_lot
+            .iter()
+            .chain(&own_shelves.never_played)
+            .filter_map(|row| {
+                let id = known(row.album.musicbrainz_id.as_ref())?;
+                Some(Card {
+                    id,
+                    album: Some(id),
+                    artist: known(row.album.artist_id.as_ref()),
+                })
+            })
+            .collect(),
         SectionContent::NewReleases { new_releases } => new_releases
             .releases
             .iter()

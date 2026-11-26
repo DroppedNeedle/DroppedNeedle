@@ -72,7 +72,7 @@ impl LibraryReads {
     }
 
     /// Every album that owns a release group, by the shared ownership rule.
-    /// Missing Essentials counts them per artist and hides their groups.
+    /// The mixes and radio hide their groups.
     pub async fn owned_albums(&self) -> Result<Vec<LibraryAlbum>, String> {
         let rows = read_all(
             &self.db,

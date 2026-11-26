@@ -52171,6 +52171,32 @@
           }
         }
       },
+      "Gap": {
+        "type": "object",
+        "description": "An album missing from an artist the person plays and the library\ncollects.",
+        "required": [
+          "album",
+          "reason",
+          "held"
+        ],
+        "properties": {
+          "album": {
+            "$ref": "#/components/schemas/AlbumRef",
+            "description": "The missing album: its type and first release year when known, and\nwhether a request for it is open."
+          },
+          "held": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AlbumRef"
+            },
+            "description": "The artist's albums the library holds, oldest first, each with its\nlibrary id and its year when tagged. The line counts them."
+          },
+          "reason": {
+            "type": "string",
+            "description": "The line: \"You have 6 of their albums, not this one.\""
+          }
+        }
+      },
       "GenreAlias": {
         "type": "object",
         "description": "One genre alias.",
@@ -60866,6 +60892,67 @@
               "*.m3u8",
               "*.pls"
             ]
+          }
+        }
+      },
+      "OwnShelfAlbum": {
+        "type": "object",
+        "description": "One of the person's own albums on their shelves.",
+        "required": [
+          "album",
+          "line"
+        ],
+        "properties": {
+          "album": {
+            "$ref": "#/components/schemas/AlbumRef",
+            "description": "The album, with its library id."
+          },
+          "last_played": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The month of the person's last play of it (`YYYY-MM`, server time);\nnone for one never played."
+          },
+          "line": {
+            "type": "string",
+            "description": "The line built from its own numbers: \"18 plays in February, none\nsince.\", \"17 plays, last in July.\" or \"Asked for in March, not\nplayed yet.\""
+          }
+        }
+      },
+      "OwnShelves": {
+        "type": "object",
+        "description": "From your shelves: the person's own albums, in two lists.",
+        "required": [
+          "played_a_lot",
+          "never_played",
+          "month"
+        ],
+        "properties": {
+          "history_from": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The first month of the person's history (`YYYY-MM`, server time);\nnone while they have none."
+          },
+          "month": {
+            "type": "string",
+            "description": "The month the lists were made in (`YYYY-MM`, server time)."
+          },
+          "never_played": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OwnShelfAlbum"
+            },
+            "description": "Asked for and never played: the oldest arrival first."
+          },
+          "played_a_lot": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OwnShelfAlbum"
+            },
+            "description": "Played a lot, not lately: most played first."
           }
         }
       },
@@ -72220,6 +72307,49 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "Albums missing from artists the person plays and the library\ncollects, each with the artist's albums the library holds.",
+            "required": [
+              "gaps",
+              "shape"
+            ],
+            "properties": {
+              "gaps": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Gap"
+                },
+                "description": "The gaps, the person's heaviest artists first."
+              },
+              "shape": {
+                "type": "string",
+                "enum": [
+                  "gaps"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The person's own albums turned over.",
+            "required": [
+              "own_shelves",
+              "shape"
+            ],
+            "properties": {
+              "own_shelves": {
+                "$ref": "#/components/schemas/OwnShelves",
+                "description": "Its two lists."
+              },
+              "shape": {
+                "type": "string",
+                "enum": [
+                  "own_shelves"
+                ]
+              }
+            }
           }
         ],
         "description": "A section's rows, tagged by `shape`."
@@ -72340,8 +72470,8 @@
           "daily_mixes",
           "radio_sections",
           "new_from_your_artists",
-          "missing_essentials",
-          "rediscover",
+          "gaps_in_your_artists",
+          "from_your_shelves",
           "anniversaries",
           "lastfm_recent_scrobbles",
           "lastfm_weekly_artist_chart",

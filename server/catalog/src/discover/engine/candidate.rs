@@ -12,11 +12,10 @@ pub enum CandidateKind {
     NewArtist,
     /// An album from a service's own picks for the person.
     SourcePick,
-    /// An album missing from an artist the person collects. Not written
-    /// yet: the gaps source writes it.
+    /// An album missing from an artist the person collects.
     Gap,
-    /// An album of the person's own shelves. Not written yet: the shelves
-    /// source writes it.
+    /// An album of the person's own shelves. Not written: those are owned
+    /// albums, read for the page and never put in the pool.
     Shelf,
     /// A new release by one of the person's artists, or one close to theirs.
     Fresh,
@@ -41,8 +40,7 @@ pub enum PathKind {
     Seed,
     /// A service named the album for the person.
     Source,
-    /// The library holds the artist's other albums. Not written yet: the
-    /// gaps source writes it.
+    /// The library holds the artist's other albums.
     Library,
     /// The album is a new release.
     Fresh,
@@ -72,7 +70,7 @@ pub enum PathSource {
     /// The install's MusicBrainz source: the new releases its follow poll
     /// found.
     Musicbrainz,
-    /// The library. Not written yet: the gaps source writes it.
+    /// The library.
     Library,
     /// The project's data file. Not written yet: the threads write it.
     DataFile,

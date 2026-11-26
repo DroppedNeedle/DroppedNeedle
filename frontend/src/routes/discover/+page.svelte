@@ -48,6 +48,8 @@
 	import AfterNoSlip from '$lib/features/discover/components/AfterNoSlip.svelte';
 	import NewFromYourArtists from '$lib/features/discover/components/NewFromYourArtists.svelte';
 	import PastWeeksRow from '$lib/features/discover/components/PastWeeksRow.svelte';
+	import GapsShelf from '$lib/features/discover/components/GapsShelf.svelte';
+	import FromYourShelves from '$lib/features/discover/components/FromYourShelves.svelte';
 	import { getDiscoverHomeV3Query } from '$lib/features/discover/queries/DiscoverV3Queries.svelte';
 	import { createPickEventMutation } from '$lib/features/discover/queries/DiscoverV3Mutations.svelte';
 	import { useDiscoverActivity } from '$lib/features/discover/queries/DiscoverDemand.svelte';
@@ -77,7 +79,9 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import type {
 		ChartSection,
+		Gap,
 		NewReleaseSheet,
+		OwnShelves,
 		PageSection,
 		SectionKey,
 		SectionState,
@@ -86,7 +90,15 @@
 	import type { KitIcon } from '$lib/ui/Button.svelte';
 	import type { StateLook } from '$lib/ui/StatusChip.svelte';
 	import { getSectionPrefsQuery } from '$lib/features/settings/queries/section-prefs.svelte';
-	import { shelfOf, shelvesOf, stateOf, weeklyOf } from '$lib/features/discover/queries/sections';
+	import {
+		gapsOf,
+		newReleasesOf,
+		ownShelvesOf,
+		shelfOf,
+		shelvesOf,
+		stateOf,
+		weeklyOf
+	} from '$lib/features/discover/queries/sections';
 	import { albumRows, genreRows } from '$lib/features/discover/components/sectionRows';
 
 	useDiscoverActivity(() => ({ feature: 'discover' }));
@@ -554,7 +566,7 @@
 	const weekly = $derived(weeklyOf(sections));
 	const dailyMixes = $derived(shelvesOf(sections, 'daily_mixes'));
 	const radioSections = $derived(shelvesOf(sections, 'radio_sections'));
-	const missingEssentials = $derived(shelfOf(sections, 'missing_essentials'));
+	const gaps = $derived(gapsOf(sections));
 	const genreList = $derived(shelfOf(sections, 'genre_list'));
 	const sectionStates = $derived(discoverData?.section_states ?? []);
 
@@ -593,6 +605,8 @@
 		| { kind: 'mixes' | 'radio' | 'genres-browse' }
 		| { kind: 'shelf'; shelf: ChartSection; key: SectionKey; playable: boolean }
 		| { kind: 'new-releases'; sheet: NewReleaseSheet }
+		| { kind: 'gaps'; gaps: Gap[] }
+		| { kind: 'own-shelves'; shelves: OwnShelves }
 		| { kind: 'state'; title: string; state: SectionState }
 	);
 
@@ -677,6 +691,10 @@
 				if (genreList) place({ id, kind: 'genres-browse', width: 'half', kicker });
 			} else if (content.shape === 'new_releases') {
 				place({ id, kind: 'new-releases', width: 'wide', kicker, sheet: content.new_releases });
+			} else if (content.shape === 'gaps') {
+				place({ id, kind: 'gaps', width: 'wide', kicker, gaps: content.gaps });
+			} else if (content.shape === 'own_shelves') {
+				place({ id, kind: 'own-shelves', width: 'wide', kicker, shelves: content.own_shelves });
 			} else if (content.shape === 'shelf') {
 				place({
 					id,
@@ -712,9 +730,16 @@
 
 	let zones = $derived(blocks.flatMap((block) => (block.nav ? [block.nav] : [])));
 
-	// covers the page already shows, for the playlist band's sleeves
+	// covers the page already shows, for the playlist band's sleeves: the
+	// gaps first, then the person's own shelves, the new releases and the mixes
 	let bandCovers = $derived.by(() => {
-		const ids = albumRows(missingEssentials)
+		const own = ownShelvesOf(sections);
+		const ids = [
+			...gaps.flatMap((gap) => [gap.album, ...gap.held]),
+			...(own ? [...own.played_a_lot, ...own.never_played].map((row) => row.album) : []),
+			...(newReleasesOf(sections)?.releases ?? []).map((row) => row.album),
+			...[...dailyMixes, ...radioSections].flatMap((shelf) => albumRows(shelf))
+		]
 			.map((album) => album.musicbrainz_id)
 			.filter((id): id is string => !!id);
 		return ids.filter((id, i) => ids.indexOf(id) === i).slice(0, 4);
@@ -1053,6 +1078,12 @@
 			updatedAt={block.sheet.updated_at ?? null}
 			href={withBasePath('/discover/new-releases')}
 		/>
+	{:else if block.kind === 'gaps'}
+		{@render kickerRow(block.kicker)}
+		<GapsShelf gaps={block.gaps} />
+	{:else if block.kind === 'own-shelves'}
+		{@render kickerRow(block.kicker)}
+		<FromYourShelves shelves={block.shelves} />
 	{:else if block.kind === 'genres-browse' && genreList}
 		{@render kickerRow(block.kicker)}
 		<div class="dn-discover-genres" class:dn-discover-genres--paired={paired}>

@@ -365,12 +365,9 @@ impl Answers {
 }
 
 /// Whether the filter applies to section `key` of `page`: a section about
-/// the person, never a chart, the library or their own history. Missing
-/// Essentials is built from the library but recommends albums the person
-/// does not have, so what they told Discover counts there too.
+/// the person, never a chart, the library or their own history.
 pub fn applies(page: Page, key: SectionKey) -> bool {
-    key == SectionKey::MissingEssentials
-        || sections::find(page, key).is_some_and(|def| def.basis == Basis::Personal)
+    sections::find(page, key).is_some_and(|def| def.basis == Basis::Personal)
 }
 
 /// One person's answers in effect, read once: what they hide.
@@ -492,6 +489,9 @@ impl Feedback {
                     .total
                     .saturating_sub(u64::try_from(hidden).unwrap_or(0));
             }
+            SectionContent::Gaps { gaps } => gaps.retain(|gap| !self.hides_album_row(&gap.album)),
+            // The person's own albums: nothing there is a recommendation.
+            SectionContent::OwnShelves { .. } => {}
         }
     }
 

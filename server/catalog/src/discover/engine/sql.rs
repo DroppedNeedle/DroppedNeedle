@@ -464,6 +464,139 @@ droppedneedle_kernel::sql! {
            WHERE ((f.kind = ?2 AND f.source = ?3) OR (f.kind = ?4 AND f.source = ?5)) \
              AND f.fetched_at > b.built_at))";
 
+    // -- gaps and the person's own shelves ----------------------------------------
+
+    /// Of the artists person `?1` played or signalled, by MusicBrainz id
+    /// and heaviest first, the ones the library holds `?2` or more albums
+    /// of, with how many. Placeholder rows are left out by kind.
+    pub(in crate::discover) GAP_ARTISTS = "SELECT t.artist_mbid_lower AS mbid, \
+         MIN(t.name) AS name, MIN(t.weight) AS weight, \
+         MIN(t.plays + t.imported_listens) AS plays, MIN(t.group_no) AS group_no, \
+         COUNT(DISTINCT ob.id) AS albums FROM catalog_taste_artists t \
+         JOIN local_artist_external_identities ai \
+           ON lower(ai.provider_artist_id) = t.artist_mbid_lower AND "
+        + (musicbrainz!("ai"))
+        + " JOIN local_artists r ON r.id = ai.local_artist_id \
+         JOIN local_album_artists oc ON oc.local_artist_id = r.id \
+         JOIN local_albums ob ON ob.id = oc.local_album_id \
+         WHERE t.user_id = ?1 AND t.weight > 0 AND r.retired_into_artist_id IS NULL \
+           AND r.kind NOT IN ('various_artists', 'unknown') AND "
+        + (owned_album!("ob"))
+        + " GROUP BY t.artist_mbid_lower HAVING COUNT(DISTINCT ob.id) >= ?2 \
+         ORDER BY MIN(t.weight) DESC, t.artist_mbid_lower";
+    pub(in crate::discover) row GapArtistRow for [GAP_ARTISTS] {
+        mbid: String,
+        name: String,
+        weight: f64,
+        plays: i64,
+        group_no: Option<i64>,
+        albums: i64,
+    }
+    /// The albums the library holds of each artist in the JSON list `?1`
+    /// (lowercased), the ones `POOL_ALBUMS_OWNED` counts, each artist's
+    /// oldest first, with the album's release group when it has one.
+    pub(in crate::discover) GAP_HELD = "SELECT lower(ai.provider_artist_id) AS artist_mbid, \
+         ob.id AS local_id, MIN(ob.title) AS title, MIN(ob.year) AS year, \
+         (SELECT MIN(lower(ae.release_group_mbid)) FROM local_album_external_identities ae \
+           WHERE ae.local_album_id = ob.id AND "
+        + (musicbrainz!("ae"))
+        + ") AS release_group_mbid FROM local_artist_external_identities ai \
+         JOIN local_artists r ON r.id = ai.local_artist_id \
+         JOIN local_album_artists oc ON oc.local_artist_id = r.id \
+         JOIN local_albums ob ON ob.id = oc.local_album_id \
+         WHERE lower(ai.provider_artist_id) IN (SELECT value FROM json_each(?1)) AND "
+        + (musicbrainz!("ai"))
+        + " AND r.retired_into_artist_id IS NULL AND "
+        + (owned_album!("ob"))
+        + " GROUP BY lower(ai.provider_artist_id), ob.id \
+         ORDER BY artist_mbid, MIN(ob.year) IS NULL, MIN(ob.year), \
+           MIN(ob.title) COLLATE NOCASE, ob.id";
+    pub(in crate::discover) row GapHeldRow for [GAP_HELD] {
+        artist_mbid: String,
+        local_id: String,
+        title: String,
+        year: Option<i64>,
+        release_group_mbid: Option<String>,
+    }
+    /// The albums person `?1` played `?2` times or more, last at `?3` or
+    /// before, that are live and have files: most played first, at most
+    /// `?4`, each with their first play of one of its tracks and of the
+    /// album alone.
+    pub(in crate::discover) SHELF_PLAYED = "SELECT ob.id AS local_id, ob.title AS title, \
+         ob.album_artist_name AS artist_name, \
+         (SELECT MIN(lower(aie.provider_artist_id)) FROM local_artist_external_identities aie \
+           WHERE aie.local_artist_id = ob.album_artist_id AND "
+        + (musicbrainz!("aie"))
+        + ") AS artist_mbid, \
+         (SELECT MIN(lower(ae.release_group_mbid)) FROM local_album_external_identities ae \
+           WHERE ae.local_album_id = ob.id AND "
+        + (musicbrainz!("ae"))
+        + ") AS release_group_mbid, ob.year AS year, p.plays AS plays, \
+         p.last_played_at AS last_played_at, \
+         (SELECT MIN(h.played_at) FROM local_tracks t JOIN library_play_history h \
+           ON h.user_id = p.user_id AND h.local_track_id = t.id \
+           WHERE t.local_album_id = p.local_album_id) AS first_track_at, \
+         (SELECT MIN(h.played_at) FROM library_play_history h WHERE h.user_id = p.user_id \
+           AND h.local_track_id IS NULL AND h.local_album_id = p.local_album_id) \
+           AS first_album_at \
+         FROM library_user_album_plays p JOIN local_albums ob ON ob.id = p.local_album_id \
+         WHERE p.user_id = ?1 AND p.plays >= ?2 AND p.last_played_at <= ?3 AND "
+        + (owned_album!("ob"))
+        + " ORDER BY p.plays DESC, p.last_played_at DESC, ob.id LIMIT ?4";
+    pub(in crate::discover) row ShelfPlayedRow for [SHELF_PLAYED] {
+        local_id: String,
+        title: String,
+        artist_name: Option<String>,
+        artist_mbid: Option<String>,
+        release_group_mbid: Option<String>,
+        year: Option<i64>,
+        plays: i64,
+        last_played_at: Millis,
+        first_track_at: Option<Millis>,
+        first_album_at: Option<Millis>,
+    }
+    /// The release groups person `?1` asked for that arrived at `?2` or
+    /// before and the library owns, none of whose owning albums they have
+    /// played: the oldest arrival first, at most `?3`, each with the first
+    /// album that owns it and when they asked.
+    pub(in crate::discover) SHELF_NEVER_PLAYED = "SELECT ob.id AS local_id, \
+         ob.title AS title, ob.album_artist_name AS artist_name, \
+         (SELECT MIN(lower(aie.provider_artist_id)) FROM local_artist_external_identities aie \
+           WHERE aie.local_artist_id = ob.album_artist_id AND "
+        + (musicbrainz!("aie"))
+        + ") AS artist_mbid, a.group_mbid AS release_group_mbid, ob.year AS year, \
+         a.asked_at AS asked_at FROM (\
+           SELECT q.musicbrainz_id_lower AS group_mbid, q.requested_at AS asked_at, \
+           h.completed_at AS arrived_at, \
+           (SELECT o.album_id FROM ("
+        + (owns_group!("= q.musicbrainz_id_lower"))
+        + ") o ORDER BY o.album_id LIMIT 1) AS local_id \
+           FROM request_history_requesters q JOIN request_history h \
+             ON h.musicbrainz_id_lower = q.musicbrainz_id_lower \
+           WHERE q.user_id = ?1 AND h.request_kind = 'album' AND h.status = 'imported' \
+             AND h.completed_at <= ?2) a \
+         JOIN local_albums ob ON ob.id = a.local_id \
+         WHERE NOT EXISTS (SELECT 1 FROM library_user_album_plays p WHERE p.user_id = ?1 \
+           AND p.local_album_id IN (SELECT o.album_id FROM ("
+        + (owns_group!("= a.group_mbid"))
+        + ") o)) \
+         ORDER BY a.arrived_at, a.group_mbid LIMIT ?3";
+    pub(in crate::discover) row ShelfNeverPlayedRow for [SHELF_NEVER_PLAYED] {
+        local_id: String,
+        title: String,
+        artist_name: Option<String>,
+        artist_mbid: Option<String>,
+        release_group_mbid: String,
+        year: Option<i64>,
+        asked_at: Millis,
+    }
+    /// When person `?1`'s history begins: the first play or imported listen
+    /// their taste build counted, or their first play in the app, whichever
+    /// is earlier; NULL with neither.
+    pub(in crate::discover) SHELF_HISTORY_FROM = "SELECT MIN(at) FROM (\
+         SELECT history_from_at AS at FROM catalog_taste_builds WHERE user_id = ?1 \
+         UNION ALL SELECT MIN(played_at) FROM library_play_history WHERE user_id = ?1)";
+
     // -- the weekly set ----------------------------------------------------------
 
     /// What a person's weekly set is built from and when: their set day and

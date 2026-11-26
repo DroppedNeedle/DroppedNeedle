@@ -101,7 +101,7 @@ fn a_page_counts_duplicates_and_repeats() {
         SectionKey::WeeklySet,
         SectionKey::RadioSections,
         SectionKey::NewFromYourArtists,
-        SectionKey::MissingEssentials,
+        SectionKey::GapsInYourArtists,
         SectionKey::LastfmWeeklyArtistChart,
         SectionKey::WeeklyExploration,
         SectionKey::LastfmWeeklyAlbumChart,
@@ -127,7 +127,7 @@ fn a_page_counts_duplicates_and_repeats() {
         health,
         PageHealth {
             sections: 3,
-            // Missing Essentials: the weekly set is never a page section,
+            // Gaps in artists you collect: the weekly set is never a page section,
             // and sections of services the person has not linked never
             // count.
             wanted_empty: 1,

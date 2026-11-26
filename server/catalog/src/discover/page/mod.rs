@@ -581,8 +581,12 @@ fn settle(
 fn row_ids(content: &SectionContent) -> Vec<String> {
     let mut ids = Vec::new();
     match content {
-        // New from your artists takes no part in the album dedupe.
-        SectionContent::Weekly { .. } | SectionContent::NewReleases { .. } => {}
+        // New from your artists, the gaps and the own shelves take no part in
+        // the album dedupe.
+        SectionContent::Weekly { .. }
+        | SectionContent::NewReleases { .. }
+        | SectionContent::Gaps { .. }
+        | SectionContent::OwnShelves { .. } => {}
         _ => {
             for shelf in content.shelves() {
                 ids.extend(shelf.items.iter().filter_map(row_id));
@@ -606,7 +610,10 @@ fn row_id(item: &SectionItem) -> Option<String> {
 fn drop_rows(content: &mut SectionContent, shown: &HashSet<String>) {
     let unseen = |id: Option<String>| id.is_none_or(|id| !shown.contains(&id.to_lowercase()));
     match content {
-        SectionContent::Weekly { .. } | SectionContent::NewReleases { .. } => {}
+        SectionContent::Weekly { .. }
+        | SectionContent::NewReleases { .. }
+        | SectionContent::Gaps { .. }
+        | SectionContent::OwnShelves { .. } => {}
         SectionContent::Shelves { shelves } => {
             for shelf in shelves.iter_mut() {
                 shelf.items.retain(|item| unseen(row_id(item)));
@@ -625,6 +632,10 @@ fn size(content: &SectionContent) -> usize {
         SectionContent::Shelves { shelves } => shelves.len(),
         SectionContent::Weekly { weekly } => weekly.tracks.len(),
         SectionContent::NewReleases { new_releases } => new_releases.releases.len(),
+        SectionContent::Gaps { gaps } => gaps.len(),
+        SectionContent::OwnShelves { own_shelves } => {
+            own_shelves.played_a_lot.len() + own_shelves.never_played.len()
+        }
     }
 }
 
@@ -767,7 +778,7 @@ mod tests {
     /// keeps the week counted from the build that worked.
     #[test]
     fn a_failed_build_never_carries_rows_another_failure_left() {
-        let key = SectionKey::MissingEssentials;
+        let key = SectionKey::LastfmWeeklyAlbumChart;
         let outcomes = [(key, DOWN)];
 
         let first = saved(
@@ -775,7 +786,7 @@ mod tests {
                 vec![albums(key, &["a"])],
                 vec![SectionState {
                     key,
-                    zone: SectionZone::NewAndFresh,
+                    zone: SectionZone::TrendingNow,
                     state: SectionCondition::SourceDown,
                     source: Some(ListenSource::Listenbrainz),
                     since: None,
@@ -816,7 +827,7 @@ mod tests {
     /// A carried section leaves out the albums a freshly built one shows.
     #[test]
     fn a_kept_section_repeats_nothing_a_fresh_one_shows() {
-        let kept = SectionKey::MissingEssentials;
+        let kept = SectionKey::LastfmWeeklyAlbumChart;
         let fresh = SectionKey::Anniversaries;
         let before = saved(page(vec![albums(kept, &["a", "b"])], Vec::new()), 0);
         let mut now = page(vec![albums(fresh, &["A"])], Vec::new());

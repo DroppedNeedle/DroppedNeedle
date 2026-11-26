@@ -3,7 +3,7 @@
 //! A build makes the sections the user has switched on, from the section
 //! list ([`sections`]). It runs in two rounds. The first makes the reads
 //! several sections share (seed artists, the Last.fm charts, the user's
-//! genres, Jellyfin plays, the library's identified albums),
+//! genres, the library's identified albums),
 //! only those a wanted section needs, every read bounded to 25 seconds
 //! so one slow service only costs its own sections. The second builds
 //! the sections in parallel under the same bound (the Daily Mixes stop at
@@ -31,10 +31,10 @@ use super::shelves::{self, RowMut, SHELF_SIZE, album, artist, genre, one, shelf}
 use droppedneedle_kernel::db::Db;
 
 use crate::discover::cache::Variant;
+use crate::discover::engine::sources::{gaps, shelves as shelves_source};
 use crate::discover::feedback::{self, Feedback};
 use crate::discover::listening::{
-    AlbumRow, ArtistRow, Ask, LastFmChartAlbum, ListenSource, ListeningData, PlayedArtist,
-    RankedAlbum, TAG_PAGE, UserMusic,
+    ArtistRow, Ask, LastFmChartAlbum, ListenSource, ListeningData, TAG_PAGE, UserMusic,
 };
 use crate::discover::models::{
     AlbumRef, ChartSection, DiscoverResponse, RadioSeedKind, SectionContent, SectionItem,
@@ -66,17 +66,6 @@ const MIXES_GRACE: Duration = Duration::from_secs(5);
 const RESOLVE_BUDGET: Duration = Duration::from_secs(15);
 /// Bound on one radio shelf.
 const RADIO_BUDGET: Duration = Duration::from_secs(18);
-/// Rediscover: artists played at least this often...
-const REDISCOVER_MIN_PLAYS: i64 = 5;
-/// ...and not in the last three months.
-const REDISCOVER_IDLE_DAYS: f64 = 90.0;
-/// Missing Essentials: artists with at least this many library albums.
-const ESSENTIALS_MIN_ALBUMS: usize = 3;
-/// Missing Essentials: at most this many albums per artist.
-const ESSENTIALS_PER_ARTIST: usize = 3;
-/// What Missing Essentials says when only a ListenBrainz link would fill it.
-const ESSENTIALS_NEED_LISTENBRAINZ: &str =
-    "Connect ListenBrainz to see the popular albums you're missing.";
 /// Milestone birthdays celebrated by Anniversaries.
 const ANNIVERSARY_YEARS: [i64; 7] = [10, 20, 25, 30, 40, 50, 60];
 /// Albums per Daily Mix.
@@ -339,7 +328,6 @@ struct Shared {
     lastfm_weekly_albums: Vec<LastFmChartAlbum>,
     lastfm_recent: Vec<LastFmChartAlbum>,
     genres: Option<Vec<(String, i64)>>,
-    jellyfin: Vec<PlayedArtist>,
     library_albums: Vec<super::library::LibraryAlbum>,
 }
 
@@ -385,22 +373,6 @@ pub(in crate::discover) fn daily_shuffler(today: &str, parts: &[&str]) -> Shuffl
     let mut seed = [0u8; 8];
     seed.copy_from_slice(&digest.0[..8]);
     Shuffler::seeded(u64::from_le_bytes(seed))
-}
-
-/// Days since an ISO 8601 instant (date part only), `None` when it does
-/// not parse.
-fn days_since(iso: &str, now: f64) -> Option<f64> {
-    let date = iso.trim().get(..10)?;
-    let mut parts = date.split('-');
-    let year: i32 = parts.next()?.parse().ok()?;
-    let month: u8 = parts.next()?.parse().ok()?;
-    let day: u8 = parts.next()?.parse().ok()?;
-    let month = time::Month::try_from(month).ok()?;
-    let played = time::Date::from_calendar_date(year, month, day).ok()?;
-    let today = time::OffsetDateTime::from_unix_timestamp(now as i64)
-        .ok()?
-        .date();
-    Some(f64::from(today.to_julian_day() - played.to_julian_day()))
 }
 
 impl Builder<'_> {
@@ -475,7 +447,6 @@ impl Builder<'_> {
             .first_round(
                 &tracker,
                 user_id,
-                &user,
                 lb_user.as_deref(),
                 lfm_user.as_deref(),
                 &needs,
@@ -698,10 +669,8 @@ impl Builder<'_> {
                     .await,
             }),
             SectionKey::NewFromYourArtists => self.new_from_your_artists(user_id).await,
-            SectionKey::MissingEssentials => {
-                one(self.missing_essentials(user_id, ctx.user, shared).await)
-            }
-            SectionKey::Rediscover => one(rediscover(&shared.jellyfin, self.now)),
+            SectionKey::GapsInYourArtists => self.gaps(user_id).await,
+            SectionKey::FromYourShelves => self.own_shelves(user_id).await,
             SectionKey::Anniversaries => one(self.anniversaries().await),
             SectionKey::LastfmRecentScrobbles => one(self
                 .lastfm_album_shelf(&shared.lastfm_recent, 30, "Recently Scrobbled", true)
@@ -757,12 +726,10 @@ impl Builder<'_> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn first_round(
         &self,
         tracker: &Tracker,
         user_id: &str,
-        user: &UserMusic,
         lb_user: Option<&str>,
         lfm_user: Option<&str>,
         needs: &(dyn Fn(Input) -> bool + Sync),
@@ -824,19 +791,6 @@ impl Builder<'_> {
                 .run(Input::Genres, "lb_genres", listening.genres(username, ask))
                 .await
         };
-        let jellyfin = async {
-            if !user.jellyfin || !needs(Input::Jellyfin) {
-                return Vec::new();
-            }
-            tracker
-                .run(
-                    Input::Jellyfin,
-                    "jf_most_played",
-                    listening.jellyfin_plays(user_id, 50, ask),
-                )
-                .await
-                .unwrap_or_default()
-        };
         let library = async {
             if !needs(Input::LibraryAlbums) {
                 return Vec::new();
@@ -850,191 +804,15 @@ impl Builder<'_> {
                 .await
                 .unwrap_or_default()
         };
-        let (
-            (lastfm_weekly_artists, lastfm_weekly_albums, lastfm_recent),
-            genres,
-            jellyfin,
-            library_albums,
-        ) = tokio::join!(lastfm_charts, genres, jellyfin, library);
+        let ((lastfm_weekly_artists, lastfm_weekly_albums, lastfm_recent), genres, library_albums) =
+            tokio::join!(lastfm_charts, genres, library);
         Shared {
             lastfm_weekly_artists,
             lastfm_weekly_albums,
             lastfm_recent,
             genres,
-            jellyfin,
             library_albums,
         }
-    }
-
-    /// Albums missing from the artists the library holds most of: up to
-    /// three of each one's most played albums (the Missing Essentials shelf).
-    async fn missing_essentials(
-        &self,
-        user_id: &str,
-        user: &UserMusic,
-        shared: &Shared,
-    ) -> Option<ChartSection> {
-        let mut per_artist: HashMap<String, usize> = HashMap::new();
-        for album in &shared.library_albums {
-            if let Some(artist) = &album.artist_mbid {
-                *per_artist.entry(artist.clone()).or_insert(0) += 1;
-            }
-        }
-        let owned: HashSet<&str> = shared
-            .library_albums
-            .iter()
-            .map(|album| album.release_group_mbid.as_str())
-            .collect();
-        let mut artists: Vec<(String, usize)> = per_artist
-            .into_iter()
-            .filter(|(_, count)| *count >= ESSENTIALS_MIN_ALBUMS)
-            .collect();
-        artists.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-        artists.truncate(10);
-        let lastfm = self.lastfm_for_popularity(user);
-        let found = if lastfm {
-            let mbids: Vec<String> = artists.iter().map(|(mbid, _)| mbid.clone()).collect();
-            self.lastfm_ranked_albums(user_id, &mbids).await
-        } else {
-            join_all(artists.iter().map(|(artist_mbid, _)| async move {
-                or_empty(
-                    "artist albums",
-                    self.listening
-                        .artist_albums(user_id, artist_mbid, 10, &self.ask)
-                        .await,
-                )
-            }))
-            .await
-        };
-        let answered = found.iter().any(|albums| !albums.is_empty());
-        let mut missing: Vec<(i64, AlbumRef)> = Vec::new();
-        for albums in found {
-            let mut taken = 0;
-            for ranked in albums {
-                if taken >= ESSENTIALS_PER_ARTIST {
-                    break;
-                }
-                let group = ranked.album.release_group_mbid.to_lowercase();
-                if group.is_empty() || owned.contains(group.as_str()) {
-                    continue;
-                }
-                missing.push((
-                    ranked.listen_count,
-                    ranked.album.shown(album(
-                        Some(&ranked.album.release_group_mbid),
-                        &ranked.album.title,
-                        Some(&ranked.album.artist_name),
-                        ranked.album.artist_mbid.as_deref(),
-                        (ranked.listen_count > 0).then_some(ranked.listen_count),
-                    )),
-                ));
-                taken += 1;
-            }
-        }
-        missing.sort_by_key(|a| Reverse(a.0));
-        if !answered
-            && !artists.is_empty()
-            && !lastfm
-            && user.listenbrainz.is_none()
-            && self.listening.listenbrainz_on()
-            && !self.listening.popularity_down()
-        {
-            // ListenBrainz ranks an artist's albums only for a linked
-            // account: say so rather than leave the shelf out.
-            return Some(ChartSection {
-                title: "Missing Essentials".to_owned(),
-                kind: SectionKind::Albums,
-                items: Vec::new(),
-                source: None,
-                fallback_message: Some(ESSENTIALS_NEED_LISTENBRAINZ.to_owned()),
-                connect_service: Some(ShelfSource::Listenbrainz),
-                radio_seed_type: None,
-                radio_seed_id: None,
-            });
-        }
-        shelf(
-            "Missing Essentials",
-            SectionKind::Albums,
-            missing
-                .into_iter()
-                .take(SHELF_SIZE)
-                .map(|(_, album)| SectionItem::Album(album))
-                .collect(),
-            Some(ShelfSource::Library),
-        )
-    }
-
-    /// Library artists' top albums from Last.fm, matched to release groups,
-    /// in Last.fm's order. Last.fm sends no count here, so each row's listen
-    /// count is zero; albums that do not match in time are left out and
-    /// come with a later build.
-    async fn lastfm_ranked_albums(
-        &self,
-        user_id: &str,
-        artist_mbids: &[String],
-    ) -> Vec<Vec<RankedAlbum>> {
-        let names = noted(
-            &self.ask,
-            "artist names",
-            self.library.artist_names(artist_mbids).await,
-        );
-        let rows: Vec<ArtistRow> = artist_mbids
-            .iter()
-            .map(|mbid| ArtistRow {
-                name: names.get(mbid).cloned().unwrap_or_default(),
-                mbid: Some(mbid.clone()),
-                listen_count: None,
-            })
-            .collect();
-        let albums = join_all(rows.iter().map(|artist| async move {
-            or_empty(
-                "lastfm artist albums",
-                self.listening
-                    .lastfm_artist_albums(user_id, artist, 10, &self.ask)
-                    .await,
-            )
-        }))
-        .await;
-        let releases: Vec<String> = albums
-            .iter()
-            .flatten()
-            .filter_map(|album| album.mbid.clone())
-            .collect();
-        let settings = self.settings.queue.clone();
-        let groups = tokio::time::timeout(
-            RESOLVE_BUDGET,
-            resolve_release_groups(&self.queue_ctx(&settings), &releases),
-        )
-        .await
-        .unwrap_or_else(|_| {
-            tracing::warn!("release group matching ran out of time; Missing Essentials is short");
-            HashMap::new()
-        });
-        rows.iter()
-            .zip(albums)
-            .map(|(artist, albums)| {
-                albums
-                    .into_iter()
-                    .filter_map(|row| {
-                        let group = groups.get(&normalize(row.mbid.as_deref())?)?.clone();
-                        Some(RankedAlbum {
-                            album: AlbumRow {
-                                release_group_mbid: group,
-                                title: row.name,
-                                artist_name: if row.artist_name.is_empty() {
-                                    artist.name.clone()
-                                } else {
-                                    row.artist_name
-                                },
-                                artist_mbid: artist.mbid.clone(),
-                                facts: Default::default(),
-                            },
-                            listen_count: 0,
-                        })
-                    })
-                    .collect()
-            })
-            .collect()
     }
 
     /// A Last.fm album chart as a shelf. Last.fm names releases, so each id
@@ -1483,6 +1261,35 @@ impl Builder<'_> {
         )
     }
 
+    /// Gaps in artists you collect, read from the person's pool. A read
+    /// that failed fails the section, so the page keeps the one it showed.
+    async fn gaps(&self, user_id: &str) -> Option<SectionContent> {
+        let now_ms = (self.now * 1000.0) as i64;
+        match gaps::section(self.library.db(), user_id, now_ms).await {
+            Ok(content) => content,
+            Err(error) => {
+                tracing::warn!(%error, "gaps unreadable; the page keeps its section");
+                self.ask.note_failure();
+                None
+            }
+        }
+    }
+
+    /// From your shelves, read from the person's own plays and requests. A
+    /// read that failed fails the section, so the page keeps the one it
+    /// showed.
+    async fn own_shelves(&self, user_id: &str) -> Option<SectionContent> {
+        let now_ms = (self.now * 1000.0) as i64;
+        match shelves_source::section(self.library.db(), user_id, now_ms).await {
+            Ok(content) => content,
+            Err(error) => {
+                tracing::warn!(%error, "shelves unreadable; the page keeps its section");
+                self.ask.note_failure();
+                None
+            }
+        }
+    }
+
     /// New from your artists: the newest of the person's list, read from
     /// kept rows. A list that could not be read fails the section, so the
     /// page keeps the one it showed.
@@ -1652,48 +1459,6 @@ fn artist_shelf(
     }
     items.truncate(SHELF_SIZE);
     shelf(title, SectionKind::Artists, items, source)
-}
-
-/// Jellyfin artists played a lot but not in the last three months.
-fn rediscover(plays: &[PlayedArtist], now: f64) -> Option<ChartSection> {
-    let mut seen = HashSet::new();
-    let mut items = Vec::new();
-    for row in plays {
-        if row.play_count < REDISCOVER_MIN_PLAYS {
-            continue;
-        }
-        let Some(idle) = row
-            .last_played
-            .as_deref()
-            .and_then(|iso| days_since(iso, now))
-        else {
-            continue;
-        };
-        if idle < REDISCOVER_IDLE_DAYS || !seen.insert(row.name.to_lowercase()) {
-            continue;
-        }
-        let image_url = match &row.mbid {
-            Some(mbid) => Some(format!("/api/v3/covers/artist/{mbid}?size=500")),
-            None => row.image_url.clone(),
-        };
-        items.push(SectionItem::Artist(crate::discover::models::ArtistRef {
-            name: row.name.clone(),
-            musicbrainz_id: row.mbid.clone(),
-            local_id: None,
-            image_url,
-            listen_count: Some(row.play_count),
-            in_library: false,
-        }));
-        if items.len() >= SHELF_SIZE {
-            break;
-        }
-    }
-    shelf(
-        "Rediscover",
-        SectionKind::Artists,
-        items,
-        Some(ShelfSource::Jellyfin),
-    )
 }
 
 /// How old a weekly exploration playlist may be and still show: a week,
@@ -1935,6 +1700,14 @@ pub async fn mark_ownership(db: &Db, page: &mut DiscoverResponse) {
                     .items
                     .retain(|item| !matches!(item, SectionItem::Album(row) if row.in_library));
             }
+            if let SectionContent::Gaps { gaps } = &mut section.content {
+                gaps.retain(|gap| !gap.album.in_library);
+            }
+        }
+        // The person's own shelves hold only what the library still has.
+        if let SectionContent::OwnShelves { own_shelves } = &mut section.content {
+            own_shelves.played_a_lot.retain(|row| row.album.in_library);
+            own_shelves.never_played.retain(|row| row.album.in_library);
         }
     }
     new_releases::mark_served(db, &mut page.sections).await;

@@ -87,13 +87,16 @@ pub enum RowMut<'a> {
 }
 
 impl SectionContent {
-    /// The section's shelves; none for the weekly playlist or the new
-    /// releases.
+    /// The section's shelves; none for the weekly playlist, the new
+    /// releases, the gaps or the person's own shelves.
     pub fn shelves(&self) -> Vec<&ChartSection> {
         match self {
             Self::Shelf { shelf } => vec![shelf],
             Self::Shelves { shelves } => shelves.iter().collect(),
-            Self::Weekly { .. } | Self::NewReleases { .. } => Vec::new(),
+            Self::Weekly { .. }
+            | Self::NewReleases { .. }
+            | Self::Gaps { .. }
+            | Self::OwnShelves { .. } => Vec::new(),
         }
     }
 
@@ -102,18 +105,38 @@ impl SectionContent {
         match self {
             Self::Shelf { shelf } => vec![shelf],
             Self::Shelves { shelves } => shelves.iter_mut().collect(),
-            Self::Weekly { .. } | Self::NewReleases { .. } => Vec::new(),
+            Self::Weekly { .. }
+            | Self::NewReleases { .. }
+            | Self::Gaps { .. }
+            | Self::OwnShelves { .. } => Vec::new(),
         }
     }
 
-    /// Every album and artist row.
+    /// Every album and artist row: for the gaps, the missing albums.
     pub fn rows_mut(&mut self) -> Vec<RowMut<'_>> {
-        if let Self::NewReleases { new_releases } = self {
-            return new_releases
-                .releases
-                .iter_mut()
-                .map(|row| RowMut::Album(&mut row.album))
-                .collect();
+        match self {
+            Self::NewReleases { new_releases } => {
+                return new_releases
+                    .releases
+                    .iter_mut()
+                    .map(|row| RowMut::Album(&mut row.album))
+                    .collect();
+            }
+            Self::Gaps { gaps } => {
+                return gaps
+                    .iter_mut()
+                    .map(|gap| RowMut::Album(&mut gap.album))
+                    .collect();
+            }
+            Self::OwnShelves { own_shelves } => {
+                return own_shelves
+                    .played_a_lot
+                    .iter_mut()
+                    .chain(own_shelves.never_played.iter_mut())
+                    .map(|row| RowMut::Album(&mut row.album))
+                    .collect();
+            }
+            _ => {}
         }
         self.shelves_mut()
             .into_iter()
@@ -131,6 +154,10 @@ impl SectionContent {
         match self {
             Self::Weekly { weekly } => weekly.tracks.is_empty(),
             Self::NewReleases { new_releases } => new_releases.releases.is_empty(),
+            Self::Gaps { gaps } => gaps.is_empty(),
+            Self::OwnShelves { own_shelves } => {
+                own_shelves.played_a_lot.is_empty() && own_shelves.never_played.is_empty()
+            }
             _ => self
                 .shelves()
                 .iter()
@@ -148,6 +175,23 @@ impl SectionContent {
             }
             Self::NewReleases { new_releases } => {
                 for row in &new_releases.releases {
+                    targets.cover(row.album.musicbrainz_id.as_deref());
+                }
+            }
+            Self::Gaps { gaps } => {
+                for gap in gaps {
+                    targets.cover(gap.album.musicbrainz_id.as_deref());
+                    for held in &gap.held {
+                        targets.cover(held.musicbrainz_id.as_deref());
+                    }
+                }
+            }
+            Self::OwnShelves { own_shelves } => {
+                for row in own_shelves
+                    .played_a_lot
+                    .iter()
+                    .chain(&own_shelves.never_played)
+                {
                     targets.cover(row.album.musicbrainz_id.as_deref());
                 }
             }
@@ -297,11 +341,11 @@ pub fn service_prompts(
         prompts.push(prompt(
             PromptService::Jellyfin,
             "Connect Jellyfin",
-            "Uses your play history to bring back old favorites and improve recommendations.",
+            "Uses your play history to improve recommendations.",
             "JF",
             "secondary",
             [
-                "Rediscover favorites",
+                "Seed artists from your plays",
                 "Play statistics",
                 "Listening history",
                 "Better recommendations",

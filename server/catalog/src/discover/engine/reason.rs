@@ -3,8 +3,9 @@
 //!
 //! A new release says so first, naming its artist and, for an artist close
 //! to theirs, the one of theirs it is closest to. Then the person's
-//! artists, then a service's pick. A line names up to three of their
-//! artists, strongest first. A pick whose line would name
+//! artists, then a gap in an artist they collect (how many of the artist's
+//! albums the library holds), then a service's pick. A line names up to
+//! three of their artists, strongest first. A pick whose line would name
 //! an artist that is no longer one of their seeds has no reason, and is not
 //! offered. No score, share or rank is ever part of a line.
 
@@ -34,6 +35,14 @@ pub(crate) fn fresh_line(artist: &str, near: Option<&str>) -> String {
     match near {
         Some(near) => format!("New from {artist}, close to {near}."),
         None => format!("New from {artist}."),
+    }
+}
+
+/// The line of a gap in an artist the library holds `owned` albums of.
+pub(crate) fn gap_line(owned: i64) -> String {
+    match owned {
+        1 => "You have one of their albums, not this one.".to_owned(),
+        owned => format!("You have {owned} of their albums, not this one."),
     }
 }
 
@@ -92,6 +101,23 @@ pub fn reason(candidate: &Candidate, seeds: &HashSet<String>) -> Option<PickReas
             kind: PickReasonKind::YourArtists,
             line,
             artists,
+        });
+    }
+    // A gap: the artist's albums the library holds are the reason.
+    if let Some(artist) = candidate
+        .paths
+        .iter()
+        .find(|path| path.kind == PathKind::Library)
+        .and_then(|path| path.artist.as_ref())
+        .filter(|artist| artist.albums_owned > 0 && !artist.name.trim().is_empty())
+    {
+        return Some(PickReason {
+            kind: PickReasonKind::YourArtists,
+            line: gap_line(artist.albums_owned),
+            artists: vec![PickReasonArtist {
+                artist_mbid: artist.mbid.clone(),
+                name: artist.name.trim().to_owned(),
+            }],
         });
     }
     candidate

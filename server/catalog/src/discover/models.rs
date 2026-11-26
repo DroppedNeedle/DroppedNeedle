@@ -545,6 +545,17 @@ pub enum SectionContent {
         /// The newest of them.
         new_releases: NewReleaseSheet,
     },
+    /// Albums missing from artists the person plays and the library
+    /// collects, each with the artist's albums the library holds.
+    Gaps {
+        /// The gaps, the person's heaviest artists first.
+        gaps: Vec<Gap>,
+    },
+    /// The person's own albums turned over.
+    OwnShelves {
+        /// Its two lists.
+        own_shelves: OwnShelves,
+    },
 }
 
 /// One release on a person's list of new releases from their artists.
@@ -601,6 +612,50 @@ pub struct NewReleaseSheet {
     /// follows found.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<i64>,
+}
+
+/// An album missing from an artist the person plays and the library
+/// collects.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct Gap {
+    /// The missing album: its type and first release year when known, and
+    /// whether a request for it is open.
+    pub album: AlbumRef,
+    /// The line: "You have 6 of their albums, not this one."
+    pub reason: String,
+    /// The artist's albums the library holds, oldest first, each with its
+    /// library id and its year when tagged. The line counts them.
+    pub held: Vec<AlbumRef>,
+}
+
+/// From your shelves: the person's own albums, in two lists.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct OwnShelves {
+    /// Played a lot, not lately: most played first.
+    pub played_a_lot: Vec<OwnShelfAlbum>,
+    /// Asked for and never played: the oldest arrival first.
+    pub never_played: Vec<OwnShelfAlbum>,
+    /// The first month of the person's history (`YYYY-MM`, server time);
+    /// none while they have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_from: Option<String>,
+    /// The month the lists were made in (`YYYY-MM`, server time).
+    pub month: String,
+}
+
+/// One of the person's own albums on their shelves.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct OwnShelfAlbum {
+    /// The album, with its library id.
+    pub album: AlbumRef,
+    /// The line built from its own numbers: "18 plays in February, none
+    /// since.", "17 plays, last in July." or "Asked for in March, not
+    /// played yet."
+    pub line: String,
+    /// The month of the person's last play of it (`YYYY-MM`, server time);
+    /// none for one never played.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_played: Option<String>,
 }
 
 /// Discover: its sections, in page order, plus the page-level fields. A

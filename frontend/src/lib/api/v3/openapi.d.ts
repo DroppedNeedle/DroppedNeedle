@@ -16603,6 +16603,24 @@ export interface components {
             /** @description The version it reported, when it gave a short plain one. */
             version?: string | null;
         };
+        /**
+         * @description An album missing from an artist the person plays and the library
+         *     collects.
+         */
+        Gap: {
+            /**
+             * @description The missing album: its type and first release year when known, and
+             *     whether a request for it is open.
+             */
+            album: components["schemas"]["AlbumRef"];
+            /**
+             * @description The artist's albums the library holds, oldest first, each with its
+             *     library id and its year when tagged. The line counts them.
+             */
+            held: components["schemas"]["AlbumRef"][];
+            /** @description The line: "You have 6 of their albums, not this one." */
+            reason: string;
+        };
         /** @description One genre alias. */
         GenreAlias: {
             /**
@@ -20684,6 +20702,36 @@ export interface components {
              *     ]
              */
             sidecar_patterns: string[];
+        };
+        /** @description One of the person's own albums on their shelves. */
+        OwnShelfAlbum: {
+            /** @description The album, with its library id. */
+            album: components["schemas"]["AlbumRef"];
+            /**
+             * @description The month of the person's last play of it (`YYYY-MM`, server time);
+             *     none for one never played.
+             */
+            last_played?: string | null;
+            /**
+             * @description The line built from its own numbers: "18 plays in February, none
+             *     since.", "17 plays, last in July." or "Asked for in March, not
+             *     played yet."
+             */
+            line: string;
+        };
+        /** @description From your shelves: the person's own albums, in two lists. */
+        OwnShelves: {
+            /**
+             * @description The first month of the person's history (`YYYY-MM`, server time);
+             *     none while they have none.
+             */
+            history_from?: string | null;
+            /** @description The month the lists were made in (`YYYY-MM`, server time). */
+            month: string;
+            /** @description Asked for and never played: the oldest arrival first. */
+            never_played: components["schemas"]["OwnShelfAlbum"][];
+            /** @description Played a lot, not lately: most played first. */
+            played_a_lot: components["schemas"]["OwnShelfAlbum"][];
         };
         /** @description One release group of an artist's discography that the library holds. */
         OwnedRelease: {
@@ -25683,6 +25731,16 @@ export interface components {
             new_releases: components["schemas"]["NewReleaseSheet"];
             /** @enum {string} */
             shape: "new_releases";
+        } | {
+            /** @description The gaps, the person's heaviest artists first. */
+            gaps: components["schemas"]["Gap"][];
+            /** @enum {string} */
+            shape: "gaps";
+        } | {
+            /** @description Its two lists. */
+            own_shelves: components["schemas"]["OwnShelves"];
+            /** @enum {string} */
+            shape: "own_shelves";
         };
         /** @description One row inside a section, tagged by `kind`. */
         SectionItem: (components["schemas"]["ArtistRef"] & {
@@ -25702,7 +25760,7 @@ export interface components {
          * @description One section of the home or discover page.
          * @enum {string}
          */
-        SectionKey: "popular_albums" | "trending_artists" | "weekly_exploration" | "your_top_albums" | "recently_played" | "recently_added" | "genre_list" | "favorite_artists" | "library_artists" | "library_albums" | "weekly_set" | "playlist_discovery" | "daily_mixes" | "radio_sections" | "new_from_your_artists" | "missing_essentials" | "rediscover" | "anniversaries" | "lastfm_recent_scrobbles" | "lastfm_weekly_artist_chart" | "lastfm_weekly_album_chart";
+        SectionKey: "popular_albums" | "trending_artists" | "weekly_exploration" | "your_top_albums" | "recently_played" | "recently_added" | "genre_list" | "favorite_artists" | "library_artists" | "library_albums" | "weekly_set" | "playlist_discovery" | "daily_mixes" | "radio_sections" | "new_from_your_artists" | "gaps_in_your_artists" | "from_your_shelves" | "anniversaries" | "lastfm_recent_scrobbles" | "lastfm_weekly_artist_chart" | "lastfm_weekly_album_chart";
         /**
          * @description What a section's rows are.
          * @enum {string}

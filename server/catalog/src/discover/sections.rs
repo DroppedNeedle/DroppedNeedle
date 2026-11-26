@@ -67,10 +67,12 @@ pub enum SectionKey {
     RadioSections,
     /// Discover: the last 90 days' releases from the person's artists.
     NewFromYourArtists,
-    /// Discover: albums missing from artists the library collects.
-    MissingEssentials,
-    /// Discover: artists played a lot, but not lately.
-    Rediscover,
+    /// Discover: albums missing from artists the person plays and the
+    /// library collects.
+    GapsInYourArtists,
+    /// Discover: the person's own albums played a lot but not lately, and
+    /// the ones they asked for and never played.
+    FromYourShelves,
     /// Discover: library albums with a round birthday this year.
     Anniversaries,
     /// Discover: the user's recent Last.fm scrobbles.
@@ -172,8 +174,6 @@ pub enum Input {
     LastfmRecent,
     /// The user's ListenBrainz genres.
     Genres,
-    /// The user's Jellyfin play counts.
-    Jellyfin,
     /// The library's identified albums.
     LibraryAlbums,
 }
@@ -426,24 +426,22 @@ pub const SECTIONS: &[SectionDef] = &[
     SectionDef {
         hides_owned: true,
         ..discover(
-            K::MissingEssentials,
+            K::GapsInYourArtists,
             Z::NewAndFresh,
-            "Missing Essentials",
-            "Celebrated albums missing from artists you collect.",
+            "Gaps in artists you collect",
+            "Albums missing from artists you play and own three or more albums of.",
             Some(Requires::Library),
-            B::Library,
+            B::Personal,
         )
-        .reading(&[I::LibraryAlbums], Dedupe::Albums(3))
     },
     discover(
-        K::Rediscover,
+        K::FromYourShelves,
         Z::FromYourLibrary,
-        "Rediscover",
-        "Library albums you haven't played in a while.",
-        None,
+        "From your shelves",
+        "Your albums played a lot but not lately, and ones you asked for and haven't played.",
+        Some(Requires::Library),
         B::OwnHistory,
-    )
-    .reading(&[I::Jellyfin], Dedupe::None),
+    ),
     discover(
         K::Anniversaries,
         Z::FromYourLibrary,

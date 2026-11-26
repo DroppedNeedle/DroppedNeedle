@@ -1,6 +1,8 @@
 import type {
 	ChartSection,
+	Gap,
 	NewReleaseSheet,
+	OwnShelves,
 	PageSection,
 	SectionKey,
 	SectionState,
@@ -39,6 +41,16 @@ export function shelvesOf(sections: Sections, key: SectionKey): ChartSection[] {
 /** New from your artists: the newest of the person's new releases. */
 export function newReleasesOf(sections: Sections): NewReleaseSheet | null {
 	return contentOf(sections, 'new_from_your_artists', 'new_releases')?.new_releases ?? null;
+}
+
+/** Gaps in artists you collect. */
+export function gapsOf(sections: Sections): Gap[] {
+	return contentOf(sections, 'gaps_in_your_artists', 'gaps')?.gaps ?? [];
+}
+
+/** From your shelves: the person's own albums in two lists. */
+export function ownShelvesOf(sections: Sections): OwnShelves | null {
+	return contentOf(sections, 'from_your_shelves', 'own_shelves')?.own_shelves ?? null;
 }
 
 /** The weekly exploration playlist. */
