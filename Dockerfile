@@ -6,6 +6,9 @@
 # images use release; CI's container boot test passes ci-e2e and `make image`
 # passes local, both quicker builds of the same code.
 ARG CARGO_PROFILE=release
+# `make image` sets SCCACHE=on for local builds (see the sccache stages
+# below); CI and release builds leave it off and build as before.
+ARG SCCACHE=off
 
 # The Node base image names the exact version in .github/node-version, and
 # the Rust build installs the one rust-toolchain.toml names; CI fails when
@@ -85,12 +88,28 @@ RUN cd server && cargo chef prepare --recipe-path /app/recipe.json
 FROM chef AS about
 RUN cargo install cargo-about --version 0.9.3 --locked --features cli
 
+# With SCCACHE=on, sccache keeps each compiled crate in a BuildKit cache that
+# outlives the build, keyed on a hash of everything that goes into it (not
+# file times, so checkouts with different timestamps never reuse a stale
+# crate). A rebuild then compiles only the crates whose inputs changed. Off,
+# /opt/sccache stays empty and the compile steps run without it.
+FROM chef AS sccache-off
+RUN mkdir -p /opt/sccache
+
+FROM chef AS sccache-on
+RUN cargo install sccache --version 0.20.1 --locked --no-default-features --root /opt/sccache
+
+FROM sccache-${SCCACHE} AS sccache
+
 FROM chef AS dependencies
 ARG CARGO_PROFILE
+COPY --from=sccache /opt/sccache /opt/sccache
+COPY server/scripts/with-sccache.sh /usr/local/bin/with-sccache
 COPY --from=planner /app/recipe.json ./recipe.json
-RUN mkdir -p server \
+RUN --mount=type=cache,id=droppedneedle-sccache,target=/sccache,sharing=locked \
+    mkdir -p server \
     && cd server \
-    && cargo chef cook --profile "$CARGO_PROFILE" --locked --recipe-path /app/recipe.json --bins -p droppedneedle -p droppedneedle-tool
+    && with-sccache cargo chef cook --profile "$CARGO_PROFILE" --locked --recipe-path /app/recipe.json --bins -p droppedneedle -p droppedneedle-tool
 
 # The licence notices are written beside the compile, from the crates the
 # dependencies stage fetched.
@@ -117,7 +136,8 @@ COPY frontend/src/lib/stores/customCssRules.json ./frontend/src/lib/stores/custo
 
 # Only the binaries stay in this layer, which keeps the build cache small. A
 # profile's output folder is target/<profile name>.
-RUN cargo build --profile "$CARGO_PROFILE" --locked --manifest-path server/Cargo.toml --bins -p droppedneedle -p droppedneedle-tool \
+RUN --mount=type=cache,id=droppedneedle-sccache,target=/sccache,sharing=locked \
+    with-sccache cargo build --profile "$CARGO_PROFILE" --locked --manifest-path server/Cargo.toml --bins -p droppedneedle -p droppedneedle-tool \
     && mkdir /out \
     && cp "server/target/$CARGO_PROFILE/droppedneedle" "server/target/$CARGO_PROFILE/droppedneedle-tool" /out/ \
     && rm -rf server/target \

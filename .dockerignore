@@ -27,6 +27,7 @@ frontend/build/
 frontend/.svelte-kit/
 frontend/.vite/
 frontend/.vitest-attachments/
+frontend/test-results/
 **/__screenshots__/
 **/__pycache__/
 
