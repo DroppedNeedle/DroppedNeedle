@@ -692,6 +692,104 @@ async fn queue_journey_scopes_explains_retries_and_clears() {
     assert_eq!(body["active_count"], 0);
 }
 
+// A settled task's file counts say what landed, not what the last poll
+// saw: the files imported, out of those plus what is still missing (#805).
+// A task that imported nothing keeps its poll's counts.
+#[tokio::test]
+async fn a_settled_task_counts_what_landed() {
+    use droppedneedle_acquire::downloads::landing_rows::{ImportDecisionRow, ImportOutcome};
+    use droppedneedle_acquire::downloads::queue_rows::ProgressColumns;
+
+    let db = AcquireDb::scratch().unwrap();
+    db.add_user("u-ada", "Ada", "user").await.unwrap();
+    let journal = Arc::new(Journal::new(db, quiet_ticks()));
+    journal
+        .run("test.seed", |store| {
+            let now = now_f64();
+            for (id, album) in [("c-short", "rg-1"), ("c-whole", "rg-2"), ("c-none", "rg-3")] {
+                let row = NewTask {
+                    release_group_mbid: album.to_owned(),
+                    ..task(id)
+                };
+                store.insert_task(&row, now)?;
+                store.transition_task(id, TaskStatus::Downloading, now, None)?;
+                // The last poll saw the first file still queued.
+                let poll = ProgressColumns {
+                    files_total: 1,
+                    ..Default::default()
+                };
+                store.record_progress(id, &poll, now)?;
+            }
+            let landed = |id: &str, outcome, imported, missing: &str| {
+                store.record_import_decision(&ImportDecisionRow {
+                    task_id: id.to_owned(),
+                    outcome,
+                    files_imported: imported,
+                    checks_json: "[]".to_owned(),
+                    missing_positions: missing.to_owned(),
+                    decided_at: now,
+                    ..Default::default()
+                })
+            };
+            landed(
+                "c-short",
+                ImportOutcome::Partial,
+                12,
+                "[[1,13],[1,14],[1,15]]",
+            )?;
+            landed("c-short", ImportOutcome::Partial, 2, "[[1,15]]")?;
+            landed("c-whole", ImportOutcome::Imported, 10, "[]")?;
+            landed("c-none", ImportOutcome::Held, 0, "[]")?;
+            store.transition_task("c-short", TaskStatus::Partial, now, None)?;
+            store.transition_task("c-whole", TaskStatus::Completed, now, None)?;
+            store.transition_task("c-none", TaskStatus::Completed, now, None)
+        })
+        .await
+        .unwrap();
+
+    let (status, body) = send(&journal, get("/api/v3/downloads/tasks", USER)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let counts = |id: &str| {
+        let item = body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["id"] == id)
+            .unwrap();
+        (item["files_completed"].clone(), item["files_total"].clone())
+    };
+    assert_eq!(
+        counts("c-short"),
+        (json!(14), json!(15)),
+        "both landings, one missing"
+    );
+    assert_eq!(counts("c-whole"), (json!(10), json!(10)));
+    assert_eq!(
+        counts("c-none"),
+        (json!(0), json!(1)),
+        "the poll's counts stay"
+    );
+
+    // Importing the held rest by hand makes the album whole.
+    journal
+        .run("test.seed", |store| {
+            store.complete_after_manual_import("c-short", now_f64())
+        })
+        .await
+        .unwrap();
+    let (_, body) = send(&journal, get("/api/v3/downloads/tasks", USER)).await;
+    let short = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == "c-short")
+        .unwrap();
+    assert_eq!(
+        (&short["files_completed"], &short["files_total"]),
+        (&json!(15), &json!(15))
+    );
+}
+
 // A long write on the lane does not hold up the journal's reads: startup
 // recovery lists the live tasks on the read pool while a write is open.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

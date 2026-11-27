@@ -712,6 +712,10 @@ impl<'conn> DownloadStore<'conn> {
         if changed > 0 && status.is_terminal() {
             self.settle_requests(task_id, status, now)?;
         }
+        if changed > 0 && matches!(status, TaskStatus::Completed | TaskStatus::Partial) {
+            self.conn
+                .execute(sql::SETTLE_FILE_COUNTS.text(), rusqlite::params![task_id])?;
+        }
         if changed == 0
             && self
                 .get_task(task_id)?
