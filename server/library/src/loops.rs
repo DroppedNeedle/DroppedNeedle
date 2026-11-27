@@ -68,6 +68,9 @@ pub const LOOPS: &[&str] = &[
     RELOOK_JOB,
     super::management::PREVIEW_CLEANUP_JOB,
     LOUDNESS_JOB,
+    // Started by the server's builder, which hands it media's transcode
+    // count.
+    super::sound::SOUND_JOB,
 ];
 
 /// Scan idle ceiling: how often the scan loop looks for scheduled work

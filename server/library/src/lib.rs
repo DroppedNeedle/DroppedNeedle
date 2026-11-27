@@ -65,6 +65,7 @@ pub mod scans;
 pub mod service;
 pub mod settings;
 pub mod settings_models;
+pub mod sound;
 pub mod tags;
 pub mod wiring;
 

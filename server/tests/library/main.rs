@@ -14,6 +14,7 @@ mod library_matching_corpus;
 mod library_publish;
 mod library_scan;
 mod library_scan_throughput;
+mod library_sound;
 mod library_tags;
 mod settings_library_policy;
 mod settings_management;

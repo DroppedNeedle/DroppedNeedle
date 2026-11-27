@@ -810,6 +810,12 @@ pub(crate) async fn build_on(
     jobs::spawn_provider_cache_sweep(supervisor, providers.cache.clone()).map_err(|_| {
         stage("jobs loops")("the provider cache sweep is already running".to_owned())
     })?;
+    jobs::spawn_sound_analysis(
+        supervisor,
+        &state.library_services,
+        state.media.transcodes_running(),
+    )
+    .map_err(|_| stage("library loops")("the sound analysis loop is already running".to_owned()))?;
     crate::admin::backups::NightlyBackup::new(runtime.backups().clone(), p)
         .spawn_on(supervisor)
         .map_err(|_| stage("jobs loops")("the nightly backup is already running".to_owned()))?;

@@ -401,6 +401,23 @@ impl Loudness {
         roots
     }
 
+    /// Whether a file is due a measurement that the loop can read now: one
+    /// under a library folder that is there, whose size and modification
+    /// time are the ones the scan read. A file it cannot read does not
+    /// count, so one such file never holds other work back. Sound analysis
+    /// waits while this answers true. Blocking.
+    pub fn files_due(&self) -> Result<bool, LoudnessError> {
+        let roots = self.present_roots();
+        if roots.is_empty() {
+            return Ok(false);
+        }
+        Ok(self.due(&roots, BATCH)?.iter().any(|track| {
+            TrackFile::in_library(Path::new(&track.file_path), &track.relative_path)
+                .and_then(|file| stat(file).ok())
+                .is_some_and(|found| as_scanned(track, found))
+        }))
+    }
+
     /// Up to `limit` due tracks. It walks and sorts the track table, so it
     /// reads on the long pool.
     fn due(&self, roots: &[String], limit: usize) -> Result<Vec<sql::DueTrack>, LoudnessError> {

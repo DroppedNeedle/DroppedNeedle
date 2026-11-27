@@ -125,6 +125,12 @@ RUN mkdir /notices \
         --output-file /notices/NOTICES-server.txt server/about.hbs 2>/notices/log \
     && ! grep -q clarification /notices/log \
     || { cat /notices/log >&2; exit 1; }
+# The sound analysis model built into the server is no crate: its licence
+# goes at the end of the same notices, so it travels wherever they do.
+RUN printf '\n%s\nMSD_musicnn sound analysis model\n\n' \
+        '--------------------------------------------------------------------------------' \
+        >> /notices/NOTICES-server.txt \
+    && cat server/library/models/MSD_musicnn-LICENSE >> /notices/NOTICES-server.txt
 
 FROM dependencies AS builder
 ARG CARGO_PROFILE

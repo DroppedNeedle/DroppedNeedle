@@ -104,6 +104,7 @@ services:
 |-|-|
 | Library paths, import naming script, scan schedule, folder watching, AcoustID key, storage cap | Settings > Library |
 | Prefer local cover art before online covers | Settings > Library > Covers |
+| Sound analysis: on or off, and pause (admin) | Settings > Library |
 | Library Management profiles, previews, recovery, the recycle bin folder and retention | Library Management (admin), also reached from Organize files under Settings > Library |
 | Download clients (slskd, SABnzbd, NZBGet), Deemix ([below](#deemix)), source priority, quality tiers, picking a copy, wanted watcher, Usenet retention days | Settings > Download Client |
 | Newznab indexers or Prowlarr | Settings > Indexers / Prowlarr |

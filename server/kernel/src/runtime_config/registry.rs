@@ -95,6 +95,7 @@ section_list! {
         LibraryScanSchedule,
         FilesystemWatcher,
         ImportFolder,
+        SoundAnalysisSettings,
         WantedWatcher,
         DeemixConnection,
         SourcePriority,

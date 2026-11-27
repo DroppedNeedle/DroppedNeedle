@@ -72,7 +72,7 @@ fn schema_rows(connection: &Connection) -> Vec<(String, String, String, Option<S
 fn fresh_migrate_marks_version_and_seeds() {
     let connection = migrated();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), latest_version());
-    assert_eq!(table_names(&connection).len(), 208);
+    assert_eq!(table_names(&connection).len(), 209);
     assert_eq!(
         scalar(
             &connection,
@@ -501,6 +501,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0182_discover_depth.sql",
         "55f852492e310599672bb3b172ad1c38bacd8c83cb1a35d0cc42cdc4098dc97a",
+    ),
+    (
+        "0183_library_sound_analyses.sql",
+        "4500e209fc37c4f063ff0482460ec9b9b356c312cdd797ce65c2be2b983e90ee",
     ),
 ];
 
@@ -5231,6 +5235,119 @@ fn discover_depth_upgrade_reads_everyone_as_next_door() {
     }
 }
 
+/// 0183 adds `library_sound_analyses`, empty on a database that already
+/// holds tracks, and changes nothing else. A row goes with its track; an
+/// analysed row needs its 800-byte vector and 50 tag bytes, any other
+/// outcome has neither, and one track holds a row per analysis version.
+#[test]
+fn sound_analyses_upgrade_adds_one_empty_table() {
+    let dir = ScratchDir::new("sound-analyses-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 183)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    connection
+        .execute_batch(
+            "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
+                 album_artist_id, grouping_source, created_at, updated_at)
+             VALUES ('a', 'r', 'k', 'A', 'a', '00000000-0000-4000-8000-000000000002',
+                 'automatic', 1, 1);
+             INSERT INTO local_tracks (id, local_album_id, root_id, file_path,
+                 relative_path, path_hash, file_size_bytes, file_mtime_ns,
+                 stat_revision, title, title_folded, album_title, album_title_folded,
+                 file_format, ingest_source, imported_at, membership_source)
+             VALUES ('t', 'a', 'r', '/m/t', 't', 't', 1, 1, '1:1', 'T', 't', 'A', 'a',
+                 'flac', 'scan', 1, 'automatic');",
+        )
+        .unwrap();
+    let tracks = table_rows(&connection, "local_tracks", "rowid, *");
+    let before = schema_rows(&connection);
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 183);
+    let mut after = schema_rows(&connection);
+    assert!(
+        before.iter().all(|row| after.contains(row)),
+        "nothing else changes"
+    );
+    after.retain(|row| !before.contains(row));
+    assert_eq!(
+        after
+            .iter()
+            .map(|(kind, name, table, _)| (kind.as_str(), name.as_str(), table.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            (
+                "index",
+                "sqlite_autoindex_library_sound_analyses_1",
+                "library_sound_analyses"
+            ),
+            ("table", "library_sound_analyses", "library_sound_analyses"),
+        ]
+    );
+    assert!(
+        after[1]
+            .3
+            .as_deref()
+            .is_some_and(|sql| sql.ends_with("STRICT")),
+        "{:?}",
+        after[1].3
+    );
+    assert_eq!(table_rows(&connection, "local_tracks", "rowid, *"), tracks);
+    assert_eq!(
+        scalar(&connection, "SELECT COUNT(*) FROM library_sound_analyses"),
+        0,
+        "the table starts empty"
+    );
+
+    let columns = "(local_track_id, analysis_version, stat_revision, model, outcome, \
+                   vector, tags, analysed_seconds, analysed_at)";
+    connection
+        .execute_batch(&format!(
+            "PRAGMA foreign_keys = ON;
+             INSERT INTO library_sound_analyses {columns}
+             VALUES ('t', 1, '1:1', 'MSD_musicnn', 'analysed', zeroblob(800), zeroblob(50),
+                 240.0, 1);
+             INSERT INTO library_sound_analyses {columns}
+             VALUES ('t', 2, '1:1', 'MSD_musicnn', 'undecodable', NULL, NULL, 0.0, 1);"
+        ))
+        .unwrap();
+    for refused in [
+        "('t', 3, '1:1', 'MSD_musicnn', 'analysed', NULL, zeroblob(50), 1.0, 1)",
+        "('t', 3, '1:1', 'MSD_musicnn', 'analysed', zeroblob(800), NULL, 1.0, 1)",
+        "('t', 3, '1:1', 'MSD_musicnn', 'analysed', zeroblob(799), zeroblob(50), 1.0, 1)",
+        "('t', 3, '1:1', 'MSD_musicnn', 'too_short', zeroblob(800), zeroblob(50), 1.0, 1)",
+        "('t', 3, '1:1', 'MSD_musicnn', 'unreadable', NULL, NULL, 1.0, 1)",
+        "('t', 1, '1:1', 'MSD_musicnn', 'over_time', NULL, NULL, 1.0, 1)",
+    ] {
+        assert!(
+            connection
+                .execute(
+                    &format!("INSERT INTO library_sound_analyses {columns} VALUES {refused}"),
+                    []
+                )
+                .is_err(),
+            "{refused}"
+        );
+    }
+    connection
+        .execute("DELETE FROM local_tracks WHERE id = 't'", [])
+        .unwrap();
+    assert_eq!(
+        scalar(&connection, "SELECT COUNT(*) FROM library_sound_analyses"),
+        0,
+        "deleting the track deletes its rows"
+    );
+}
+
 /// Every foreign key and what deleting its parent does. A rebuild that
 /// drops or changes a key's action, or adds a key, fails here: the list
 /// changes in the same commit, on purpose.
@@ -5401,6 +5518,7 @@ const FOREIGN_KEYS: &[(&str, &str, &str, &str)] = &[
     ("library_scan_run_scopes", "run_id", "library_scan_runs", "CASCADE"),
     ("library_scan_runs", "requested_by_user_id", "auth_users", "SET NULL"),
     ("library_scan_unjudged_tracks", "local_track_id", "local_tracks", "CASCADE"),
+    ("library_sound_analyses", "local_track_id", "local_tracks", "CASCADE"),
     ("library_track_hand_matches", "local_track_id", "local_tracks", "CASCADE"),
     ("library_track_hand_matches", "matched_by_user_id", "auth_users", "SET NULL"),
     ("library_track_management_identity", "local_track_id", "local_tracks", "CASCADE"),
@@ -5887,6 +6005,7 @@ fn state_columns() -> Vec<StateColumn> {
     use droppedneedle_library::identity::remap::RemapOrigin;
     use droppedneedle_library::jobs::models::Control;
     use droppedneedle_library::loudness::LoudnessOutcome;
+    use droppedneedle_library::sound::SoundOutcome;
     use droppedneedle_library::jobs::{
         ControlRequest, ManagementPhase, OperationKind, OperationState, WorkState,
     };
@@ -6024,6 +6143,7 @@ fn state_columns() -> Vec<StateColumn> {
         state("library_identify_reviews", "state", &ReviewState::ALL, ReviewState::as_str),
         state("library_identity_repair_findings", "state", &FindingState::ALL, FindingState::as_str),
         state("library_loudness_measurements", "outcome", &LoudnessOutcome::ALL, LoudnessOutcome::as_str),
+        state("library_sound_analyses", "outcome", &SoundOutcome::ALL, SoundOutcome::as_str),
         state("library_management_job_snapshots", "mode", &JobMode::ALL, JobMode::as_str),
         state("library_management_job_snapshots", "origin", &Origin::ALL, Origin::as_str),
         state("library_management_job_snapshots", "phase", &ManagementPhase::ALL, ManagementPhase::as_str),
@@ -6535,6 +6655,13 @@ fn every_registered_statement_prepares() {
 /// when no album is named, the remap sweep over every identified album's
 /// tracks, and the loudness loop's look for the tracks it has not measured,
 /// newest first, a background read about every 20 files.
+/// Sound analysis's six: its look for the tracks it has not analysed, as
+/// loudness's, about every 10 files; at a pass's end, the check for tracks
+/// left under a folder that is not there and the drop of an old version's
+/// rows once the new one covers every track; the read of every track's
+/// sound for the features built on it, when the analysis changed; and the
+/// counts and last file not read on its settings card, which an admin has
+/// open.
 /// Discover's four: radio's two track reads, which filter on ids worked out
 /// per track over the whole library, the check for any local file, which
 /// stops at the first row, and the owned groups with their album artist
@@ -6564,6 +6691,12 @@ const TRACK_WALKS: &[&str] = &[
     "droppedneedle_library::corrections::sql::CANDIDATES",
     "droppedneedle_library::duplicates::sql::DUPLICATE_ALBUMS",
     "droppedneedle_library::loudness::sql::DUE",
+    "droppedneedle_library::sound::sql::DUE",
+    "droppedneedle_library::sound::sql::ANY_DUE",
+    "droppedneedle_library::sound::sql::DROP_OLD_VERSIONS",
+    "droppedneedle_library::sound::sql::VECTORS",
+    "droppedneedle_library::sound::sql::COVERAGE",
+    "droppedneedle_library::sound::sql::LAST_NOT_ANALYSED",
     "droppedneedle_catalog::local::sql::TRACK_PAGE_LIKE",
     "droppedneedle_catalog::local::sql::TRACK_PAGE_WORDS",
     "droppedneedle_catalog::local::sql::TRACK_KEY_AT_LIKE",

@@ -318,6 +318,11 @@ const LATE_ALLOWED: &[(&str, &str, &str)] = &[
         "the open session's sandbox, none once it closes",
     ),
     (
+        "library/src/sound/analyse.rs",
+        "analyser",
+        "one file's analyser, made at its first block, once the stream's rate is known",
+    ),
+    (
         "library/src/test_support/mod.rs",
         "hook",
         "the setter of a test's hook between two publish steps",

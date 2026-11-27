@@ -40,6 +40,7 @@ reqwest = { version = "0.12", default-features = false, features = ["multipart",
 ring = "0.17"
 sha1 = "0.10"
 rubato = "0.16"
+realfft = "3.5"
 percent-encoding = "2"
 # fallible_uint keeps the u64 and usize conversions, which fail out of i64 range.
 rusqlite = { version = "0.42", features = ["bundled", "backup", "hooks", "fallible_uint"] }
@@ -52,6 +53,8 @@ subtle = "2"
 symphonia = { version = "0.6", features = ["aac", "alac", "isomp4", "mp3"] }
 symphonia-adapter-libopus = "0.3"
 thiserror = "2"
+# Sound analysis runs its two small ONNX models on this pure-Rust runtime.
+tract-onnx = "0.23.10"
 unicode-normalization = "0.1"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-util = "0.7"
@@ -230,4 +233,42 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.libsqlite3-sys]
+opt-level = 3
+
+# And sound analysis's model runtime (tract), resampler (rubato) and FFT
+# (realfft, rustfft), which its tests run on whole files.
+[profile.dev.package.tract-core]
+opt-level = 3
+
+[profile.dev.package.tract-data]
+opt-level = 3
+
+[profile.dev.package.tract-hir]
+opt-level = 3
+
+[profile.dev.package.tract-linalg]
+opt-level = 3
+
+[profile.dev.package.tract-nnef]
+opt-level = 3
+
+[profile.dev.package.tract-onnx]
+opt-level = 3
+
+[profile.dev.package.tract-onnx-opl]
+opt-level = 3
+
+[profile.dev.package.tract-extra]
+opt-level = 3
+
+[profile.dev.package.tract-transformers]
+opt-level = 3
+
+[profile.dev.package.rubato]
+opt-level = 3
+
+[profile.dev.package.realfft]
+opt-level = 3
+
+[profile.dev.package.rustfft]
 opt-level = 3

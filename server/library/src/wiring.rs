@@ -45,6 +45,7 @@ use super::scan::watcher::{DirtyScopes, WatcherState, WorkWakeups};
 use super::scans::Scans;
 use super::service::{Identification, ServiceError};
 use super::settings::LibrarySettings;
+use super::sound::SoundAnalysis;
 use crate::jobs::service::Operations;
 use crate::publish::session::{PublishCell, Publishing};
 use crate::removal::Mutations;
@@ -433,6 +434,8 @@ pub struct LibrarySetup {
     pub imports: Imports,
     /// Each track's measured loudness, and the loop's passes.
     pub loudness: Loudness,
+    /// Each track's sound, the loop's passes and its status.
+    pub sound: SoundAnalysis,
 }
 
 impl LibrarySetup {
@@ -610,6 +613,14 @@ impl LibrarySetup {
             coordinator.clone(),
             platform.clock.clone(),
         );
+        let sound = SoundAnalysis::new(
+            db.clone(),
+            core.clone(),
+            coordinator.clone(),
+            loudness.clone(),
+            settings.sound.clone(),
+            platform.clock.clone(),
+        );
         Ok(Self {
             ids: platform.ids.clone(),
             management_settings: Arc::new(LibraryManagementService::new(platform.settings.clone())),
@@ -643,6 +654,7 @@ impl LibrarySetup {
             publishing,
             imports,
             loudness,
+            sound,
         })
     }
 }
@@ -667,6 +679,7 @@ pub struct LibraryServices {
     pub mutations: Mutations,
     pub contrib: Arc<ContributionService>,
     pub loudness: Loudness,
+    pub sound: SoundAnalysis,
 }
 
 impl LibraryServices {
@@ -691,6 +704,7 @@ impl LibraryServices {
             mutations: Mutations::new(setup),
             contrib: setup.contrib.clone(),
             loudness: setup.loudness.clone(),
+            sound: setup.sound.clone(),
             scans: setup.scans.clone(),
             activity: setup.activity.clone(),
             identification: setup.identification.clone(),
@@ -776,4 +790,5 @@ substate!(
     mutations: Mutations,
     contrib: Arc<ContributionService>,
     loudness: Loudness,
+    sound: SoundAnalysis,
 );

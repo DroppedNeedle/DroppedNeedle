@@ -167,6 +167,13 @@ vi.mock('$lib/features/settings/queries/SectionSettingsQueries.svelte', async (i
 	getImportFolderStatusQuery: () => ({
 		data: { state: 'off', overlap: null, overlap_path: null, waiting: 0 }
 	}),
+	getSoundAnalysisSettingsQuery: () => ({
+		data: { sound_analysis_enabled: false, sound_analysis_paused: false },
+		isPending: false,
+		isError: false
+	}),
+	createSaveSoundAnalysisSettingsMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	getSoundAnalysisStatusQuery: () => ({ data: undefined }),
 	getAdvancedSettingsQuery: () => ({
 		data: { prefer_local_cover_art: true },
 		isPending: false,

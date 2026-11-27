@@ -159,6 +159,7 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 		key(U, 'settings', 'import-folder-status'),
 		key('admin', 'health', 'problems')
 	],
+	soundAnalysisChanged: [key(U, 'settings', 'sound-analysis-status')],
 	anyDownloadChanged: [every('downloads')],
 	anyRequestChanged: [every('requests')],
 	albumStatusChanged: [key(U, 'library', 'album', 'job')],

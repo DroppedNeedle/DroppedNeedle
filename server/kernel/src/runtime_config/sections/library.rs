@@ -174,6 +174,24 @@ impl Section for ImportFolder {
     }
 }
 
+// --- library_sound_analysis -------------------------------------------------
+
+/// Sound analysis: the library's own files read once in the background to
+/// find songs that sound alike. Off by default.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(default)]
+pub struct SoundAnalysisSettings {
+    /// Analyse the library's tracks, and let the sound features answer.
+    pub sound_analysis_enabled: bool,
+    /// Stop the background work until this is turned off again. What is
+    /// analysed keeps serving.
+    pub sound_analysis_paused: bool,
+}
+
+impl Section for SoundAnalysisSettings {
+    const KEY: &'static str = "library_sound_analysis";
+}
+
 // --- edition_preferences ----------------------------------------------------
 
 /// Which release date wins when editions otherwise tie.

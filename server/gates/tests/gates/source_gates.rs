@@ -1627,6 +1627,10 @@ const NARRATION_SKIPPED: &[(&str, &str)] = &[
         "server/tests/fixtures",
         "recorded third-party answers, kept as they were sent",
     ),
+    (
+        "server/library/models",
+        "the sound analysis model files, binary, and their licence as written",
+    ),
 ];
 
 /// Every file under `root` (a file or a folder), as a path from the
@@ -1789,4 +1793,47 @@ fn test_support_stays_in_named_places() {
         }
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// A sound vector is never a track's identity. Only the sound module reads
+/// `library_sound_analyses`, and none of its statements compares or joins on
+/// the vector column: tracks are joined by id, and anything built on the
+/// vectors gets them through the module's reads, never to merge, link or
+/// de-duplicate tracks.
+#[test]
+fn nothing_joins_tracks_on_a_sound_vector() {
+    let table = Regex::new(r"\blibrary_sound_analyses\b").unwrap();
+    // Within one string literal: a comparison with the vector, or the
+    // vector after ON, GROUP BY, ORDER BY or PARTITION BY. Keeping a row
+    // sets the column from the new value, which is no comparison.
+    let on_vector = Regex::new(
+        r#"(?i)\bvector\s*(=|<>|!=|<|>|\bIS\b|\bIN\b|\bLIKE\b)|(=|<>|!=|\bIS\b|\bIN\b)\s*\(?\s*(\w+\.)?vector\b|\b(ON|GROUP\s+BY|ORDER\s+BY|PARTITION\s+BY)\b[^"]*?\bvector\b"#,
+    )
+    .unwrap();
+    let mut wrong = Vec::new();
+    for source in workspace_sources() {
+        if source.path.starts_with("gates/") {
+            continue;
+        }
+        let code = source.code();
+        let ours = source.path.starts_with("library/src/sound/");
+        for found in table.find_iter(&code) {
+            if !ours {
+                let line = code[..found.start()].matches('\n').count() + 1;
+                wrong.push(format!("{}:{line}: reads the sound rows", source.path));
+            }
+        }
+        if source.path == "library/src/sound/sql.rs" {
+            let code = code.replace("vector = excluded.vector", "");
+            for found in on_vector.find_iter(&code) {
+                let line = code[..found.start()].matches('\n').count() + 1;
+                wrong.push(format!("{}:{line}: {}", source.path, found.as_str()));
+            }
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "read track sounds through `droppedneedle_library::sound`, which joins tracks by id only:\n{}",
+        wrong.join("\n")
+    );
 }

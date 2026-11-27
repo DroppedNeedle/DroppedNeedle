@@ -21,6 +21,7 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
 };
 use droppedneedle_kernel::runtime_config::sections::{
     FilesystemWatcher, LibraryManagement, LibraryScanSchedule, MusicBrainzSettings,
+    SoundAnalysisSettings,
 };
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live, UpdateError};
@@ -45,6 +46,8 @@ pub struct LibrarySettings {
     pub editions: LivePreferences,
     /// The MusicBrainz source identification asks.
     pub musicbrainz: Live<MusicBrainzSettings>,
+    /// Sound analysis's switch and pause.
+    pub sound: Live<SoundAnalysisSettings>,
     /// Adding a root and Library Management's settings write here, and
     /// correction previews are signed with its data key.
     pub(crate) store: ConfigStore,
@@ -62,6 +65,7 @@ impl LibrarySettings {
             management: config.live(),
             editions: LivePreferences::new(config),
             musicbrainz: config.live(),
+            sound: config.live(),
             store: config.clone(),
         }
     }

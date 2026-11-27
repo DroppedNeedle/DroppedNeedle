@@ -22,6 +22,7 @@ pub mod repairs;
 pub mod reviews;
 pub mod routes;
 pub mod scan;
+pub mod sound;
 
 /// Run store-backed work on a blocking thread: the library stores are
 /// synchronous SQLite and must not stall the async workers. The work's

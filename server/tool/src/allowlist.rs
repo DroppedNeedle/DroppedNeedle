@@ -308,6 +308,7 @@ mod tests {
             "edition_preferences",
             "app_connect",
             "library_import_folder",
+            "library_sound_analysis",
             "appearance",
             "deemix",
             "backups",

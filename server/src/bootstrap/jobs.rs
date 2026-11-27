@@ -626,3 +626,20 @@ pub fn spawn_provider_cache_sweep(
         }),
     )
 }
+
+/// Start the sound analysis loop over the library's service and wakeups,
+/// waiting while `transcodes` (media's count of running ffmpeg jobs) is
+/// above zero. It starts here, where both areas are in hand: the library
+/// sits below media and cannot ask it.
+pub fn spawn_sound_analysis(
+    supervisor: &Supervisor,
+    library: &droppedneedle_library::wiring::LibraryServices,
+    transcodes: impl Fn() -> usize + Send + Sync + 'static,
+) -> Result<(), AlreadyRunning> {
+    droppedneedle_library::sound::spawn_on(
+        supervisor,
+        library.sound.clone(),
+        &library.setup.wakeups,
+        move || transcodes() > 0,
+    )
+}

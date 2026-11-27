@@ -9954,6 +9954,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/settings/library/sound-analysis": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the sound analysis switch and pause. */
+        get: operations["get_sound_analysis"];
+        /**
+         * Turn sound analysis on or off, or pause it. It reads only the
+         *     library's own files, in the background, and never writes them.
+         */
+        put: operations["put_sound_analysis"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library/sound-analysis/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What sound analysis is doing now, or why it waits, and how far it has
+         *     come. `GET /api/v3/settings/library/sound-analysis/status`.
+         */
+        get: operations["get_sound_analysis_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/settings/library/watcher": {
         parameters: {
             query?: never;
@@ -26422,6 +26463,90 @@ export interface components {
             /** @description slskd version, when the probe reached it. */
             version?: string | null;
         };
+        /**
+         * @description Sound analysis: the library's own files read once in the background to
+         *     find songs that sound alike. Off by default.
+         */
+        SoundAnalysisSettings: {
+            /**
+             * @description Analyse the library's tracks, and let the sound features answer.
+             * @default false
+             */
+            sound_analysis_enabled: boolean;
+            /**
+             * @description Stop the background work until this is turned off again. What is
+             *     analysed keeps serving.
+             * @default false
+             */
+            sound_analysis_paused: boolean;
+        };
+        /** @description What sound analysis is doing and how far it has come. */
+        SoundAnalysisStatus: {
+            /**
+             * Format: int64
+             * @description Tracks analysed for their current file.
+             */
+            analysed: number;
+            /**
+             * Format: int64
+             * @description The analysis version rows are written at.
+             */
+            analysis_version: number;
+            /** @description The last file it could not read, if any. */
+            last_not_analysed?: null | components["schemas"]["SoundNotAnalysedView"];
+            /**
+             * Format: int64
+             * @description About how long the whole library takes, in seconds.
+             */
+            library_seconds: number;
+            /** @description The model's name. */
+            model: string;
+            /**
+             * Format: int64
+             * @description Tracks whose file could not be analysed, until it changes.
+             */
+            not_analysed: number;
+            /**
+             * Format: int64
+             * @description About how long the tracks still to read take, in seconds.
+             */
+            seconds_left: number;
+            state: components["schemas"]["SoundState"];
+            /**
+             * Format: int64
+             * @description Tracks still to read.
+             */
+            to_go: number;
+            /**
+             * Format: int64
+             * @description Tracks in the library.
+             */
+            tracks: number;
+            /** @description With `waiting`: what it waits for. It carries on by itself. */
+            waiting_for?: null | components["schemas"]["SoundWaitReason"];
+        };
+        /** @description The last file sound analysis could not read. */
+        SoundNotAnalysedView: {
+            /** @description Why: `undecodable`, `too_short` or `over_time`. */
+            outcome: components["schemas"]["SoundOutcome"];
+            /** @description Where it lies below its library folder. */
+            relative_path: string;
+        };
+        /**
+         * @description What analysing a file came to.
+         * @enum {string}
+         */
+        SoundOutcome: "analysed" | "undecodable" | "too_short" | "over_time";
+        /**
+         * @description What the loop is doing, as the status shows it.
+         * @enum {string}
+         */
+        SoundState: "off" | "starting" | "running" | "waiting" | "paused" | "done";
+        /**
+         * @description Why the loop is waiting. It carries on by itself once the reason goes.
+         * @enum {string}
+         */
+        SoundWaitReason: "scan" | "loudness" | "streaming" | "folder_missing" | "library_off" | "settings_unreadable";
         /** @description A service that stopped answering, and since when. */
         SourceFailing: {
             /**
@@ -54185,6 +54310,88 @@ export interface operations {
             };
             /** @description The script is too long */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_sound_analysis: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sound analysis switch and pause */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SoundAnalysisSettings"];
+                };
+            };
+        };
+    };
+    put_sound_analysis: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SoundAnalysisSettings"];
+            };
+        };
+        responses: {
+            /** @description Saved switch and pause */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SoundAnalysisSettings"];
+                };
+            };
+        };
+    };
+    get_sound_analysis_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sound analysis status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SoundAnalysisStatus"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not an admin */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

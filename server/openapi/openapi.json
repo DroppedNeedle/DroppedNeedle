@@ -36895,6 +36895,118 @@
         ]
       }
     },
+    "/api/v3/settings/library/sound-analysis": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Read the sound analysis switch and pause.",
+        "operationId": "get_sound_analysis",
+        "responses": {
+          "200": {
+            "description": "Sound analysis switch and pause",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SoundAnalysisSettings"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Turn sound analysis on or off, or pause it. It reads only the\nlibrary's own files, in the background, and never writes them.",
+        "operationId": "put_sound_analysis",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SoundAnalysisSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved switch and pause",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SoundAnalysisSettings"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/settings/library/sound-analysis/status": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "What sound analysis is doing now, or why it waits, and how far it has\ncome. `GET /api/v3/settings/library/sound-analysis/status`.",
+        "operationId": "get_sound_analysis_status",
+        "responses": {
+          "200": {
+            "description": "Sound analysis status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SoundAnalysisStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/settings/library/watcher": {
       "get": {
         "tags": [
@@ -73866,6 +73978,161 @@
             "description": "slskd version, when the probe reached it."
           }
         }
+      },
+      "SoundAnalysisSettings": {
+        "type": "object",
+        "description": "Sound analysis: the library's own files read once in the background to\nfind songs that sound alike. Off by default.",
+        "properties": {
+          "sound_analysis_enabled": {
+            "type": "boolean",
+            "description": "Analyse the library's tracks, and let the sound features answer.",
+            "default": false
+          },
+          "sound_analysis_paused": {
+            "type": "boolean",
+            "description": "Stop the background work until this is turned off again. What is\nanalysed keeps serving.",
+            "default": false
+          }
+        }
+      },
+      "SoundAnalysisStatus": {
+        "type": "object",
+        "description": "What sound analysis is doing and how far it has come.",
+        "required": [
+          "state",
+          "tracks",
+          "analysed",
+          "to_go",
+          "not_analysed",
+          "library_seconds",
+          "seconds_left",
+          "model",
+          "analysis_version"
+        ],
+        "properties": {
+          "analysed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Tracks analysed for their current file.",
+            "minimum": 0
+          },
+          "analysis_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The analysis version rows are written at."
+          },
+          "last_not_analysed": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SoundNotAnalysedView"
+              }
+            ],
+            "description": "The last file it could not read, if any."
+          },
+          "library_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "About how long the whole library takes, in seconds.",
+            "minimum": 0
+          },
+          "model": {
+            "type": "string",
+            "description": "The model's name."
+          },
+          "not_analysed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Tracks whose file could not be analysed, until it changes.",
+            "minimum": 0
+          },
+          "seconds_left": {
+            "type": "integer",
+            "format": "int64",
+            "description": "About how long the tracks still to read take, in seconds.",
+            "minimum": 0
+          },
+          "state": {
+            "$ref": "#/components/schemas/SoundState"
+          },
+          "to_go": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Tracks still to read.",
+            "minimum": 0
+          },
+          "tracks": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Tracks in the library.",
+            "minimum": 0
+          },
+          "waiting_for": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SoundWaitReason"
+              }
+            ],
+            "description": "With `waiting`: what it waits for. It carries on by itself."
+          }
+        }
+      },
+      "SoundNotAnalysedView": {
+        "type": "object",
+        "description": "The last file sound analysis could not read.",
+        "required": [
+          "relative_path",
+          "outcome"
+        ],
+        "properties": {
+          "outcome": {
+            "$ref": "#/components/schemas/SoundOutcome",
+            "description": "Why: `undecodable`, `too_short` or `over_time`."
+          },
+          "relative_path": {
+            "type": "string",
+            "description": "Where it lies below its library folder."
+          }
+        }
+      },
+      "SoundOutcome": {
+        "type": "string",
+        "description": "What analysing a file came to.",
+        "enum": [
+          "analysed",
+          "undecodable",
+          "too_short",
+          "over_time"
+        ]
+      },
+      "SoundState": {
+        "type": "string",
+        "description": "What the loop is doing, as the status shows it.",
+        "enum": [
+          "off",
+          "starting",
+          "running",
+          "waiting",
+          "paused",
+          "done"
+        ]
+      },
+      "SoundWaitReason": {
+        "type": "string",
+        "description": "Why the loop is waiting. It carries on by itself once the reason goes.",
+        "enum": [
+          "scan",
+          "loudness",
+          "streaming",
+          "folder_missing",
+          "library_off",
+          "settings_unreadable"
+        ]
       },
       "SourceFailing": {
         "type": "object",

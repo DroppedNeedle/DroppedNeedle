@@ -85,6 +85,8 @@ pub struct MediaSetup {
     pub history: Arc<HistoryStore>,
     /// The scrobble job handlers, one per service.
     scrobble_jobs: Vec<(KindSpec, Arc<dyn JobHandler>)>,
+    /// The ffmpeg jobs' gate, for how many run now.
+    transcodes: Arc<TranscodeGate>,
 }
 
 /// The media drains' name on the supervisor.
@@ -208,7 +210,8 @@ impl MediaSetup {
         // is never run.
         let spawner =
             ProcessSpawner::with_path(ffmpeg.clone().unwrap_or_else(|| PathBuf::from("ffmpeg")));
-        let transcoder = FfmpegTranscoder::new(spawner, Arc::new(TranscodeGate::new()));
+        let transcodes = Arc::new(TranscodeGate::new());
+        let transcoder = FfmpegTranscoder::new(spawner, transcodes.clone());
         let gateway = Gateway::new(
             library,
             PluginStreams {
@@ -269,6 +272,7 @@ impl MediaSetup {
                 listening,
                 history,
                 scrobble_jobs: ScrobbleJobs::handlers(&courier),
+                transcodes,
             },
             worker,
         ))
@@ -293,6 +297,13 @@ impl MediaSetup {
                 Arc::new(SyncJobs::new(self.history.clone())),
             ),
         ]
+    }
+
+    /// How many ffmpeg transcodes run now, read each time it is called:
+    /// someone is playing through one while it answers above zero.
+    pub fn transcodes_running(&self) -> impl Fn() -> usize + Send + Sync + 'static {
+        let gate = self.transcodes.clone();
+        move || gate.active()
     }
 
     /// What the jobs bundle reads from media: the presence registry the

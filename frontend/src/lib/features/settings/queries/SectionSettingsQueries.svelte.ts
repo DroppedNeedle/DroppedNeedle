@@ -13,6 +13,7 @@ import {
 	concertsChanged,
 	createAppMutation,
 	importFolderChanged,
+	soundAnalysisChanged,
 	type Effect
 } from '$lib/queries/effects';
 
@@ -31,6 +32,8 @@ export type PlexSettings = Schemas['PlexConnection'];
 export type PlexVerifyResult = Schemas['PlexVerifyResponse'];
 export type ReleasePreferences = Schemas['UserPreferences'];
 export type SecuritySettings = Schemas['SecuritySettings'];
+export type SoundAnalysisSettings = Schemas['SoundAnalysisSettings'];
+export type SoundAnalysisStatus = Schemas['SoundAnalysisStatus'];
 export type SpotifySettings = Schemas['SpotifySettings'];
 export type VerifyResult = Schemas['VerifyConnectionResponse'];
 export type WrappedSettings = Schemas['WrappedSettings'];
@@ -134,6 +137,29 @@ export const getImportFolderStatusQuery = (enabled: () => boolean = () => true) 
 			api.v3.GET(v3('/api/v3/settings/library/import-folder/status'), { signal }),
 		enabled: enabled(),
 		refetchInterval: 15_000
+	}));
+
+// Sound analysis's switch and pause; a save changes what its status says.
+const soundAnalysis = section<SoundAnalysisSettings>(
+	'sound-analysis',
+	(signal) => api.v3.GET(v3('/api/v3/settings/library/sound-analysis'), { signal }),
+	(body) => api.v3.PUT(v3('/api/v3/settings/library/sound-analysis'), body),
+	() => [soundAnalysisChanged(authStore.user?.id)]
+);
+export const getSoundAnalysisSettingsQuery = soundAnalysis.query;
+export const createSaveSoundAnalysisSettingsMutation = soundAnalysis.save;
+
+/**
+ * What sound analysis is doing, read again every 15 seconds while shown and
+ * switched on. Switched off it changes only with a save, which reads it again.
+ */
+export const getSoundAnalysisStatusQuery = (enabled: () => boolean = () => true) =>
+	createQuery(() => ({
+		queryKey: SettingsQueryKeyFactory.soundAnalysisStatus(authStore.user?.id),
+		queryFn: ({ signal }) =>
+			api.v3.GET(v3('/api/v3/settings/library/sound-analysis/status'), { signal }),
+		enabled: enabled(),
+		refetchInterval: (query) => (query.state.data?.state === 'off' ? false : 15_000)
 	}));
 
 const navidrome = section<NavidromeSettings>(

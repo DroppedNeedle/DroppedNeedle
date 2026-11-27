@@ -11,5 +11,7 @@ export const SettingsQueryKeyFactory = {
 	publicAddress: (userId: UserId) => key(userScope(userId), 'settings', 'public-address'),
 	importFolderStatus: (userId: UserId) =>
 		key(userScope(userId), 'settings', 'import-folder-status'),
+	soundAnalysisStatus: (userId: UserId) =>
+		key(userScope(userId), 'settings', 'sound-analysis-status'),
 	cacheStats: (userId: UserId) => key(userScope(userId), 'admin', 'cache', 'stats')
 };

@@ -23,6 +23,7 @@
 	} from '$lib/features/downloads/queries/DownloadClientsQueries.svelte';
 	import LibraryScanScheduleControl from '$lib/features/library-management/components/LibraryScanScheduleControl.svelte';
 	import SettingsImportFolder from './SettingsImportFolder.svelte';
+	import SettingsSoundAnalysis from './SettingsSoundAnalysis.svelte';
 	import SettingsLibraryCard from './SettingsLibraryCard.svelte';
 	import { createLibraryCard } from './libraryCard.svelte';
 	import SettingsLyrics from './SettingsLyrics.svelte';
@@ -350,6 +351,7 @@
 
 	{#if authStore.isAdmin}
 		<SettingsImportFolder aboveReady={!settingsQuery.isPending} />
+		<SettingsSoundAnalysis />
 	{/if}
 
 	<Card as="section" variant="bordered">

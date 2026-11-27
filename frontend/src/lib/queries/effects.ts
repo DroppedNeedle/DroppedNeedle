@@ -388,6 +388,10 @@ export const EFFECTS = {
 		{ key: SettingsQueryKeyFactory.importFolderStatus(userId) },
 		{ key: ProblemsQueryKeyFactory.list() }
 	],
+	/** Sound analysis's switch or pause, and so what its status says. */
+	soundAnalysisChanged: (userId: UserId): Sweep[] => [
+		{ key: SettingsQueryKeyFactory.soundAnalysisStatus(userId) }
+	],
 	/** Any download, in the caller's views and the admin's. */
 	anyDownloadChanged: (): Sweep[] => [{ everyScope: [DownloadQueryKeyFactory.feature] }],
 	/** Any request, in the caller's views and the admin's. */
@@ -683,6 +687,7 @@ export const sourcePriorityChanged = fact('sourcePriorityChanged');
 export const downloadPolicyChanged = fact('downloadPolicyChanged');
 export const wantedSettingsChanged = fact('wantedSettingsChanged');
 export const importFolderChanged = fact('importFolderChanged');
+export const soundAnalysisChanged = fact('soundAnalysisChanged');
 export const anyDownloadChanged = fact('anyDownloadChanged');
 export const anyRequestChanged = fact('anyRequestChanged');
 export const albumStatusChanged = fact('albumStatusChanged');

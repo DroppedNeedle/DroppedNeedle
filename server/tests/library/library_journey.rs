@@ -3704,6 +3704,456 @@ async fn a_failed_measure_again_keeps_the_old_measurement() {
     assert_eq!(pass().decoded, 0, "not picked again");
 }
 
+/// Save sound analysis's switch and pause.
+fn sound_switch(library: &LibrarySetup, enabled: bool, paused: bool) {
+    use droppedneedle_kernel::db::DurableLane;
+    use droppedneedle_kernel::runtime_config::sections::SoundAnalysisSettings;
+    library
+        .settings
+        .store()
+        .update_blocking::<SoundAnalysisSettings, String, _>(
+            DurableLane::Foreground,
+            move |mut stored| {
+                stored.sound_analysis_enabled = enabled;
+                stored.sound_analysis_paused = paused;
+                Ok(stored)
+            },
+        )
+        .expect("sound analysis saved");
+}
+
+/// Measure every file's loudness, which sound analysis waits for.
+fn measure_loudness(library: &LibrarySetup) {
+    let unpaced = droppedneedle_library::loudness::Pace {
+        min_rest: std::time::Duration::ZERO,
+        rest_per_spent: 0.0,
+    };
+    let report = library
+        .loudness
+        .pass(
+            &mut droppedneedle_library::loudness::Sweep::default(),
+            &unpaced,
+            &|| false,
+            &|_| true,
+        )
+        .expect("loudness pass runs");
+    assert!(report.finished, "{report:?}");
+}
+
+/// Sound analysis is off until an admin turns it on, and then reads each
+/// track once, after the loudness loop has measured it: a moved file is not
+/// read again, a changed one is, and a file under one patch keeps a row
+/// saying so. It waits while anyone plays through a transcode, stops for a
+/// scan and stops at the next file when switched off, keeping its rows;
+/// paused it reads nothing and still answers. It never changes a file's
+/// bytes.
+#[tokio::test]
+async fn each_track_is_analysed_once_when_sound_analysis_is_on() {
+    use droppedneedle_library::scan::{ScanKind, ScanRequest, ScanTrigger};
+    use droppedneedle_library::sound::{Pace, SoundOutcome, SoundWaitReason, Sweep};
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
+
+    let (_scratch, library, music) = bare_library("lib-sound").await;
+    // Tagged, so a file moved by hand continues its track.
+    for (number, fixture) in [("1", "sound_44k_stereo.flac"), ("2", "sound_96k_mono.flac")] {
+        let file = plant(&music, &format!("Tone/LP/0{number}.flac"), fixture);
+        let tag = |field, value: &str| TagEdit::verbatim(field, vec![value.to_owned()]);
+        save_tags(
+            &file,
+            &[
+                tag(TagField::AlbumArtist, "Tone"),
+                tag(TagField::Artist, "Tone"),
+                tag(TagField::Album, "LP"),
+                tag(TagField::Title, &format!("Song {number}")),
+                tag(TagField::TrackNumber, number),
+            ],
+        )
+        .expect("fixture tagged");
+    }
+    plant(&music, "Short/LP/01.flac", "flac_full_01.flac");
+    add_music_root(&library, &music).await;
+    let first_track = library
+        .scan_store
+        .track_at("music", "Tone/LP/01.flac")
+        .unwrap()
+        .expect("track indexed");
+    let db = library.scan_store.db();
+    let rows = |outcome: &str| {
+        db.query_i64(&format!(
+            "SELECT COUNT(*) FROM library_sound_analyses WHERE outcome = '{outcome}'"
+        ))
+        .expect("count reads")
+    };
+    let sound = library.sound.clone();
+    let mut sweep = Sweep::default();
+    let unpaced = Pace {
+        min_rest: std::time::Duration::ZERO,
+        rest_per_spent: 0.0,
+    };
+    let mut pass = |busy: &dyn Fn() -> bool, rest: &dyn Fn(std::time::Duration) -> bool| {
+        sound
+            .pass(&mut sweep, &unpaced, &|| false, busy, rest)
+            .expect("pass runs")
+    };
+    let idle = || false;
+    let go_on = |_: std::time::Duration| true;
+    let untouched = snapshot_tree(&music);
+
+    let off = pass(&idle, &go_on);
+    assert_eq!((off.read, off.kept), (0, 0), "off: nothing is read");
+    assert_eq!(
+        library.sound.vectors().expect("reads"),
+        None,
+        "off: nothing answers"
+    );
+
+    sound_switch(&library, true, false);
+    let waited = pass(&idle, &go_on);
+    assert_eq!(
+        (waited.read, waited.held_back),
+        (0, Some(SoundWaitReason::Loudness)),
+        "loudness first"
+    );
+    measure_loudness(&library);
+    let streaming = pass(&|| true, &go_on);
+    assert_eq!(
+        (streaming.read, streaming.held_back),
+        (0, Some(SoundWaitReason::Streaming)),
+        "it waits while someone plays through a transcode"
+    );
+    let first = pass(&idle, &go_on);
+    assert_eq!((first.read, first.kept, first.finished), (3, 3, true));
+    assert_eq!(
+        (rows("analysed"), rows(SoundOutcome::TooShort.as_str())),
+        (2, 1),
+        "the short file keeps a row saying why"
+    );
+    let vectors = library.sound.vectors().expect("reads").expect("on");
+    assert_eq!(vectors.tracks.len(), 2);
+    assert!(
+        vectors
+            .tracks
+            .iter()
+            .all(|track| track.vector.len() == 200 && track.tags.len() == 50)
+    );
+    let stored = library
+        .sound
+        .track(&first_track)
+        .expect("reads")
+        .expect("analysed");
+    assert_eq!(pass(&idle, &go_on).read, 0, "each track is read once");
+    assert_eq!(snapshot_tree(&music), untouched, "no file's bytes change");
+    let status = library.sound.status().expect("status reads");
+    assert_eq!(
+        (status.state, status.coverage.to_go()),
+        (droppedneedle_library::sound::SoundState::Done, 0)
+    );
+    assert_eq!(
+        (
+            status.coverage.tracks,
+            status.coverage.analysed,
+            status.coverage.not_analysed
+        ),
+        (3, 2, 1)
+    );
+    assert_eq!(
+        status
+            .last_not_analysed
+            .map(|last| (last.relative_path, last.outcome)),
+        Some(("Short/LP/01.flac".to_owned(), SoundOutcome::TooShort))
+    );
+
+    // A long enough file cut off halfway, read at the production pace: it
+    // keeps an undecodable row, is not read again, and the rest after it is
+    // at least as long as it took.
+    let whole = std::fs::read(fixtures_dir().join("sound_44k_stereo.flac")).expect("fixture");
+    let damaged = &whole[..whole.len() / 2];
+    std::fs::create_dir_all(music.join("Damaged")).expect("mkdir");
+    std::fs::write(music.join("Damaged/01.flac"), damaged).expect("damaged copy");
+    rescan(&library).await;
+    measure_loudness(&library);
+    let rested = std::cell::Cell::new(std::time::Duration::ZERO);
+    let paced = library
+        .sound
+        .pass(
+            &mut Sweep::default(),
+            &droppedneedle_library::sound::PACE,
+            &|| false,
+            &idle,
+            &|wait| {
+                rested.set(rested.get().max(wait));
+                true
+            },
+        )
+        .expect("pass runs");
+    assert_eq!((paced.read, paced.kept), (1, 1));
+    assert_eq!(rows(SoundOutcome::Undecodable.as_str()), 1);
+    assert!(
+        rested.get() >= paced.spent && rested.get() >= droppedneedle_library::sound::PACE.min_rest,
+        "rested {:?} after {:?}",
+        rested.get(),
+        paced.spent
+    );
+    assert_eq!(
+        pass(&idle, &go_on).read,
+        0,
+        "an undecodable file is not read again"
+    );
+
+    std::fs::create_dir_all(music.join("Moved")).expect("mkdir");
+    std::fs::rename(music.join("Tone/LP/01.flac"), music.join("Moved/01.flac")).expect("moved");
+    rescan(&library).await;
+    assert_eq!(
+        library
+            .scan_store
+            .track_at("music", "Moved/01.flac")
+            .unwrap(),
+        Some(first_track.clone())
+    );
+    measure_loudness(&library);
+    assert_eq!(pass(&idle, &go_on).read, 0, "a move leaves nothing to read");
+    assert_eq!(
+        library.sound.track(&first_track).expect("reads"),
+        Some(stored.clone())
+    );
+
+    save_tags(
+        &music.join("Moved/01.flac"),
+        &[TagEdit::verbatim(
+            TagField::Title,
+            vec!["Changed".to_owned()],
+        )],
+    )
+    .expect("file rewritten");
+    rescan(&library).await;
+    measure_loudness(&library);
+    assert_eq!(
+        library.sound.track(&first_track).expect("reads"),
+        None,
+        "a changed file is not answered from its old row"
+    );
+    let again = pass(&idle, &go_on);
+    assert_eq!((again.read, again.kept), (1, 1), "only the changed file");
+    assert_eq!(
+        library.sound.track(&first_track).expect("reads"),
+        Some(stored)
+    );
+
+    plant(&music, "More/LP/01.flac", "sound_44k_stereo.flac");
+    plant(&music, "More/LP/02.flac", "sound_96k_mono.flac");
+    plant(&music, "More/LP/03.flac", "sound_44k_stereo.flac");
+    rescan(&library).await;
+    measure_loudness(&library);
+    let registry = library.core.live_registry();
+    let scan_asked = |_: std::time::Duration| {
+        library
+            .coordinator
+            .request_run(&ScanRequest {
+                kind: ScanKind::Incremental,
+                trigger: ScanTrigger::Manual,
+                scopes: registry.scheduled_root_scopes(),
+                requested_by_user_id: None,
+                policy_revision: registry.fingerprint().to_owned(),
+            })
+            .expect("scan requested");
+        true
+    };
+    let stopped = pass(&idle, &scan_asked);
+    assert_eq!(
+        (stopped.read, stopped.kept, stopped.held_back),
+        (1, 1, Some(SoundWaitReason::Scan)),
+        "a scan stops the pass at the next file and keeps what it read"
+    );
+    drain_scans(&library).await;
+
+    let switched_off = |_: std::time::Duration| {
+        sound_switch(&library, false, false);
+        true
+    };
+    let off = pass(&idle, &switched_off);
+    assert_eq!(
+        (off.read, off.kept),
+        (1, 1),
+        "switched off, it stops at the next file"
+    );
+    assert_eq!(rows("analysed"), 4, "and keeps its rows");
+    assert_eq!(library.sound.vectors().expect("reads"), None);
+
+    sound_switch(&library, true, true);
+    assert_eq!(pass(&idle, &go_on).read, 0, "paused: nothing is read");
+    assert_eq!(
+        library
+            .sound
+            .vectors()
+            .expect("reads")
+            .expect("paused still answers")
+            .tracks
+            .len(),
+        4
+    );
+}
+
+/// A new analysis version wipes nothing: the old version's rows keep
+/// answering, and only they, until every track has a row at the new one;
+/// then they are dropped. A read never mixes versions.
+#[tokio::test]
+async fn old_sound_rows_answer_until_the_new_version_covers_the_library() {
+    use droppedneedle_library::sound::{ANALYSIS_VERSION, Pace, Sweep};
+
+    let (_scratch, library, music) = bare_library("lib-sound-version").await;
+    plant(&music, "Tone/LP/01.flac", "sound_44k_stereo.flac");
+    plant(&music, "Tone/LP/02.flac", "sound_96k_mono.flac");
+    plant(&music, "Gone/LP/01.flac", "sound_44k_stereo.flac");
+    add_music_root(&library, &music).await;
+    measure_loudness(&library);
+    sound_switch(&library, true, false);
+    let sound = library.sound.clone();
+    let mut sweep = Sweep::default();
+    let unpaced = Pace {
+        min_rest: std::time::Duration::ZERO,
+        rest_per_spent: 0.0,
+    };
+    let mut pass = |rest: &dyn Fn(std::time::Duration) -> bool| {
+        sound
+            .pass(&mut sweep, &unpaced, &|| false, &|| false, rest)
+            .expect("pass runs")
+    };
+    assert_eq!(pass(&|_: std::time::Duration| true).kept, 3);
+    let db = library.scan_store.db();
+    // A folder removed from the settings leaves its tracks indexed.
+    let gone = library
+        .scan_store
+        .track_at("music", "Gone/LP/01.flac")
+        .unwrap()
+        .expect("track indexed");
+    db.run_sql(&format!(
+        "UPDATE local_tracks SET root_id = 'removed' WHERE id = '{gone}'; \
+         DELETE FROM library_sound_analyses WHERE local_track_id = '{gone}'"
+    ))
+    .expect("its folder is removed");
+    let old = ANALYSIS_VERSION - 1;
+    db.run_sql(&format!(
+        "UPDATE library_sound_analyses SET analysis_version = {old}, vector = zeroblob(800)"
+    ))
+    .expect("rows read as the old version");
+    let read = || library.sound.vectors().expect("reads").expect("on");
+    let is_old = |vectors: &droppedneedle_library::sound::SoundVectors| {
+        vectors.analysis_version == old
+            && vectors.tracks.len() == 2
+            && vectors
+                .tracks
+                .iter()
+                .all(|track| track.vector.iter().all(|value| *value == 0.0))
+    };
+    assert!(is_old(&read()), "the old rows answer");
+
+    let half = pass(&|_: std::time::Duration| false);
+    assert_eq!(half.kept, 1);
+    assert!(
+        is_old(&read()),
+        "one new row does not cover the library: the old rows still answer"
+    );
+
+    let rest = pass(&|_: std::time::Duration| true);
+    assert_eq!((rest.kept, rest.finished), (1, true));
+    let vectors = read();
+    assert_eq!(vectors.analysis_version, ANALYSIS_VERSION);
+    assert_eq!(vectors.tracks.len(), 2);
+    assert!(
+        vectors
+            .tracks
+            .iter()
+            .all(|track| track.vector.iter().any(|value| *value != 0.0)),
+        "the new rows answer"
+    );
+    assert_eq!(
+        db.query_i64(&format!(
+            "SELECT COUNT(*) FROM library_sound_analyses WHERE analysis_version = {old}"
+        ))
+        .expect("count reads"),
+        0,
+        "the old rows are dropped, a removed folder's track not waited for"
+    );
+    let coverage = library.sound.status().expect("status reads").coverage;
+    assert_eq!(
+        (coverage.tracks, coverage.analysed, coverage.to_go()),
+        (2, 2, 0),
+        "a removed folder's track does not count"
+    );
+
+    // With no library folder named, a pass knows nothing about coverage:
+    // old rows stay.
+    db.run_sql(&format!(
+        "UPDATE library_sound_analyses SET analysis_version = {old}, vector = zeroblob(800)"
+    ))
+    .expect("rows read as the old version");
+    library
+        .settings
+        .store()
+        .update_secret_blocking::<droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary, String, _>(
+            |stored| {
+                let mut settings = stored.into_inner();
+                settings.library_roots.clear();
+                Ok(settings)
+            },
+        )
+        .expect("folders removed");
+    library.core.refresh_registry();
+    assert!(pass(&|_: std::time::Duration| true).finished);
+    assert!(is_old(&read()), "no folder named: the old rows stay");
+}
+
+/// Switched to waiting while a file is read (someone starts playing
+/// through a transcode), the pass stops inside that file: it leaves no row
+/// for it, and the file read before keeps its row.
+#[tokio::test]
+async fn sound_analysis_stops_inside_a_file() {
+    use droppedneedle_library::sound::{Pace, Sweep};
+
+    let (_scratch, library, music) = bare_library("lib-sound-stop").await;
+    plant(&music, "A/LP/01.flac", "sound_44k_stereo.flac");
+    plant(&music, "B/LP/01.flac", "sound_44k_stereo.flac");
+    add_music_root(&library, &music).await;
+    measure_loudness(&library);
+    sound_switch(&library, true, false);
+    let unpaced = Pace {
+        min_rest: std::time::Duration::ZERO,
+        rest_per_spent: 0.0,
+    };
+    // Asked before a file and then during it: after the first file, the
+    // check before the second answers no and every one inside it yes.
+    let asked_since_rest = std::cell::Cell::new(None::<u32>);
+    let busy = || match asked_since_rest.get() {
+        Some(asked) => {
+            asked_since_rest.set(Some(asked + 1));
+            asked >= 1
+        }
+        None => false,
+    };
+    let report = library
+        .sound
+        .pass(&mut Sweep::default(), &unpaced, &|| false, &busy, &|_| {
+            asked_since_rest.set(Some(0));
+            true
+        })
+        .expect("pass runs");
+    assert_eq!((report.read, report.kept), (1, 1));
+    assert!(
+        asked_since_rest.get().is_some_and(|asked| asked >= 2),
+        "{asked_since_rest:?}"
+    );
+    assert_eq!(
+        library
+            .scan_store
+            .db()
+            .query_i64("SELECT COUNT(*) FROM library_sound_analyses")
+            .expect("count reads"),
+        1,
+        "the file stopped inside has no row; the one before keeps its row"
+    );
+}
+
 /// A publish is checked against its own rows, not the catalog counter: a
 /// scan that only adds another album leaves a sealed preview good, and a
 /// change to the previewed track's own row refuses it before anything is

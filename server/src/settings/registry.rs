@@ -25,7 +25,7 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
 use droppedneedle_kernel::runtime_config::sections::{
     AppConnect, Backups, ConnectApps, DeemixConnection, EditionPreferences, FilesystemWatcher,
     GetIt, ImportFolder, ListenBrainzSettings, LyricsSettings, PlainSection, PublicAddress,
-    SecuritySettings, UserPreferences, WantedWatcher,
+    SecuritySettings, SoundAnalysisSettings, UserPreferences, WantedWatcher,
 };
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_kernel::runtime_config::{Masked, SecretSection, Section};
@@ -205,6 +205,12 @@ section_routes! {
             => "Import folder";
         put put_import_folder: "Save the import folder. Music copied there is imported, then\nremoved from it."
             => "Saved import folder";
+    }
+    plain SoundAnalysisSettings at "/api/v3/settings/library/sound-analysis", read admin, write admin {
+        get get_sound_analysis: "Read the sound analysis switch and pause."
+            => "Sound analysis switch and pause";
+        put put_sound_analysis: "Turn sound analysis on or off, or pause it. It reads only the\nlibrary's own files, in the background, and never writes them."
+            => "Saved switch and pause";
     }
     checked Backups at "/api/v3/settings/backups", read admin, write admin {
         get get_backup_settings: "Read the nightly backups switch and the second backups folder."
