@@ -249,6 +249,9 @@
 	/** The station "Play the week" starts, by its tag. */
 	const WEEK = 'week';
 	const weekPlaying = $derived(sounding && deckSampler.stationTag === WEEK);
+	// paused (from the floating player, say): the play controls resume it
+	const paused = $derived(deckSampler.status === 'paused');
+	const samplePaused = $derived(sampling && paused);
 
 	// one-sound rule: the player starting stops the sampler
 	$effect(() => {
@@ -288,6 +291,10 @@
 	function toggleSample() {
 		const entry = current;
 		if (!entry) return;
+		if (samplePaused) {
+			deckSampler.resume();
+			return;
+		}
 		if (sampling) {
 			deckSampler.stop();
 			return;
@@ -306,6 +313,10 @@
 	);
 
 	function playTheWeek() {
+		if (weekPlaying && paused) {
+			deckSampler.resume();
+			return;
+		}
 		if (weekPlaying) {
 			deckSampler.stop();
 			return;
@@ -961,7 +972,7 @@
 							? undefined
 							: 'Made from your shelves alone. Link ListenBrainz to add what you play elsewhere.'}
 						recordLabel={recordLabel(current)}
-						{sampling}
+						sampling={sampling && !paused}
 						hasPrevious={deck.index > 0}
 						hasNext={deck.index < deck.entries.length - 1 || deck.extraLeft}
 						{keeping}

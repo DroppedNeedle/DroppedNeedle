@@ -1,9 +1,10 @@
 import { page } from 'vitest/browser';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { toAuthUser } from '$lib/features/auth/queries/types';
 import { queryClient } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { pickSlip } from '$lib/features/discover/state/passLine.svelte';
+import { deckSampler } from '$lib/features/discover/state/deckSampler.svelte';
 import { apiError, fakeApi, type FakeRoutes, type RouteData } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
 
@@ -329,5 +330,68 @@ describe('the Discover page', () => {
 			await expect.element(button).toBeVisible();
 			expect(inFirstScreen(button.element())).toBe(true);
 		}
+	});
+});
+
+/** An element that plays at once and never ends, so a sample stays on its clip. */
+class SilentAudio extends EventTarget {
+	src = '';
+	preload = '';
+	muted = false;
+	volume = 1;
+	currentTime = 0;
+	duration = 30;
+	ended = false;
+	play() {
+		return Promise.resolve();
+	}
+	pause() {}
+	removeAttribute(name: string) {
+		if (name === 'src') this.src = '';
+	}
+	load() {}
+}
+
+describe('the listening post', () => {
+	const realAudio = window.Audio;
+	beforeEach(() => {
+		(window as unknown as { Audio: typeof SilentAudio }).Audio = SilentAudio;
+	});
+	afterEach(() => {
+		deckSampler.stop();
+		window.Audio = realAudio;
+	});
+
+	it('picks the week up where it was paused', async () => {
+		fakeApi({
+			...routes(ready()),
+			'GET /api/v3/discover/album-preview': ({ query }) => ({
+				provider: 'deezer',
+				tracks: ['opener', 'best_known', 'deep_cut'].map((role, i) => ({
+					title: `${query.get('album')} ${role}`,
+					artist_name: 'Artist',
+					preview_url: `https://cdn.example/${i}.mp3`,
+					duration_s: 30,
+					position: i + 1,
+					role: role as 'opener',
+					source: 'deezer' as const
+				}))
+			})
+		});
+		await renderWithQuery(Discover, PROPS, { client: queryClient });
+		const post = page.getByRole('group', { name: 'Listening post' });
+
+		await post.getByRole('button', { name: 'Play the week' }).click();
+		await expect.element(post.getByRole('button', { name: 'Stop' })).toBeVisible();
+		deckSampler.nextClip();
+		await expect.poll(() => deckSampler.currentTrack?.title).toBe('Album 1 best_known');
+		// paused from the floating player while away from the page
+		deckSampler.pause();
+
+		await post.getByRole('button', { name: 'Resume' }).click();
+
+		await expect.poll(() => deckSampler.status).toBe('playing');
+		expect(deckSampler.currentTrack?.title).toBe('Album 1 best_known');
+		await expect.element(post.getByRole('button', { name: 'Stop' })).toBeVisible();
 	});
 });

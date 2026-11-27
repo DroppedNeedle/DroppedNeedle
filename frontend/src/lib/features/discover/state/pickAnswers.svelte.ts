@@ -8,7 +8,8 @@ export interface PickAnswerer {
 	open(key: string): boolean;
 }
 
-let answerer = $state<PickAnswerer | null>(null);
+// Raw, not a deep proxy: the clear finds its own registration by identity.
+let answerer = $state.raw<PickAnswerer | null>(null);
 
 export const pickAnswers = {
 	/** The mounted page's counter, or null while it is not mounted. */

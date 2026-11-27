@@ -12,7 +12,7 @@
 	import { deckSampler } from '$lib/features/discover/state/deckSampler.svelte';
 
 	interface Props {
-		/** "Play the week" is playing: the key stays down and lit. */
+		/** "Play the week" is on: the key stays down and lit, or resumes it while paused. */
 		weekPlaying?: boolean;
 		/** Where the week has got to: "3 of 8". */
 		weekPosition?: string | null;
@@ -26,14 +26,19 @@
 	const SOURCES = { deezer: 'Deezer', itunes: 'iTunes' } as const;
 
 	const playing = $derived(deckSampler.status === 'playing' || deckSampler.status === 'paused');
+	// the week paused: the key resumes it
+	const weekPaused = $derived(weekPlaying && deckSampler.status === 'paused');
+	const weekOn = $derived(weekPlaying && !weekPaused);
 	const loading = $derived(deckSampler.status === 'loading');
 	const source = $derived.by(() => {
 		const from = deckSampler.currentTrack?.source ?? deckSampler.provider;
 		return from === 'deezer' || from === 'itunes' ? SOURCES[from] : '';
 	});
 	const head = $derived.by(() => {
-		if (weekPlaying)
-			return weekPosition ? `Playing the week - ${weekPosition}` : 'Playing the week';
+		if (weekPlaying) {
+			const what = weekPaused ? 'Week paused' : 'Playing the week';
+			return weekPosition ? `${what} - ${weekPosition}` : what;
+		}
 		if (playing || loading) return source ? `Sample - ${source}` : 'Sample';
 		return 'Listening post';
 	});
@@ -51,13 +56,13 @@
 		variant="key"
 		size="display-sm"
 		class="dn-post__key"
-		icon={weekPlaying ? Pause : Play}
+		icon={weekOn ? Pause : Play}
 		lamp={weekPlaying || playing || loading}
-		active={weekPlaying}
+		active={weekOn}
 		disabled={weekOff && !weekPlaying}
 		onclick={onweek}
 	>
-		{weekPlaying ? 'Stop' : 'Play the week'}
+		{weekOn ? 'Stop' : weekPaused ? 'Resume' : 'Play the week'}
 	</Button>
 	<div class="dn-post__readout" aria-live="polite">
 		<span>{head}</span>
