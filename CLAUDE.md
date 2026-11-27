@@ -592,10 +592,12 @@ Run from the repo root. `make help` lists every target.
   listed once in `runtime_config/registry.rs` and declares its save effects
   there.
 - The audio stack is decided: lofty behind its save wrapper, symphonia,
-  rusty-chromaprint, ffmpeg for transcoding, no WMA. The image's ffmpeg is a
-  slim LGPL-only build: a new codec goes on its lists in the Dockerfile with
-  a transcode in `server/scripts/e2e-container.sh`. Unrelated tags survive
-  every mutation.
+  rusty-chromaprint, ffmpeg for transcoding, tract-onnx for sound analysis
+  (`MSD_musicnn`, our own export of musicnn's ISC-licensed checkpoint, built
+  into the binary, checked by its SHA-256 and never downloaded), no WMA.
+  The image's ffmpeg is a slim LGPL-only build: a new codec goes on its
+  lists in the Dockerfile with a transcode in
+  `server/scripts/e2e-container.sh`. Unrelated tags survive every mutation.
 - Prefer a healthy, maintained crate over home-made parser, crypto or retry
   code. New licenses and advisory ignores are reviewed edits to
   `server/deny.toml`, with the reason beside them.
@@ -770,6 +772,20 @@ Run from the repo root. `make help` lists every target.
   `GET /api/v3/library/tracks/{id}/loudness`, measured first, tags second,
   and an album's loudness is worked out there from its tracks' rows, never
   stored.
+- Sound analysis (`library/src/sound/`) is an admin's opt-in, off by
+  default. It reads only the library's own files, beneath their library
+  folder through the no-follow opener, never a preview, a stream or other
+  music the library does not hold, and never writes a file. Its rows live
+  in `library_sound_analyses`, written only by that module: a row counts
+  only while its stat revision is its track's, and carries its analysis
+  version, bumped when the model or the audio preparation changes; a new
+  version's rows replace the old only once they cover every indexed track
+  under a library folder, and a read takes one version. It gives way to
+  scans, to the loudness loop while it has files due that it can read, and
+  to anyone playing through a transcode. A sound vector is never a track's
+  identity: nothing merges, links or de-duplicates tracks by it, and only
+  `library/src/sound/` reads its table (`source_gates.rs`,
+  `nothing_joins_tracks_on_a_sound_vector`).
 
 **Identity** (product rules, not up for debate)
 - An edition a person chose is the album's identity; a v2 pin carries as
