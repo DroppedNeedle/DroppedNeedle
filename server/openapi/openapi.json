@@ -24355,6 +24355,155 @@
         ]
       }
     },
+    "/api/v3/library/tracks/{id}/similar": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "The library tracks that sound most like this one, nearest first.",
+        "operationId": "get_similar_tracks",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Local track id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Tracks to list, 1 to 50 (10 by default); more is read as 50.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tracks that sound like it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SimilarTracksView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown track, or one not analysed for its current file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "SOUND_ANALYSIS_OFF: sound analysis is off; SOUND_ANALYSIS_UNREADABLE: its settings cannot be read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/library/tracks/{id}/sound": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "A track's 200 stored sound measures, as stored.",
+        "operationId": "get_track_sound",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Local track id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The track's stored sound",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackSoundView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown track, or one not analysed for its current file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "SOUND_ANALYSIS_OFF: sound analysis is off; SOUND_ANALYSIS_UNREADABLE: its settings cannot be read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/library/unconfirmed": {
       "get": {
         "tags": [
@@ -46203,6 +46352,15 @@
           }
         }
       },
+      "Closeness": {
+        "type": "string",
+        "description": "How close a track sounds to the seed, in words.",
+        "enum": [
+          "very_close",
+          "close",
+          "further"
+        ]
+      },
       "Concert": {
         "type": "object",
         "description": "One upcoming gig in one of the caller's cities.",
@@ -52469,7 +52627,8 @@
         "enum": [
           "co_listening",
           "source_pick",
-          "band_link"
+          "band_link",
+          "sound"
         ]
       },
       "FoundFolder": {
@@ -63795,6 +63954,17 @@
             },
             "description": "The person's artists that led to it through co-listening, strongest\nfirst; none for a pick found otherwise."
           },
+          "sound_seed": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SoundSeed"
+              }
+            ],
+            "description": "For a pick found by sound: the person's own track that led here."
+          },
           "source": {
             "$ref": "#/components/schemas/EvidenceSource",
             "description": "The service the finding fact came from."
@@ -63863,7 +64033,8 @@
         "enum": [
           "your_artists",
           "source",
-          "fact"
+          "fact",
+          "sound"
         ]
       },
       "PickRequest": {
@@ -67162,13 +67333,6 @@
             "format": "int64",
             "description": "Wanted track count."
           },
-          "exclude_recording_mbids": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Recording mbids to leave out."
-          },
           "items": {
             "type": "array",
             "items": {
@@ -67180,27 +67344,56 @@
             "$ref": "#/components/schemas/RadioMode",
             "description": "Which tracks the plan may use."
           },
+          "more_like": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Library tracks the person asked for more like on this station:\neach seeds the station with double weight."
+          },
+          "not_this": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Library tracks the person said \"Not this\" to on this station: they\nnever come again and tracks that sound like them come later."
+          },
           "seed_id": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Seed id (mbid or genre name); empty for item seeds."
+            "description": "Seed id: an artist or release-group mbid, a genre name, a library\ntrack id or a playlist id; empty for item seeds."
           },
           "seed_type": {
             "$ref": "#/components/schemas/RadioSeedKind",
             "description": "What the plan starts from."
+          },
+          "sound_only": {
+            "type": "boolean",
+            "description": "Order by sound alone, without pushing down tracks from outside the\nseed's genre."
+          },
+          "station_tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StationTrack"
+            },
+            "description": "The station's tracks so far, in the order they play: those played,\nthen those still to play. None of them, nor another copy of one,\ncomes again; the next tracks follow on from the last library one,\nand no thirty in a row hold more than four by one artist."
           }
         }
       },
       "RadioPlanResponse": {
         "type": "object",
-        "description": "A complete radio plan.",
+        "description": "A radio plan, or the next chunk of an endless station.",
         "required": [
           "title",
           "tracks"
         ],
         "properties": {
+          "library_only": {
+            "type": "boolean",
+            "description": "The station holds only library tracks although tracks the library\nlacks were asked for: no admin set up a source that plays them."
+          },
           "title": {
             "type": "string",
             "description": "Plan title."
@@ -67272,6 +67465,17 @@
             ],
             "description": "Native file id for owned rows, when known."
           },
+          "reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RadioReason"
+              }
+            ],
+            "description": "Why it is on the station, built from the path that put it there."
+          },
           "recording_mbid": {
             "type": [
               "string",
@@ -67284,6 +67488,59 @@
             "description": "Track title."
           }
         }
+      },
+      "RadioReason": {
+        "type": "object",
+        "description": "Why a track is on a station: one line and the names it is built from.",
+        "required": [
+          "kind",
+          "line",
+          "seed_name"
+        ],
+        "properties": {
+          "closeness": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Closeness"
+              }
+            ],
+            "description": "How close it sounds to that seed track, for a track found by\nsound."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RadioReasonKind",
+            "description": "What put it there."
+          },
+          "line": {
+            "type": "string",
+            "description": "The line, a short sentence."
+          },
+          "seed_name": {
+            "type": "string",
+            "description": "The seed the line names: a track's title, an artist, an album, a\nplaylist or a genre."
+          },
+          "seed_track_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The seed track, for a track found by sound."
+          }
+        }
+      },
+      "RadioReasonKind": {
+        "type": "string",
+        "description": "What put a track on a station.",
+        "enum": [
+          "sounds_like",
+          "more_like",
+          "close_to_artist",
+          "seed",
+          "genre",
+          "shelf"
+        ]
       },
       "RadioRequest": {
         "type": "object",
@@ -67354,7 +67611,9 @@
           "artist",
           "album",
           "genre",
-          "items"
+          "items",
+          "track",
+          "playlist"
         ]
       },
       "RatedKind": {
@@ -73850,6 +74109,86 @@
           }
         }
       },
+      "SimilarTrackView": {
+        "type": "object",
+        "description": "One library track that sounds like the asked one.",
+        "required": [
+          "track_id",
+          "title",
+          "artist_name",
+          "album_id",
+          "distance",
+          "closeness",
+          "shared_tags"
+        ],
+        "properties": {
+          "album_id": {
+            "type": "string",
+            "description": "The local album id."
+          },
+          "album_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "artist_name": {
+            "type": "string"
+          },
+          "closeness": {
+            "$ref": "#/components/schemas/Closeness",
+            "description": "That distance in words."
+          },
+          "distance": {
+            "type": "number",
+            "format": "float",
+            "description": "Cosine distance from the asked track: 0 is the same sound. Never\npast 0.15."
+          },
+          "duration_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "shared_tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tags among both tracks' five strongest, in the asked track's order."
+          },
+          "title": {
+            "type": "string"
+          },
+          "track_id": {
+            "type": "string",
+            "description": "The local track id."
+          }
+        }
+      },
+      "SimilarTracksView": {
+        "type": "object",
+        "description": "The library tracks that sound like one track.",
+        "required": [
+          "analysis_version",
+          "tracks"
+        ],
+        "properties": {
+          "analysis_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The analysis version the distances were read at."
+          },
+          "tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SimilarTrackView"
+            },
+            "description": "Nearest first. Short, or empty, when few tracks sound close."
+          }
+        }
+      },
       "SiteAppearance": {
         "type": "object",
         "description": "The site's appearance as every signed-in person reads it.",
@@ -74109,6 +74448,29 @@
           "too_short",
           "over_time"
         ]
+      },
+      "SoundSeed": {
+        "type": "object",
+        "description": "The person's own library track a pick found by sound sounds like.",
+        "required": [
+          "track_id",
+          "title",
+          "artist_name"
+        ],
+        "properties": {
+          "artist_name": {
+            "type": "string",
+            "description": "Its artist's name."
+          },
+          "title": {
+            "type": "string",
+            "description": "Its title."
+          },
+          "track_id": {
+            "type": "string",
+            "description": "The local track id."
+          }
+        }
       },
       "SoundState": {
         "type": "string",
@@ -74510,6 +74872,42 @@
             "format": "int32",
             "description": "The most one person may name.",
             "minimum": 0
+          }
+        }
+      },
+      "StationTrack": {
+        "type": "object",
+        "description": "One of a station's tracks so far.",
+        "required": [
+          "artist_name",
+          "track_name"
+        ],
+        "properties": {
+          "artist_mbid": {
+            "type": "string",
+            "description": "Its artist's MusicBrainz id; empty when not known."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Its artist's name."
+          },
+          "local_track_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The library track, for one the library holds."
+          },
+          "recording_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its recording's MusicBrainz id, when known."
+          },
+          "track_name": {
+            "type": "string",
+            "description": "Its title."
           }
         }
       },
@@ -76479,6 +76877,23 @@
           "title": {
             "type": "string",
             "description": "Track title."
+          }
+        }
+      },
+      "TrackSoundView": {
+        "type": "object",
+        "description": "One track's stored sound.",
+        "required": [
+          "measures"
+        ],
+        "properties": {
+          "measures": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float"
+            },
+            "description": "The 200 values the model gave the track, as stored."
           }
         }
       },

@@ -903,6 +903,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("catalog/src/discover/content.rs", 1, DISCOVER_BUILD),
     ("catalog/src/discover/home/mod.rs", 1, DISCOVER_BUILD),
     ("catalog/src/discover/page/mod.rs", 2, DISCOVER_BUILD),
+    ("catalog/src/discover/radio/mod.rs", 1, REQUEST),
     ("catalog/src/discover/record/outcomes.rs", 1, AWAITED),
     // The collections store's long background read: `Db::read_long` blocks.
     ("catalog/src/collections/db.rs", 1, AWAITED),

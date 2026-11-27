@@ -1,7 +1,8 @@
 import { v3 } from '$lib/api/v3/endpoint';
 /**
- * Resolves upcoming YouTube tracks before playback. Unresolvable tracks are
- * removed; cross-origin previews stay in deckSampler because Web Audio mutes them.
+ * Resolves upcoming YouTube tracks before playback and, on each tick, lets the
+ * station ask for its next tracks. Unresolvable tracks are removed;
+ * cross-origin previews stay in deckSampler because Web Audio mutes them.
  */
 import { api } from '$lib/api/client';
 import { playerStore } from '$lib/features/player/state/player.svelte';
@@ -13,6 +14,7 @@ const TICK_MS = 2000;
 
 let timer: ReturnType<typeof setInterval> | null = null;
 let hydrating = new Set<string>();
+let onTick: (() => unknown) | null = null;
 
 export function needsHydration(item: QueueItem): boolean {
 	if (!item.playlistTrackId?.startsWith('radio:')) return false;
@@ -69,6 +71,7 @@ async function tick(): Promise<void> {
 	const queue = playerStore.queue as QueueItem[];
 	const from = playerStore.currentIndex;
 	const window = queue.slice(from, from + 1 + LOOKAHEAD);
+	onTick?.();
 	await Promise.all(window.filter(needsHydration).map(hydrateOne));
 }
 
@@ -77,8 +80,10 @@ export function prepareRadioHydration(): void {
 	hydrating = new Set();
 }
 
-export function startRadioHydration(): void {
+/** `eachTick` runs every tick while the station plays: the station's ask for more. */
+export function startRadioHydration(eachTick?: () => unknown): void {
 	if (timer) clearInterval(timer);
+	onTick = eachTick ?? null;
 	void tick();
 	timer = setInterval(() => void tick(), TICK_MS);
 }
@@ -88,4 +93,5 @@ export function stopRadioHydration(): void {
 		clearInterval(timer);
 		timer = null;
 	}
+	onTick = null;
 }

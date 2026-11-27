@@ -59,8 +59,11 @@ pub enum RadioFailure {
     NotFound,
     /// The seed cannot make a station. The string is user-facing.
     Invalid(String),
-    /// A provider or store failed.
+    /// A provider failed, or needs setup first.
     Provider(ProviderFailure),
+    /// A read of this server's own store failed. The string is a log-only
+    /// cause.
+    Store(String),
 }
 
 impl From<ProviderFailure> for RadioFailure {

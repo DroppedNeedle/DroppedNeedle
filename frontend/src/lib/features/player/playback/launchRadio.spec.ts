@@ -6,9 +6,15 @@ const { apiMock, playerMock, toastMock } = vi.hoisted(() => ({
 	playerMock: {
 		queue: [] as unknown[],
 		currentIndex: 0,
+		currentQueueItem: null as unknown,
+		shuffleEnabled: false,
+		shuffleOrder: [] as number[],
+		upcomingQueueLength: 0,
 		isPlaying: false,
 		playQueue: vi.fn(),
 		addMultipleToQueue: vi.fn(),
+		appendQueueSilent: vi.fn(),
+		nextTrack: vi.fn(),
 		patchQueueItemByPlaylistTrackId: vi.fn(),
 		removeFromQueue: vi.fn(),
 		pause: vi.fn()
@@ -22,8 +28,9 @@ vi.mock('$lib/api/client', () => ({
 vi.mock('$lib/features/player/state/player.svelte', () => ({ playerStore: playerMock }));
 vi.mock('$lib/stores/toast', () => ({ toastStore: toastMock }));
 const resolveRadioPatch = vi.hoisted(() => vi.fn());
+const startRadioHydration = vi.hoisted(() => vi.fn());
 vi.mock('$lib/features/player/playback/radioQueueHydrator', () => ({
-	startRadioHydration: vi.fn(),
+	startRadioHydration: (...args: unknown[]) => startRadioHydration(...args),
 	stopRadioHydration: vi.fn(),
 	prepareRadioHydration: vi.fn(),
 	resolveRadioPatch: (...args: unknown[]) => resolveRadioPatch(...args),
@@ -37,7 +44,14 @@ vi.mock('$lib/features/player/playback/radioQueueHydrator', () => ({
 	}
 }));
 
-import { launchRadio, planTrackToQueueItem } from './launchRadio';
+import {
+	ASK_WHEN_LEFT,
+	NEXT_CHUNK,
+	extendRadio,
+	launchRadio,
+	notePlaying,
+	planTrackToQueueItem
+} from './launchRadio';
 import { radioSession } from '$lib/features/player/state/radioSession.svelte';
 
 function track(overrides: Partial<RadioPlanTrack> = {}): RadioPlanTrack {
@@ -68,6 +82,10 @@ describe('launchRadio', () => {
 		vi.clearAllMocks();
 		resolveRadioPatch.mockResolvedValue({ trackSourceId: 'vid-default' });
 		radioSession.end();
+		playerMock.queue = [];
+		playerMock.currentIndex = 0;
+		playerMock.currentQueueItem = null;
+		playerMock.upcomingQueueLength = 0;
 	});
 
 	it('resolves the first YouTube placeholder BEFORE playback starts', async () => {
@@ -148,5 +166,130 @@ describe('launchRadio', () => {
 		expect(await first).toBe(false);
 		expect(playerMock.playQueue).toHaveBeenCalledOnce();
 		expect(playerMock.playQueue.mock.calls[0][0][0].trackName).toBe('Second');
+	});
+
+	describe('endless', () => {
+		const owned = (n: number) =>
+			track({
+				track_name: `Song ${n}`,
+				in_library: true,
+				local_file_id: `t${n}`,
+				recording_mbid: null
+			});
+		const ids = (from: number, to: number) =>
+			Array.from({ length: to - from + 1 }, (_, n) => `t${from + n}`);
+
+		async function playing(tracks: number): Promise<void> {
+			playerMock.playQueue.mockImplementation((items: unknown[]) => {
+				playerMock.queue = items;
+				playerMock.currentIndex = 0;
+				playerMock.currentQueueItem = items[0];
+			});
+			apiMock.post.mockResolvedValueOnce({
+				title: 'Radio',
+				tracks: Array.from({ length: tracks }, (_, n) => owned(n + 1))
+			});
+			expect(
+				await launchRadio({ seed_type: 'track', seed_id: 't1' }, false, { mode: 'library' })
+			).toBe(true);
+		}
+
+		/** Play on to queue index `at`, as the player does: it keeps 3 played tracks. */
+		function playTo(at: number): void {
+			const all = playerMock.queue as { trackSourceId: string }[];
+			for (let index = playerMock.currentIndex + 1; index <= at; index++) {
+				playerMock.currentIndex = index;
+				playerMock.currentQueueItem = all[index];
+				notePlaying();
+			}
+			const dropped = Math.max(0, at - 3);
+			playerMock.queue = all.slice(dropped);
+			playerMock.currentIndex = at - dropped;
+			playerMock.upcomingQueueLength = playerMock.queue.length - playerMock.currentIndex - 1;
+		}
+
+		it('asks for the next chunk at 5 left, sending every track the station played in order', async () => {
+			await playing(10);
+			playTo(3);
+			expect(await extendRadio()).toBe(false);
+			expect(apiMock.post).toHaveBeenCalledTimes(1);
+
+			playTo(6);
+			expect(playerMock.queue).toHaveLength(7);
+			apiMock.post.mockResolvedValueOnce({ title: 'Radio', tracks: [owned(11), owned(12)] });
+			expect(await extendRadio()).toBe(true);
+			const [, body] = apiMock.post.mock.calls[1];
+			expect(body).toMatchObject({
+				seed_type: 'track',
+				seed_id: 't1',
+				mode: 'library',
+				count: NEXT_CHUNK,
+				more_like: [],
+				not_this: []
+			});
+			expect(
+				body.station_tracks.map((sent: { local_track_id: string }) => sent.local_track_id)
+			).toEqual(ids(1, 10));
+			expect(body.station_tracks[0]).toMatchObject({ artist_name: 'Artist', track_name: 'Song 1' });
+			const [appended] = playerMock.appendQueueSilent.mock.calls[0];
+			expect(appended.map((item: { trackSourceId: string }) => item.trackSourceId)).toEqual([
+				't11',
+				't12'
+			]);
+		});
+
+		it('asks for more from the hydrator tick the station starts', async () => {
+			await playing(6);
+			const [tick] = startRadioHydration.mock.calls[0];
+			playerMock.upcomingQueueLength = ASK_WHEN_LEFT;
+			apiMock.post.mockResolvedValueOnce({ title: 'Radio', tracks: [owned(7)] });
+			tick();
+			await vi.waitFor(() => expect(playerMock.appendQueueSilent).toHaveBeenCalledOnce());
+			expect(apiMock.post).toHaveBeenCalledTimes(2);
+		});
+
+		it('tries a failed ask again after a wait, and does not end the station', async () => {
+			const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+			try {
+				await playing(6);
+				playerMock.upcomingQueueLength = ASK_WHEN_LEFT;
+				apiMock.post.mockRejectedValueOnce(new Error('offline'));
+				expect(await extendRadio()).toBe(false);
+				expect(radioSession.exhausted).toBe(false);
+				expect(await extendRadio()).toBe(false);
+				expect(apiMock.post).toHaveBeenCalledTimes(2);
+
+				now.mockReturnValue(1_000_000 + 60_000);
+				apiMock.post.mockResolvedValueOnce({ title: 'Radio', tracks: [owned(7)] });
+				expect(await extendRadio()).toBe(true);
+				expect(apiMock.post).toHaveBeenCalledTimes(3);
+				expect(warn).toHaveBeenCalledOnce();
+			} finally {
+				now.mockRestore();
+				warn.mockRestore();
+			}
+		});
+
+		it('drops an answer that comes after the player stopped, so nothing plays again', async () => {
+			await playing(6);
+			playerMock.upcomingQueueLength = 1;
+			let answer: (value: { title: string; tracks: RadioPlanTrack[] }) => void = () => {};
+			apiMock.post.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						answer = resolve;
+					})
+			);
+			const asking = extendRadio();
+			// Stop clears the queue and ends the station, as the player does.
+			playerMock.queue = [];
+			radioSession.end();
+			answer({ title: 'Radio', tracks: [owned(7)] });
+
+			expect(await asking).toBe(false);
+			expect(playerMock.appendQueueSilent).not.toHaveBeenCalled();
+			expect(playerMock.playQueue).toHaveBeenCalledOnce();
+		});
 	});
 });

@@ -51,8 +51,10 @@ pub const RADIO_PLAN_MIN: i64 = 5;
 pub const RADIO_PLAN_MAX: i64 = 50;
 /// Max seed rows in one radio plan.
 pub const RADIO_ITEMS_MAX: usize = 50;
-/// Max recordings one radio plan may leave out.
+/// Max station tracks one radio plan may leave out.
 pub const RADIO_EXCLUDE_MAX: usize = 500;
+/// Max "More like this" and max "Not this" tracks one radio plan takes.
+pub const RADIO_STEERING_MAX: usize = 50;
 /// Max radio shelf rows.
 pub const RADIO_SHELF_MAX: i64 = 50;
 
@@ -237,7 +239,10 @@ pub async fn radio_shelf(
     user_id: &str,
     body: &RadioRequest,
 ) -> Result<ChartSection, ServiceError> {
-    if body.seed_type == RadioSeedKind::Items {
+    if matches!(
+        body.seed_type,
+        RadioSeedKind::Items | RadioSeedKind::Track | RadioSeedKind::Playlist
+    ) {
         return Err(ServiceError::InvalidInput(
             "A radio shelf starts from an artist, an album or a genre".to_owned(),
         ));
@@ -267,7 +272,8 @@ pub async fn radio_plan(
         && body.seed_id.as_deref().unwrap_or("").trim().is_empty()
     {
         return Err(ServiceError::InvalidInput(
-            "seed_id must not be blank for artist, album, and genre plans".to_owned(),
+            "seed_id must not be blank for artist, album, genre, track and playlist plans"
+                .to_owned(),
         ));
     }
     if body.items.len() > RADIO_ITEMS_MAX {
@@ -275,9 +281,15 @@ pub async fn radio_plan(
             "A radio plan takes at most {RADIO_ITEMS_MAX} seed items"
         )));
     }
-    if body.exclude_recording_mbids.len() > RADIO_EXCLUDE_MAX {
+    if body.station_tracks.len() > RADIO_EXCLUDE_MAX {
         return Err(ServiceError::InvalidInput(format!(
-            "A radio plan can leave out at most {RADIO_EXCLUDE_MAX} recordings"
+            "A radio plan can leave out at most {RADIO_EXCLUDE_MAX} of the station's tracks"
+        )));
+    }
+    if body.more_like.len() > RADIO_STEERING_MAX || body.not_this.len() > RADIO_STEERING_MAX {
+        return Err(ServiceError::InvalidInput(format!(
+            "A radio plan takes at most {RADIO_STEERING_MAX} tracks to play more like and \
+             {RADIO_STEERING_MAX} to leave out"
         )));
     }
     let request = RadioPlanRequest {
@@ -316,6 +328,7 @@ fn radio_failure(failure: RadioFailure) -> ServiceError {
         RadioFailure::NotFound => ServiceError::NotFound,
         RadioFailure::Invalid(message) => ServiceError::InvalidInput(message),
         RadioFailure::Provider(failure) => failure.into(),
+        RadioFailure::Store(cause) => ServiceError::Internal(cause),
     }
 }
 

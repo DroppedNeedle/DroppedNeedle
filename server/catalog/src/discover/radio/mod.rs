@@ -6,11 +6,18 @@
 //!   an album (similar albums, then more by its artist) or a genre (the
 //!   library's artists in that genre as seeds, sampled the same way all
 //!   day);
-//! - a radio plan: a finite track list the player walks. Owned tracks by
-//!   the seed artists and their similar artists, mixed about half and half
-//!   with their popular tracks (ListenBrainz, then Last.fm, then Deezer)
-//!   in hybrid mode. A shelf of albums plays its owned tracks and album
-//!   samples in shelf order;
+//! - a radio plan: the next tracks of a station, which the player asks for
+//!   again as it runs low, sending what it played and the person's steering
+//!   (the server keeps no station). While sound analysis is on, a station
+//!   from a track, an album, an artist or a playlist plays the library
+//!   tracks that sound like its seed tracks ([`sound`], [`walk`]); else, and
+//!   for a genre or a shelf, owned tracks by the seed artists and their
+//!   similar artists. In hybrid mode, with a source an admin set up for
+//!   tracks the library lacks, they are mixed about half and half with
+//!   popular tracks (ListenBrainz, then Last.fm, then Deezer) of the seed
+//!   artists and their neighbours. A shelf of albums plays its owned tracks
+//!   and album samples in shelf order. Every track carries its reason
+//!   ([`reasons`]);
 //! - playlist suggestions: albums by artists similar to the playlist's,
 //!   plus albums in the playlist artists' genres.
 //!
@@ -23,9 +30,12 @@
 
 pub mod library;
 pub mod plan;
+mod reasons;
+pub mod sound;
+pub mod walk;
 
 use droppedneedle_providers::RequestPriority;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
@@ -33,6 +43,7 @@ use std::time::Duration;
 use futures_util::future::join_all;
 use futures_util::stream::{self, StreamExt};
 
+use super::engine::pool_store;
 use super::feedback::Feedback;
 use super::listening::{ArtistRow, Ask, ListenSource, ListeningData, SourcePolicy, UserMusic};
 use super::page::build::daily_shuffler;
@@ -47,21 +58,23 @@ use super::queue::store::QueueDb;
 use super::queue::{QueueSettings, SETTINGS_UNREADABLE};
 use crate::discover::models::{
     ChartSection, PlaylistProfile, PlaylistSuggestionsRequest, PlaylistSuggestionsResponse,
-    RadioMode, RadioPlanRequest, RadioPlanResponse, RadioPlanTrack, RadioRequest, RadioSeedItem,
-    RadioSeedKind, SectionItem, SectionKind,
+    RadioMode, RadioPlanRequest, RadioPlanResponse, RadioPlanTrack, RadioReason, RadioRequest,
+    RadioSeedItem, RadioSeedKind, SectionItem, SectionKind,
 };
 use crate::discover::ports::{BoxFuture, ProviderFailure, RadioFailure};
 use crate::metadata::Catalog;
 use crate::metadata::error::CatalogError;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::runtime_config::Live;
-use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
+use droppedneedle_kernel::runtime_config::secret_sections::{AdvancedSettings, YouTubeConnection};
+use droppedneedle_library::sound::{SoundError, SoundSearch};
 use droppedneedle_providers::error::ProviderError;
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 use droppedneedle_providers::preview::{PreviewClient, PreviewTrack};
 use droppedneedle_providers::{CacheKey, Fetched, Policy, ProviderCacheStore, Source};
 use library::RadioLibrary;
 use plan::{LIBRARY_POOL, MAX_SEED_ARTISTS, TRACKS_PER_ARTIST, clean_pool, mix, song_key};
+use walk::STRETCH;
 
 /// Title of a plan built from a shelf of items.
 const SHELF_TITLE: &str = "Radio: This Shelf";
@@ -75,6 +88,80 @@ const PREVIEWS: Policy = Policy {
 
 /// Title of the playlist suggestions shelf.
 const SUGGESTIONS_TITLE: &str = "Suggestions for your playlist";
+/// Tracks of an artist or a playlist a station by sound grows from.
+const SEED_TRACKS: usize = 20;
+/// Most tracks of an album a station by sound grows from: all of them.
+const ALBUM_SEED_TRACKS: i64 = 200;
+/// A skip this early in a track counts toward resting it.
+const EARLY_SKIP_MS: i64 = 30_000;
+/// How far back early skips are counted.
+const REST_WINDOW_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+/// Early skips on a station in that window that rest a track from
+/// stations.
+const REST_AFTER_SKIPS: i64 = 2;
+/// What a station asks while the sound analysis settings cannot be read:
+/// it waits rather than play as if analysis were off.
+const SOUND_SETTINGS_UNREADABLE: &str =
+    "The sound analysis settings cannot be read. An admin needs to save them again.";
+/// What a hybrid station answers while the YouTube settings cannot be
+/// read: it waits rather than play as if no source were set up.
+const YOUTUBE_SETTINGS_UNREADABLE: &str =
+    "The YouTube settings cannot be read. An admin needs to save them again.";
+
+/// The library tracks the station has queued, in the order they play.
+fn station_ids(request: &RadioPlanRequest) -> Vec<String> {
+    request
+        .station_tracks
+        .iter()
+        .filter_map(|track| track.local_track_id.clone())
+        .collect()
+}
+
+/// How a station's library pool says where a track came from.
+enum Pooled {
+    /// From the station's artist and those similar to it.
+    Similar,
+    /// From the artists on this playlist.
+    Playlist(String),
+    /// From a genre's artists.
+    Genre(String),
+    /// From a shelf's artists.
+    Shelf,
+}
+
+/// What a plan grows from.
+struct Station {
+    title: String,
+    /// The name a seed reason gives it: a track, an album or an artist.
+    seed_name: String,
+    /// The artist a library pool starts from, with its similar artists.
+    base: Option<(String, String)>,
+    /// The artists a library pool spreads over when it has no base.
+    artists: Vec<(String, String)>,
+    pooled: Pooled,
+    /// The library tracks a station by sound grows from.
+    seed_tracks: Vec<RadioPlanTrack>,
+}
+
+impl Station {
+    fn of_artists(title: &str, pooled: Pooled, artists: Vec<(String, String)>) -> Self {
+        Self {
+            title: title.to_owned(),
+            seed_name: String::new(),
+            base: None,
+            artists,
+            pooled,
+            seed_tracks: Vec::new(),
+        }
+    }
+}
+
+/// An artist a station reads tracks of, and the reason they carry.
+struct PoolArtist {
+    mbid: String,
+    name: String,
+    reason: RadioReason,
+}
 
 /// What the radio reads from.
 pub struct RadioInputs {
@@ -94,6 +181,11 @@ pub struct RadioInputs {
     pub cache: ProviderCacheStore,
     /// Wall time, which picks the day's shuffle.
     pub clock: Arc<dyn Clock>,
+    /// The search over how the library's tracks sound.
+    pub sound: SoundSearch,
+    /// The YouTube settings, which say whether tracks the library lacks
+    /// can play.
+    pub youtube: Live<YouTubeConnection>,
 }
 
 /// Radio over the live providers and the library.
@@ -107,6 +199,8 @@ pub struct LiveRadio {
     previews: PreviewClient,
     cache: ProviderCacheStore,
     clock: Arc<dyn Clock>,
+    sound: SoundSearch,
+    youtube: Live<YouTubeConnection>,
 }
 
 /// A preview's title and artist: what a plan keeps of it. The preview
@@ -184,6 +278,12 @@ fn empty_shelf(title: &str, source: ListenSource, message: Option<String>) -> Ch
     }
 }
 
+/// A failed read of this server's own store: an honest failure, never an
+/// empty answer.
+fn store(cause: impl std::fmt::Display) -> RadioFailure {
+    RadioFailure::Store(cause.to_string())
+}
+
 fn catalog_failure(error: CatalogError) -> RadioFailure {
     match error {
         CatalogError::NotFound => RadioFailure::NotFound,
@@ -208,6 +308,8 @@ impl LiveRadio {
             previews: inputs.previews,
             cache: inputs.cache,
             clock: inputs.clock,
+            sound: inputs.sound,
+            youtube: inputs.youtube,
         }
     }
 
@@ -294,12 +396,12 @@ impl LiveRadio {
     }
 
     /// The artist's name from the library, else from their most played
-    /// album, else the id.
-    async fn artist_name(&self, user_id: &str, mbid: &str) -> String {
+    /// album; `None` when neither knows it.
+    async fn artist_name(&self, user_id: &str, mbid: &str) -> Option<String> {
         match self.genres.artist_names(&[mbid.to_owned()]).await {
             Ok(names) => {
                 if let Some(name) = names.into_values().find(|name| !name.is_empty()) {
-                    return name;
+                    return Some(name);
                 }
             }
             Err(cause) => tracing::warn!(%cause, "radio artist name read failed"),
@@ -314,7 +416,6 @@ impl LiveRadio {
         .next()
         .map(|ranked| ranked.album.artist_name)
         .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| mbid.to_owned())
     }
 
     /// Up to `want` library artists in one genre, the same ones all day.
@@ -361,11 +462,18 @@ impl LiveRadio {
                     .ok_or(RadioFailure::NotFound)?;
                 let name = self.artist_name(user_id, &mbid).await;
                 let pools = self
-                    .similar_pools(user_id, &user, &[seed(&mbid, &name)], 15, 3, lastfm)
+                    .similar_pools(
+                        user_id,
+                        &user,
+                        &[seed(&mbid, name.as_deref().unwrap_or(""))],
+                        15,
+                        3,
+                        lastfm,
+                    )
                     .await?;
                 let picked = round_robin(pools, count, MAX_PER_ARTIST, &mut Shuffler::random());
                 (
-                    format!("Radio: {name}"),
+                    name.map_or_else(|| "Radio".to_owned(), |name| format!("Radio: {name}")),
                     mbid,
                     self.album_rows(picked).await,
                 )
@@ -376,6 +484,11 @@ impl LiveRadio {
                     .ok_or(RadioFailure::NotFound)?;
                 let (title, items) = self.album_station(user_id, &mbid, count).await?;
                 (title, mbid, items)
+            }
+            RadioSeedKind::Track | RadioSeedKind::Playlist => {
+                return Err(RadioFailure::Invalid(
+                    "A radio shelf starts from an artist, an album or a genre".to_owned(),
+                ));
             }
             RadioSeedKind::Genre | RadioSeedKind::Items => {
                 let genre = request.seed_id.trim().to_owned();
@@ -467,48 +580,192 @@ impl LiveRadio {
         Ok((title, items))
     }
 
-    /// The seed artists a plan spreads over, and its title.
-    async fn plan_seeds(
+    /// What a plan grows from: its title, its library seed tracks, the
+    /// name its reasons give the seed and the artists a library pool
+    /// starts from.
+    async fn station(
         &self,
         user_id: &str,
         request: &RadioPlanRequest,
-    ) -> Result<(Vec<(String, String)>, String), RadioFailure> {
-        if request.seed_type == RadioSeedKind::Items {
-            let mut seen = HashSet::new();
-            let seeds = request
-                .items
-                .iter()
-                .filter_map(|item| {
-                    let mbid = normalize(Some(&item.artist_mbid)).filter(|id| is_valid_mbid(id))?;
-                    (mbid != VARIOUS_ARTISTS_MBID && seen.insert(mbid.clone()))
-                        .then(|| (mbid, item.artist_name.clone()))
-                })
-                .take(MAX_SEED_ARTISTS)
-                .collect();
-            return Ok((seeds, SHELF_TITLE.to_owned()));
-        }
+    ) -> Result<Station, RadioFailure> {
         let seed_id = request.seed_id.as_deref().unwrap_or("").trim();
-        if request.seed_type == RadioSeedKind::Genre {
-            return Ok(self.genre_plan_seeds(user_id, seed_id).await);
-        }
-        let mbid = normalize(Some(seed_id))
-            .filter(|id| is_valid_mbid(id))
-            .ok_or_else(|| RadioFailure::Invalid(format!("Unknown seed MBID: {seed_id}")))?;
-        let (base, title) = if request.seed_type == RadioSeedKind::Album {
-            match self.catalog.album_basic(&mbid).await {
-                Ok(basic) => {
-                    let title = format!("Radio: {}", basic.title);
-                    match normalize(Some(&basic.artist_id)) {
-                        Some(artist) => ((artist, basic.artist_name), title),
-                        None => return Ok((Vec::new(), title)),
-                    }
-                }
-                Err(CatalogError::NotFound) => return Ok((Vec::new(), "Radio".to_owned())),
-                Err(error) => return Err(catalog_failure(error)),
+        match request.seed_type {
+            RadioSeedKind::Items => {
+                let mut seen = HashSet::new();
+                let artists = request
+                    .items
+                    .iter()
+                    .filter_map(|item| {
+                        let mbid =
+                            normalize(Some(&item.artist_mbid)).filter(|id| is_valid_mbid(id))?;
+                        (mbid != VARIOUS_ARTISTS_MBID && seen.insert(mbid.clone()))
+                            .then(|| (mbid, item.artist_name.clone()))
+                    })
+                    .take(MAX_SEED_ARTISTS)
+                    .collect();
+                Ok(Station::of_artists(SHELF_TITLE, Pooled::Shelf, artists))
             }
-        } else {
-            let name = self.artist_name(user_id, &mbid).await;
-            ((mbid.clone(), name.clone()), format!("Radio: {name}"))
+            RadioSeedKind::Genre => {
+                let (artists, title) = self.genre_plan_seeds(user_id, seed_id).await;
+                Ok(Station::of_artists(
+                    &title,
+                    Pooled::Genre(seed_id.to_owned()),
+                    artists,
+                ))
+            }
+            RadioSeedKind::Playlist => {
+                let found = self
+                    .tracks
+                    .playlist_seeds(user_id, seed_id)
+                    .await
+                    .map_err(store)?
+                    .ok_or(RadioFailure::NotFound)?;
+                let mut ids = found.track_ids;
+                Shuffler::random().shuffle(&mut ids);
+                ids.truncate(SEED_TRACKS);
+                let (artists, _) = self
+                    .tracks
+                    .playlist_artists(user_id, seed_id)
+                    .await
+                    .map_err(store)?
+                    .unwrap_or_default();
+                let artists = artists
+                    .into_iter()
+                    .take(MAX_SEED_ARTISTS)
+                    .map(|mbid| (mbid, String::new()))
+                    .collect();
+                let mut station = Station::of_artists(
+                    &format!("Radio: {}", found.name),
+                    Pooled::Playlist(found.name),
+                    artists,
+                );
+                station.seed_tracks = self.library_tracks(&ids).await?;
+                Ok(station)
+            }
+            RadioSeedKind::Track => {
+                let track = self
+                    .library_tracks(&[seed_id.to_owned()])
+                    .await?
+                    .into_iter()
+                    .next()
+                    .ok_or(RadioFailure::NotFound)?;
+                let base = normalize(Some(&track.artist_mbid))
+                    .filter(|id| is_valid_mbid(id) && !is_various_artists(Some(id)))
+                    .map(|mbid| (mbid, track.artist_name.clone()));
+                Ok(Station {
+                    title: format!("Radio: {}", track.track_name),
+                    seed_name: track.track_name.clone(),
+                    base,
+                    artists: Vec::new(),
+                    pooled: Pooled::Similar,
+                    seed_tracks: vec![track],
+                })
+            }
+            RadioSeedKind::Album | RadioSeedKind::Artist => {
+                let mbid = normalize(Some(seed_id))
+                    .filter(|id| is_valid_mbid(id))
+                    .ok_or_else(|| {
+                        RadioFailure::Invalid(format!("Unknown seed MBID: {seed_id}"))
+                    })?;
+                if request.seed_type == RadioSeedKind::Artist {
+                    let name = self.artist_name(user_id, &mbid).await;
+                    let seed_tracks = self
+                        .tracks
+                        .tracks_by_artists(std::slice::from_ref(&mbid), SEED_TRACKS as i64)
+                        .await
+                        .map_err(store)?;
+                    return Ok(Station {
+                        title: name
+                            .as_deref()
+                            .map_or_else(|| "Radio".to_owned(), |name| format!("Radio: {name}")),
+                        seed_name: name.clone().unwrap_or_default(),
+                        base: Some((mbid, name.unwrap_or_default())),
+                        artists: Vec::new(),
+                        pooled: Pooled::Similar,
+                        seed_tracks,
+                    });
+                }
+                let basic = match self.catalog.album_basic(&mbid).await {
+                    Ok(basic) => basic,
+                    Err(CatalogError::NotFound) => {
+                        return Ok(Station::of_artists("Radio", Pooled::Similar, Vec::new()));
+                    }
+                    Err(error) => return Err(catalog_failure(error)),
+                };
+                let seed_tracks = self
+                    .tracks
+                    .tracks_of_albums(std::slice::from_ref(&mbid), ALBUM_SEED_TRACKS)
+                    .await
+                    .map_err(store)?;
+                Ok(Station {
+                    title: format!("Radio: {}", basic.title),
+                    seed_name: basic.title.clone(),
+                    base: normalize(Some(&basic.artist_id))
+                        .map(|artist| (artist, basic.artist_name.clone())),
+                    artists: Vec::new(),
+                    pooled: Pooled::Similar,
+                    seed_tracks,
+                })
+            }
+        }
+    }
+
+    /// The library tracks among `ids` that are in the library now, in the
+    /// order asked.
+    async fn library_tracks(&self, ids: &[String]) -> Result<Vec<RadioPlanTrack>, RadioFailure> {
+        let found = self.tracks.tracks_by_ids(ids).await.map_err(store)?;
+        let mut by_id: HashMap<String, RadioPlanTrack> = found
+            .into_iter()
+            .filter_map(|track| Some((track.local_file_id.clone()?, track)))
+            .collect();
+        Ok(ids.iter().filter_map(|id| by_id.remove(id)).collect())
+    }
+
+    /// The artists a library pool spreads over: the station's artist, the
+    /// artists of the tracks the person asked for more like and the
+    /// station artist's similar artists; or the station's own artists.
+    async fn pool_artists(
+        &self,
+        user_id: &str,
+        station: &Station,
+        more_like: &[RadioPlanTrack],
+    ) -> Result<Vec<PoolArtist>, RadioFailure> {
+        let feedback = self.feedback(user_id).await;
+        let mut seen = HashSet::new();
+        let mut artists = Vec::new();
+        let seed_reason = |name: &str| match &station.pooled {
+            Pooled::Shelf => reasons::shelf(),
+            Pooled::Genre(genre) => reasons::genre(genre),
+            Pooled::Playlist(playlist) => reasons::on_playlist(playlist),
+            Pooled::Similar => reasons::seed(if name.is_empty() {
+                &station.seed_name
+            } else {
+                name
+            }),
+        };
+        for (mbid, name) in station.base.iter().chain(&station.artists) {
+            if seen.insert(mbid.clone()) {
+                artists.push(PoolArtist {
+                    mbid: mbid.clone(),
+                    name: name.clone(),
+                    reason: seed_reason(name),
+                });
+            }
+        }
+        for track in more_like {
+            if let Some(mbid) = normalize(Some(&track.artist_mbid)).filter(|id| is_valid_mbid(id))
+                && !is_various_artists(Some(&mbid))
+                && seen.insert(mbid.clone())
+            {
+                artists.push(PoolArtist {
+                    mbid,
+                    name: track.artist_name.clone(),
+                    reason: reasons::more_like(&track.track_name, None),
+                });
+            }
+        }
+        let Some((base, base_name)) = station.base.as_ref() else {
+            return Ok(artists);
         };
         let settings = self.queue_settings()?;
         let ctx = BuildContext {
@@ -518,22 +775,85 @@ impl LiveRadio {
             ask: Ask::person(),
             now_ms: self.clock.now_ms(),
         };
-        let similar =
-            similar_to(&ctx, user_id, &seed(&base.0, &base.1), MAX_SEED_ARTISTS + 1).await;
-        let feedback = self.feedback(user_id).await;
-        let mut seeds = vec![base];
+        let similar = similar_to(&ctx, user_id, &seed(base, base_name), MAX_SEED_ARTISTS + 1).await;
         for artist in similar.into_iter().map(|scored| scored.artist) {
-            if seeds.len() >= MAX_SEED_ARTISTS {
+            if artists.len() >= MAX_SEED_ARTISTS {
                 break;
             }
             if let Some(mbid) = normalize(artist.mbid.as_deref())
                 && !is_various_artists(Some(&mbid))
                 && !feedback.hides_artist(Some(mbid.as_str()))
+                && seen.insert(mbid.clone())
             {
-                seeds.push((mbid, artist.name));
+                artists.push(PoolArtist {
+                    reason: reasons::close_to_artist(&artist.name, base_name),
+                    mbid,
+                    name: artist.name,
+                });
             }
         }
-        Ok((seeds, title))
+        Ok(artists)
+    }
+
+    /// The artists whose popular tracks join a station by sound: the seed
+    /// tracks' artists, then the artists the person's Discover pool reaches
+    /// from them.
+    async fn sound_pool_artists(
+        &self,
+        user_id: &str,
+        station: &Station,
+        seeds: &[(&RadioPlanTrack, bool)],
+    ) -> Result<Vec<PoolArtist>, RadioFailure> {
+        let feedback = self.feedback(user_id).await;
+        let mut seen = HashSet::new();
+        let mut artists: Vec<PoolArtist> = Vec::new();
+        for (track, more_like) in seeds {
+            if artists.len() >= MAX_SEED_ARTISTS / 2 {
+                break;
+            }
+            if let Some(mbid) = normalize(Some(&track.artist_mbid)).filter(|id| is_valid_mbid(id))
+                && !is_various_artists(Some(&mbid))
+                && !feedback.hides_artist(Some(mbid.as_str()))
+                && seen.insert(mbid.clone())
+            {
+                let reason = match (&station.pooled, more_like) {
+                    (_, true) => reasons::more_like(&track.track_name, None),
+                    (Pooled::Playlist(playlist), false) => reasons::on_playlist(playlist),
+                    _ => reasons::seed(&track.artist_name),
+                };
+                artists.push(PoolArtist {
+                    reason,
+                    mbid,
+                    name: track.artist_name.clone(),
+                });
+            }
+        }
+        let seed_names: HashMap<String, String> = artists
+            .iter()
+            .map(|artist| (artist.mbid.clone(), artist.name.clone()))
+            .collect();
+        let pool = pool_store::ranked(self.queue_db.db(), user_id, self.clock.now_ms())
+            .await
+            .map_err(store)?;
+        for candidate in pool {
+            if artists.len() >= MAX_SEED_ARTISTS {
+                break;
+            }
+            let Some(via) = candidate.paths.iter().find_map(|path| {
+                let artist = path.artist.as_ref()?;
+                seed_names.get(&artist.mbid)
+            }) else {
+                continue;
+            };
+            if seen.insert(candidate.artist_mbid.clone()) {
+                artists.push(PoolArtist {
+                    reason: reasons::close_to_artist(&candidate.artist_name, via),
+                    mbid: candidate.artist_mbid,
+                    name: candidate.artist_name,
+                });
+            }
+        }
+        Ok(artists)
     }
 
     /// Genre seeds: library artists in the genre (the same ones all day
@@ -628,6 +948,7 @@ impl LiveRadio {
             local_file_id: None,
             file_format: None,
             duration_s: None,
+            reason: None,
         };
         match self
             .catalog
@@ -671,46 +992,245 @@ impl LiveRadio {
         .collect()
     }
 
+    /// Whether a source an admin set up plays tracks the library lacks:
+    /// the YouTube player with its search key. Settings that cannot be read
+    /// are refused, never read as no source.
+    fn plays_unowned(&self) -> Result<bool, RadioFailure> {
+        let youtube = self.youtube.read().ok_or_else(|| {
+            RadioFailure::Provider(ProviderFailure::not_configured(YOUTUBE_SETTINGS_UNREADABLE))
+        })?;
+        Ok(youtube.enabled && youtube.api_enabled && !youtube.api_key.expose().trim().is_empty())
+    }
+
+    /// The library tracks `user_id` skipped early on a station often
+    /// enough lately to rest them from stations.
+    async fn rested(&self, user_id: &str) -> Result<HashSet<String>, RadioFailure> {
+        let since = self.clock.now_ms() - REST_WINDOW_MS;
+        Ok(self
+            .tracks
+            .rested(user_id, EARLY_SKIP_MS, since, REST_AFTER_SKIPS)
+            .await
+            .map_err(store)?
+            .into_iter()
+            .collect())
+    }
+
+    /// The next library tracks of a station grown from `seeds` by how they
+    /// sound, each with its reason; `None` while sound analysis is off or
+    /// holds none of the seeds.
+    async fn by_sound(
+        &self,
+        user_id: &str,
+        request: &RadioPlanRequest,
+        seeds: &[sound::Seed],
+        names: &HashMap<String, (String, String)>,
+        excluded: &HashSet<String>,
+        count: usize,
+    ) -> Result<Option<Vec<RadioPlanTrack>>, RadioFailure> {
+        if seeds.is_empty() {
+            return Ok(None);
+        }
+        match self.sound.switch() {
+            Some(true) => {}
+            Some(false) => {
+                // Turned off: the loaded sounds are let go.
+                self.sound.release();
+                return Ok(None);
+            }
+            None => {
+                return Err(RadioFailure::Provider(ProviderFailure::not_configured(
+                    SOUND_SETTINGS_UNREADABLE,
+                )));
+            }
+        }
+        let feedback = self.feedback(user_id).await;
+        let groups = if request.sound_only {
+            HashMap::new()
+        } else {
+            self.tracks.taste_groups(user_id).await.map_err(store)?
+        };
+        let search = self.sound.clone();
+        let seeds = seeds.to_vec();
+        let excluded = excluded.clone();
+        let not_this = request.not_this.clone();
+        let played = station_ids(request);
+        let sound_only = request.sound_only;
+        // The load, when the analysis changed, and the scan of every vector
+        // are blocking work.
+        let searched = tokio::task::spawn_blocking(move || {
+            let Some(index) = search.index()? else {
+                return Ok(None);
+            };
+            if !seeds
+                .iter()
+                .any(|seed| index.track(&seed.track_id).is_some())
+            {
+                return Ok(None);
+            }
+            // "Not this artist" holds on a station too, except for the
+            // artists the station itself grows from.
+            let own: HashSet<String> = seeds
+                .iter()
+                .filter_map(|seed| index.track(&seed.track_id)?.artist_mbid.clone())
+                .collect();
+            let hidden_artist =
+                |artist: &str| !own.contains(artist) && feedback.hides_artist(Some(artist));
+            let steering = sound::Steering {
+                excluded: &excluded,
+                hidden_artist: &hidden_artist,
+                not_this: &not_this,
+                played: &played,
+                groups: &groups,
+                sound_only,
+            };
+            Ok::<_, SoundError>(Some(sound::station(&index, &seeds, &steering, count)))
+        })
+        .await;
+        let found = match searched {
+            Ok(Ok(Some(found))) => found,
+            Ok(Ok(None)) => return Ok(None),
+            Ok(Err(error)) => return Err(store(error)),
+            Err(error) => return Err(store(error)),
+        };
+        let ids: Vec<String> = found.iter().map(|found| found.track_id.clone()).collect();
+        let mut tracks: HashMap<String, RadioPlanTrack> = self
+            .library_tracks(&ids)
+            .await?
+            .into_iter()
+            .filter_map(|track| Some((track.local_file_id.clone()?, track)))
+            .collect();
+        Ok(Some(
+            found
+                .into_iter()
+                .filter_map(|found| {
+                    let mut track = tracks.remove(&found.track_id)?;
+                    let (title, artist) = names.get(&found.seed.track_id)?;
+                    track.reason = Some(if found.seed.more_like {
+                        reasons::more_like(title, Some(&found.seed.track_id))
+                    } else {
+                        reasons::sounds_like(title, artist, &found.seed.track_id, found.distance)
+                    });
+                    Some(track)
+                })
+                .collect(),
+        ))
+    }
+
     async fn build_plan(
         &self,
         user_id: &str,
         request: &RadioPlanRequest,
     ) -> Result<RadioPlanResponse, RadioFailure> {
         let count = usize::try_from(request.count).unwrap_or(30);
-        let exclude: HashSet<String> = request
-            .exclude_recording_mbids
-            .iter()
-            .map(|mbid| mbid.to_lowercase())
-            .collect();
+        let exclude = plan::station_keys(&request.station_tracks);
         let hybrid = request.mode == RadioMode::Hybrid;
+        let unowned = hybrid && self.plays_unowned()?;
+        let library_only = hybrid && !unowned;
+        let mut excluded: HashSet<String> = self.rested(user_id).await?;
+        excluded.extend(station_ids(request));
+        excluded.extend(request.not_this.iter().cloned());
         if request.seed_type == RadioSeedKind::Items
             && request
                 .items
                 .iter()
                 .any(|item| item.album_mbid.is_some() && !item.album_name.is_empty())
         {
-            return self.shelf_plan(request, count, &exclude, hybrid).await;
+            let mut plan = self
+                .shelf_plan(request, count, &exclude, &excluded, unowned)
+                .await?;
+            plan.library_only = library_only;
+            return Ok(plan);
         }
-        let (seeds, title) = self.plan_seeds(user_id, request).await?;
-        if seeds.is_empty() {
-            return Ok(RadioPlanResponse {
-                title,
-                tracks: Vec::new(),
-            });
-        }
-        let artist_ids: Vec<String> = seeds.iter().map(|(mbid, _)| mbid.clone()).collect();
-        let library = self
-            .tracks
-            .tracks_by_artists(&artist_ids, LIBRARY_POOL)
-            .await
-            .unwrap_or_else(|cause| {
-                tracing::warn!(%cause, "radio library pool failed; playing without it");
-                Vec::new()
-            });
-        let external = if hybrid {
-            let lookups: Vec<_> = seeds
+        let station = self.station(user_id, request).await?;
+        let more_like = self.library_tracks(&request.more_like).await?;
+        let stations = &request.station_tracks;
+        let recent: Vec<String> = stations[stations.len().saturating_sub(STRETCH)..]
+            .iter()
+            .map(plan::station_artist_key)
+            .collect();
+        let seed_tracks: Vec<(&RadioPlanTrack, bool)> = station
+            .seed_tracks
+            .iter()
+            .map(|track| (track, false))
+            .chain(more_like.iter().map(|track| (track, true)))
+            .collect();
+        let seeds: Vec<sound::Seed> = seed_tracks
+            .iter()
+            .filter_map(|(track, more_like)| {
+                Some(sound::Seed {
+                    track_id: track.local_file_id.clone()?,
+                    more_like: *more_like,
+                })
+            })
+            .collect();
+        let names: HashMap<String, (String, String)> = seed_tracks
+            .iter()
+            .filter_map(|(track, _)| {
+                Some((
+                    track.local_file_id.clone()?,
+                    (track.track_name.clone(), track.artist_name.clone()),
+                ))
+            })
+            .collect();
+        let (library, artists) = match self
+            .by_sound(user_id, request, &seeds, &names, &excluded, count)
+            .await?
+        {
+            Some(library) => {
+                let artists = if unowned {
+                    let tracks: Vec<(&RadioPlanTrack, bool)> = more_like
+                        .iter()
+                        .map(|track| (track, true))
+                        .chain(station.seed_tracks.iter().map(|track| (track, false)))
+                        .collect();
+                    self.sound_pool_artists(user_id, &station, &tracks).await?
+                } else {
+                    Vec::new()
+                };
+                (library, artists)
+            }
+            None => {
+                let artists = self.pool_artists(user_id, &station, &more_like).await?;
+                if artists.is_empty() {
+                    return Ok(RadioPlanResponse {
+                        title: station.title,
+                        tracks: Vec::new(),
+                        library_only,
+                    });
+                }
+                let ids: Vec<String> = artists.iter().map(|artist| artist.mbid.clone()).collect();
+                let pool = self
+                    .tracks
+                    .pool_tracks(&ids, LIBRARY_POOL)
+                    .await
+                    .map_err(store)?;
+                // A track goes by the artist that brought it: its own, else
+                // its album's.
+                let library = pool
+                    .into_iter()
+                    .map(|(mut track, album_artist)| {
+                        let by = artists
+                            .iter()
+                            .find(|artist| artist.mbid == track.artist_mbid)
+                            .or_else(|| artists.iter().find(|artist| artist.mbid == album_artist));
+                        track.reason = by.map(|artist| artist.reason.clone());
+                        track
+                    })
+                    .collect();
+                let artists = if unowned { artists } else { Vec::new() };
+                (library, artists)
+            }
+        };
+        let external = if unowned {
+            let lookups: Vec<_> = artists
                 .iter()
-                .map(|(mbid, name)| self.top_tracks(user_id, mbid, name))
+                .map(|artist| async move {
+                    let mut tracks = self.top_tracks(user_id, &artist.mbid, &artist.name).await;
+                    for track in &mut tracks {
+                        track.reason = Some(artist.reason.clone());
+                    }
+                    tracks
+                })
                 .collect();
             stream::iter(lookups)
                 .buffered(LOOKUP_CONCURRENCY)
@@ -723,13 +1243,15 @@ impl LiveRadio {
             Vec::new()
         };
         Ok(RadioPlanResponse {
-            title,
+            title: station.title,
             tracks: mix(
-                clean_pool(library, &exclude),
-                clean_pool(external, &exclude),
+                clean_pool(library, &exclude, &excluded),
+                clean_pool(external, &exclude, &excluded),
                 count,
-                hybrid,
+                unowned,
+                &recent,
             ),
+            library_only,
         })
     }
 
@@ -741,6 +1263,7 @@ impl LiveRadio {
         request: &RadioPlanRequest,
         count: usize,
         exclude: &HashSet<String>,
+        excluded_tracks: &HashSet<String>,
         hybrid: bool,
     ) -> Result<RadioPlanResponse, RadioFailure> {
         let items: Vec<_> = request
@@ -756,13 +1279,10 @@ impl LiveRadio {
             .tracks
             .tracks_of_albums(&album_ids, count as i64)
             .await
-            .unwrap_or_else(|cause| {
-                tracing::warn!(%cause, "shelf radio library read failed");
-                Vec::new()
-            });
+            .map_err(store)?;
         let mut by_album: std::collections::HashMap<String, Vec<RadioPlanTrack>> =
             std::collections::HashMap::new();
-        for track in clean_pool(local, exclude) {
+        for track in clean_pool(local, exclude, excluded_tracks) {
             let album = track.album_mbid.clone().unwrap_or_default();
             by_album.entry(album).or_default().push(track);
         }
@@ -785,7 +1305,7 @@ impl LiveRadio {
             .collect()
             .await;
         for ((album, _), found) in missing.into_iter().zip(samples) {
-            by_album.insert(album.clone(), found);
+            by_album.insert(album.clone(), clean_pool(found, exclude, excluded_tracks));
         }
         let mut seen = HashSet::new();
         let mut tracks = Vec::new();
@@ -795,13 +1315,17 @@ impl LiveRadio {
                     break 'albums;
                 }
                 if seen.insert(song_key(&track.artist_name, &track.track_name)) {
-                    tracks.push(track);
+                    tracks.push(RadioPlanTrack {
+                        reason: Some(reasons::shelf()),
+                        ..track
+                    });
                 }
             }
         }
         Ok(RadioPlanResponse {
             title: SHELF_TITLE.to_owned(),
             tracks,
+            library_only: false,
         })
     }
 
@@ -861,6 +1385,7 @@ impl LiveRadio {
                 local_file_id: None,
                 file_format: None,
                 duration_s: None,
+                reason: None,
             })
             .collect()
     }
@@ -1000,7 +1525,7 @@ impl LiveRadio {
 }
 
 impl LiveRadio {
-    /// A complete, finite track plan for the user.
+    /// The next tracks of a station for the user.
     pub fn plan<'a>(
         &'a self,
         user_id: &'a str,

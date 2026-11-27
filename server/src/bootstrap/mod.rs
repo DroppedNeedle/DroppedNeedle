@@ -538,6 +538,7 @@ pub(crate) async fn build_on(
             jobs: queues.queue().clone(),
             playback: playback.clone(),
             history: history.clone(),
+            sound: library.sound.search().clone(),
         },
     );
     // Your Weekly Mix: one builder behind the refresh route, the daily

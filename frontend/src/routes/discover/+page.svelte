@@ -178,7 +178,8 @@
 	const TAPES = {
 		your_artists: 'New to you',
 		fact: 'New to you',
-		source: 'ListenBrainz pick'
+		source: 'ListenBrainz pick',
+		sound: 'Found by sound'
 	} as const;
 
 	function tapesOf(entry: DeckEntry): [string, string?] {

@@ -254,6 +254,7 @@ pub fn catalog_setup_at(
             jobs: JobQueue::new(platform.db.clone(), platform.clock.clone()),
             playback,
             history: super::history_store(platform),
+            sound: library.sound.search().clone(),
         },
     )
 }

@@ -6212,6 +6212,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/tracks/{id}/similar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The library tracks that sound most like this one, nearest first. */
+        get: operations["get_similar_tracks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/tracks/{id}/sound": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A track's 200 stored sound measures, as stored. */
+        get: operations["get_track_sound"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/unconfirmed": {
         parameters: {
             query?: never;
@@ -13853,6 +13887,11 @@ export interface components {
              */
             cleared: number;
         };
+        /**
+         * @description How close a track sounds to the seed, in words.
+         * @enum {string}
+         */
+        Closeness: "very_close" | "close" | "further";
         /** @description One upcoming gig in one of the caller's cities. */
         Concert: {
             /** @description Followed artist's MBID (lowercase in library sweep scope). */
@@ -16706,7 +16745,7 @@ export interface components {
          * @description How a pick was found.
          * @enum {string}
          */
-        FoundBy: "co_listening" | "source_pick" | "band_link";
+        FoundBy: "co_listening" | "source_pick" | "band_link" | "sound";
         /** @description One folder the setup guide found. */
         FoundFolder: {
             /**
@@ -21833,6 +21872,8 @@ export interface components {
              *     first; none for a pick found otherwise.
              */
             seeds: components["schemas"]["EvidenceSeed"][];
+            /** @description For a pick found by sound: the person's own track that led here. */
+            sound_seed?: null | components["schemas"]["SoundSeed"];
             /** @description The service the finding fact came from. */
             source: components["schemas"]["EvidenceSource"];
             /**
@@ -21869,7 +21910,7 @@ export interface components {
          * @description What a pick's reason rests on.
          * @enum {string}
          */
-        PickReasonKind: "your_artists" | "source" | "fact";
+        PickReasonKind: "your_artists" | "source" | "fact" | "sound";
         /** @description Pick one candidate. */
         PickRequest: {
             /** @description `candidate_index` of the candidate to download. */
@@ -23480,19 +23521,47 @@ export interface components {
              * @description Wanted track count.
              */
             count?: number;
-            /** @description Recording mbids to leave out. */
-            exclude_recording_mbids?: string[];
             /** @description Seed rows for `items` plans. */
             items?: components["schemas"]["RadioSeedItem"][];
             /** @description Which tracks the plan may use. */
             mode?: components["schemas"]["RadioMode"];
-            /** @description Seed id (mbid or genre name); empty for item seeds. */
+            /**
+             * @description Library tracks the person asked for more like on this station:
+             *     each seeds the station with double weight.
+             */
+            more_like?: string[];
+            /**
+             * @description Library tracks the person said "Not this" to on this station: they
+             *     never come again and tracks that sound like them come later.
+             */
+            not_this?: string[];
+            /**
+             * @description Seed id: an artist or release-group mbid, a genre name, a library
+             *     track id or a playlist id; empty for item seeds.
+             */
             seed_id?: string | null;
             /** @description What the plan starts from. */
             seed_type: components["schemas"]["RadioSeedKind"];
+            /**
+             * @description Order by sound alone, without pushing down tracks from outside the
+             *     seed's genre.
+             */
+            sound_only?: boolean;
+            /**
+             * @description The station's tracks so far, in the order they play: those played,
+             *     then those still to play. None of them, nor another copy of one,
+             *     comes again; the next tracks follow on from the last library one,
+             *     and no thirty in a row hold more than four by one artist.
+             */
+            station_tracks?: components["schemas"]["StationTrack"][];
         };
-        /** @description A complete radio plan. */
+        /** @description A radio plan, or the next chunk of an endless station. */
         RadioPlanResponse: {
+            /**
+             * @description The station holds only library tracks although tracks the library
+             *     lacks were asked for: no admin set up a source that plays them.
+             */
+            library_only?: boolean;
             /** @description Plan title. */
             title: string;
             /** @description Planned tracks in order. */
@@ -23519,11 +23588,37 @@ export interface components {
             in_library: boolean;
             /** @description Native file id for owned rows, when known. */
             local_file_id?: string | null;
+            /** @description Why it is on the station, built from the path that put it there. */
+            reason?: null | components["schemas"]["RadioReason"];
             /** @description MusicBrainz recording id, when known. */
             recording_mbid?: string | null;
             /** @description Track title. */
             track_name: string;
         };
+        /** @description Why a track is on a station: one line and the names it is built from. */
+        RadioReason: {
+            /**
+             * @description How close it sounds to that seed track, for a track found by
+             *     sound.
+             */
+            closeness?: null | components["schemas"]["Closeness"];
+            /** @description What put it there. */
+            kind: components["schemas"]["RadioReasonKind"];
+            /** @description The line, a short sentence. */
+            line: string;
+            /**
+             * @description The seed the line names: a track's title, an artist, an album, a
+             *     playlist or a genre.
+             */
+            seed_name: string;
+            /** @description The seed track, for a track found by sound. */
+            seed_track_id?: string | null;
+        };
+        /**
+         * @description What put a track on a station.
+         * @enum {string}
+         */
+        RadioReasonKind: "sounds_like" | "more_like" | "close_to_artist" | "seed" | "genre" | "shelf";
         /** @description Body generating one radio shelf. */
         RadioRequest: {
             /**
@@ -23553,7 +23648,7 @@ export interface components {
          * @description The seed a radio shelf or plan starts from.
          * @enum {string}
          */
-        RadioSeedKind: "artist" | "album" | "genre" | "items";
+        RadioSeedKind: "artist" | "album" | "genre" | "items" | "track" | "playlist";
         /**
          * @description What a rating is on: the table's `item_kind` values.
          * @enum {string}
@@ -26388,6 +26483,38 @@ export interface components {
             /** @description Services that failed, or are switched off, while the list was built. */
             unavailable_sources: components["schemas"]["ListenSource"][];
         };
+        /** @description One library track that sounds like the asked one. */
+        SimilarTrackView: {
+            /** @description The local album id. */
+            album_id: string;
+            album_title?: string | null;
+            artist_name: string;
+            /** @description That distance in words. */
+            closeness: components["schemas"]["Closeness"];
+            /**
+             * Format: float
+             * @description Cosine distance from the asked track: 0 is the same sound. Never
+             *     past 0.15.
+             */
+            distance: number;
+            /** Format: double */
+            duration_seconds?: number | null;
+            /** @description Tags among both tracks' five strongest, in the asked track's order. */
+            shared_tags: string[];
+            title: string;
+            /** @description The local track id. */
+            track_id: string;
+        };
+        /** @description The library tracks that sound like one track. */
+        SimilarTracksView: {
+            /**
+             * Format: int64
+             * @description The analysis version the distances were read at.
+             */
+            analysis_version: number;
+            /** @description Nearest first. Short, or empty, when few tracks sound close. */
+            tracks: components["schemas"]["SimilarTrackView"][];
+        };
         /** @description The site's appearance as every signed-in person reads it. */
         SiteAppearance: {
             /** @description Whether people's own CSS applies. */
@@ -26537,6 +26664,15 @@ export interface components {
          * @enum {string}
          */
         SoundOutcome: "analysed" | "undecodable" | "too_short" | "over_time";
+        /** @description The person's own library track a pick found by sound sounds like. */
+        SoundSeed: {
+            /** @description Its artist's name. */
+            artist_name: string;
+            /** @description Its title. */
+            title: string;
+            /** @description The local track id. */
+            track_id: string;
+        };
         /**
          * @description What the loop is doing, as the status shows it.
          * @enum {string}
@@ -26710,6 +26846,19 @@ export interface components {
              * @description The most one person may name.
              */
             limit: number;
+        };
+        /** @description One of a station's tracks so far. */
+        StationTrack: {
+            /** @description Its artist's MusicBrainz id; empty when not known. */
+            artist_mbid?: string;
+            /** @description Its artist's name. */
+            artist_name: string;
+            /** @description The library track, for one the library holds. */
+            local_track_id?: string | null;
+            /** @description Its recording's MusicBrainz id, when known. */
+            recording_mbid?: string | null;
+            /** @description Its title. */
+            track_name: string;
         };
         /**
          * @description A listening-statistics window: the chart pages' `range`, and the
@@ -27546,6 +27695,11 @@ export interface components {
             musicbrainz_id?: string | null;
             /** @description Track title. */
             title: string;
+        };
+        /** @description One track's stored sound. */
+        TrackSoundView: {
+            /** @description The 200 values the model gave the track, as stored. */
+            measures: number[];
         };
         /**
          * @description One catalog track. Only streamable tracks are listed; missing or
@@ -46011,6 +46165,109 @@ export interface operations {
             };
             /** @description Unknown track id */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_similar_tracks: {
+        parameters: {
+            query?: {
+                /** @description Tracks to list, 1 to 50 (10 by default); more is read as 50. */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Local track id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Tracks that sound like it */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimilarTracksView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unknown track, or one not analysed for its current file */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description SOUND_ANALYSIS_OFF: sound analysis is off; SOUND_ANALYSIS_UNREADABLE: its settings cannot be read */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_track_sound: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local track id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The track's stored sound */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackSoundView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unknown track, or one not analysed for its current file */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description SOUND_ANALYSIS_OFF: sound analysis is off; SOUND_ANALYSIS_UNREADABLE: its settings cannot be read */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

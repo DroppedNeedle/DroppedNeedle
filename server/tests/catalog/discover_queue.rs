@@ -639,6 +639,10 @@ pub(crate) fn discover_inputs(rig: &AuthRig, dir: &Path, providers: Providers) -
         remotes: Arc::new(remotes_resolver(platform)),
         playback: crate::common::playback_store(platform),
         history: crate::common::history_store(platform),
+        sound: droppedneedle_library::sound::SoundSearch::new(
+            platform.db.clone(),
+            rig.config.live(),
+        ),
     }
 }
 

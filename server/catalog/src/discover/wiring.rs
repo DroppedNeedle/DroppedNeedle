@@ -64,6 +64,8 @@ pub struct DiscoverInputs {
     pub playback: Arc<PlaybackStore>,
     /// The imported listening history, for forgetting it.
     pub history: Arc<HistoryStore>,
+    /// The search over how the library's tracks sound, for radio.
+    pub sound: droppedneedle_library::sound::SoundSearch,
 }
 
 /// The live listening reads production makes.
@@ -166,6 +168,8 @@ fn deps_with(
         previews: inputs.providers.previews.clone(),
         cache: inputs.providers.cache.clone(),
         clock: Arc::clone(&inputs.clock),
+        sound: inputs.sound.clone(),
+        youtube: config.live(),
     });
     let pages = page::DiscoverPages::new(page::PageInputs {
         listening: listening.clone(),

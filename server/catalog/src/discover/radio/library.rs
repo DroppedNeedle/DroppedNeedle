@@ -38,7 +38,16 @@ fn track(row: sql::RadioTrackColumns) -> RadioPlanTrack {
         local_file_id: Some(row.id),
         file_format: row.file_format.map(|format| format.to_ascii_lowercase()),
         duration_s: row.duration_seconds,
+        reason: None,
     }
+}
+
+/// A playlist a station plays from: its name and the library tracks its
+/// entries name, in playlist order.
+#[derive(Debug, Clone)]
+pub struct PlaylistSeeds {
+    pub name: String,
+    pub track_ids: Vec<String>,
 }
 
 /// Lowercased ids, then the limit.
@@ -68,6 +77,21 @@ impl RadioLibrary {
         artist_mbids: &[String],
         limit: i64,
     ) -> Result<Vec<RadioPlanTrack>, String> {
+        Ok(self
+            .pool_tracks(artist_mbids, limit)
+            .await?
+            .into_iter()
+            .map(|(track, _)| track)
+            .collect())
+    }
+
+    /// As [`Self::tracks_by_artists`], each with its album artist's
+    /// MusicBrainz id (empty when unknown).
+    pub async fn pool_tracks(
+        &self,
+        artist_mbids: &[String],
+        limit: i64,
+    ) -> Result<Vec<(RadioPlanTrack, String)>, String> {
         if artist_mbids.is_empty() {
             return Ok(Vec::new());
         }
@@ -80,7 +104,13 @@ impl RadioLibrary {
         )
         .await
         .map_err(|error| format!("radio library tracks: {error}"))?;
-        Ok(rows.into_iter().map(track).collect())
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                let album_artist = row.album_artist_mbid.clone();
+                (track(row), album_artist)
+            })
+            .collect())
     }
 
     /// Up to `limit` owned tracks of these albums, album by album in the
@@ -113,6 +143,94 @@ impl RadioLibrary {
         // A stable sort keeps the disc and track order inside each album.
         tracks.sort_by_key(order);
         Ok(tracks)
+    }
+
+    /// The library tracks among `ids` that are in the library now, in no
+    /// particular order.
+    pub async fn tracks_by_ids(&self, ids: &[String]) -> Result<Vec<RadioPlanTrack>, String> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = read_all(
+            &self.db,
+            "discover.radio.tracks_by_ids",
+            sql::radio_tracks_by_ids(ListLen::new(ids.len())),
+            rusqlite::params_from_iter(ids.to_vec()),
+            sql::RadioTrackColumns::read,
+        )
+        .await
+        .map_err(|error| format!("radio tracks by id: {error}"))?;
+        Ok(rows.into_iter().map(track).collect())
+    }
+
+    /// The playlist's name and library tracks when the caller may read it,
+    /// as [`Self::playlist_artists`] decides.
+    pub async fn playlist_seeds(
+        &self,
+        user_id: &str,
+        playlist_id: &str,
+    ) -> Result<Option<PlaylistSeeds>, String> {
+        let names = read_all(
+            &self.db,
+            "discover.radio.playlist_name",
+            sql::VISIBLE_PLAYLIST_NAME.text(),
+            (playlist_id.to_owned(), user_id.to_owned()),
+            |row| row.get::<_, String>(0),
+        )
+        .await
+        .map_err(|error| format!("playlist read: {error}"))?;
+        let Some(name) = names.into_iter().next() else {
+            return Ok(None);
+        };
+        let track_ids = read_all(
+            &self.db,
+            "discover.radio.playlist_library_tracks",
+            sql::PLAYLIST_LIBRARY_TRACKS.text(),
+            (playlist_id.to_owned(),),
+            |row| row.get::<_, String>(0),
+        )
+        .await
+        .map_err(|error| format!("playlist tracks read: {error}"))?;
+        Ok(Some(PlaylistSeeds { name, track_ids }))
+    }
+
+    /// The library tracks `user_id` skipped within `early_ms` of their
+    /// start on a station at least `times` times since `since_ms`. It reads
+    /// how plays ended, which is no play count, scrobble or statistic.
+    pub async fn rested(
+        &self,
+        user_id: &str,
+        early_ms: i64,
+        since_ms: i64,
+        times: i64,
+    ) -> Result<Vec<String>, String> {
+        read_all(
+            &self.db,
+            "discover.radio.rested",
+            sql::RADIO_RESTED.text(),
+            (user_id.to_owned(), early_ms, since_ms, times),
+            |row| row.get::<_, String>(0),
+        )
+        .await
+        .map_err(|error| format!("radio skips read: {error}"))
+    }
+
+    /// `user_id`'s artists in one of their taste groups: each artist's
+    /// group, by MusicBrainz id lowercased.
+    pub async fn taste_groups(&self, user_id: &str) -> Result<HashMap<String, i64>, String> {
+        let rows = read_all(
+            &self.db,
+            "discover.radio.taste_groups",
+            sql::RADIO_TASTE_GROUPS.text(),
+            (user_id.to_owned(),),
+            sql::RadioTasteGroup::read,
+        )
+        .await
+        .map_err(|error| format!("taste groups read: {error}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.artist_mbid_lower, row.group_no))
+            .collect())
     }
 
     /// The playlist's distinct artist MBIDs and its track count, when the

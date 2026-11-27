@@ -129,7 +129,51 @@ droppedneedle_kernel::sql! {
         outcome: SoundOutcome,
     }
     /// The catalog revision, which every commit that changes catalog rows
-    /// moves: a scan that reads a file again, a track that goes.
-    pub(super) CATALOG_REVISION = "SELECT COALESCE((SELECT value FROM library_catalog_revision \
-                                   WHERE singleton = 1), 0)";
+    /// moves (a scan that reads a file again, a track that goes), and the
+    /// newest analysis row's rowid, which every added row moves.
+    pub(super) MARK = "SELECT COALESCE((SELECT value FROM library_catalog_revision \
+                       WHERE singleton = 1), 0) AS catalog_revision, \
+                       COALESCE((SELECT MAX(rowid) FROM library_sound_analyses), 0) \
+                       AS newest_row";
+    pub(super) row Mark for [MARK] {
+        catalog_revision: i64,
+        newest_row: i64,
+    }
+    /// Every track with a sound at analysis version `?1` for its current
+    /// bytes, with what the search compares besides its sound: its title,
+    /// its first credited artist (the library's and MusicBrainz's ids) and
+    /// its recording.
+    pub(super) SEARCH_TRACKS = (concat!(
+        "SELECT s.local_track_id AS track_id, s.vector, s.tags, t.title AS title, \
+         COALESCE(NULLIF(t.artist_name, ''), t.album_artist_name, '') AS artist_name, \
+         ta.local_artist_id AS artist_id, \
+         COALESCE(ae.provider_artist_id, t.embedded_artist_mbid) AS artist_mbid, \
+         t.local_album_id AS album_id, t.album_title AS album_title, \
+         t.duration_seconds AS duration_seconds, ",
+        crate::recording_mbid!("te", "t"),
+        " AS recording_mbid \
+         FROM library_sound_analyses s \
+         JOIN local_tracks t ON t.id = s.local_track_id \
+         AND t.stat_revision = s.stat_revision \
+         LEFT JOIN local_track_artists ta ON ta.local_track_id = t.id AND ta.position = 0 \
+         LEFT JOIN local_artist_external_identities ae \
+         ON ae.local_artist_id = ta.local_artist_id AND ae.provider = 'musicbrainz' \
+         LEFT JOIN local_track_external_identities te ON te.local_track_id = t.id \
+         AND te.provider = 'musicbrainz' \
+         WHERE s.analysis_version = ?1 AND s.outcome = 'analysed' \
+         AND t.availability = 'indexed' ORDER BY s.local_track_id"
+    ));
+    pub(super) row SearchTrack for [SEARCH_TRACKS] {
+        track_id: String,
+        vector: Vec<u8>,
+        tags: Vec<u8>,
+        title: String,
+        artist_name: String,
+        artist_id: Option<String>,
+        artist_mbid: Option<String>,
+        album_id: String,
+        album_title: Option<String>,
+        duration_seconds: Option<f64>,
+        recording_mbid: Option<String>,
+    }
 }

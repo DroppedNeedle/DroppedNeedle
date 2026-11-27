@@ -1,13 +1,20 @@
 import { v3 } from '$lib/api/v3/endpoint';
 /**
- * Loads one finite radio plan. Local files stream natively; unowned tracks use
+ * Plays a radio station: its first tracks, then the next chunk each time few
+ * are left, sending what the station played and how the person steered it (the
+ * server keeps no station). Local files stream natively; unowned tracks use
  * YouTube when configured. Cross-origin previews stay in deckSampler because the
  * player's Web Audio graph mutes them.
  */
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { playerStore } from '$lib/features/player/state/player.svelte';
-import { radioSession } from '$lib/features/player/state/radioSession.svelte';
+import {
+	radioSession,
+	type AskOutcome,
+	type StationTrack
+} from '$lib/features/player/state/radioSession.svelte';
+import { upcomingIndexes } from '$lib/features/player/state/playerQueueOps';
 import { audioFocus } from '$lib/features/player/state/audioFocus.svelte';
 import { toastStore } from '$lib/stores/toast';
 import { getCoverUrl } from '$lib/utils/errorHandling';
@@ -27,6 +34,18 @@ import type {
 
 export type RadioMode = 'library' | 'hybrid';
 
+/** Tracks a station starts with. */
+const FIRST_CHUNK = 30;
+/** Tracks each later ask brings. */
+export const NEXT_CHUNK = 15;
+/** The station asks for more when this many tracks are left to play. */
+export const ASK_WHEN_LEFT = 5;
+/** The most of the station's tracks one ask sends, newest kept. */
+const SENT_MOST = 500;
+
+/** What a station starts from; what it played and its steering are added as it plays. */
+export type StationSeed = Omit<RadioPlanRequest, 'station_tracks' | 'more_like' | 'not_this'>;
+
 export interface LaunchRadioOptions {
 	shuffle?: boolean;
 	mode?: RadioMode;
@@ -36,7 +55,7 @@ export interface LaunchRadioOptions {
 }
 
 /** A station is named by its seed (`artist:<mbid>`, `genre:<name>`); one made of items is not. */
-function stationPlayedFrom(seed: Omit<RadioPlanRequest, 'exclude_recording_mbids'>): PlayedFrom {
+function stationPlayedFrom(seed: StationSeed): PlayedFrom {
 	return seed.seed_id
 		? { kind: 'radio', id: `${seed.seed_type}:${seed.seed_id}` }
 		: { kind: 'radio' };
@@ -105,11 +124,154 @@ function toPlanTrack(track: components['schemas']['RadioPlanTrack']): RadioPlanT
 }
 
 async function fetchPlan(
-	request: RadioPlanRequest & { mode: RadioMode },
+	request: RadioPlanRequest,
 	signal: AbortSignal
 ): Promise<RadioPlanResponse> {
 	const plan = await api.v3.POST(v3('/api/v3/discover/radio/plan'), request, { signal });
-	return { title: plan.title, tracks: (plan.tracks ?? []).map(toPlanTrack) };
+	return {
+		title: plan.title,
+		tracks: (plan.tracks ?? []).map(toPlanTrack),
+		library_only: plan.library_only ?? false
+	};
+}
+
+function isStationItem(item: QueueItem): boolean {
+	return !!item.playlistTrackId?.startsWith('radio:');
+}
+
+function libraryId(item: QueueItem): string | null {
+	return item.sourceType === 'local' && item.trackSourceId ? item.trackSourceId : null;
+}
+
+function stationTrack(item: QueueItem): StationTrack {
+	return {
+		local_track_id: libraryId(item),
+		recording_mbid: item.recordingIds?.youtube ?? null,
+		artist_mbid: item.artistId ?? '',
+		artist_name: item.artistName,
+		track_name: item.trackName
+	};
+}
+
+/**
+ * Notes the station tracks played so far, in play order: the one playing and
+ * those the queue still holds before it, so a track skipped between two ticks
+ * is noted too. The queue keeps only a few played tracks; the session keeps
+ * the rest.
+ */
+export function notePlaying(): void {
+	const queue = playerStore.queue as QueueItem[];
+	const current = playerStore.currentIndex;
+	if (!queue[current]) return;
+	const playedIndexes = playerStore.shuffleEnabled
+		? playerStore.shuffleOrder.slice(0, Math.max(0, playerStore.shuffleOrder.indexOf(current)) + 1)
+		: Array.from({ length: current + 1 }, (_, index) => index);
+	for (const index of playedIndexes) {
+		const item = queue[index];
+		if (item && isStationItem(item) && item.playlistTrackId) {
+			radioSession.notePlaying(item.playlistTrackId, stationTrack(item));
+		}
+	}
+}
+
+/** The station's tracks still to play, in play order. */
+function upcomingStationItems(): { index: number; item: QueueItem }[] {
+	const queue = playerStore.queue as QueueItem[];
+	return upcomingIndexes(
+		queue.length,
+		playerStore.currentIndex,
+		playerStore.shuffleEnabled,
+		playerStore.shuffleOrder
+	)
+		.map((index) => ({ index, item: queue[index] }))
+		.filter(({ item }) => item && isStationItem(item));
+}
+
+/** The station's tracks in play order: those played, then those still to play. */
+function stationSoFar(upcoming: QueueItem[]): { station_tracks: StationTrack[] } {
+	return {
+		station_tracks: [...radioSession.played, ...upcoming.map(stationTrack)].slice(-SENT_MOST)
+	};
+}
+
+/**
+ * Asks for the station's next tracks once few are left, and queues them. A
+ * station that stopped, changed or was cleared while the ask was out takes
+ * nothing from its answer, so a late answer never starts playback again. A
+ * failed ask is tried again by the tick after a wait; only an answer with
+ * nothing new ends the station. `replace` (a steer) asks at once, aborting an
+ * ask already out, and swaps the station's tracks still to play for the answer.
+ */
+export async function extendRadio(replace = false): Promise<boolean> {
+	const station = radioSession.station;
+	if (!station) return false;
+	notePlaying();
+	if (!replace && playerStore.upcomingQueueLength > ASK_WHEN_LEFT) return false;
+	const turn = radioSession.beginExtend(replace);
+	if (!turn) return false;
+	let outcome: AskOutcome = 'failed';
+	try {
+		const kept = replace ? [] : upcomingStationItems().map(({ item }) => item);
+		const plan = await fetchPlan(
+			{
+				...station.request,
+				count: NEXT_CHUNK,
+				...stationSoFar(kept),
+				more_like: [...radioSession.moreLike],
+				not_this: [...radioSession.notThis]
+			},
+			turn.signal
+		);
+		if (!radioSession.isCurrentAsk(turn)) return false;
+		if ((playerStore.queue as QueueItem[]).length === 0) return false;
+		const replaced = replace ? upcomingStationItems() : [];
+		const going = new Set(replaced.map(({ index }) => index));
+		const inQueue = new Set(
+			(playerStore.queue as QueueItem[])
+				.filter((_, index) => !going.has(index))
+				.map((item) => item.playlistTrackId)
+		);
+		const items = withPlayedFrom(
+			dedupeTracks(plan.tracks)
+				.map((t) => planTrackToQueueItem(t, station.ytConfigured))
+				.filter((item): item is QueueItem => item !== null && !inQueue.has(item.playlistTrackId)),
+			station.playedFrom
+		);
+		// A steer that brings nothing new keeps what was queued, and the
+		// station goes on.
+		if (replace && items.length === 0) {
+			outcome = 'added';
+			return false;
+		}
+		for (const { index } of replaced.sort((a, b) => b.index - a.index)) {
+			playerStore.removeFromQueue(index);
+		}
+		playerStore.appendQueueSilent(items);
+		outcome = items.length > 0 ? 'added' : 'nothing_new';
+		return items.length > 0;
+	} catch (error) {
+		if (radioSession.isCurrentAsk(turn) && radioSession.failures === 0) {
+			console.warn('The station could not get its next tracks; it tries again shortly', error);
+		}
+		return false;
+	} finally {
+		radioSession.finishExtend(turn, outcome);
+	}
+}
+
+/**
+ * Steers the playing station by one of its library tracks: "More like this" grows
+ * it from the track as well, "Not this" skips the track and keeps it and what
+ * sounds like it away. Either lasts for the station and, once the new answer is
+ * in, replaces what the station has left to play; if the ask fails, what was
+ * queued stays.
+ */
+export async function steerRadio(kind: 'more_like' | 'not_this', item: QueueItem): Promise<void> {
+	const id = libraryId(item);
+	if (!radioSession.active || !id) return;
+	radioSession.steer(kind, id);
+	if (kind === 'not_this') playerStore.nextTrack();
+	await extendRadio(true);
 }
 
 function dedupeTracks(tracks: RadioPlanTrack[]): RadioPlanTrack[] {
@@ -125,13 +287,14 @@ function dedupeTracks(tracks: RadioPlanTrack[]): RadioPlanTrack[] {
 }
 
 export async function launchRadio(
-	seed: Omit<RadioPlanRequest, 'exclude_recording_mbids'>,
+	seed: StationSeed,
 	ytConfigured: boolean,
 	options: LaunchRadioOptions = {}
 ): Promise<boolean> {
 	const mode: RadioMode = options.mode ?? seed.mode ?? 'hybrid';
 	const effectiveYt = ytConfigured;
-	const request = { ...seed, mode, count: options.count ?? seed.count ?? 30 };
+	const request = { ...seed, mode, count: options.count ?? seed.count ?? FIRST_CHUNK };
+	const playedFrom = options.playedFrom ?? stationPlayedFrom(seed);
 	const launch = radioSession.beginLaunch();
 
 	// starting a station takes audio focus from the preview player
@@ -162,7 +325,7 @@ export async function launchRadio(
 		dedupeTracks(plan.tracks)
 			.map((t) => planTrackToQueueItem(t, effectiveYt))
 			.filter((item): item is QueueItem => item !== null),
-		options.playedFrom ?? stationPlayedFrom(seed)
+		playedFrom
 	);
 
 	// resolve the head inline or rapid placeholder failures can stop the station
@@ -182,8 +345,10 @@ export async function launchRadio(
 		return false;
 	}
 
-	if (!radioSession.start(launch.generation)) return false;
+	const station = { request: { ...seed, mode }, ytConfigured: effectiveYt, playedFrom };
+	if (!radioSession.start(launch.generation, station)) return false;
 	playerStore.playQueue(items, 0, options.shuffle ?? false);
-	startRadioHydration();
+	startRadioHydration(() => void extendRadio());
+	notePlaying();
 	return true;
 }

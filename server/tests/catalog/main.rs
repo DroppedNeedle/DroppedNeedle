@@ -13,6 +13,7 @@ mod discover_new_releases;
 mod discover_page;
 mod discover_pool;
 mod discover_queue;
+mod discover_radio;
 mod discover_reasons;
 mod discover_record;
 mod discover_replay;

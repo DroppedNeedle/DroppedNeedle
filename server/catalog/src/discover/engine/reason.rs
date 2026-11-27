@@ -15,6 +15,7 @@ use std::collections::HashSet;
 
 use super::candidate::{BandLinkRole, Candidate, Path, PathKind, PathSource};
 use crate::discover::models::{PickReason, PickReasonArtist, PickReasonKind};
+use droppedneedle_library::sound::Closeness;
 
 /// The most of the person's artists a line names.
 const NAMED_MAX: usize = 3;
@@ -29,6 +30,18 @@ pub(crate) fn seed_paths(candidate: &Candidate) -> Vec<&Path> {
         .collect();
     paths.sort_by(|a, b| b.support().total_cmp(&a.support()));
     paths
+}
+
+/// The line of a track found by sound: how close it sounds to the
+/// person's own track `title` by `artist`. A sound find is always a
+/// library track, and the line names the track it was found from.
+pub(crate) fn sound_line(closeness: Closeness, title: &str, artist: &str) -> String {
+    let how = match closeness {
+        Closeness::VeryClose => "Sounds very close to",
+        Closeness::Close => "Sounds close to",
+        Closeness::Further => "Sounds a little like",
+    };
+    format!("{how} {title} by {artist}.")
 }
 
 /// The line of a new release by `artist`: one of the person's, or close to

@@ -135,6 +135,10 @@ pub enum RadioSeedKind {
     Genre,
     /// A list of seed rows (radio plans only).
     Items,
+    /// A library track id (radio plans only).
+    Track,
+    /// A playlist id (radio plans only).
+    Playlist,
 }
 
 impl RadioSeedKind {
@@ -145,6 +149,8 @@ impl RadioSeedKind {
             Self::Album => "album",
             Self::Genre => "genre",
             Self::Items => "items",
+            Self::Track => "track",
+            Self::Playlist => "playlist",
         }
     }
 }
@@ -1009,6 +1015,10 @@ pub enum PickReasonKind {
     Source,
     /// A fact about one of the person's artists leads to it: its band.
     Fact,
+    /// One of the person's own tracks sounds like it. Not written yet: the
+    /// mixes by sound write it. Sound finds only what the library holds,
+    /// so no weekly set pick ever has it.
+    Sound,
 }
 
 /// One of the person's own artists a reason names.
@@ -1044,6 +1054,9 @@ pub enum FoundBy {
     /// One of the person's artists' bands, members or other names, as
     /// MusicBrainz links them.
     BandLink,
+    /// By how the person's own files sound. Nothing left this server. Not
+    /// written yet: the mixes by sound write it.
+    Sound,
 }
 
 /// A service a pick's facts came from.
@@ -1116,6 +1129,20 @@ pub struct PickEvidence {
     /// When that fact was read (unix ms); null when not known.
     #[serde(default)]
     pub source_read_at: Option<i64>,
+    /// For a pick found by sound: the person's own track that led here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sound_seed: Option<SoundSeed>,
+}
+
+/// The person's own library track a pick found by sound sounds like.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct SoundSeed {
+    /// The local track id.
+    pub track_id: String,
+    /// Its title.
+    pub title: String,
+    /// Its artist's name.
+    pub artist_name: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -1549,7 +1576,8 @@ pub enum RadioMode {
 pub struct RadioPlanRequest {
     /// What the plan starts from.
     pub seed_type: RadioSeedKind,
-    /// Seed id (mbid or genre name); empty for item seeds.
+    /// Seed id: an artist or release-group mbid, a genre name, a library
+    /// track id or a playlist id; empty for item seeds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed_id: Option<String>,
     /// Seed rows for `items` plans.
@@ -1561,9 +1589,42 @@ pub struct RadioPlanRequest {
     /// Wanted track count.
     #[serde(default = "default_radio_count")]
     pub count: i64,
-    /// Recording mbids to leave out.
+    /// The station's tracks so far, in the order they play: those played,
+    /// then those still to play. None of them, nor another copy of one,
+    /// comes again; the next tracks follow on from the last library one,
+    /// and no thirty in a row hold more than four by one artist.
     #[serde(default)]
-    pub exclude_recording_mbids: Vec<String>,
+    pub station_tracks: Vec<StationTrack>,
+    /// Library tracks the person asked for more like on this station:
+    /// each seeds the station with double weight.
+    #[serde(default)]
+    pub more_like: Vec<String>,
+    /// Library tracks the person said "Not this" to on this station: they
+    /// never come again and tracks that sound like them come later.
+    #[serde(default)]
+    pub not_this: Vec<String>,
+    /// Order by sound alone, without pushing down tracks from outside the
+    /// seed's genre.
+    #[serde(default)]
+    pub sound_only: bool,
+}
+
+/// One of a station's tracks so far.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct StationTrack {
+    /// The library track, for one the library holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_track_id: Option<String>,
+    /// Its recording's MusicBrainz id, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recording_mbid: Option<String>,
+    /// Its artist's MusicBrainz id; empty when not known.
+    #[serde(default)]
+    pub artist_mbid: String,
+    /// Its artist's name.
+    pub artist_name: String,
+    /// Its title.
+    pub track_name: String,
 }
 
 fn default_radio_count() -> i64 {
@@ -1599,15 +1660,59 @@ pub struct RadioPlanTrack {
     /// Duration in seconds, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_s: Option<f64>,
+    /// Why it is on the station, built from the path that put it there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<RadioReason>,
 }
 
-/// A complete radio plan.
+/// What put a track on a station.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RadioReasonKind {
+    /// It sounds like one of the station's seed tracks.
+    SoundsLike,
+    /// It sounds like a track the person asked for more like.
+    MoreLike,
+    /// It is by an artist similar to the station's artist.
+    CloseToArtist,
+    /// It is by the station's own artist, or by an artist on its playlist.
+    Seed,
+    /// It is by an artist tagged with the station's genre.
+    Genre,
+    /// It is from the shelf the station plays.
+    Shelf,
+}
+
+/// Why a track is on a station: one line and the names it is built from.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct RadioReason {
+    /// What put it there.
+    pub kind: RadioReasonKind,
+    /// The line, a short sentence.
+    pub line: String,
+    /// The seed the line names: a track's title, an artist, an album, a
+    /// playlist or a genre.
+    pub seed_name: String,
+    /// The seed track, for a track found by sound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed_track_id: Option<String>,
+    /// How close it sounds to that seed track, for a track found by
+    /// sound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closeness: Option<droppedneedle_library::sound::Closeness>,
+}
+
+/// A radio plan, or the next chunk of an endless station.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RadioPlanResponse {
     /// Plan title.
     pub title: String,
     /// Planned tracks in order.
     pub tracks: Vec<RadioPlanTrack>,
+    /// The station holds only library tracks although tracks the library
+    /// lacks were asked for: no admin set up a source that plays them.
+    #[serde(default)]
+    pub library_only: bool,
 }
 
 /// Body generating one radio shelf.

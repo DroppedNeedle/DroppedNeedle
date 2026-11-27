@@ -6655,13 +6655,14 @@ fn every_registered_statement_prepares() {
 /// when no album is named, the remap sweep over every identified album's
 /// tracks, and the loudness loop's look for the tracks it has not measured,
 /// newest first, a background read about every 20 files.
-/// Sound analysis's six: its look for the tracks it has not analysed, as
+/// Sound analysis's seven: its look for the tracks it has not analysed, as
 /// loudness's, about every 10 files; at a pass's end, the check for tracks
 /// left under a folder that is not there and the drop of an old version's
 /// rows once the new one covers every track; the read of every track's
-/// sound for the features built on it, when the analysis changed; and the
-/// counts and last file not read on its settings card, which an admin has
-/// open.
+/// sound for the features built on it, and the search's load of every
+/// track's sound with its title, artist and recording, each when the
+/// analysis changed; and the counts and last file not read on its settings
+/// card, which an admin has open.
 /// Discover's four: radio's two track reads, which filter on ids worked out
 /// per track over the whole library, the check for any local file, which
 /// stops at the first row, and the owned groups with their album artist
@@ -6695,6 +6696,7 @@ const TRACK_WALKS: &[&str] = &[
     "droppedneedle_library::sound::sql::ANY_DUE",
     "droppedneedle_library::sound::sql::DROP_OLD_VERSIONS",
     "droppedneedle_library::sound::sql::VECTORS",
+    "droppedneedle_library::sound::sql::SEARCH_TRACKS",
     "droppedneedle_library::sound::sql::COVERAGE",
     "droppedneedle_library::sound::sql::LAST_NOT_ANALYSED",
     "droppedneedle_catalog::local::sql::TRACK_PAGE_LIKE",

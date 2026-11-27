@@ -428,7 +428,10 @@ droppedneedle_kernel::sql! {
     family RADIO_TRACKS_BY_ARTISTS = radio_tracks_by_artists;
     /// Radio's tracks of some albums, in disc and track order.
     family RADIO_TRACKS_OF_ALBUMS = radio_tracks_of_albums;
-    pub(super) row RadioTrackColumns for family [radio_tracks_by_artists, radio_tracks_of_albums] {
+    /// Radio's tracks by their ids, identified or not.
+    family RADIO_TRACKS_BY_IDS = radio_tracks_by_ids;
+    pub(super) row RadioTrackColumns for family
+        [radio_tracks_by_artists, radio_tracks_of_albums, radio_tracks_by_ids] {
         id: String,
         title: String,
         artist_name: String,
@@ -445,6 +448,31 @@ droppedneedle_kernel::sql! {
     pub(super) VISIBLE_PLAYLIST = "SELECT id FROM catalog_playlists p \
          WHERE id = ?1 AND (user_id = ?2 OR is_public = 1 OR EXISTS (SELECT 1 \
          FROM catalog_playlist_members m WHERE m.playlist_id = p.id AND m.user_id = ?2))";
+    /// The name of a playlist the caller may read, as [`VISIBLE_PLAYLIST`].
+    pub(super) VISIBLE_PLAYLIST_NAME = "SELECT name FROM catalog_playlists p \
+         WHERE id = ?1 AND (user_id = ?2 OR is_public = 1 OR EXISTS (SELECT 1 \
+         FROM catalog_playlist_members m WHERE m.playlist_id = p.id AND m.user_id = ?2))";
+    /// The library tracks a playlist's entries name, in playlist order.
+    pub(super) PLAYLIST_LIBRARY_TRACKS = "SELECT p.library_file_id \
+         FROM catalog_playlist_tracks p \
+         JOIN local_tracks t ON t.id = p.library_file_id AND t.availability = 'indexed' \
+         WHERE p.playlist_id = ?1 ORDER BY p.position";
+    /// The library tracks person `?1` skipped within `?2` ms of their start
+    /// on a station at least `?4` times since `?3`. How a play ended is no
+    /// play count, scrobble or statistic: a station only rests such a
+    /// track.
+    pub(super) RADIO_RESTED = "SELECT local_track_id FROM media_playback_events \
+         WHERE user_id = ?1 AND ended_at >= ?3 AND came_from = 'radio' \
+         AND ended_by = 'skipped' AND listened_ms < ?2 AND local_track_id IS NOT NULL \
+         GROUP BY local_track_id HAVING COUNT(*) >= ?4";
+    /// Person `?1`'s artists that sit in one of their taste groups, by
+    /// MusicBrainz id lowercased.
+    pub(super) RADIO_TASTE_GROUPS = "SELECT artist_mbid_lower, group_no \
+         FROM catalog_taste_artists WHERE user_id = ?1 AND group_no IS NOT NULL";
+    pub(super) row RadioTasteGroup for [RADIO_TASTE_GROUPS] {
+        artist_mbid_lower: String,
+        group_no: i64,
+    }
     /// A playlist entry `p`: the stored artist id (a media server's own id
     /// for an imported playlist), the artist name, and the MusicBrainz id
     /// of the first credited artist of a library track with the entry's
@@ -1340,6 +1368,14 @@ pub(super) fn radio_tracks_by_artists(artists: ListLen) -> String {
         "{RADIO_TRACK_COLUMNS}FROM ({RADIO_TRACK_SELECT}) WHERE release_group_mbid IS NOT NULL \
          AND (artist_mbid IN ({marks}) OR album_artist_mbid IN ({marks})) \
          ORDER BY RANDOM() LIMIT ?"
+    )
+}
+
+/// `RADIO_TRACKS_BY_IDS`: binds the ids.
+pub(super) fn radio_tracks_by_ids(ids: ListLen) -> String {
+    format!(
+        "{RADIO_TRACK_COLUMNS}FROM ({RADIO_TRACK_SELECT}) WHERE id IN ({})",
+        marks(ids)
     )
 }
 

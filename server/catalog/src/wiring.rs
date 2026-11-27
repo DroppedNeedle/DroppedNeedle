@@ -72,6 +72,8 @@ pub struct CatalogPorts {
     /// The app's one listening history store, for forgetting a person's
     /// imported history.
     pub history: Arc<droppedneedle_media::history::HistoryStore>,
+    /// The search over how the library's tracks sound, for radio.
+    pub sound: droppedneedle_library::sound::SoundSearch,
 }
 
 /// The cover and artist image service: local and Cover Art Archive art
@@ -139,6 +141,7 @@ impl CatalogSetup {
             jobs,
             playback,
             history,
+            sound,
         } = ports;
         let discover = discover::wiring::production_deps(
             discover::wiring::DiscoverInputs {
@@ -156,6 +159,7 @@ impl CatalogSetup {
                 remotes,
                 playback,
                 history,
+                sound,
             },
             settings,
         );

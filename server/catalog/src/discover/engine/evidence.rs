@@ -45,6 +45,9 @@ fn found(
                 .iter()
                 .find(|path| path.kind == PathKind::Source)?,
         ),
+        // Sound finds only what the library holds and a pool candidate
+        // never is, so no candidate has a sound path.
+        PickReasonKind::Sound => return None,
     };
     Some((found_by, service(path.source)?, path.fetched_at))
 }
@@ -135,6 +138,7 @@ impl Evidence {
             found_by,
             source,
             source_read_at,
+            sound_seed: None,
         }))
     }
 

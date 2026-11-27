@@ -49,11 +49,13 @@ pub mod analyse;
 pub mod front;
 pub mod net;
 mod run;
+pub mod search;
 pub(crate) mod sql;
 
 pub use analyse::{Analyser, TrackSound, Unanalysed, analyse_file};
 pub use net::{MODEL, Models, TAGS};
 pub use run::{SOUND_JOB, spawn_on};
+pub use search::{Closeness, Neighbour, SoundIndex, SoundSearch, SoundTrack};
 
 /// The analysis every new row is written at. Bump it when the model or
 /// anything in the audio preparation changes, the resampler's settings for
@@ -283,6 +285,8 @@ pub struct SoundAnalysis {
     activity: Arc<Mutex<Activity>>,
     /// Moved after every write that kept or dropped rows, for [`SoundMark`].
     changes: Arc<AtomicU64>,
+    /// The search over what is analysed, which hears `changes`.
+    search: SoundSearch,
 }
 
 /// One track's stored sound.
@@ -324,15 +328,17 @@ impl Coverage {
 
 /// A cheap answer to "has the analysis changed", read without walking a
 /// table. It differs whenever [`SoundAnalysis::vectors`] could answer
-/// differently: this process kept or dropped rows (`changes`), a commit
-/// changed catalog rows, such as a scan reading a file again (its row stops
-/// counting) or a track going (its row goes with it) (`catalog_revision`),
-/// or the switch moved (`enabled`). A restart starts `changes` again, so a
-/// reader keeps its mark in memory only.
+/// differently: this process kept or dropped rows (`changes`), a row was
+/// added (`newest_row`, its rowid), a commit changed catalog rows, such as
+/// a scan reading a file again (its row stops counting) or a track going
+/// (its row goes with it) (`catalog_revision`), or the switch moved
+/// (`enabled`). A restart starts `changes` again, so a reader keeps its
+/// mark in memory only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SoundMark {
     pub enabled: bool,
     pub catalog_revision: i64,
+    pub newest_row: i64,
     pub changes: u64,
 }
 
@@ -398,7 +404,9 @@ impl SoundAnalysis {
         settings: Live<SoundAnalysisSettings>,
         clock: Arc<dyn Clock>,
     ) -> Self {
+        let changes: Arc<AtomicU64> = Arc::default();
         Self {
+            search: SoundSearch::sharing(db.clone(), settings.clone(), Arc::clone(&changes)),
             db,
             core,
             coordinator,
@@ -406,8 +414,14 @@ impl SoundAnalysis {
             settings,
             clock,
             activity: Arc::default(),
-            changes: Arc::default(),
+            changes,
         }
+    }
+
+    /// The search over what is analysed.
+    #[must_use]
+    pub fn search(&self) -> &SoundSearch {
+        &self.search
     }
 
     fn switch(&self) -> Switch {
@@ -950,22 +964,11 @@ impl SoundAnalysis {
         Ok(coverage_of(&row))
     }
 
-    /// A cheap mark that changes whenever the analysis does, so a reader
-    /// loads [`Self::vectors`] again only then. A reader takes the mark
-    /// before it calls `vectors`, so a change between the two shows as a
-    /// new mark next time rather than being missed. Blocking.
+    /// The search's mark ([`SoundSearch::mark`]): it changes whenever the
+    /// analysis does, and the search loads its index again only then.
+    /// Blocking.
     pub fn mark(&self) -> Result<SoundMark, SoundError> {
-        let changes = self.changes.load(Ordering::Acquire);
-        let catalog_revision = self.db.read_blocking("library.sound_mark", |conn| {
-            conn.prepare_cached(sql::CATALOG_REVISION.text())?
-                .query_row([], |row| row.get::<_, i64>(0))
-                .map_err(SoundError::from)
-        })?;
-        Ok(SoundMark {
-            enabled: self.enabled(),
-            catalog_revision,
-            changes,
-        })
+        self.search.mark()
     }
 }
 
