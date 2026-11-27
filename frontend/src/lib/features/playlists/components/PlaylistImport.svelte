@@ -1,6 +1,8 @@
 <!--
-	Import a playlist file into a new playlist: the picker, the upload, and
-	the match report. The file's stem names the new playlist.
+	Import a playlist file into a new playlist: a small dialog with the
+	library-only choice and the file picker, the upload, and the match
+	report. The file's stem names the new playlist. The page opens it by
+	setting `open`.
 -->
 <script lang="ts">
 	import { Upload } from 'lucide-svelte';
@@ -23,11 +25,18 @@
 		duplicate: 'already in the file'
 	};
 
+	interface Props {
+		/** The dialog that picks the file. */
+		open?: boolean;
+	}
+
+	let { open = $bindable(false) }: Props = $props();
+
 	const mutation = createImportPlaylistV3Mutation();
 
 	let fileInput = $state<HTMLInputElement | null>(null);
 	let importing = $state(false);
-	let open = $state(false);
+	let reportOpen = $state(false);
 	let libraryOnly = $state(false);
 	let report = $state<ImportPlaylistResponseV3 | null>(null);
 
@@ -50,6 +59,7 @@
 			return;
 		}
 		importing = true;
+		open = false;
 		try {
 			const content = await file.text();
 			report = await mutation.mutateAsync({
@@ -58,7 +68,7 @@
 				content,
 				library_only: libraryOnly
 			});
-			open = true;
+			reportOpen = true;
 		} catch (error) {
 			toastStore.show({
 				message:
@@ -83,14 +93,22 @@
 	}
 </script>
 
-<div class="flex flex-wrap items-center gap-3">
-	<Button variant="outline" size="display" icon={Upload} loading={importing} onclick={chooseFile}>
-		Import playlist
-	</Button>
-	<div class="w-64">
-		<ToggleRow label="Only songs already in the library" bind:checked={libraryOnly} />
-	</div>
-</div>
+<Modal
+	bind:open
+	title="Import a playlist file"
+	description=".m3u, .m3u8 or .csv, up to 2 MB"
+	icon={Upload}
+	size="sm"
+	closeButton
+>
+	<ToggleRow label="Only songs already in the library" bind:checked={libraryOnly} />
+	{#snippet actions()}
+		<Button variant="ghost" onclick={() => (open = false)}>Cancel</Button>
+		<Button variant="primary" icon={Upload} loading={importing} onclick={chooseFile}>
+			Choose a file
+		</Button>
+	{/snippet}
+</Modal>
 <input
 	type="file"
 	accept=".m3u,.m3u8,.csv"
@@ -101,7 +119,7 @@
 />
 
 <Modal
-	bind:open
+	bind:open={reportOpen}
 	title="Playlist imported"
 	description="What the file's entries became"
 	icon={Upload}
@@ -150,12 +168,12 @@
 		</div>
 	{/if}
 	{#snippet actions()}
-		<Button variant="ghost" onclick={() => (open = false)}>Close</Button>
+		<Button variant="ghost" onclick={() => (reportOpen = false)}>Close</Button>
 		<Button
 			variant="primary"
 			href={withBasePath(`/playlists/${report?.playlist_id ?? ''}`)}
 			disabled={!report}
-			onclick={() => (open = false)}
+			onclick={() => (reportOpen = false)}
 		>
 			Open playlist
 		</Button>

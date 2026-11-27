@@ -39,7 +39,7 @@ describe('a private playlist of someone else', () => {
 		});
 
 		await expect.element(page.getByRole('heading', { name: 'Private playlist' })).toBeVisible();
-		await expect.element(page.getByText('4 tracks · owned by Cara')).toBeVisible();
+		await expect.element(page.getByText('4 songs · By Cara')).toBeVisible();
 		await expect.element(page.getByText("Couldn't load this playlist")).not.toBeInTheDocument();
 	});
 });

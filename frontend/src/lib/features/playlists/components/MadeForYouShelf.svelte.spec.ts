@@ -6,7 +6,7 @@ import { renderWithQuery } from '$lib/test/render';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { toAuthUser } from '$lib/features/auth/queries/types';
 
-import RotationShelf from './RotationShelf.svelte';
+import MadeForYouShelf from './MadeForYouShelf.svelte';
 
 type Status = RouteData<'GET /api/v3/me/rotation'>;
 
@@ -23,8 +23,8 @@ const STATUS: Status = {
 function list(
 	id: string,
 	name: string,
-	rotation: NonNullable<PlaylistSummary['rotation']>
-): PlaylistSummary {
+	rotation: NonNullable<PlaylistSummary['rotation']> | null
+): PlaylistSummary & { kind: 'rotation' | 'weekly_mix' } {
 	return {
 		id,
 		name,
@@ -42,10 +42,12 @@ function list(
 		can_delete: true,
 		owner_name: 'Owner',
 		is_redacted: false,
-		kind: 'rotation',
+		kind: rotation ? 'rotation' : 'weekly_mix',
 		rotation
 	};
 }
+
+const MIX = list('pl-mix', 'Your Weekly Mix', null);
 
 const LISTS = [
 	list('pl-added', 'Added recently', {
@@ -86,35 +88,39 @@ beforeEach(() => {
 	);
 });
 
-describe('the On rotation shelf', () => {
-	it('shows each list with its tab and rule, and what waits its turn', async () => {
+describe('the Made for you shelf', () => {
+	it('shows the Weekly Mix first, each list on rotation with its change day, and the ideas waiting', async () => {
 		fakeApi({ 'GET /api/v3/me/rotation': STATUS });
-		await renderWithQuery(RotationShelf, { lists: LISTS });
+		await renderWithQuery(MadeForYouShelf, { lists: [...LISTS, MIX] });
 
-		await expect.element(page.getByRole('heading', { name: 'On rotation' })).toBeVisible();
-		await expect
-			.element(page.getByText('From your library · next change Mon 30 Nov'))
-			.toBeVisible();
-		const card = (name: string) => page.getByRole('article').filter({ hasText: name });
-		await expect.element(card('Added recently').getByText('Always on')).toBeVisible();
-		await expect.element(card('The 1990s').getByText('On rotation')).toBeVisible();
-		await expect.element(card('Deep cuts').getByText('Kept on')).toBeVisible();
-		await expect
-			.element(page.getByText('Songs from 1990 to 1999, a new 50 each week.'))
-			.toBeVisible();
-		await expect.element(page.getByText('Waiting their turn')).toBeVisible();
+		await expect.element(page.getByRole('heading', { name: 'Made for you' })).toBeVisible();
+		const tiles = page.getByRole('link');
+		await expect.element(tiles.first()).toHaveAccessibleName('Your Weekly Mix');
+		await expect.element(page.getByText('Each week')).toBeVisible();
+		expect(page.getByText('Changes Mon').elements()).toHaveLength(3);
+		await expect.element(page.getByRole('link', { name: 'The 1990s' })).toBeVisible();
+		await expect.element(page.getByText('2 waiting')).toBeVisible();
 		await expect.element(page.getByText('Five stars · Lossless')).toBeVisible();
 		await expect.element(page.getByText('Skipped while thin: Never played')).toBeVisible();
 	});
 
-	it('is absent while lists on rotation are off', async () => {
+	it('keeps the Weekly Mix and drops the lists on rotation while they are off', async () => {
 		const api = fakeApi({ 'GET /api/v3/me/rotation': { ...STATUS, enabled: false } });
-		await renderWithQuery(RotationShelf, { lists: LISTS });
+		await renderWithQuery(MadeForYouShelf, { lists: [...LISTS, MIX] });
 
 		await expect.poll(() => api.calls('GET /api/v3/me/rotation').length).toBe(1);
+		await expect.element(page.getByRole('link', { name: 'Your Weekly Mix' })).toBeVisible();
 		await expect.element(page.getByText('Added recently')).not.toBeInTheDocument();
+		await expect.element(page.getByText('2 waiting')).not.toBeInTheDocument();
+	});
+
+	it('is absent while it has nothing', async () => {
+		const api = fakeApi({ 'GET /api/v3/me/rotation': { ...STATUS, enabled: false } });
+		await renderWithQuery(MadeForYouShelf, { lists: LISTS });
+
+		await expect.poll(() => api.calls('GET /api/v3/me/rotation').length).toBe(1);
 		await expect
-			.element(page.getByRole('heading', { name: 'On rotation' }))
+			.element(page.getByRole('heading', { name: 'Made for you' }))
 			.not.toBeInTheDocument();
 	});
 });

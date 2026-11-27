@@ -263,6 +263,7 @@
 				<div class="pl-sheet__for">
 					<div class="pl-sheet__mosaic">
 						<PlaylistMosaic
+							playlistId={activePlaylistId}
 							coverUrls={activePlaylist.coverUrls}
 							customCoverUrl={activePlaylist.customCoverUrl}
 							size="w-full h-full"

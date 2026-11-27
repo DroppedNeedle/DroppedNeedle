@@ -36,13 +36,13 @@ describe('playlistV3Adapter', () => {
 		{
 			// Names a locked playlist's owner only when the server sends a name.
 			expect(privatePlaylistLine({ track_count: 4, owner_name: 'Cara', can_delete: false })).toBe(
-				'4 tracks · owned by Cara'
+				'4 songs · By Cara'
 			);
 			expect(privatePlaylistLine({ track_count: 1, owner_name: null, can_delete: false })).toBe(
-				'1 track'
+				'1 song'
 			);
 			expect(privatePlaylistLine({ track_count: 2, owner_name: null, can_delete: true })).toBe(
-				'2 tracks · No owner'
+				'2 songs · No owner'
 			);
 		}
 

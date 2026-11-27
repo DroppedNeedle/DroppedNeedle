@@ -303,6 +303,7 @@
 							>
 								<span class="crate-art">
 									<PlaylistMosaic
+										playlistId={playlist.id}
 										coverUrls={playlist.cover_urls}
 										customCoverUrl={playlist.custom_cover_url}
 										size="w-full h-full"

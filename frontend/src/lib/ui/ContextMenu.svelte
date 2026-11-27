@@ -142,7 +142,8 @@
 </script>
 
 <script lang="ts">
-	import { Ellipsis, EllipsisVertical } from 'lucide-svelte';
+	import { ChevronDown, Ellipsis, EllipsisVertical } from 'lucide-svelte';
+	import Button, { type KitIcon } from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import { untrack, type Component, type SvelteComponent } from 'svelte';
 
@@ -167,11 +168,15 @@
 		/** What the button is called; name the row when a list has many. */
 		label?: string;
 		/**
-		 * `button` sits in a row of outlined buttons, at their height. `point`
-		 * has no button: the menu is open while `at` is set, at that point
-		 * (open it with `menuTrigger`).
+		 * `button` sits in a row of outlined buttons, at their height. `text`
+		 * is a page header's outlined button with words, `textIcon` and a
+		 * chevron ("Import"); `label` is then its words. `point` has no
+		 * button: the menu is open while `at` is set, at that point (open it
+		 * with `menuTrigger`).
 		 */
-		trigger?: 'icon' | 'button' | 'point';
+		trigger?: 'icon' | 'button' | 'text' | 'point';
+		/** The icon before a `text` trigger's words. */
+		textIcon?: KitIcon;
 		/** Where a point menu opens; null is closed. */
 		at?: MenuPoint | null;
 		/** A point menu asks to close: a pick, Escape, a wheel or swipe, or a press outside it. */
@@ -184,6 +189,7 @@
 		size = 'sm',
 		label = 'More actions',
 		trigger = 'icon',
+		textIcon,
 		at = null,
 		onclose
 	}: Props = $props();
@@ -348,17 +354,32 @@
 		class="dropdown {position === 'start' ? 'dropdown-start' : 'dropdown-end'}"
 		ontoggle={handleToggle}
 	>
-		<IconButton
-			as="summary"
-			bind:ref={summaryEl}
-			variant={trigger === 'button' ? 'outline' : 'ghost'}
-			shape={trigger === 'button' ? 'square' : 'circle'}
-			size={trigger === 'button' ? 'md' : size === 'xs' ? 'xs' : 'sm'}
-			icon={trigger === 'button' ? Ellipsis : EllipsisVertical}
-			{label}
-			aria-haspopup="menu"
-			onclick={(e: MouseEvent) => e.stopPropagation()}
-		/>
+		{#if trigger === 'text'}
+			<Button
+				as="summary"
+				bind:ref={summaryEl}
+				variant="outline"
+				size="display"
+				icon={textIcon}
+				aria-haspopup="menu"
+				onclick={(e: MouseEvent) => e.stopPropagation()}
+			>
+				{label}
+				<ChevronDown class="size-4" aria-hidden="true" />
+			</Button>
+		{:else}
+			<IconButton
+				as="summary"
+				bind:ref={summaryEl}
+				variant={trigger === 'button' ? 'outline' : 'ghost'}
+				shape={trigger === 'button' ? 'square' : 'circle'}
+				size={trigger === 'button' ? 'md' : size === 'xs' ? 'xs' : 'sm'}
+				icon={trigger === 'button' ? Ellipsis : EllipsisVertical}
+				{label}
+				aria-haspopup="menu"
+				onclick={(e: MouseEvent) => e.stopPropagation()}
+			/>
+		{/if}
 	</details>
 {/if}
 

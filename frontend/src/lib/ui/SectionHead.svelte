@@ -3,7 +3,9 @@
 	source, a date), and "See all" (or `moreLabel`) at the right when the
 	shelf has a page of its own. With `href` the title is a link too. `actions` sits before
 	"See all" for a shelf's own buttons or outside link. `icon` marks the
-	title (a lock on a private shelf).
+	title (a lock on a private shelf). `wrap` lets the controls drop under
+	the title when the row is too narrow, so the title and its chips stay on
+	one line (a list's search and sort on a phone).
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
@@ -22,6 +24,8 @@
 		chips?: Snippet;
 		/** Controls before "See all". */
 		actions?: Snippet;
+		/** The controls drop under the title when there is no room beside it. */
+		wrap?: boolean;
 		/** The link's words at the right; "See all" by default. */
 		moreLabel?: string;
 		/** Layout only: margin. */
@@ -36,11 +40,16 @@
 		chips,
 		actions,
 		moreLabel = 'See all',
+		wrap = false,
 		class: className = ''
 	}: Props = $props();
 </script>
 
-<div class="dn-section-head {className}" data-part={part('section-head')}>
+<div
+	class="dn-section-head {className}"
+	class:dn-section-head--wrap={wrap}
+	data-part={part('section-head')}
+>
 	<div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
 		<svelte:element this={as} class="dn-section-head__title" data-part={part('section-head-title')}>
 			{#if Icon}<Icon class="dn-section-head__icon" aria-hidden="true" />{/if}
@@ -72,6 +81,13 @@
 		justify-content: space-between;
 		gap: 0.75rem;
 		margin-bottom: 0.75rem;
+	}
+	.dn-section-head--wrap {
+		flex-wrap: wrap;
+		row-gap: 0.5rem;
+	}
+	.dn-section-head--wrap > :first-child {
+		flex-wrap: nowrap;
 	}
 
 	.dn-section-head__title {

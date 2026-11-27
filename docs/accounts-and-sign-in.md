@@ -27,7 +27,7 @@ The first account is always admin. Later accounts are created by an admin or aut
 
 Deleting an account under Settings > Users also deletes its play history.
 
-Any signed-in user can see other users' display names, and nothing else about them, when sharing a playlist. Only names people chose are listed: someone shows up there once they save a display name under Profile, or when an admin typed one other than their username while making their account. A name that came from Jellyfin, Plex or single sign-on is never listed. Someone's private playlist shows to everyone else on the Playlists page as a locked card with its track count and its owner's display name if they chose one, never its name, cover or songs; **Only me** in Share says so. Shared and public playlists name their owner the same way in the web UI and in music apps.
+Any signed-in user can see other users' display names, and nothing else about them, when sharing a playlist. Only names people chose are listed: someone shows up there once they save a display name under Profile, or when an admin typed one other than their username while making their account. A name that came from Jellyfin, Plex or single sign-on is never listed. Someone's private playlist shows to everyone else on the Playlists page under Shared with you as a locked row with its track count and its owner's display name if they chose one, never its name, cover or songs; **Only me** in Share says so. Shared and public playlists name their owner the same way in the web UI and in music apps.
 
 ## Sessions
 

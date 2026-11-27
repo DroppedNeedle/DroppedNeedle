@@ -300,6 +300,7 @@
 			<VinylSleeve class="pl-hero__sleeve">
 				<div class="group relative">
 					<PlaylistMosaic
+						playlistId={playlist.id}
 						coverUrls={playlist.cover_urls}
 						customCoverUrl={coverDisplayUrl}
 						size="w-full aspect-square"

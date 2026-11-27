@@ -207,11 +207,11 @@ Once an import finishes, each song whose matched album is in your library plays 
 
 ### Liked Songs
 
-Your Liked Songs are the first tile on the Spotify page, and import into a playlist of their own, newest at the top. A Spotify link made before DroppedNeedle could read Liked Songs needs one more sign-in: the tile and the Spotify card on your profile say so and offer Reconnect.
+Your Liked Songs are the first tile on the Spotify page (**Import** > **From Spotify** on the Playlists page), and import into a playlist of their own, newest at the top. A Spotify link made before DroppedNeedle could read Liked Songs needs one more sign-in: the tile and the Spotify card on your profile say so and offer Reconnect.
 
 ### Keep in sync
 
-A playlist imported from Spotify, and Liked Songs, can be kept in step with Spotify: its owner turns on Keep in sync on the playlist page. Once an hour DroppedNeedle asks Spotify whether the playlist changed and reads its songs when it did, and reads a playlist in full once a day in any case (Liked Songs has no daily full read). New songs go at the end (for Liked Songs, at the top). Sync only adds: a song taken off on Spotify stays, nothing is reordered, and a song you removed here is not added again. While a playlist is synced, the Spotify page marks it Synced instead of offering Re-import. People you let edit the playlist see the sync's status line but not its switches.
+A playlist imported from Spotify, and Liked Songs, can be kept in step with Spotify: its owner turns on Keep in sync on the playlist page. Once an hour DroppedNeedle asks Spotify whether the playlist changed and reads its songs when it did, and reads a playlist in full once a day in any case (Liked Songs has no daily full read). New songs go at the end (for Liked Songs, at the top). Sync only adds: a song taken off on Spotify stays, nothing is reordered, and a song you removed here is not added again. While a playlist is synced, the Spotify page marks it Synced instead of offering Re-import. On the Playlists page, a synced playlist whose sync stopped or is held shows a warning beside its name. People you let edit the playlist see the sync's status line but not its switches.
 
 New songs the library doesn't have are requested by themselves, as the playlist owner's requests, so they count toward the owner's quota and wait while it is full. The Request choice beside the switch says what is asked for: Songs, or Whole albums, which requests each new song's album instead of the song. A song whose request was made once is never asked for again, however that request ended. Admins and trusted users need no approval. A regular user's sync asks an admin once, under Requests > Auto-downloads; until then, and after an admin rejects it or takes the approval back, songs are still added and get their albums, and nothing is requested. On a collaborative Spotify playlist, the songs other people add are requested as the owner's, under the owner's approval and quota.
 
@@ -223,7 +223,7 @@ Liked Songs has no version for Spotify to compare, so each pass reads it newest 
 
 ## Playlist files
 
-A playlist's menu exports it as M3U (extended M3U8) or CSV, and "Import playlist" on the Playlists page reads one of those files back into a new private playlist of yours, named after the file.
+A playlist's menu exports it as M3U (extended M3U8) or CSV, and **Import** > **From a file** on the Playlists page reads one of those files back into a new private playlist of yours, named after the file.
 
 An export lists each entry's file by its path inside its library folder, such as `Portishead/Dummy/01 Mysterons.flac`. If your player keeps music under a folder of its own, add a path prefix (`Music/`, say) and it goes before every path; the export window remembers it in this browser. Entries with no file in your library (a Spotify or YouTube entry, a removed track) are left out, and the export says how many. A CSV has a header row and the columns `title`, `artist`, `album`, `album artist`, `duration` (whole seconds) and `path`. A cell that starts with `=`, `+`, `-`, `@`, a tab or a carriage return gets a `'` in front, so a spreadsheet shows it as text; the import takes that `'` off again.
 

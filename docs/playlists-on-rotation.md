@@ -1,6 +1,6 @@
 # Lists on rotation
 
-Lists on rotation are five playlists DroppedNeedle makes for you from your own library and keeps fresh. Two are always there, Added recently and On repeat. The other three take turns: every Monday they are swapped for other ideas, and the shuffled ones get new songs. They sit at the top of Playlists, under "On rotation".
+Lists on rotation are five playlists DroppedNeedle makes for you from your own library and keeps fresh. Two are always there, Added recently and On repeat. The other three take turns: every Monday they are swapped for other ideas, and the shuffled ones get new songs. They sit at the top of Playlists, under "Made for you", after Your Weekly Mix.
 
 ## Contents
 
@@ -28,7 +28,7 @@ Each list is made from one idea. Only your own rows count: your plays here (in t
 | The 1990s (a decade) | Songs from one decade. Each time it comes on, it moves to the next decade with enough songs. |
 | Long ones | Songs of 7 minutes or more. |
 
-A list needs 20 songs to go on (the two always-on lists need 10). On the Playlists page, the dashed tile beside the lists names the ideas waiting their turn, and those skipped because they have too few songs.
+A list needs 20 songs to go on (the two always-on lists need 10). On the Playlists page, the dashed Ideas tile after the lists names the ideas waiting their turn, with those skipped because they have too few songs under it.
 
 ## When they change
 

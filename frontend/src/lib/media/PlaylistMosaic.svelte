@@ -3,6 +3,8 @@
 	import AlbumImage from './AlbumImage.svelte';
 
 	interface Props {
+		/** The playlist's id: missing art takes its colours from it. */
+		playlistId?: string | null;
 		coverUrls?: string[];
 		customCoverUrl?: string | null;
 		size?: string;
@@ -10,6 +12,7 @@
 	}
 
 	let {
+		playlistId = null,
 		coverUrls = [],
 		customCoverUrl = null,
 		size = 'w-32 h-32',
@@ -21,7 +24,7 @@
 
 {#snippet emptyCell()}
 	<div class="relative w-full h-full overflow-hidden">
-		<CoverPlaceholder />
+		<CoverPlaceholder id={playlistId} name={playlistId ?? ''} />
 	</div>
 {/snippet}
 

@@ -50,6 +50,14 @@ export function ideaRule(rotation: Pick<RotationInfo, 'idea' | 'decade'>): strin
 	return SHUFFLED.has(idea) ? `${rule.slice(0, -1)}, a new 50 each week.` : rule;
 }
 
+/** "Mon" for an epoch-seconds time, in UTC, as the lists change. */
+export function changeWeekday(epochSec: number): string {
+	return new Date(epochSec * 1000).toLocaleDateString('en-GB', {
+		weekday: 'short',
+		timeZone: 'UTC'
+	});
+}
+
 /** "Mon 30 Nov" for an epoch-seconds time, in UTC, as the lists change. */
 export function changeDay(epochSec: number): string {
 	return new Date(epochSec * 1000).toLocaleDateString('en-GB', {

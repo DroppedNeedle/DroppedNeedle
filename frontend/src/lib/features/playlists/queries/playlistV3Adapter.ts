@@ -37,18 +37,18 @@ export function privatePlaylistStub(
 }
 
 /**
- * "4 tracks · owned by Cara", the one line a private playlist shows. The
- * owner is named only when they chose a display name; one with no owner,
- * which only an admin may delete, says so.
+ * "4 songs · By Cara", the one line a private playlist shows. The owner is
+ * named only when they chose a display name; one with no owner, which only
+ * an admin may delete, says so.
  */
 export function privatePlaylistLine(stub: {
 	track_count: number;
 	owner_name?: string | null;
 	can_delete: boolean;
 }) {
-	const tracks = `${stub.track_count} track${stub.track_count === 1 ? '' : 's'}`;
-	if (stub.owner_name) return `${tracks} · owned by ${stub.owner_name}`;
-	return stub.can_delete ? `${tracks} · No owner` : tracks;
+	const songs = `${stub.track_count} song${stub.track_count === 1 ? '' : 's'}`;
+	if (stub.owner_name) return `${songs} · By ${stub.owner_name}`;
+	return stub.can_delete ? `${songs} · No owner` : songs;
 }
 
 /** V3 track row to the page track shape. */
