@@ -1069,6 +1069,51 @@ async fn artist_sections_use_listenbrainz_then_lastfm() {
 }
 
 #[tokio::test]
+async fn album_lastfm_skips_release_group_mbid_lookup() {
+    let mut routes = routes();
+    routes.push(Route {
+        path: "/lastfm/2.0/".to_owned(),
+        param: Some(("mbid", OK_COMPUTER)),
+        status: 200,
+        body: json!({"error": 6, "message": "Album not found"}).to_string(),
+    });
+    routes.push(Route {
+        path: "/lastfm/2.0/".to_owned(),
+        param: Some(("method", "album.getInfo")),
+        status: 200,
+        body: json!({
+            "album": {
+                "name": "OK Computer",
+                "artist": "Radiohead",
+                "url": "https://www.last.fm/music/Radiohead/OK+Computer",
+                "listeners": "2000000",
+                "playcount": "50000000",
+                "tags": { "tag": [{ "name": "alternative rock", "url": "https://www.last.fm/tag/alternative+rock" }] },
+                "wiki": { "summary": "Third studio album by Radiohead." }
+            }
+        })
+        .to_string(),
+    });
+    let fixtures = Fixtures::start_with(routes).await;
+    let (app, _rig) = app(&fixtures).await;
+
+    let body = get(
+        &app,
+        &format!(
+            "/api/v3/albums/{OK_COMPUTER}/lastfm?artist_name=Radiohead&album_name=OK%20Computer"
+        ),
+    )
+    .await;
+    assert_eq!(body["listeners"], 2_000_000);
+    assert_eq!(body["playcount"], 50_000_000);
+    assert_eq!(
+        fixtures.hits("/lastfm/2.0/"),
+        1,
+        "album Last.fm lookup must go straight to artist + album name without a release-group mbid miss"
+    );
+}
+
+#[tokio::test]
 async fn album_page_shows_the_owned_edition_and_where_to_buy() {
     let fixtures = Fixtures::start().await;
     let (app, _auth) = app(&fixtures).await;

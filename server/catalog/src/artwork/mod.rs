@@ -100,8 +100,8 @@ pub const PAGE_SETTLE: Duration = Duration::from_secs(2);
 pub const WARM_WAIT: Duration = Duration::from_millis(2_500);
 /// How long compat clients (which cannot poll) wait for an archive fetch.
 pub const COMPAT_WAIT: Duration = Duration::from_secs(20);
-/// The archive said it has no cover: ask again after four hours.
-pub const MISS_TTL_SECS: u64 = 4 * 3600;
+/// The archive said it has no cover: ask again after seven days.
+pub const MISS_TTL_SECS: u64 = 7 * 24 * 3600;
 /// A source could not be asked (down, refusing, or resting after
 /// failures): nothing is known about the art, so the routes answer
 /// "warming" and ask again after one rest of the provider's row.
@@ -416,11 +416,17 @@ impl ArtworkService {
         {
             return true;
         }
-        self.settled(&format!(
-            "caa:{}:{mbid}:500",
-            EntityKind::ReleaseGroup.path()
-        ))
-        .await
+        if self
+            .settled(&format!(
+                "caa:{}:{mbid}:500",
+                EntityKind::ReleaseGroup.path()
+            ))
+            .await
+        {
+            return true;
+        }
+        self.settled(&caa_miss_key(EntityKind::ReleaseGroup, &mbid))
+            .await
     }
 
     /// Fetch and cache a release group's 500 px cover now (the precache
@@ -926,6 +932,7 @@ impl ArtworkService {
     ) -> CoverLookup {
         let remote = self.remote.clone();
         let key = format!("caa:{}:{mbid}:{}", entity.path(), size.label());
+        let shared_miss = caa_miss_key(entity, mbid);
         match self.cache.key(&key).await {
             Some(KeyEntry::Hit { hash, content_type }) => {
                 if let Some(bytes) = self.cache.blob(&hash).await {
@@ -946,6 +953,12 @@ impl ArtworkService {
                 return CoverLookup::Warming;
             }
             _ => {}
+        }
+        if matches!(
+            self.cache.key(&shared_miss).await,
+            Some(KeyEntry::Miss { until }) if until > self.cache.unix_now()
+        ) {
+            return CoverLookup::Missing;
         }
         let flights = self.flights.clone();
         let cache = self.cache.clone();
@@ -1162,6 +1175,9 @@ async fn fetch_and_store(
         }
         Ok(None) => {
             cache.put_miss(key, MISS_TTL_SECS).await;
+            cache
+                .put_miss(&caa_miss_key(entity, mbid), MISS_TTL_SECS)
+                .await;
             Fetched::Missing
         }
         Err(error) => {
@@ -1352,6 +1368,12 @@ async fn resolve_artist(
         cache.put_miss(key, MISS_TTL_SECS).await;
         Fetched::Missing
     }
+}
+
+/// Shared size-independent Cover Art Archive miss key: a 404 means the entity
+/// has no front cover at any resolution.
+fn caa_miss_key(entity: EntityKind, mbid: &str) -> String {
+    format!("caa:{}:{mbid}:miss", entity.path())
 }
 
 /// The archive file a validated size (`250`, `375`, `500`, `1200`, or

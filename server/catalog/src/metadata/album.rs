@@ -1091,30 +1091,29 @@ impl Catalog {
         artist_name: &str,
         album_name: &str,
     ) -> Result<LastFmAlbumEnrichment, CatalogError> {
-        let id = self.album_id(raw_id).await?;
+        let _id = self.album_id(raw_id).await?;
         let Some((client, creds)) = self.upstream().lastfm(user_id).await else {
             return Ok(LastFmAlbumEnrichment::default());
         };
+        let artist = artist_name.trim().to_owned();
+        let album = album_name.trim().to_owned();
+        if artist.is_empty() || album.is_empty() {
+            return Ok(LastFmAlbumEnrichment::default());
+        }
         let key = CacheKey::hashed(
             Source::LastFm,
             "album_info",
-            &[&id, artist_name, album_name],
+            &[&artist.to_lowercase(), &album.to_lowercase()],
         );
-        let artist = artist_name.to_owned();
-        let album = album_name.to_owned();
         let priority = RequestPriority::UserInitiated;
         let enrichment = self
             .cached(&key, LASTFM_DETAILS, priority, move |priority| async move {
-                let mut found = client
-                    .album_info(&creds, &artist, &album, Some(&id), priority)
+                // Last.fm does not key albums by release-group MBID; look up
+                // directly by artist and album name to avoid a guaranteed miss.
+                let found = client
+                    .album_info(&creds, &artist, &album, None, priority)
                     .await
                     .map_err(CatalogError::Unavailable)?;
-                if found.is_none() && !artist.trim().is_empty() && !album.trim().is_empty() {
-                    found = client
-                        .album_info(&creds, &artist, &album, None, priority)
-                        .await
-                        .map_err(CatalogError::Unavailable)?;
-                }
                 let Some(info) = found else {
                     return Ok(Fetched::Missing);
                 };

@@ -4,7 +4,9 @@
 //! keys are not stored here: callers pass the key they read from settings
 //! for this run.
 
-use std::time::Duration;
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use droppedneedle_providers::Providers;
 use droppedneedle_providers::RequestPriority;
@@ -15,12 +17,18 @@ use droppedneedle_providers::ticketmaster::{self, TicketmasterClient, TmAttracti
 
 use super::sweep::FETCH_TIMEOUT;
 
+/// How long a city search result stays cached in memory (7 days).
+const CITY_CACHE_TTL: Duration = Duration::from_secs(7 * 24 * 3_600);
+/// Upper bound on cached city search queries.
+const CITY_CACHE_MAX_ENTRIES: usize = 256;
+
 /// The concerts feature's view of Ticketmaster, Skiddle and the geocoder.
 #[derive(Debug)]
 pub struct Sources {
     ticketmaster: TicketmasterClient,
     skiddle: SkiddleClient,
     geocoding: GeocodingClient,
+    city_cache: Mutex<HashMap<String, (Instant, Vec<GeoCity>)>>,
 }
 
 impl Sources {
@@ -30,6 +38,7 @@ impl Sources {
             ticketmaster: providers.ticketmaster.clone(),
             skiddle: providers.skiddle.clone(),
             geocoding: providers.geocoding.clone(),
+            city_cache: Mutex::new(HashMap::new()),
         }
     }
 
@@ -104,15 +113,41 @@ impl Sources {
             .await
     }
 
-    /// Cities matching a search, best first.
+    /// Cities matching a search, best first, cached in memory for 7 days.
     pub async fn cities(
         &self,
         query: &str,
         priority: RequestPriority,
     ) -> Result<Vec<GeoCity>, ProviderError> {
-        self.geocoding
+        let key = query.trim().to_ascii_lowercase();
+        let now = Instant::now();
+        if let Ok(cache) = self.city_cache.lock()
+            && let Some((stored_at, cities)) = cache.get(&key)
+            && now.saturating_duration_since(*stored_at) < CITY_CACHE_TTL
+        {
+            return Ok(cities.clone());
+        }
+        let cities = self
+            .geocoding
             .search_cities(query, DEFAULT_CITY_COUNT, priority)
-            .await
+            .await?;
+        if let Ok(mut cache) = self.city_cache.lock() {
+            if cache.len() >= CITY_CACHE_MAX_ENTRIES {
+                cache.retain(|_, (stored_at, _)| {
+                    now.saturating_duration_since(*stored_at) < CITY_CACHE_TTL
+                });
+                if cache.len() >= CITY_CACHE_MAX_ENTRIES
+                    && let Some(oldest) = cache
+                        .iter()
+                        .min_by_key(|(_, (stored_at, _))| *stored_at)
+                        .map(|(k, _)| k.clone())
+                {
+                    cache.remove(&oldest);
+                }
+            }
+            cache.insert(key, (now, cities.clone()));
+        }
+        Ok(cities)
     }
 }
 

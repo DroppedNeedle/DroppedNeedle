@@ -360,3 +360,81 @@ async fn sweep_fills_feed_and_routes_narrow_it_to_saved_cities() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["error"]["code"], "INVALID_INPUT");
 }
+
+#[tokio::test]
+async fn city_search_caches_repeat_queries() {
+    let scratch = ScratchDir::new("concerts-city-cache");
+    let runtime = crate::common::scratch_runtime(&scratch.join("app.db")).await;
+    let config = Arc::new(
+        ConfigStore::scratch(&scratch, Crypto::from_key_bytes(&[9u8; 32]).unwrap()).unwrap(),
+    );
+    let geo_calls = Arc::new(AtomicUsize::new(0));
+    let calls_ref = Arc::clone(&geo_calls);
+    let fake = Router::new().route(
+        "/geo",
+        get(move || {
+            let calls_ref = Arc::clone(&calls_ref);
+            async move {
+                calls_ref.fetch_add(1, Ordering::SeqCst);
+                axum::Json(json!({
+                    "results": [{
+                        "name": "London",
+                        "latitude": 51.5072,
+                        "longitude": -0.1276,
+                        "country_code": "GB",
+                        "country": "United Kingdom",
+                        "admin1": "England"
+                    }]
+                }))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, fake).await.unwrap() });
+
+    let http = droppedneedle_kernel::http_client::HttpClientFactory::new().unwrap();
+    let providers = Providers::unpaced_at(
+        Arc::new(ReqwestWire::new(&http)),
+        ProviderEndpoints {
+            geocoding: format!("{base}/geo"),
+            ..ProviderEndpoints::closed()
+        },
+    );
+    let setup = ConcertsSetup::new(
+        runtime.db().clone(),
+        config.live(),
+        &providers,
+        Arc::new(Recorder::default()),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
+    let app = with_test_principal(
+        droppedneedle_catalog::concerts::handlers::routes()
+            .with_state(setup.service())
+            .into_router(),
+        test_principal("u1", Role::User, "s1", SessionKind::Standard),
+    );
+
+    let (status, first) = call(
+        &app,
+        "GET",
+        "/api/v3/following/concerts/city-search?q=London",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    let (status, second) = call(
+        &app,
+        "GET",
+        "/api/v3/following/concerts/city-search?q=london",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second}");
+    assert_eq!(first, second);
+    assert_eq!(
+        geo_calls.load(Ordering::SeqCst),
+        1,
+        "case-insensitive repeat city search must hit cache"
+    );
+}

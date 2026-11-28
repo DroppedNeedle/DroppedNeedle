@@ -333,6 +333,41 @@ async fn archive_failures_are_remembered_for_as_long_as_they_mean() {
     }
 }
 
+#[tokio::test]
+async fn caa_404_miss_is_shared_across_sizes() {
+    let rig = rig(None).await;
+    let mbid = "0a1b2c3d-0000-4000-8000-000000000199";
+    rig.archive
+        .wire
+        .answer(&front_url(mbid), 404, &[], Vec::new());
+
+    let (first, _, _) = get(
+        rig.app(true),
+        &format!("/api/v3/covers/release-group/{mbid}?size=500"),
+    )
+    .await;
+    assert_eq!(first, StatusCode::NOT_FOUND);
+    assert_eq!(rig.archive.calls().len(), 1);
+
+    let (second, _, _) = get(
+        rig.app(true),
+        &format!("/api/v3/covers/release-group/{mbid}?size=1200"),
+    )
+    .await;
+    let (third, _, _) = get(
+        rig.app(true),
+        &format!("/api/v3/covers/release-group/{mbid}"),
+    )
+    .await;
+    assert_eq!(second, StatusCode::NOT_FOUND);
+    assert_eq!(third, StatusCode::NOT_FOUND);
+    assert_eq!(
+        rig.archive.calls().len(),
+        1,
+        "404 at size=500 must settle 1200 and full without hitting Cover Art Archive again"
+    );
+}
+
 /// An archive that cannot be reached says nothing about the art: the cover
 /// answers "warming" (202) while it is down, never "no art" (404), and is
 /// served once the archive answers again.

@@ -120,10 +120,10 @@ const LISTENING_SLOW: Policy = Policy {
     fresh: Duration::from_secs(12 * 3_600),
     miss: Duration::from_secs(12 * 3_600),
 };
-/// Tag searches.
+/// Tag searches: genres for an artist change rarely.
 const TAGS: Policy = Policy {
-    fresh: Duration::from_secs(12 * 3_600),
-    miss: Duration::from_secs(12 * 3_600),
+    fresh: Duration::from_secs(7 * 24 * 3_600),
+    miss: Duration::from_secs(24 * 3_600),
 };
 
 /// Why a listening read failed.
