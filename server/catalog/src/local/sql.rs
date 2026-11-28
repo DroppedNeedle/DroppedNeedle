@@ -803,6 +803,18 @@ droppedneedle_kernel::sql! {
         JOIN local_artists r ON r.id = e.local_artist_id \
         WHERE e.provider = 'musicbrainz' AND lower(e.provider_artist_id) = lower(?1) \
         AND r.retired_into_artist_id IS NULL ORDER BY r.id LIMIT 1";
+    /// The live artist linked to each MusicBrainz artist id in the JSON
+    /// array `?1`, compared without case: the id lowercased and the
+    /// artist, the first by id where several carry it.
+    pub(crate) ARTISTS_FOR_MBIDS = "SELECT lower(e.provider_artist_id) AS mbid, MIN(r.id) AS artist_id \
+        FROM local_artist_external_identities e JOIN local_artists r ON r.id = e.local_artist_id \
+        WHERE e.provider = 'musicbrainz' \
+        AND lower(e.provider_artist_id) IN (SELECT lower(value) FROM json_each(?1)) \
+        AND r.retired_into_artist_id IS NULL GROUP BY lower(e.provider_artist_id)";
+    pub(crate) row ArtistForMbid for [ARTISTS_FOR_MBIDS] {
+        mbid: String,
+        artist_id: String,
+    }
     /// Owned albums holding one of the release groups: album id and the
     /// lowercase group.
     family OWNERS_BY_GROUP = owners_by_group;

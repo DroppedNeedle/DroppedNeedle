@@ -14759,6 +14759,12 @@ export interface components {
         /** @description How the person's weekly set is made. */
         DiscoverPrefs: {
             /**
+             * @description Whether Discover keeps their playlists for their apps ("This week's
+             *     set", "From your shelves", their Daily Mixes). On unless they turned
+             *     it off; off removes them.
+             */
+            app_playlists: boolean;
+            /**
              * @description How far from what they know their picks go. Next door unless they
              *     chose another; a new depth rebuilds their pool, and this week's set
              *     stays as it is.
@@ -22281,7 +22287,7 @@ export interface components {
          * @description Where a playlist came from, as the server tells it.
          * @enum {string}
          */
-        PlaylistKind: "own" | "imported" | "weekly_mix" | "rotation";
+        PlaylistKind: "own" | "imported" | "weekly_mix" | "rotation" | "discover";
         /** @description One row of the playlist list: a full summary or a redacted stub. */
         PlaylistListItem: components["schemas"]["PlaylistSummary"] | components["schemas"]["RedactedPlaylist"];
         /** @description Playlist list answer. */

@@ -10,7 +10,8 @@
 //! the lists beside it). Two songLyrics 2 shapes differ in XML, as the
 //! OpenSubsonic spec writes them: a `cueLine`'s value is an attribute
 //! (`XML_VALUE_ATTRIBUTE`), and each of `agents` is an `<agent>` element
-//! (`XML_ITEM_TAGS`).
+//! (`XML_ITEM_TAGS`). A `sonicMatch`'s `similarity` is a child element
+//! (`XML_TEXT_ELEMENTS`), as Navidrome writes it.
 //!
 //! Quirk (v2): XML booleans lowercase; C0 controls dropped from
 //! XML; JSONP callbacks allowlisted to a bare identifier path (unsafe or
@@ -364,6 +365,12 @@ const XML_VALUE_ATTRIBUTE: &[&str] = &["cueLine"];
 /// Lists whose items XML writes under another tag (songLyrics 2: each of
 /// `agents` is an `<agent>`).
 const XML_ITEM_TAGS: &[(&str, &str)] = &[("agents", "agent")];
+/// Scalars XML writes as a child element with the value as its text, not
+/// as an attribute. The spec shows `sonicMatch` in JSON only; this is
+/// Navidrome's XML (its `SonicMatch` response type tags `similarity` as an
+/// element, written after `<entry>`), read from its handler and response
+/// types (PR 5419, merged 2026-04-27).
+const XML_TEXT_ELEMENTS: &[&str] = &["similarity"];
 
 impl Element {
     fn is_empty(&self) -> bool {
@@ -387,6 +394,9 @@ impl Element {
                     Node::Scalar(text) => Some(text),
                     _ => None,
                 };
+            }
+            Node::Scalar(text) if XML_TEXT_ELEMENTS.contains(&key) => {
+                write_node(key, Node::Scalar(text), &mut self.children);
             }
             Node::Scalar(text) => self.push_attr(key, &text),
             node => {

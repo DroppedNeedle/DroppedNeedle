@@ -160,6 +160,7 @@ impl CatalogSetup {
                 playback,
                 history,
                 sound,
+                collections: collections.clone(),
             },
             settings,
         );

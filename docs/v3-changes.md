@@ -51,8 +51,12 @@ and the callback addresses and settings to change first are under
 - **Similar-songs modes for Subsonic and Jellyfin apps.** v2's Connect Apps
   settings offered three: local only, related artists from MusicBrainz, and
   Last.fm or ListenBrainz when linked. v3 always answers from your own
-  library and has no setting. If you used one of the other two modes, the
-  similar songs your apps show will change.
+  library, asks no outside service and has no setting. Once an admin turns
+  on sound analysis and it has analysed nine in ten tracks, an app's similar
+  songs and instant mix are the library's tracks that sound like the song,
+  album or artist; until then, they are the album artist's own tracks. If
+  you used one of the other two modes, the similar songs your apps show
+  will change.
 - **The staged "Match exact edition" job.** v2 downloaded a complete exact
   release as a job with its own steps: a space check, a download, a preview,
   then Apply, with retry, recheck and cancel along the way. In v3 you choose

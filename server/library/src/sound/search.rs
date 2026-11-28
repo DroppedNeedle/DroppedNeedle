@@ -12,7 +12,9 @@
 //! by the same artist) go first, then a track that sounds the same as the
 //! one kept before it, unless the two are different identified pieces.
 //! At most [`PER_ARTIST`] a list, and nothing past [`CUT_OFF`]: a thin
-//! library gives a short list, never one topped up with far tracks.
+//! library gives a short list, never one topped up with far tracks. A
+//! path from one track to another ([`SoundIndex::path`]) keeps the same
+//! rules at each step along the arc between their sounds.
 //!
 //! The search knows only the library. It knows nothing of a person.
 
@@ -43,6 +45,8 @@ pub const CLOSE_UNDER: f32 = CUT_OFF * 2.0 / 3.0;
 const SAME_SOUND: f32 = 0.01;
 /// Most tracks by one artist in one list.
 pub const PER_ARTIST: usize = 3;
+/// The nearest tracks each waypoint of a path chooses among.
+pub const PATH_CHOICE: usize = 25;
 /// A track's strongest tags, the ones two tracks can share.
 pub const TOP_TAGS: usize = 5;
 
@@ -455,6 +459,103 @@ impl SoundIndex {
             });
         }
         found
+    }
+
+    /// Up to `count` tracks leading from `start` to `end`, both included,
+    /// `start` first and `end` last. Between them each waypoint is a step
+    /// along the arc from one sound to the other (spherical interpolation
+    /// of the two vectors), and takes the nearest of its [`PATH_CHOICE`]
+    /// nearest tracks that keeps the rules at the top of this file: one
+    /// version of a song, no near copy of the track before, at most
+    /// [`PER_ARTIST`] by one artist between the ends, nothing past
+    /// [`CUT_OFF`] from its waypoint. A waypoint with no such track is
+    /// passed, so a thin library gives a shorter path. A track `skip`
+    /// answers true for is never taken. `None` when either end is not
+    /// analysed.
+    #[must_use]
+    pub fn path(
+        &self,
+        start: &str,
+        end: &str,
+        count: usize,
+        skip: &dyn Fn(&SoundTrack) -> bool,
+    ) -> Option<Vec<String>> {
+        let (start_at, end_at) = (*self.at.get(start)?, *self.at.get(end)?);
+        if start_at == end_at {
+            return Some(vec![start.to_owned()]);
+        }
+        let waypoints = count.saturating_sub(2);
+        let from = self.vector(start_at);
+        let to = self.vector(end_at);
+        let dot: f32 = from.iter().zip(to).map(|(a, b)| a * b).sum();
+        let angle = dot.clamp(-1.0, 1.0).acos();
+        let mut picked: Vec<usize> = vec![start_at];
+        let mut taken = vec![false; self.tracks.len()];
+        taken[start_at] = true;
+        let mut per_artist: HashMap<&str, usize> = HashMap::new();
+        for step in 1..=waypoints {
+            let t = step as f32 / (waypoints + 1) as f32;
+            let (a, b) = if angle.sin().abs() < 1e-6 {
+                (1.0 - t, t)
+            } else {
+                (
+                    ((1.0 - t) * angle).sin() / angle.sin(),
+                    (t * angle).sin() / angle.sin(),
+                )
+            };
+            let mut point: Vec<f32> = from.iter().zip(to).map(|(x, y)| a * x + b * y).collect();
+            let norm = point.iter().map(|value| value * value).sum::<f32>().sqrt();
+            if !norm.is_normal() {
+                continue;
+            }
+            point.iter_mut().for_each(|value| *value /= norm);
+            let mut nearest: Vec<(f32, usize)> = (0..self.tracks.len())
+                .filter(|at| *at != end_at && !taken[*at])
+                .map(|at| {
+                    let dot: f32 = point.iter().zip(self.vector(at)).map(|(x, y)| x * y).sum();
+                    ((1.0 - dot).max(0.0), at)
+                })
+                .collect();
+            let by_distance = |a: &(f32, usize), b: &(f32, usize)| {
+                a.0.total_cmp(&b.0)
+                    .then_with(|| self.tracks[a.1].track_id.cmp(&self.tracks[b.1].track_id))
+            };
+            if nearest.len() > PATH_CHOICE {
+                nearest.select_nth_unstable_by(PATH_CHOICE, by_distance);
+                nearest.truncate(PATH_CHOICE);
+            }
+            nearest.sort_by(by_distance);
+            let previous = picked.last().copied().unwrap_or(start_at);
+            let chosen = nearest.into_iter().find(|(distance, at)| {
+                let track = &self.tracks[*at];
+                let other = &self.tracks[previous];
+                let different_pieces = track.recording.is_some() && other.recording.is_some();
+                *distance <= CUT_OFF
+                    && !skip(track)
+                    && !picked
+                        .iter()
+                        .chain([&end_at])
+                        .any(|kept| track.same_song(&self.tracks[*kept]))
+                    && (self.between(*at, previous) >= SAME_SOUND || different_pieces)
+                    && per_artist
+                        .get(track.artist_key.as_str())
+                        .is_none_or(|count| *count < PER_ARTIST)
+            });
+            if let Some((_, at)) = chosen {
+                *per_artist
+                    .entry(self.tracks[at].artist_key.as_str())
+                    .or_default() += 1;
+                taken[at] = true;
+                picked.push(at);
+            }
+        }
+        picked.push(end_at);
+        Some(
+            picked
+                .into_iter()
+                .map(|at| self.tracks[at].track_id.clone())
+                .collect(),
+        )
     }
 }
 

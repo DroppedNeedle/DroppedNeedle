@@ -1,0 +1,440 @@
+{
+  "steps": [
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
+          "sonicMatch": [
+            {
+              "entry": {
+                "album": "Mezzanine",
+                "albumArtists": [
+                  {
+                    "id": "ar-<id-1>",
+                    "name": "Massive Attack"
+                  }
+                ],
+                "albumId": "al-<id-2>",
+                "artist": "Massive Attack",
+                "artistId": "ar-<id-1>",
+                "artists": [
+                  {
+                    "id": "ar-<id-1>",
+                    "name": "Massive Attack"
+                  }
+                ],
+                "bitDepth": 0,
+                "bitRate": 2,
+                "bpm": 0,
+                "channelCount": 2,
+                "comment": "",
+                "contentType": "audio/mp4",
+                "contributors": [],
+                "coverArt": "al-<id-2>_bbbb77b2",
+                "created": "0000-00-00T00:00:00Z",
+                "discNumber": 1,
+                "displayAlbumArtist": "Massive Attack",
+                "displayArtist": "Massive Attack",
+                "displayComposer": "",
+                "duration": 0,
+                "explicitStatus": "",
+                "genres": [],
+                "groupings": [],
+                "id": "tr-<id-3>",
+                "isDir": false,
+                "isrc": [],
+                "mediaType": "song",
+                "moods": [],
+                "musicBrainzId": "",
+                "parent": "al-<id-2>",
+                "path": "Massive Attack/Mezzanine/04 Teardrop.m4a",
+                "replayGain": {},
+                "samplingRate": 44100,
+                "size": 2563,
+                "sortName": "Teardrop",
+                "suffix": "m4a",
+                "title": "Teardrop",
+                "track": 4,
+                "type": "music",
+                "year": 1998
+              },
+              "similarity": 0.9961947202682495
+            },
+            {
+              "entry": {
+                "album": "Achtung Baby",
+                "albumArtists": [
+                  {
+                    "id": "ar-<id-4>",
+                    "name": "U2"
+                  }
+                ],
+                "albumId": "al-<id-5>",
+                "artist": "U2",
+                "artistId": "ar-<id-4>",
+                "artists": [
+                  {
+                    "id": "ar-<id-4>",
+                    "name": "U2"
+                  }
+                ],
+                "bitDepth": 0,
+                "bitRate": 344,
+                "bpm": 0,
+                "channelCount": 2,
+                "comment": "",
+                "contentType": "audio/mpeg",
+                "contributors": [],
+                "coverArt": "al-<id-5>_bbbb77b2",
+                "created": "0000-00-00T00:00:00Z",
+                "discNumber": 1,
+                "displayAlbumArtist": "U2",
+                "displayArtist": "U2",
+                "displayComposer": "",
+                "duration": 0,
+                "explicitStatus": "",
+                "genre": "Rock",
+                "genres": [
+                  {
+                    "name": "Rock"
+                  }
+                ],
+                "groupings": [],
+                "id": "tr-<id-6>",
+                "isDir": false,
+                "isrc": [],
+                "mediaType": "song",
+                "moods": [],
+                "musicBrainzId": "",
+                "parent": "al-<id-5>",
+                "path": "U2/Achtung Baby/03 One.mp3",
+                "replayGain": {},
+                "samplingRate": 44100,
+                "size": 16008,
+                "sortName": "One",
+                "suffix": "mp3",
+                "title": "One",
+                "track": 3,
+                "type": "music",
+                "year": 1991
+              },
+              "similarity": 0.9945219159126282
+            },
+            {
+              "entry": {
+                "album": "Now Thats Music",
+                "albumArtists": [
+                  {
+                    "id": "ar-<id-7>",
+                    "name": "Various Artists"
+                  }
+                ],
+                "albumId": "al-<id-8>",
+                "artist": "Artist One",
+                "artistId": "ar-<id-9>",
+                "artists": [
+                  {
+                    "id": "ar-<id-9>",
+                    "name": "Artist One"
+                  }
+                ],
+                "bitDepth": 16,
+                "bitRate": 1,
+                "bpm": 0,
+                "channelCount": 2,
+                "comment": "",
+                "contentType": "audio/flac",
+                "contributors": [],
+                "coverArt": "al-<id-8>_bbbb77b2",
+                "created": "0000-00-00T00:00:00Z",
+                "discNumber": 1,
+                "displayAlbumArtist": "Various Artists",
+                "displayArtist": "Artist One",
+                "displayComposer": "",
+                "duration": 0,
+                "explicitStatus": "",
+                "genres": [],
+                "groupings": [],
+                "id": "tr-<id-10>",
+                "isDir": false,
+                "isrc": [],
+                "mediaType": "song",
+                "moods": [],
+                "musicBrainzId": "",
+                "parent": "al-<id-8>",
+                "path": "Various Artists/Now Thats Music/01 Song A.flac",
+                "replayGain": {},
+                "samplingRate": 44100,
+                "size": 1413,
+                "sortName": "Song A",
+                "suffix": "flac",
+                "title": "Song A",
+                "track": 1,
+                "type": "music",
+                "year": 2001
+              },
+              "similarity": 0.9848077893257141
+            },
+            {
+              "entry": {
+                "album": "望厚",
+                "albumArtists": [
+                  {
+                    "id": "ar-<id-11>",
+                    "name": "ユキ"
+                  }
+                ],
+                "albumId": "al-<id-12>",
+                "artist": "ユキ",
+                "artistId": "ar-<id-11>",
+                "artists": [
+                  {
+                    "id": "ar-<id-11>",
+                    "name": "ユキ"
+                  }
+                ],
+                "bitDepth": 16,
+                "bitRate": 1,
+                "bpm": 0,
+                "channelCount": 2,
+                "comment": "",
+                "contentType": "audio/flac",
+                "contributors": [],
+                "coverArt": "al-<id-12>_bbbb77b2",
+                "created": "0000-00-00T00:00:00Z",
+                "discNumber": 1,
+                "displayAlbumArtist": "ユキ",
+                "displayArtist": "ユキ",
+                "displayComposer": "",
+                "duration": 0,
+                "explicitStatus": "",
+                "genres": [],
+                "groupings": [],
+                "id": "tr-<id-13>",
+                "isDir": false,
+                "isrc": [],
+                "mediaType": "song",
+                "moods": [],
+                "musicBrainzId": "",
+                "parent": "al-<id-12>",
+                "path": "ユキ/望厚/01 桃源へ.flac",
+                "replayGain": {},
+                "samplingRate": 44100,
+                "size": 1354,
+                "sortName": "桃源へ",
+                "suffix": "flac",
+                "title": "桃源へ",
+                "track": 1,
+                "type": "music",
+                "year": 2015
+              },
+              "similarity": 0.9781476259231567
+            }
+          ],
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getSonicSimilarTracks?id=tr-<id-14>&u=alice&p=***&v=1.16.1&c=golden&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
+          "sonicMatch": [
+            {
+              "entry": {
+                "album": "OK Computer",
+                "albumArtists": [
+                  {
+                    "id": "ar-<id-15>",
+                    "name": "Radiohead"
+                  }
+                ],
+                "albumId": "al-<id-16>",
+                "artist": "Radiohead",
+                "artistId": "ar-<id-15>",
+                "artists": [
+                  {
+                    "id": "ar-<id-15>",
+                    "name": "Radiohead"
+                  }
+                ],
+                "bitDepth": 16,
+                "bitRate": 1,
+                "bpm": 0,
+                "channelCount": 2,
+                "comment": "",
+                "contentType": "audio/flac",
+                "contributors": [],
+                "coverArt": "al-<id-16>_bbbb77b2",
+                "created": "0000-00-00T00:00:00Z",
+                "discNumber": 1,
+                "displayAlbumArtist": "Radiohead",
+                "displayArtist": "Radiohead",
+                "displayComposer": "",
+                "duration": 0,
+                "explicitStatus": "",
+                "genre": "Alternative Rock",
+                "genres": [
+                  {
+                    "name": "Alternative Rock"
+                  }
+                ],
+                "groupings": [],
+                "id": "tr-<id-14>",
+                "isDir": false,
+                "isrc": [],
+                "mediaType": "song",
+                "moods": [],
+                "musicBrainzId": "",
+                "parent": "al-<id-16>",
+                "path": "Radiohead/OK Computer/01 Airbag.flac",
+                "replayGain": {},
+                "samplingRate": 44100,
+                "size": 1567,
+                "sortName": "Airbag",
+                "suffix": "flac",
+                "title": "Airbag",
+                "track": 1,
+                "type": "music",
+                "year": 1997
+              },
+              "similarity": 1.0
+            },
+            {
+              "entry": {
+                "album": "Achtung Baby",
+                "albumArtists": [
+                  {
+                    "id": "ar-<id-4>",
+                    "name": "U2"
+                  }
+                ],
+                "albumId": "al-<id-5>",
+                "artist": "U2",
+                "artistId": "ar-<id-4>",
+                "artists": [
+                  {
+                    "id": "ar-<id-4>",
+                    "name": "U2"
+                  }
+                ],
+                "bitDepth": 0,
+                "bitRate": 344,
+                "bpm": 0,
+                "channelCount": 2,
+                "comment": "",
+                "contentType": "audio/mpeg",
+                "contributors": [],
+                "coverArt": "al-<id-5>_bbbb77b2",
+                "created": "0000-00-00T00:00:00Z",
+                "discNumber": 1,
+                "displayAlbumArtist": "U2",
+                "displayArtist": "U2",
+                "displayComposer": "",
+                "duration": 0,
+                "explicitStatus": "",
+                "genre": "Rock",
+                "genres": [
+                  {
+                    "name": "Rock"
+                  }
+                ],
+                "groupings": [],
+                "id": "tr-<id-6>",
+                "isDir": false,
+                "isrc": [],
+                "mediaType": "song",
+                "moods": [],
+                "musicBrainzId": "",
+                "parent": "al-<id-5>",
+                "path": "U2/Achtung Baby/03 One.mp3",
+                "replayGain": {},
+                "samplingRate": 44100,
+                "size": 16008,
+                "sortName": "One",
+                "suffix": "mp3",
+                "title": "One",
+                "track": 3,
+                "type": "music",
+                "year": 1991
+              },
+              "similarity": 0.9945219159126282
+            },
+            {
+              "entry": {
+                "album": "望厚",
+                "albumArtists": [
+                  {
+                    "id": "ar-<id-11>",
+                    "name": "ユキ"
+                  }
+                ],
+                "albumId": "al-<id-12>",
+                "artist": "ユキ",
+                "artistId": "ar-<id-11>",
+                "artists": [
+                  {
+                    "id": "ar-<id-11>",
+                    "name": "ユキ"
+                  }
+                ],
+                "bitDepth": 16,
+                "bitRate": 1,
+                "bpm": 0,
+                "channelCount": 2,
+                "comment": "",
+                "contentType": "audio/flac",
+                "contributors": [],
+                "coverArt": "al-<id-12>_bbbb77b2",
+                "created": "0000-00-00T00:00:00Z",
+                "discNumber": 1,
+                "displayAlbumArtist": "ユキ",
+                "displayArtist": "ユキ",
+                "displayComposer": "",
+                "duration": 0,
+                "explicitStatus": "",
+                "genres": [],
+                "groupings": [],
+                "id": "tr-<id-13>",
+                "isDir": false,
+                "isrc": [],
+                "mediaType": "song",
+                "moods": [],
+                "musicBrainzId": "",
+                "parent": "al-<id-12>",
+                "path": "ユキ/望厚/01 桃源へ.flac",
+                "replayGain": {},
+                "samplingRate": 44100,
+                "size": 1354,
+                "sortName": "桃源へ",
+                "suffix": "flac",
+                "title": "桃源へ",
+                "track": 1,
+                "type": "music",
+                "year": 2015
+              },
+              "similarity": 0.9781476259231567
+            }
+          ],
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/findSonicPath?startSongId=tr-<id-14>&endSongId=tr-<id-13>&count=3&u=alice&p=***&v=1.16.1&c=golden&f=json",
+      "status": 200
+    }
+  ]
+}

@@ -1,9 +1,10 @@
 //! "Forget my history": a person removes what the app keeps about their
 //! listening and what Discover did for them, and everything built from it:
 //! the copy of their ListenBrainz history, their taste and candidate pool
-//! among it, their weekly sets and their Daily Mixes. Their next taste
-//! build makes the taste and pool again from what is left, and the next
-//! day's mixes are built from what is left; their sets are gone for good.
+//! among it, their weekly sets, their Daily Mixes and the playlists
+//! Discover keeps for their apps. Their next taste build makes the taste
+//! and pool again from what is left, and the next day's mixes are built
+//! from what is left; their sets are gone for good.
 //!
 //! One function runs every step, each deleting the person's rows by their
 //! id and safe to run again, so a forget cut off part way is finished by
@@ -18,6 +19,7 @@ use droppedneedle_kernel::db::{Db, DbError};
 use droppedneedle_media::history::{self, HistoryStore};
 use droppedneedle_media::playback::{events, sqlite::PlaybackStore};
 
+use crate::collections::discover_lists;
 use crate::discover::cache::{self, ForgetCounts};
 use crate::discover::engine::{pool_store, taste_store, weekly_store};
 use crate::discover::{mixes, record, scheduler::activity::ActivityDb, services::DiscoverDeps};
@@ -72,6 +74,8 @@ pub struct Forgotten {
     pub weekly_sets: usize,
     /// Their Daily Mixes and the mixes' tracks.
     pub mixes: usize,
+    /// The playlists Discover kept for their apps.
+    pub app_playlists: usize,
     /// Their saved Discover, home and queue pages.
     pub pages: usize,
 }
@@ -108,14 +112,17 @@ fn at<E: Into<StepError>>(step: &'static str) -> impl FnOnce(E) -> ForgetError {
 /// ListenBrainz history (its import is marked forgotten and its jobs
 /// cancelled in the same write, so an import running across the forget
 /// keeps nothing), the pick record, their Discover activity, their taste,
-/// their candidate pool, their weekly sets, their Daily Mixes and their
-/// saved pages, in that order, then start one rebuild of their Discover
-/// page. Their forget count moves on before the first step and again inside
-/// the taste, the pool, the sets', the mixes' and the pages steps' writes,
-/// so a build of theirs claimed before those commits keeps no taste, no
-/// pool, no set, no mix, no page and records no pick. While such a build runs no rebuild starts here: their next visit
-/// builds the page, which is due because its row is gone. Fails at the first step that fails; the
-/// rebuild is asked for only once every step ran.
+/// their candidate pool, their weekly sets, their Daily Mixes, the
+/// playlists Discover kept for their apps and their saved pages, in that
+/// order, then start one rebuild of their Discover page. Their forget
+/// count moves on before the first step and again inside the taste, the
+/// pool, the sets', the mixes', the app playlists' and the pages steps'
+/// writes, so a build or refresh of theirs claimed before those commits
+/// keeps no taste, no pool, no set, no mix, no app playlist, no page and
+/// records no pick. While such a build runs no rebuild starts here: their
+/// next visit builds the page, which is due because its row is gone.
+/// Fails at the first step that fails; the rebuild is asked for only once
+/// every step ran.
 pub async fn forget(deps: &DiscoverDeps, user_id: &str) -> Result<Forgotten, ForgetError> {
     let stores = &deps.history;
     stores.forgets.bump(user_id);
@@ -145,6 +152,9 @@ pub async fn forget(deps: &DiscoverDeps, user_id: &str) -> Result<Forgotten, For
     let mixes = mixes::store::forget(&stores.db, &stores.forgets, user_id)
         .await
         .map_err(at("daily mixes"))?;
+    let app_playlists = discover_lists::forget(&stores.db, &stores.forgets, user_id)
+        .await
+        .map_err(at("app playlists"))?;
     let pages = cache::forget_user(&stores.db, &stores.forgets, user_id)
         .await
         .map_err(at("saved pages"))?;
@@ -160,6 +170,7 @@ pub async fn forget(deps: &DiscoverDeps, user_id: &str) -> Result<Forgotten, For
         pool,
         weekly_sets,
         mixes,
+        app_playlists,
         pages,
     })
 }

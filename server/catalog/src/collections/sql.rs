@@ -13,33 +13,37 @@ use super::models::{AlbumPick, FiledKind, SourceAlbumKind};
 use droppedneedle_auth::listed_user;
 use droppedneedle_library::{copy_of_group, holds_recording, owns_group};
 
-/// The playlist over an alias is not a list on rotation: only the app's
-/// refresh writes those (`super::rotation`).
-macro_rules! not_rotation {
+/// The playlist over an alias is not one only the app writes: a list on
+/// rotation (`super::rotation`) or a list Discover keeps for its owner's
+/// apps (`super::discover_lists`, marked by its source).
+macro_rules! not_app_kept {
     ($playlist:literal) => {
         concat!(
-            "NOT EXISTS (SELECT 1 FROM catalog_rotation_lists rl WHERE rl.playlist_id = ",
+            "(NOT EXISTS (SELECT 1 FROM catalog_rotation_lists rl WHERE rl.playlist_id = ",
             $playlist,
-            ".id)"
+            ".id) AND substr(COALESCE(",
+            $playlist,
+            ".source_ref, ''), 1, 14) <> 'discover-list:')"
         )
     };
 }
 
 /// The playlist over an alias is one the app made for its owner: the Weekly
-/// Mix or a list on rotation. Their songs are not the person's own choice.
+/// Mix, a list on rotation or a list Discover keeps for their apps. Their
+/// songs are not the person's own choice.
 macro_rules! made_by_app {
     ($playlist:literal) => {
         concat!(
-            "(COALESCE(",
+            "(substr(COALESCE(",
             $playlist,
-            ".source_ref, '') LIKE 'personal-mix:%' OR NOT ",
-            $crate::collections::sql::not_rotation!($playlist),
+            ".source_ref, ''), 1, 13) = 'personal-mix:' OR NOT ",
+            $crate::collections::sql::not_app_kept!($playlist),
             ")"
         )
     };
 }
 
-pub(crate) use {made_by_app, not_rotation};
+pub(crate) use {made_by_app, not_app_kept};
 
 droppedneedle_kernel::sql! {
     /// The caller may read the playlist: it is theirs, it is public, or it
@@ -50,10 +54,11 @@ droppedneedle_kernel::sql! {
     /// The playlist is the caller's.
     fragment OWNED = "p.user_id = ?1";
     /// The caller may change the playlist's songs: it is theirs, or it is
-    /// shared with them to edit. A list on rotation is nobody's to change.
+    /// shared with them to edit. A list only the app writes is nobody's to
+    /// change.
     fragment EDITABLE = "((COALESCE(p.user_id = ?1, 0) OR EXISTS (SELECT 1 \
          FROM catalog_playlist_members m WHERE m.playlist_id = p.id AND m.user_id = ?1 \
-         AND m.can_edit = 1)) AND " + (not_rotation!("p")) + ")";
+         AND m.can_edit = 1)) AND " + (not_app_kept!("p")) + ")";
     /// One playlist with its aggregates, in `PlaylistRow`'s mapper order.
     /// The owner's name comes twice: as it reads to the owner, then only
     /// when they chose it, which is all anyone else may see.
@@ -89,11 +94,11 @@ droppedneedle_kernel::sql! {
 
     /// Every playlist, then whether the caller may read it. A private
     /// playlist with no owner is left out unless `?2`, an admin asking.
-    /// Another person's list on rotation is left out for everyone, even as
-    /// a private stub.
+    /// Another person's list only the app writes is left out for everyone,
+    /// even as a private stub.
     pub(super) LIST_ALL = PLAYLIST_COLUMNS + ", " + READABLE + PLAYLIST_FROM
         + " WHERE (p.user_id IS NOT NULL OR p.is_public != 0 OR ?2) \
-         AND (r.playlist_id IS NULL OR p.user_id = ?1)" + BY_NAME;
+         AND (" + (not_app_kept!("p")) + " OR p.user_id = ?1)" + BY_NAME;
     /// The playlists the caller may read.
     pub(super) LIST_READABLE = PLAYLIST_COLUMNS + PLAYLIST_FROM + " WHERE " + READABLE + BY_NAME;
     /// The first `?2` entry covers of each playlist the caller may read.
@@ -136,7 +141,8 @@ droppedneedle_kernel::sql! {
     pub(super) FIND_BY_SOURCE = "SELECT id FROM catalog_playlists WHERE user_id = ?1 AND source_ref = ?2";
     /// For each `[track, artist, album]` in the JSON array `?2`, by its
     /// index, the playlists the caller may read holding an entry with
-    /// exactly those names.
+    /// exactly those names, but the lists Discover keeps for apps, which the
+    /// web UI does not show.
     pub(super) MEMBERSHIP = "WITH q(idx, track_name, artist_name, album_name) AS \
          (SELECT key, json_extract(value, '$[0]'), json_extract(value, '$[1]'), \
          json_extract(value, '$[2]') FROM json_each(?2)) \
@@ -144,35 +150,61 @@ droppedneedle_kernel::sql! {
          JOIN catalog_playlist_tracks t ON t.track_name = q.track_name \
          AND t.artist_name = q.artist_name AND t.album_name = q.album_name \
          JOIN catalog_playlists p ON p.id = t.playlist_id WHERE " + READABLE
-        + " ORDER BY q.idx, t.playlist_id";
+        + " AND substr(COALESCE(p.source_ref, ''), 1, 14) <> 'discover-list:' \
+         ORDER BY q.idx, t.playlist_id";
 
     /// Whether playlist `?1` is user `?2`'s to change: theirs and not a
-    /// list on rotation.
+    /// list only the app writes.
     pub(super) OWNED_GUARD = "SELECT 1 FROM catalog_playlists p WHERE p.id = ?1 \
-         AND p.user_id = ?2 AND " + (not_rotation!("p"));
+         AND p.user_id = ?2 AND " + (not_app_kept!("p"));
     /// Whether user `?1` may change the songs of playlist `?2`.
     pub(super) EDIT_GUARD = "SELECT 1 FROM catalog_playlists p WHERE p.id = ?2 AND " + EDITABLE;
     /// Stamp playlist `?2` as changed at `?1`, milliseconds.
     pub(super) STAMP = "UPDATE catalog_playlists SET updated_at = ?1 WHERE id = ?2";
     /// Stamp user `?3`'s playlist `?2` as changed at `?1`, milliseconds,
-    /// unless it is a list on rotation.
+    /// unless it is a list only the app writes.
     pub(super) TOUCH = "UPDATE catalog_playlists SET updated_at = ?1 \
-         WHERE id = ?2 AND user_id = ?3 AND " + (not_rotation!("catalog_playlists"));
+         WHERE id = ?2 AND user_id = ?3 AND " + (not_app_kept!("catalog_playlists"));
     /// One empty private playlist made at `?3`, milliseconds.
     pub(super) INSERT_PLAYLIST = "INSERT INTO catalog_playlists (id, name, created_at, \
          updated_at, source_ref, user_id, is_public) VALUES (?1, ?2, ?3, ?3, ?4, ?5, 0)";
-    /// Rename user `?3`'s playlist `?2`, unless it is a list on rotation.
+    /// Rename user `?3`'s playlist `?2`, unless it is a list only the app
+    /// writes.
     pub(super) RENAME = "UPDATE catalog_playlists SET name = ?1 WHERE id = ?2 AND user_id = ?3 \
-         AND " + (not_rotation!("catalog_playlists"));
+         AND " + (not_app_kept!("catalog_playlists"));
     /// Set the public flag of user `?3`'s playlist `?2`, unless it is a
-    /// list on rotation.
+    /// list only the app writes.
     pub(super) SET_PUBLIC = "UPDATE catalog_playlists SET is_public = ?1 \
-         WHERE id = ?2 AND user_id = ?3 AND " + (not_rotation!("catalog_playlists"));
+         WHERE id = ?2 AND user_id = ?3 AND " + (not_app_kept!("catalog_playlists"));
     /// Delete user `?2`'s playlist `?1`; its entries and cover go with it.
     pub(super) DELETE_PLAYLIST = "DELETE FROM catalog_playlists WHERE id = ?1 AND user_id = ?2";
     /// Delete playlist `?1` if it has no owner; its entries and cover go
     /// with it.
     pub(super) DELETE_STRAY = "DELETE FROM catalog_playlists WHERE id = ?1 AND user_id IS NULL";
+    /// The library tracks of user `?1`'s list from source `?2`, in order.
+    pub(super) SOURCE_LIST_FILES = "SELECT t.library_file_id FROM catalog_playlist_tracks t \
+         JOIN catalog_playlists p ON p.id = t.playlist_id \
+         WHERE p.user_id = ?1 AND p.source_ref = ?2 ORDER BY t.position";
+    /// Whether account `?1` is there.
+    pub(super) ACCOUNT_THERE = "SELECT EXISTS (SELECT 1 FROM auth_users WHERE id = ?1)";
+    /// Every list Discover keeps for user `?1`'s apps: its id, source and
+    /// name.
+    pub(super) DISCOVER_LISTS_OF = "SELECT id, source_ref, name FROM catalog_playlists \
+         WHERE user_id = ?1 AND substr(source_ref, 1, 14) = 'discover-list:' ORDER BY id";
+    pub(super) row DiscoverListRow for [DISCOVER_LISTS_OF] {
+        id: String,
+        source_ref: String,
+        name: String,
+    }
+    /// Name user `?3`'s list Discover keeps `?2` `?1`.
+    pub(super) DISCOVER_LIST_RENAME = "UPDATE catalog_playlists SET name = ?1 \
+         WHERE id = ?2 AND user_id = ?3 AND substr(source_ref, 1, 14) = 'discover-list:'";
+    /// Delete user `?2`'s list Discover keeps `?1`; its entries go with it.
+    pub(super) DISCOVER_LIST_DELETE = "DELETE FROM catalog_playlists \
+         WHERE id = ?1 AND user_id = ?2 AND substr(source_ref, 1, 14) = 'discover-list:'";
+    /// Delete every list Discover keeps for user `?1`'s apps.
+    pub(super) DISCOVER_LISTS_DELETE = "DELETE FROM catalog_playlists WHERE user_id = ?1 \
+         AND substr(source_ref, 1, 14) = 'discover-list:'";
     /// One playlist as a write left it: name, flag and made time in epoch
     /// seconds.
     pub(super) SAVED = "SELECT name, is_public, created_at / 1000 \

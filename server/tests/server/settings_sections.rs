@@ -432,6 +432,7 @@ async fn a_switch_for_a_section_that_has_gone_never_fails_a_save() {
         db.clone(),
         rig.platform.clock.clone(),
         LastFmLinks::new(&AuthDb::new(&db, rig.platform.clock.clone())),
+        crate::common::bundles::queue_app_lists_at(&rig.platform),
     );
     let masters = Masters {
         lastfm: false,
@@ -486,6 +487,7 @@ async fn the_sound_bench_is_turned_off_while_sound_analysis_is() {
         db.clone(),
         rig.platform.clock.clone(),
         LastFmLinks::new(&AuthDb::new(&db, rig.platform.clock.clone())),
+        crate::common::bundles::queue_app_lists_at(&rig.platform),
     );
     let bench = |sound_analysis| {
         let prefs = &prefs;

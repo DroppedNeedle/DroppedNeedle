@@ -785,7 +785,26 @@ pub fn settings_at(
         droppedneedle_acquire::wiring::DeemixWiring::build(platform, Providers::closed().previews)
             .checks()
             .clone(),
+        queue_app_lists_at(platform),
     )
+}
+
+/// A section switches save's Discover app playlists' refresh, queued on
+/// the platform's jobs table as Discover's `Due::queue_now` queues it,
+/// where nothing runs it.
+pub fn queue_app_lists_at(
+    platform: &Platform,
+) -> droppedneedle::settings::section_prefs::QueueAppLists {
+    let queue = JobQueue::new(platform.db.clone(), platform.clock.clone());
+    Arc::new(move |tx, user_id| {
+        queue.enqueue(
+            tx,
+            droppedneedle_catalog::discover::engine::app_lists::KIND,
+            user_id,
+            &(),
+        )?;
+        Ok(())
+    })
 }
 
 /// [`settings_at`] with the live probes over closed providers, for rigs

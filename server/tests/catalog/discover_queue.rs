@@ -643,6 +643,7 @@ pub(crate) fn discover_inputs(rig: &AuthRig, dir: &Path, providers: Providers) -
             platform.db.clone(),
             rig.config.live(),
         ),
+        collections: crate::common::bundles::collections_at(platform).wired(),
     }
 }
 

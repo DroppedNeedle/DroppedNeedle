@@ -27,7 +27,7 @@ function signIn() {
 
 describe('DepthSwitch.svelte', () => {
 	it('shows the stored depth, and a choice saves it with the set day kept', async () => {
-		let prefs: Prefs = { set_day: 'monday', depth: 'home_ground' };
+		let prefs: Prefs = { set_day: 'monday', depth: 'home_ground', app_playlists: true };
 		const api = fakeApi({
 			[PREFS]: () => prefs,
 			[SAVE]: ({ body }) => {
@@ -50,7 +50,7 @@ describe('DepthSwitch.svelte', () => {
 			.element(page.getByText('Your next set will follow this. This week holds still.'))
 			.toBeVisible();
 		expect(api.calls(SAVE).map((call) => call.body)).toEqual([
-			{ set_day: 'monday', depth: 'far_out' }
+			{ set_day: 'monday', depth: 'far_out', app_playlists: true }
 		]);
 	});
 });

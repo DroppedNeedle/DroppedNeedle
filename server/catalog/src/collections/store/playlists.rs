@@ -82,6 +82,18 @@ pub struct PlaylistRow {
     pub rotation: Option<RotationMark>,
 }
 
+impl PlaylistRow {
+    /// Whether only the app writes it: a list on rotation, or a list
+    /// Discover keeps for its owner's apps.
+    pub fn app_kept(&self) -> bool {
+        self.rotation.is_some()
+            || self
+                .source_ref
+                .as_deref()
+                .is_some_and(crate::collections::discover_lists::is_discover_list)
+    }
+}
+
 /// What makes a playlist a list on rotation: its row in
 /// `catalog_rotation_lists`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

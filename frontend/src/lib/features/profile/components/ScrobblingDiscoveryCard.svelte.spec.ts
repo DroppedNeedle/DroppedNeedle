@@ -6,6 +6,7 @@ import { renderWithQuery } from '$lib/test/render';
 import type { ScrobblePreferences } from '$lib/features/profile/queries/scrobble-preferences.svelte';
 import type { IntegrationStatus } from '$lib/features/home/queries/home.svelte';
 import type { ListeningHistory } from '$lib/features/profile/queries/listening-history.svelte';
+import type { DiscoverPrefs } from '$lib/features/discover/queries/week.svelte';
 
 // The preferences read waits for a signed-in user.
 vi.mock('$lib/stores/authStore.svelte', () => ({
@@ -34,6 +35,12 @@ const nothing: ListeningHistory = {
 	oldest_listened_at: null,
 	newest_listened_at: null,
 	last_synced_at: null
+};
+
+const discoverPrefs: DiscoverPrefs = {
+	set_day: 'monday',
+	depth: 'far_out',
+	app_playlists: true
 };
 
 // ListenBrainz linked as `username`.
@@ -72,6 +79,7 @@ describe('Last.fm link on the profile', () => {
 			},
 			'GET /api/v3/me/scrobble-preferences': prefs,
 			'GET /api/v3/home/integration-status': integrations(true),
+			'GET /api/v3/discover/prefs': discoverPrefs,
 			'GET /api/v3/me/listening-history': nothing,
 			'POST /api/v3/me/connections/lastfm/token': {
 				token: 'lfm-token',
@@ -108,6 +116,7 @@ describe('Last.fm link on the profile', () => {
 			'GET /api/v3/me/connections': { connections: [] },
 			'GET /api/v3/me/scrobble-preferences': { ...prefs, primary_music_source: 'lastfm' },
 			'GET /api/v3/home/integration-status': integrations(false),
+			'GET /api/v3/discover/prefs': discoverPrefs,
 			'GET /api/v3/me/listening-history': nothing
 		});
 		await renderWithQuery(ScrobblingDiscoveryCard, { navidromeEnabled: false });
@@ -131,6 +140,7 @@ describe('Last.fm link on the profile', () => {
 			'GET /api/v3/me/connections': { connections: [] },
 			'GET /api/v3/me/scrobble-preferences': prefs,
 			'GET /api/v3/home/integration-status': integrations(true),
+			'GET /api/v3/discover/prefs': discoverPrefs,
 			'GET /api/v3/me/listening-history': nothing,
 			'POST /api/v3/me/connections/lastfm/token': apiError(
 				409,
@@ -148,12 +158,34 @@ describe('Last.fm link on the profile', () => {
 	});
 });
 
+describe('Discover playlists in apps', () => {
+	it('turns them off, keeping the set day and depth', async () => {
+		const api = fakeApi({
+			'GET /api/v3/me/connections': { connections: [] },
+			'GET /api/v3/me/scrobble-preferences': prefs,
+			'GET /api/v3/home/integration-status': integrations(true),
+			'GET /api/v3/discover/prefs': discoverPrefs,
+			'GET /api/v3/me/listening-history': nothing,
+			'PUT /api/v3/discover/prefs': (request: FakeRequest) => request.body as DiscoverPrefs
+		});
+		await renderWithQuery(ScrobblingDiscoveryCard, { navidromeEnabled: false });
+
+		const toggle = page.getByRole('checkbox', { name: 'Discover playlists in apps' });
+		await expect.element(toggle).toBeChecked();
+		await toggle.click();
+		await expect
+			.poll(() => api.calls('PUT /api/v3/discover/prefs').map((call) => call.body))
+			.toEqual([{ ...discoverPrefs, app_playlists: false }]);
+	});
+});
+
 describe('Your history on the profile', () => {
 	it('says what is kept and forgets it once confirmed', async () => {
 		const api = fakeApi({
 			'GET /api/v3/me/connections': { connections: [] },
 			'GET /api/v3/me/scrobble-preferences': prefs,
 			'GET /api/v3/home/integration-status': integrations(true),
+			'GET /api/v3/discover/prefs': discoverPrefs,
 			'GET /api/v3/me/listening-history': nothing,
 			'DELETE /api/v3/discover/history': undefined
 		});
@@ -193,6 +225,7 @@ describe('Your history on the profile', () => {
 			'GET /api/v3/me/connections': { connections: [] },
 			'GET /api/v3/me/scrobble-preferences': prefs,
 			'GET /api/v3/home/integration-status': integrations(true),
+			'GET /api/v3/discover/prefs': discoverPrefs,
 			'GET /api/v3/me/listening-history': nothing,
 			'DELETE /api/v3/discover/history': apiError(status, code)
 		});
@@ -211,6 +244,7 @@ describe('Listening history on the profile', () => {
 			'GET /api/v3/me/connections': { connections: [] },
 			'GET /api/v3/me/scrobble-preferences': prefs,
 			'GET /api/v3/home/integration-status': integrations(true),
+			'GET /api/v3/discover/prefs': discoverPrefs,
 			'GET /api/v3/me/listening-history': () =>
 				uploaded
 					? { ...nothing, state: 'importing', source: 'upload', imported_listens: 4512 }
@@ -246,6 +280,7 @@ describe('Listening history on the profile', () => {
 			'GET /api/v3/me/connections': { connections: [] },
 			'GET /api/v3/me/scrobble-preferences': prefs,
 			'GET /api/v3/home/integration-status': integrations(true),
+			'GET /api/v3/discover/prefs': discoverPrefs,
 			'GET /api/v3/me/listening-history': nothing,
 			'POST /api/v3/me/listening-history/upload': apiError(
 				400,
@@ -274,6 +309,7 @@ describe('Listening history on the profile', () => {
 			'GET /api/v3/me/connections': linkedAs('ada'),
 			'GET /api/v3/me/scrobble-preferences': prefs,
 			'GET /api/v3/home/integration-status': integrations(true),
+			'GET /api/v3/discover/prefs': discoverPrefs,
 			'GET /api/v3/me/listening-history': {
 				...nothing,
 				state: 'exporting',
@@ -291,6 +327,7 @@ describe('Listening history on the profile', () => {
 			'GET /api/v3/me/connections': linkedAs('ada'),
 			'GET /api/v3/me/scrobble-preferences': prefs,
 			'GET /api/v3/home/integration-status': integrations(true),
+			'GET /api/v3/discover/prefs': discoverPrefs,
 			'GET /api/v3/me/listening-history': {
 				...nothing,
 				state: 'current',
@@ -316,6 +353,7 @@ describe('Listening history on the profile', () => {
 			'GET /api/v3/me/connections': linkedAs('ada'),
 			'GET /api/v3/me/scrobble-preferences': prefs,
 			'GET /api/v3/home/integration-status': integrations(true),
+			'GET /api/v3/discover/prefs': discoverPrefs,
 			'GET /api/v3/me/listening-history': () =>
 				asked
 					? { ...nothing, state: 'pending', source: 'export', account: 'ada' }
@@ -345,6 +383,7 @@ describe('Listening history on the profile', () => {
 			'GET /api/v3/me/connections': { connections: [] },
 			'GET /api/v3/me/scrobble-preferences': prefs,
 			'GET /api/v3/home/integration-status': integrations(true),
+			'GET /api/v3/discover/prefs': discoverPrefs,
 			'GET /api/v3/me/listening-history': {
 				...nothing,
 				state: 'current',
@@ -386,6 +425,7 @@ describe('Listening history on the profile', () => {
 			'GET /api/v3/me/connections': { connections: [] },
 			'GET /api/v3/me/scrobble-preferences': prefs,
 			'GET /api/v3/home/integration-status': integrations(true),
+			'GET /api/v3/discover/prefs': discoverPrefs,
 			'GET /api/v3/me/listening-history': apiError(500, 'INTERNAL_ERROR')
 		});
 		await renderWithQuery(ScrobblingDiscoveryCard, { navidromeEnabled: false });

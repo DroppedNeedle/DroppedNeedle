@@ -77,7 +77,9 @@ impl SettingsSetup {
     /// Management settings say through `bins` when the recycle bin path is
     /// not used. The appearance routes use `appearance`, the store the
     /// admin routes share, and Deemix's Test `deemix`, the checks on the
-    /// session the Deezer source keeps.
+    /// session the Deezer source keeps. A save of a person's section
+    /// switches queues their Discover app playlists' refresh through
+    /// `app_lists`.
     #[allow(clippy::too_many_arguments)]
     pub fn build(
         platform: &Platform,
@@ -89,6 +91,7 @@ impl SettingsSetup {
         bins: BinSource,
         appearance: AppearanceStore,
         deemix: Arc<DeemixChecks>,
+        app_lists: crate::settings::section_prefs::QueueAppLists,
     ) -> Self {
         let store = platform.settings.clone();
         let service = Arc::new(
@@ -109,6 +112,7 @@ impl SettingsSetup {
                 platform.db.clone(),
                 platform.clock.clone(),
                 lastfm,
+                app_lists,
             )),
             bins,
             other_folders: OtherFolders::new(

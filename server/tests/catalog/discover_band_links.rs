@@ -825,6 +825,7 @@ async fn a_band_link_pick_goes_in_by_the_depths_order() {
             DiscoverPrefs {
                 set_day: SetDay::Friday,
                 depth: Depth::FarOut,
+                app_playlists: true,
             },
         )
         .await

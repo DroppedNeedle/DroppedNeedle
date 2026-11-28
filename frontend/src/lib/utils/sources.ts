@@ -1,10 +1,10 @@
 /**
  * Where a playlist came from, as its tab and fact line name it: the
  * Weekly Mix, or an imported playlist's source. Null for one made by a
- * person or a list on rotation, which says so in its own way.
+ * person, a list on rotation or a list Discover keeps for apps.
  */
 export function playlistSourceType(playlist: {
-	kind: 'own' | 'imported' | 'weekly_mix' | 'rotation';
+	kind: 'own' | 'imported' | 'weekly_mix' | 'rotation' | 'discover';
 	source_ref: string | null;
 }): string | null {
 	if (playlist.kind === 'weekly_mix') return 'weekly_mix';

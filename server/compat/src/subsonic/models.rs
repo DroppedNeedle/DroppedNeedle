@@ -722,8 +722,29 @@ pub struct SArtistInfo {
     /// Large cover URL.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub largeImageUrl: Option<String>,
-    /// Similar artists.
-    pub similarArtist: Vec<SArtistID3>,
+    /// Similar artists the library holds: the file-structure shape for
+    /// `getArtistInfo`, ID3 for `getArtistInfo2`.
+    pub similarArtist: Vec<SSimilarArtist>,
+}
+
+/// One similar artist, in the shape its endpoint answers.
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum SSimilarArtist {
+    /// `getArtistInfo`.
+    File(SArtist),
+    /// `getArtistInfo2`.
+    Id3(SArtistID3),
+}
+
+/// One track the sound engine found (OpenSubsonic `sonicSimilarity`).
+#[derive(Debug, Clone, Serialize)]
+pub struct SSonicMatch {
+    /// The song.
+    pub entry: SChild,
+    /// How alike it sounds to the song asked about (the start song for a
+    /// path): `1 - cosine distance`, from 0 to 1.
+    pub similarity: f64,
 }
 
 /// Album info.

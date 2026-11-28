@@ -6,14 +6,15 @@ use super::error::{NOT_AUTHORIZED, NOT_FOUND, SubsonicError};
 use super::ids::{IdKind, decode, decode_expect, encode};
 use super::models::{
     SAgent, SAlbumInfo, SArtistInfo, SBookmark, SCue, SCueLine, SLyrics, SLyricsLine, SPlayQueue,
-    SPlayQueueByIndex, SPlaylist, SScanStatus, SSearchResult, SStructuredLyrics, SUser, Wrap,
+    SPlayQueueByIndex, SPlaylist, SScanStatus, SSearchResult, SSimilarArtist, SSonicMatch,
+    SStructuredLyrics, SUser, Wrap,
 };
 use super::params::SubsonicParameters;
 use super::picture::{INFO_SIZES, PictureKind};
 use super::records::{PlaylistDetail, PlaylistEntry, PlaylistRecord};
 use super::views::{ViewTrack, iso};
 use super::{Ctx, Outcome};
-use crate::library::CompatError;
+use crate::library::{CompatError, SoundSeed};
 use crate::subsonic::principal::CompatPrincipal;
 use droppedneedle_library::tags::lyrics::{AgentRole, LyricsKind, LyricsTrack};
 
@@ -943,12 +944,18 @@ pub fn effective_username(user: &CompatPrincipal) -> String {
 }
 
 /// Artist info: projected MBID or an empty string (else the raw mbid when
-/// it looks like one) plus small/medium/large open picture links. `count`
-/// and `includeNotPresent` are parsed and ignored.
+/// it looks like one) plus small/medium/large open picture links, and up
+/// to `count` similar artists the library holds, from the similar-artists
+/// answer Discover keeps (kept rows only: an artist with none has none,
+/// and nothing is asked for). `includeNotPresent` is parsed and ignored:
+/// an artist the library lacks has nothing to open.
 pub async fn artist_info(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let mbid = decode_expect(&ctx.p("id")?.unwrap_or_default(), IdKind::Artist)?;
     let mbid = current_id(ctx, IdKind::Artist, mbid).await?;
-    ctx.pint("count", Some(20), Some(0), Some(500))?;
+    let count = ctx
+        .pint("count", Some(20), Some(0), Some(500))?
+        .unwrap_or(20)
+        .max(0) as usize;
     ctx.pbool("includeNotPresent", false)?;
     let (artist, _) = ctx
         .store
@@ -965,11 +972,31 @@ pub async fn artist_info(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     };
     let [small, medium, large] = INFO_SIZES
         .map(|size| ctx.picture_link(PictureKind::Artist, &artist.artist_mbid, size, None));
-    let key = if ctx.endpoint_name == "getartistinfo2" {
-        "artistInfo2"
-    } else {
-        "artistInfo"
+    let id3 = ctx.endpoint_name == "getartistinfo2";
+    let key = if id3 { "artistInfo2" } else { "artistInfo" };
+    let similar = match artist
+        .musicbrainz_artist_id
+        .as_deref()
+        .filter(|_| artist.provider_identity_projected && count > 0)
+    {
+        Some(artist_mbid) => ctx
+            .store
+            .similar_artists(artist_mbid, count)
+            .await
+            .map_err(Ctx::store_err)?,
+        None => Vec::new(),
     };
+    let similar_artist = similar
+        .iter()
+        .filter(|similar| similar.artist_mbid != artist.artist_mbid)
+        .map(|similar| {
+            if id3 {
+                SSimilarArtist::Id3(ctx.artist_id3(similar))
+            } else {
+                SSimilarArtist::File(ctx.artist_file(similar))
+            }
+        })
+        .collect();
     Outcome::keyed(
         key,
         SArtistInfo {
@@ -979,7 +1006,7 @@ pub async fn artist_info(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
             smallImageUrl: small,
             mediumImageUrl: medium,
             largeImageUrl: large,
-            similarArtist: Vec::new(),
+            similarArtist: similar_artist,
         },
     )
 }
@@ -1367,13 +1394,18 @@ pub async fn top_songs(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
 }
 
 /// Similar songs for an artist, album or song id (shared by both
-/// spellings). An album or song stands for its album artist (a song
-/// without one, for its own artist); Music Assistant sends a song id for
-/// track radio.
+/// spellings). While the sound engine answers apps, the library's tracks
+/// that sound like the song, the album's tracks or some of the artist's,
+/// in a station's walking order. Otherwise, or when nothing sounds near
+/// enough, an album or song stands for its album artist (a song without
+/// one, for its own artist) and the artist's tracks answer; Music
+/// Assistant sends a song id for track radio.
 pub async fn similar_songs_query(
     ctx: &Ctx<'_>,
 ) -> Result<Vec<super::views::ViewTrack>, SubsonicError> {
-    let mbid = similar_seed_artist(ctx).await?;
+    let (kind, internal) = super::ids::decode(&ctx.p("id")?.unwrap_or_default())?;
+    let internal = current_id(ctx, kind, internal).await?;
+    let mbid = similar_seed_artist(ctx, kind, &internal).await?;
     let count = ctx
         .pint("count", Some(50), Some(1), Some(500))?
         .unwrap_or(50)
@@ -1388,6 +1420,22 @@ pub async fn similar_songs_query(
         return Err(SubsonicError::new(NOT_FOUND, "Artist not found"));
     }
     let user_id = ctx.user()?.user_id().to_owned();
+    let seed = match kind {
+        IdKind::Track => Some(SoundSeed::Track(&internal)),
+        IdKind::Album => Some(SoundSeed::Album(&internal)),
+        IdKind::Artist => Some(SoundSeed::Artist(&internal)),
+        IdKind::Playlist | IdKind::Genre => None,
+    };
+    if let Some(seed) = seed {
+        let found = ctx
+            .store
+            .sound_similar(&user_id, seed, count)
+            .await
+            .map_err(Ctx::store_err)?;
+        if !found.is_empty() {
+            return Ok(found);
+        }
+    }
     ctx.store
         .get_similar_songs(&mbid, &user_id, count)
         .await
@@ -1396,22 +1444,24 @@ pub async fn similar_songs_query(
 
 /// The artist a getSimilarSongs id stands for; 70 for any other kind of
 /// id, or one that names nothing.
-async fn similar_seed_artist(ctx: &Ctx<'_>) -> Result<String, SubsonicError> {
+async fn similar_seed_artist(
+    ctx: &Ctx<'_>,
+    kind: IdKind,
+    internal: &str,
+) -> Result<String, SubsonicError> {
     let not_found = || SubsonicError::new(NOT_FOUND, "Artist not found");
-    let (kind, internal) = super::ids::decode(&ctx.p("id")?.unwrap_or_default())?;
-    let internal = current_id(ctx, kind, internal).await?;
     match kind {
-        IdKind::Artist => Ok(internal),
+        IdKind::Artist => Ok(internal.to_owned()),
         IdKind::Album => ctx
             .store
-            .get_album(&internal)
+            .get_album(internal)
             .await
             .map_err(Ctx::store_err)?
             .and_then(|album| album.artist_mbid)
             .ok_or_else(not_found),
         IdKind::Track => ctx
             .store
-            .get_track(&internal)
+            .get_track(internal)
             .await
             .map_err(Ctx::store_err)?
             .and_then(|track| track.album_artist_mbid.or(track.artist_mbid))
@@ -1421,6 +1471,120 @@ async fn similar_seed_artist(ctx: &Ctx<'_>) -> Result<String, SubsonicError> {
             "Expected an artist, album or song id",
         )),
     }
+}
+
+/// The song a sonicSimilarity parameter names, as it is now; 10 when it
+/// is missing, 70 for another kind of id or a song the library does not
+/// hold.
+async fn sonic_song(ctx: &Ctx<'_>, key: &str) -> Result<String, SubsonicError> {
+    let raw = ctx
+        .p(key)?
+        .ok_or_else(|| SubsonicError::code_only(super::error::PARAM_MISSING))?;
+    let internal = decode_expect(&raw, IdKind::Track)?;
+    let internal = current_id(ctx, IdKind::Track, internal).await?;
+    if ctx
+        .store
+        .get_track(&internal)
+        .await
+        .map_err(Ctx::store_err)?
+        .is_none()
+    {
+        return Err(SubsonicError::new(NOT_FOUND, "Song not found"));
+    }
+    Ok(internal)
+}
+
+/// `matches` as `sonicMatch` entries, in order.
+async fn sonic_matches(
+    ctx: &Ctx<'_>,
+    matches: Vec<crate::sound::Match>,
+) -> Result<Outcome, SubsonicError> {
+    let ids: Vec<String> = matches.iter().map(|found| found.track_id.clone()).collect();
+    let tracks: std::collections::HashMap<String, ViewTrack> = ctx
+        .store
+        .get_tracks_in_order(&ids)
+        .await
+        .map_err(Ctx::store_err)?
+        .into_iter()
+        .map(|track| (track.file_id.clone(), track))
+        .collect();
+    let entries: Vec<SSonicMatch> = matches
+        .iter()
+        .filter_map(|found| {
+            Some(SSonicMatch {
+                entry: ctx.child(tracks.get(&found.track_id)?),
+                similarity: found.similarity,
+            })
+        })
+        .collect();
+    Outcome::keyed("sonicMatch", entries)
+}
+
+/// OpenSubsonic `getSonicSimilarTracks` (extension `sonicSimilarity` 1):
+/// up to `count` (10) library songs that sound like `id`, nearest first.
+/// Served only while the sound engine answers apps; otherwise a plain 404
+/// as for an unknown method. A song with no sound yet answers none.
+pub async fn sonic_similar_tracks(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
+    if !ctx.store.sound().serves().await {
+        return Ok(Outcome::NotServed);
+    }
+    let song = sonic_song(ctx, "id").await?;
+    let count = ctx
+        .pint("count", Some(10), Some(1), Some(500))?
+        .unwrap_or(10) as usize;
+    let user_id = ctx.user()?.user_id().to_owned();
+    let matches = ctx
+        .store
+        .sound()
+        .nearest(&user_id, &song, count)
+        .await
+        .map_err(Ctx::store_err)?
+        .unwrap_or_default();
+    sonic_matches(ctx, matches).await
+}
+
+/// The most songs one `findSonicPath` answers, whatever `count` asks: each
+/// step scans every sound.
+const PATH_MOST: i64 = 100;
+
+/// OpenSubsonic `findSonicPath` (extension `sonicSimilarity` 1): up to
+/// `count` (25, at most [`PATH_MOST`]) library songs leading from `startSongId` to `endSongId` by
+/// how they sound, the start first and the end last, each with how alike
+/// it sounds to the start. Served only while the sound engine answers
+/// apps. Either end with no sound yet answers the two ends alone.
+pub async fn find_sonic_path(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
+    if !ctx.store.sound().serves().await {
+        return Ok(Outcome::NotServed);
+    }
+    let start = sonic_song(ctx, "startSongId").await?;
+    let end = sonic_song(ctx, "endSongId").await?;
+    let count = ctx
+        .pint("count", Some(25), Some(2), Some(500))?
+        .unwrap_or(25)
+        .min(PATH_MOST) as usize;
+    let user_id = ctx.user()?.user_id().to_owned();
+    let matches = match ctx
+        .store
+        .sound()
+        .path(&user_id, &start, &end, count)
+        .await
+        .map_err(Ctx::store_err)?
+    {
+        Some(matches) => matches,
+        None => {
+            let mut ends = vec![start.clone()];
+            if end != start {
+                ends.push(end.clone());
+            }
+            ends.into_iter()
+                .map(|track_id| crate::sound::Match {
+                    similarity: if track_id == start { 1.0 } else { 0.0 },
+                    track_id,
+                })
+                .collect()
+        }
+    };
+    sonic_matches(ctx, matches).await
 }
 
 /// Similar songs (ID3 key).

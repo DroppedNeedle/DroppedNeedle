@@ -2246,7 +2246,7 @@ async fn caller_keyed_state_stays_with_its_caller() {
             StatusCode::NOT_FOUND,
             "{what} read A's set pick: {body}"
         );
-        let chosen = json!({"set_day": "monday", "depth": "far_out"});
+        let chosen = json!({"set_day": "monday", "depth": "far_out", "app_playlists": true});
         let (status, body) = call(&app, who, "PUT", prefs, Some(chosen)).await;
         ok(
             status,

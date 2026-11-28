@@ -590,6 +590,7 @@ pub(crate) async fn build_on(
         media.stream.engine.clone(),
         library.scans.clone(),
         &catalog_setup,
+        library.sound.clone(),
     ));
     // Durable quota overrides back into the live ledger. A failure warns
     // instead of stopping the boot; the admin can re-save.
@@ -665,6 +666,10 @@ pub(crate) async fn build_on(
         .with(
             droppedneedle_catalog::discover::mixes::SPEC,
             catalog_setup.discover.mixes.clone(),
+        )
+        .with(
+            droppedneedle_catalog::discover::engine::app_lists::SPEC,
+            catalog_setup.discover.app_lists.clone(),
         )
         .with(
             droppedneedle_acquire::imports::jobs::SPEC,
@@ -748,6 +753,7 @@ pub(crate) async fn build_on(
         library.bins.clone(),
         appearance,
         acquire.deemix.clone(),
+        crate::settings::section_prefs::queue_through(catalog_setup.discover.due.clone()),
     );
     let plugins = PluginsSetup::build(p, plugin_host, plugin_ticks, providers.github_repos.clone());
     plugins.sync_ticks().await;

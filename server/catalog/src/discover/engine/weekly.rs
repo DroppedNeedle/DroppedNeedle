@@ -48,7 +48,7 @@ use super::rank::proposed;
 use super::select::{self, Exposure, Floors, Share};
 use super::taste_store::Kept;
 use super::weekly_store::{self, Context, NewPick, NewSet, StoredSet};
-use super::{pool, pool_store, reason};
+use super::{app_lists, pool, pool_store, reason};
 use crate::discover::cache::ForgetCounts;
 use crate::discover::due::Due;
 use crate::discover::facts::FactSource;
@@ -665,6 +665,12 @@ impl WeeklySets {
             tastes,
             picks: new_picks,
         };
+        // The new set is this week's: its app playlist follows it.
+        let (due, user) = (Arc::clone(&self.due), user_id.to_owned());
+        let complete = move |tx: &Transaction| {
+            due.queue_now(tx, app_lists::KIND, &user)?;
+            complete(tx)
+        };
         let kept =
             weekly_store::keep(&self.db, &self.forgets, user_id, forgets_at, set, complete).await?;
         if kept == Kept::Dropped {
@@ -877,23 +883,28 @@ impl WeeklySets {
         Ok(Page::at_offset(items, offset, limit, total))
     }
 
-    /// `user_id`'s set day and depth.
+    /// `user_id`'s set day, depth and app playlists switch.
     ///
     /// # Errors
     ///
     /// The read's failure.
     pub async fn prefs(&self, user_id: &str) -> Result<DiscoverPrefs, DbError> {
-        let (set_day, depth) = weekly_store::prefs(&self.db, user_id)
+        let prefs = weekly_store::prefs(&self.db, user_id)
             .await?
-            .unwrap_or((SetDay::DEFAULT, Depth::DEFAULT));
-        Ok(DiscoverPrefs { set_day, depth })
+            .unwrap_or(weekly_store::Prefs::DEFAULT);
+        Ok(DiscoverPrefs {
+            set_day: prefs.set_day,
+            depth: prefs.depth,
+            app_playlists: prefs.app_playlists,
+        })
     }
 
-    /// Keep `user_id`'s set day and depth. The set of the week running
-    /// stays; a new day counts from the first such day after it. A new
-    /// depth queues their pool build in the same write: dig further takes
-    /// its floors at once and its order once the pool is built, and the
-    /// next set is dealt at it.
+    /// Keep `user_id`'s set day, depth and app playlists switch. The set of
+    /// the week running stays; a new day counts from the first such day
+    /// after it. A new depth queues their pool build in the same write: dig
+    /// further takes its floors at once and its order once the pool is
+    /// built, and the next set is dealt at it. A switch turned on or off
+    /// queues their app playlists' refresh, which makes or removes them.
     ///
     /// # Errors
     ///
@@ -907,9 +918,21 @@ impl WeeklySets {
         weekly_store::save_prefs(
             &self.db,
             user_id,
-            (prefs.set_day, prefs.depth),
+            weekly_store::Prefs {
+                set_day: prefs.set_day,
+                depth: prefs.depth,
+                app_playlists: prefs.app_playlists,
+            },
             self.clock.now_ms(),
-            move |tx| due.queue_now(tx, pool::KIND, &user),
+            move |tx, changed| {
+                if changed.depth {
+                    due.queue_now(tx, pool::KIND, &user)?;
+                }
+                if changed.app_playlists {
+                    due.queue_now(tx, app_lists::KIND, &user)?;
+                }
+                Ok(())
+            },
         )
         .await?;
         Ok(prefs)

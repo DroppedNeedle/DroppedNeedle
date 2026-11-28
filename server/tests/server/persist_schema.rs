@@ -510,6 +510,10 @@ const SHIPPED: &[(&str, &str)] = &[
         "0184_daily_mixes.sql",
         "4966b349ce02691b4531ecd62d5ead95d4fd9ea5c041749ba71fa00f08892e28",
     ),
+    (
+        "0185_discover_app_playlists.sql",
+        "3240dd59344c8bc45687d104e938badc25ed7bfd84b7495a26f9fc7b058c1095",
+    ),
 ];
 
 /// Upgrading an instance keeps existing sessions valid and outside the
@@ -5559,6 +5563,65 @@ fn daily_mixes_upgrade_adds_two_tables_and_drops_the_memo() {
         0,
         "a mix's tracks go with it"
     );
+}
+
+/// 0185 adds whether Discover keeps playlists for a person's apps. Everyone
+/// kept reads as on, a new row is on unless it says otherwise, a value but
+/// 0 or 1 is refused, and the prefs carry across.
+#[test]
+fn discover_app_playlists_upgrade_reads_everyone_as_on() {
+    let dir = ScratchDir::new("discover-app-playlists-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 185)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, created_at)
+                 VALUES ('u1', 'One', 1), ('u2', 'Two', 1);
+             INSERT INTO catalog_discover_prefs (user_id, set_day, depth, updated_at)
+                 VALUES ('u1', 'monday', 'far_out', 5);",
+        )
+        .unwrap();
+    let prefs = table_rows(&connection, "catalog_discover_prefs", "rowid, *");
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 185);
+    let columns = "rowid, user_id, set_day, updated_at, history_wait_from_at, depth";
+    assert_eq!(
+        table_rows(&connection, "catalog_discover_prefs", columns),
+        prefs,
+        "the prefs carry across"
+    );
+    connection
+        .execute_batch(
+            "INSERT INTO catalog_discover_prefs (user_id, updated_at, app_playlists)
+                 VALUES ('u2', 1, 0);",
+        )
+        .expect("a switch turned off is stored");
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT user_id || ' ' || app_playlists FROM catalog_discover_prefs ORDER BY user_id",
+            []
+        ),
+        ["u1 1", "u2 0"],
+        "a kept person reads as on"
+    );
+    for refused in [
+        "UPDATE catalog_discover_prefs SET app_playlists = 2",
+        "UPDATE catalog_discover_prefs SET app_playlists = NULL",
+    ] {
+        assert!(connection.execute_batch(refused).is_err(), "{refused}");
+    }
 }
 
 /// Every foreign key and what deleting its parent does. A rebuild that

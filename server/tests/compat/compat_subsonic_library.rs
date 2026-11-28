@@ -549,6 +549,292 @@ async fn similar_songs_take_a_song_or_album_id() {
     rig.stop().await;
 }
 
+/// The library's six tracks planted around Airbag, at these angles: their
+/// distances from it are 0.0038, 0.0055, 0.0152 and 0.0219, and Paranoid
+/// Android, at 60 degrees, is past the cut-off. 桃源へ is left out of
+/// `planted` so a test can plant it last.
+const SOUNDS: [(&str, f64); 5] = [
+    ("Airbag", 0.0),
+    ("Teardrop", 5.0),
+    ("One", -6.0),
+    ("Song A", 10.0),
+    ("Paranoid Android", 60.0),
+];
+const LAST_SOUND: (&str, f64) = ("桃源へ", -12.0);
+
+/// The titles of a list of songs, in order.
+fn titles_of(songs: &Value) -> Vec<String> {
+    songs
+        .as_array()
+        .map(|songs| {
+            songs
+                .iter()
+                .map(|song| song["title"].as_str().expect("title").to_owned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The extension names `getOpenSubsonicExtensions` lists.
+async fn extension_names(rig: &CompatApp) -> Vec<String> {
+    let answer = unsigned(rig, "GET", "getOpenSubsonicExtensions", &[("f", "json")]).await;
+    let body: Value = serde_json::from_slice(&answer.body).expect("json answer");
+    body["subsonic-response"]["openSubsonicExtensions"]
+        .as_array()
+        .expect("extensions")
+        .iter()
+        .map(|extension| extension["name"].as_str().expect("name").to_owned())
+        .collect()
+}
+
+/// While sound analysis is off, or has analysed fewer than nine in ten of
+/// the library's tracks (five of six here), the sound endpoints are unknown
+/// methods, the extension is not listed and similar songs answer the album
+/// artist's tracks. Once it covers nine in ten: similar songs walk by sound from the song, getSonicSimilarTracks
+/// lists the nearest first with `1 - distance`, findSonicPath starts and
+/// ends on the songs it was given, and both answer the shapes pinned in
+/// `subsonic_sonic_match.json` (JSON) and `subsonic_sonic_match_xml.json`
+/// (Navidrome's XML).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sound_answers_similar_songs_and_the_sonic_endpoints() {
+    use crate::common::compat::{Trace, assert_golden};
+
+    let rig = CompatApp::start("compat-sub-sound").await;
+    let client = Client::player(&rig);
+    let ids = Ids::read(&client).await;
+    let airbag = ids.song("Airbag");
+    let not_served = |answer: Answer, case: &str| {
+        assert_eq!(
+            (answer.status, answer.content_type()),
+            (StatusCode::NOT_FOUND, "text/plain"),
+            "{case}"
+        );
+    };
+    let sorted = |mut titles: Vec<String>| {
+        titles.sort();
+        titles
+    };
+    let fallback = ["Airbag", "Paranoid Android"];
+
+    for (title, degrees) in SOUNDS {
+        rig.plant_sound(title, degrees).await;
+    }
+    for on in [false, true] {
+        rig.set_sound_analysis(on).await;
+        assert!(
+            !extension_names(&rig)
+                .await
+                .contains(&"sonicSimilarity".to_owned()),
+            "listed while on is {on} and five of six tracks are analysed"
+        );
+        not_served(
+            client
+                .get("getSonicSimilarTracks", &[("id", &airbag)])
+                .await,
+            "similar tracks not served",
+        );
+        let answer = client.ok("getSimilarSongs", &[("id", &airbag)]).await;
+        assert_eq!(
+            sorted(titles_of(&answer["similarSongs"]["song"])),
+            fallback,
+            "the album artist's songs while on is {on}"
+        );
+    }
+
+    rig.set_sound_analysis(false).await;
+    rig.plant_sound(LAST_SOUND.0, LAST_SOUND.1).await;
+    rig.set_sound_analysis(true).await;
+    assert!(
+        extension_names(&rig)
+            .await
+            .contains(&"sonicSimilarity".to_owned()),
+        "listed once nine in ten are analysed"
+    );
+    for endpoint in ["getSonicSimilarTracks", "findSonicPath"] {
+        let answer = unsigned(&rig, "GET", endpoint, &[("id", &airbag)]).await;
+        assert_code(&answer, 10, &format!("{endpoint} without credentials"));
+    }
+    let walked = ["Teardrop", "Song A", "One", "桃源へ"];
+    for (endpoint, key) in [
+        ("getSimilarSongs", "similarSongs"),
+        ("getSimilarSongs2", "similarSongs2"),
+    ] {
+        let answer = client.ok(endpoint, &[("id", &airbag)]).await;
+        assert_eq!(titles_of(&answer[key]["song"]), walked, "{endpoint}");
+    }
+    let answer = client
+        .ok("getSimilarSongs", &[("id", &ids.song("Paranoid Android"))])
+        .await;
+    assert_eq!(
+        sorted(titles_of(&answer["similarSongs"]["song"])),
+        fallback,
+        "nothing near enough answers the album artist's songs"
+    );
+
+    let mut trace = Trace::new(&rig);
+    let auth = rig.subsonic_auth("golden");
+    let nearest = trace
+        .get(
+            &crate::common::compat::rest(&format!("getSonicSimilarTracks?id={airbag}"), &auth),
+            &[],
+        )
+        .await;
+    let matches = &nearest["subsonic-response"]["sonicMatch"];
+    assert_eq!(
+        matches
+            .as_array()
+            .expect("matches")
+            .iter()
+            .map(|found| found["entry"]["title"].as_str().expect("title"))
+            .collect::<Vec<_>>(),
+        ["Teardrop", "One", "Song A", "桃源へ"],
+        "nearest first"
+    );
+    assert!(
+        (matches[0]["similarity"].as_f64().expect("similarity") - 0.9962).abs() < 1e-4,
+        "{matches}"
+    );
+    let path = trace
+        .get(
+            &crate::common::compat::rest(
+                &format!(
+                    "findSonicPath?startSongId={airbag}&endSongId={}&count=3",
+                    ids.song("桃源へ")
+                ),
+                &auth,
+            ),
+            &[],
+        )
+        .await;
+    let steps = &path["subsonic-response"]["sonicMatch"];
+    assert_eq!(
+        steps
+            .as_array()
+            .expect("path")
+            .iter()
+            .map(|found| found["entry"]["title"].as_str().expect("title"))
+            .collect::<Vec<_>>(),
+        ["Airbag", "One", "桃源へ"],
+        "the path starts and ends on the songs given"
+    );
+    assert_eq!(steps[0]["similarity"], json!(1.0), "{steps}");
+    assert_golden("subsonic_sonic_match.json", &trace.body());
+
+    for (method, form) in [("GET", false), ("POST", true)] {
+        let pairs = [("id", airbag.as_str()), ("count", "1")];
+        let answer = if form {
+            client.form("getSonicSimilarTracks", &pairs).await
+        } else {
+            client.get("getSonicSimilarTracks", &pairs).await
+        };
+        assert_eq!(answer.content_type(), "application/xml", "{method}");
+        let id = regex::Regex::new("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+            .expect("id pattern");
+        let time = regex::Regex::new(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z").expect("time");
+        let xml = answer.text().replace(
+            &format!("serverVersion=\"{}\"", env!("CARGO_PKG_VERSION")),
+            "serverVersion=\"<version>\"",
+        );
+        let xml = time.replace_all(&xml, "<time>");
+        let xml = id.replace_all(&xml, "<id>");
+        assert_golden("subsonic_sonic_match_xml.json", &json!({ "xml": xml }));
+    }
+    rig.stop().await;
+}
+
+/// getArtistInfo lists, from the similar-artists answer Discover keeps,
+/// only the artists the library holds, in that answer's order (score over
+/// listeners, so the famous U2 goes after Massive Attack), in each
+/// endpoint's shape. An artist with no kept answer lists none, and asking
+/// records nothing as wanted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn artist_info_lists_the_library_artists_kept_as_similar() {
+    const RADIOHEAD: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
+    const U2: &str = "a3cb23fc-acd3-4ce0-8f36-1e5aa6a18432";
+    const MASSIVE_ATTACK: &str = "10adbe5e-a2c0-4bf3-8249-2b4cbf6e6ca8";
+    const ELSEWHERE: &str = "00000000-0000-4000-8000-0000000000aa";
+    let rig = CompatApp::start("compat-sub-similar-artists").await;
+    let client = Client::player(&rig);
+    let ids = Ids::read(&client).await;
+    for (name, mbid) in [
+        ("Radiohead", RADIOHEAD),
+        ("U2", U2),
+        ("Massive Attack", MASSIVE_ATTACK),
+    ] {
+        rig.app
+            .seed_with(
+                "INSERT OR REPLACE INTO local_artist_external_identities \
+                 (local_artist_id, provider, provider_artist_id, decision_source, selected_at) \
+                 SELECT id, 'musicbrainz', ?2, 'manual', 1000 FROM local_artists \
+                 WHERE display_name = ?1",
+                [name, mbid],
+            )
+            .await;
+    }
+    rig.app
+        .seed(format!(
+            "INSERT INTO catalog_fact_fetches (artist_mbid, kind, source, outcome, fetched_at, \
+             due_at, read_at) VALUES ('{RADIOHEAD}', 'neighbours', 'listenbrainz_labs', \
+             'found', 1, 1, 1);
+             INSERT INTO catalog_artist_neighbours (artist_mbid, source, rank, neighbour_mbid, \
+             neighbour_name, score) VALUES \
+             ('{RADIOHEAD}', 'listenbrainz_labs', 0, '{U2}', 'U2', 1.0), \
+             ('{RADIOHEAD}', 'listenbrainz_labs', 1, '{ELSEWHERE}', 'Elsewhere', 0.9), \
+             ('{RADIOHEAD}', 'listenbrainz_labs', 2, '{MASSIVE_ATTACK}', 'Massive Attack', 0.5);
+             INSERT INTO catalog_fact_fetches (artist_mbid, kind, source, outcome, fetched_at, \
+             due_at, read_at) VALUES ('{U2}', 'listeners', 'listenbrainz', 'found', 1, 1, 1), \
+             ('{ELSEWHERE}', 'listeners', 'listenbrainz', 'found', 1, 1, 1), \
+             ('{MASSIVE_ATTACK}', 'listeners', 'listenbrainz', 'found', 1, 1, 1);
+             INSERT INTO catalog_artist_listeners (artist_mbid, listeners, listens) VALUES \
+             ('{U2}', 1000000, 1), ('{ELSEWHERE}', 100, 1), ('{MASSIVE_ATTACK}', 10000, 1);"
+        ))
+        .await;
+    let fetch_rows = || {
+        rig.app
+            .db()
+            .query_row("SELECT COUNT(*) FROM catalog_fact_fetches", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("fetch rows count")
+    };
+    let names = |answer: &Value, key: &str| -> Vec<String> {
+        answer[key]["similarArtist"]
+            .as_array()
+            .expect("similar artists")
+            .iter()
+            .map(|artist| artist["name"].as_str().expect("name").to_owned())
+            .collect()
+    };
+    let radiohead = ids.artist("Radiohead");
+    let info2 = client.ok("getArtistInfo2", &[("id", &radiohead)]).await;
+    assert_eq!(names(&info2, "artistInfo2"), ["Massive Attack", "U2"]);
+    assert_eq!(
+        info2["artistInfo2"]["similarArtist"][0]["id"],
+        json!(ids.artist("Massive Attack"))
+    );
+    assert!(
+        info2["artistInfo2"]["similarArtist"][0]["albumCount"].is_number(),
+        "an ID3 artist: {info2}"
+    );
+    let info = client.ok("getArtistInfo", &[("id", &radiohead)]).await;
+    assert_eq!(names(&info, "artistInfo"), ["Massive Attack", "U2"]);
+    assert!(
+        info["artistInfo"]["similarArtist"][0]["albumCount"].is_null(),
+        "a file-structure artist: {info}"
+    );
+    let one = client
+        .ok("getArtistInfo2", &[("id", &radiohead), ("count", "1")])
+        .await;
+    assert_eq!(names(&one, "artistInfo2"), ["Massive Attack"]);
+    let before = fetch_rows();
+    let u2 = client
+        .ok("getArtistInfo2", &[("id", &ids.artist("U2"))])
+        .await;
+    assert_eq!(names(&u2, "artistInfo2"), Vec::<String>::new());
+    assert_eq!(fetch_rows(), before, "nothing is wanted for U2");
+    rig.stop().await;
+}
+
 /// OpenSubsonic requires a start on every line of a synced set, and Music
 /// Assistant drops its whole track sync on a line without one: synced
 /// lyrics with an untimed line go out unsynced, with no times at all.
@@ -2398,6 +2684,7 @@ async fn a_busy_read_answers_503_with_retry_after_in_both_protocols() {
         media.stream.engine.clone(),
         library.scans.clone(),
         &catalog_setup,
+        library.sound.clone(),
     );
     let compat = CompatSetup::build(deps);
     compat
@@ -2593,6 +2880,7 @@ async fn a_busy_playlist_create_writes_nothing_and_asking_again_makes_one() {
         media.stream.engine.clone(),
         library.scans.clone(),
         &catalog_setup,
+        library.sound.clone(),
     );
     let router = scope.request_scope(CompatSetup::build(deps).router());
     let create = uri(

@@ -39,6 +39,7 @@ use droppedneedle_kernel::jobs::{AlreadyRunning, Supervisor};
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::Crypto;
 use droppedneedle_library::scans::Scans;
+use droppedneedle_library::sound::SoundAnalysis;
 use droppedneedle_media::MediaEngine;
 use droppedneedle_media::playback::PlaybackDeps;
 
@@ -71,8 +72,9 @@ pub struct CompatDeps {
 
 impl CompatDeps {
     /// Deps over the native catalog bundle, so compat shares its catalog and
-    /// collections; the data key, the live settings and this server's port
-    /// and proxies come from `platform`.
+    /// collections, and over the library's sound analysis; the data key, the
+    /// live settings and this server's port and proxies come from
+    /// `platform`.
     pub fn over_reads(
         platform: &Platform,
         users: UsersDeps,
@@ -80,6 +82,7 @@ impl CompatDeps {
         engine: Arc<MediaEngine>,
         scan: Scans,
         catalog_setup: &CatalogSetup,
+        sound: SoundAnalysis,
     ) -> Self {
         let config = &platform.config;
         let settings = LiveSettings::from_config(&platform.settings, engine.can_transcode());
@@ -90,7 +93,7 @@ impl CompatDeps {
             playback,
             engine,
             scan,
-            library: CompatLibrary::from_catalog(catalog_setup, platform.db.clone()),
+            library: CompatLibrary::from_catalog(catalog_setup, platform, sound),
             queues: CompatQueues::new(catalog_setup.collections.db.clone()),
             settings,
             listener: ListenerConfig {

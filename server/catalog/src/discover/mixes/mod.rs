@@ -159,6 +159,9 @@ pub struct MixInputs {
     pub facts: KeptFacts,
     /// The YouTube settings: whether a source plays what the library lacks.
     pub youtube: Live<YouTubeConnection>,
+    /// Where the app playlists' refresh a new day's mixes make due is
+    /// queued.
+    pub due: Arc<crate::discover::due::Due>,
 }
 
 /// Runs [`KIND`] jobs.
@@ -432,6 +435,12 @@ impl MixJobs {
                 )
                 .await?;
         }
+        // The day's mixes are what their app playlists play.
+        let (due, user) = (Arc::clone(&inner.due), user_id.to_owned());
+        let complete = move |tx: &Transaction| {
+            due.queue_now(tx, crate::discover::engine::app_lists::KIND, &user)?;
+            complete(tx)
+        };
         let kept = store::keep(
             &inner.db,
             &inner.forgets,

@@ -517,22 +517,50 @@ pub(crate) async fn stored_evidence(
     }))
 }
 
-/// `user_id`'s set day and depth; `None` while they have chosen neither.
+/// A person's Discover choices as kept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Prefs {
+    /// Their set day.
+    pub set_day: SetDay,
+    /// How far their picks go.
+    pub depth: Depth,
+    /// Whether Discover keeps their app playlists.
+    pub app_playlists: bool,
+}
+
+impl Prefs {
+    /// What someone who has chosen nothing has.
+    pub const DEFAULT: Self = Self {
+        set_day: SetDay::DEFAULT,
+        depth: Depth::DEFAULT,
+        app_playlists: true,
+    };
+}
+
+/// `user_id`'s Discover choices; `None` while they have chosen none.
 ///
 /// # Errors
 ///
 /// The read's failure.
-pub(crate) async fn prefs(db: &Db, user_id: &str) -> Result<Option<(SetDay, Depth)>, DbError> {
+pub(crate) async fn prefs(db: &Db, user_id: &str) -> Result<Option<Prefs>, DbError> {
     let user = user_id.to_owned();
     db.read("discover.weekly.prefs", move |conn| {
         conn.prepare_cached(sql::PREFS_READ.text())?
             .query_map([user], sql::PrefsRow::read)?
             .next()
             .transpose()
-            .map(|row| row.map(|row| (row.set_day, row.depth)))
+            .map(|row| row.map(prefs_of))
             .map_err(DbError::from)
     })
     .await
+}
+
+fn prefs_of(row: sql::PrefsRow) -> Prefs {
+    Prefs {
+        set_day: row.set_day,
+        depth: row.depth,
+        app_playlists: row.app_playlists,
+    }
 }
 
 /// `user_id`'s depth, [`Depth::DEFAULT`] while they have not chosen one.
@@ -554,9 +582,18 @@ pub(crate) async fn depth(db: &Db, user_id: &str) -> Result<Depth, DbError> {
     Ok(depth.unwrap_or(Depth::DEFAULT))
 }
 
-/// Keep `user_id`'s set day `day` and depth `depth`, chosen at `now_ms`;
-/// when the depth is not the one kept before, `changed` runs in the same
-/// write.
+/// What a save of a person's choices changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PrefsChanged {
+    /// Their depth is not the one kept before.
+    pub depth: bool,
+    /// Their app playlists switch is not the one kept before.
+    pub app_playlists: bool,
+}
+
+/// Keep `user_id`'s choices `prefs`, made at `now_ms`; when one that
+/// `changed` is told about differs from the one kept before, it runs in the
+/// same write.
 ///
 /// # Errors
 ///
@@ -564,23 +601,34 @@ pub(crate) async fn depth(db: &Db, user_id: &str) -> Result<Depth, DbError> {
 pub(crate) async fn save_prefs(
     db: &Db,
     user_id: &str,
-    (day, depth): (SetDay, Depth),
+    prefs: Prefs,
     now_ms: i64,
-    changed: impl FnOnce(&Transaction) -> Result<(), JobError> + Send + 'static,
+    changed: impl FnOnce(&Transaction, PrefsChanged) -> Result<(), JobError> + Send + 'static,
 ) -> Result<(), JobError> {
     let user = user_id.to_owned();
     db.write(Lane::Foreground, "discover.weekly.save_prefs", move |tx| {
-        let before: Option<Depth> = tx
-            .prepare_cached(sql::PREFS_DEPTH.text())?
-            .query_map([&user], |row| row.get(0))?
+        let before = tx
+            .prepare_cached(sql::PREFS_READ.text())?
+            .query_map([&user], sql::PrefsRow::read)?
             .next()
-            .transpose()?;
+            .transpose()?
+            .map_or(Prefs::DEFAULT, prefs_of);
         tx.execute(
             sql::PREFS_SAVE.text(),
-            params![user, day, depth, Millis(now_ms)],
+            params![
+                user,
+                prefs.set_day,
+                prefs.depth,
+                Millis(now_ms),
+                prefs.app_playlists
+            ],
         )?;
-        if before.unwrap_or(Depth::DEFAULT) != depth {
-            changed(tx)?;
+        let moved = PrefsChanged {
+            depth: before.depth != prefs.depth,
+            app_playlists: before.app_playlists != prefs.app_playlists,
+        };
+        if moved.depth || moved.app_playlists {
+            changed(tx, moved)?;
         }
         Ok(())
     })

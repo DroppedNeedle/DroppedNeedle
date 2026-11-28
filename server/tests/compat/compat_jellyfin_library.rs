@@ -707,6 +707,59 @@ async fn browse_query_dialects() {
     rig.stop().await;
 }
 
+/// Once sound analysis covers the library, Similar and both InstantMix
+/// routes answer the library's tracks that sound like the item, in a
+/// station's walking order: a track seeds itself, an album and an artist
+/// their tracks. Airbag sits at 0 degrees with the rest around it
+/// (Paranoid Android far off), so every seed walks the same way. An unknown
+/// id is still an empty result.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn similar_and_instant_mix_answer_by_sound() {
+    let rig = CompatApp::start("jf-sound").await;
+    let auth = finamp(&rig.secret);
+    for (title, degrees) in [
+        ("Airbag", 0.0),
+        ("Teardrop", 5.0),
+        ("One", -6.0),
+        ("Song A", 10.0),
+        ("桃源へ", -12.0),
+        ("Paranoid Android", 60.0),
+    ] {
+        rig.plant_sound(title, degrees).await;
+    }
+    rig.set_sound_analysis(true).await;
+    let airbag = track_id(&rig, &auth, "Airbag").await;
+    let ok_computer = album_id(&rig, &auth, "OK Computer").await;
+    let radiohead = artist_id(&rig, &auth, "Radiohead").await;
+    let walked = ["Teardrop", "Song A", "One", "桃源へ"];
+    for uri in [
+        format!("/jellyfin/Items/{airbag}/Similar"),
+        format!("/jellyfin/Items/{airbag}/InstantMix?Limit=10"),
+        format!("/jellyfin/Items/{ok_computer}/InstantMix"),
+        format!("/jellyfin/Artists/{radiohead}/InstantMix"),
+    ] {
+        let page = json(&rig, &uri, &auth).await;
+        let got: Vec<&str> = page["Items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .map(|item| item["Name"].as_str().expect("name"))
+            .collect();
+        assert_eq!(got, walked, "{uri}");
+    }
+    let limited = json(
+        &rig,
+        &format!("/jellyfin/Items/{airbag}/InstantMix?Limit=2"),
+        &auth,
+    )
+    .await;
+    assert_eq!(limited["Items"].as_array().map(Vec::len), Some(2));
+    let none = "f".repeat(32);
+    let empty = json(&rig, &format!("/jellyfin/Items/{none}/InstantMix"), &auth).await;
+    assert_eq!(empty["Items"], json!([]), "{empty}");
+    rig.stop().await;
+}
+
 /// An artist matched to MusicBrainz sends that id as `MusicBrainzArtist`,
 /// on the artist and on its tracks. (An album's ids are pinned by
 /// `an_album_sends_the_accepted_ids_else_its_tags`.)

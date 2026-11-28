@@ -17,7 +17,7 @@ use rusqlite::types::Value;
 use super::models::UnlinkedCopy;
 use super::sql;
 use super::store::{LocalCatalog, first, rows, texts, track_row, unsigned};
-use super::stores::{StatsExtras, StoreError, TrackRecord};
+use super::stores::{ArtistRecord, StatsExtras, StoreError, TrackRecord};
 
 /// Most ids bound into one `IN (...)` list.
 const MAX_BINDS: usize = 500;
@@ -274,6 +274,34 @@ impl LocalCatalog {
             first(conn, sql::ARTIST_FOR_MBID.text(), &values, |row| row.get(0))
         })
         .await
+    }
+
+    /// The live artist linked to each of `mbids` that has one, in one read:
+    /// by the MusicBrainz id lowercased.
+    pub async fn artists_for_mbids(
+        &self,
+        mbids: &[String],
+    ) -> Result<HashMap<String, String>, StoreError> {
+        if mbids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let values = vec![Value::Text(
+            serde_json::to_string(mbids).unwrap_or_else(|_| "[]".to_owned()),
+        )];
+        let found = self
+            .read("library.lookups.artist_mbids", move |conn| {
+                rows(conn, sql::ARTISTS_FOR_MBIDS.text(), &values, |row| {
+                    sql::ArtistForMbid::read(row).map(|found| (found.mbid, found.artist_id))
+                })
+            })
+            .await?;
+        Ok(found.into_iter().collect())
+    }
+
+    /// Live artists by id with their counts, in `ids` order; unknown ids
+    /// drop out.
+    pub async fn artists_by_ids(&self, ids: &[String]) -> Result<Vec<ArtistRecord>, StoreError> {
+        self.hydrate_artists(ids).await
     }
 
     /// The release groups among `groups`, as the catalog spells them, that

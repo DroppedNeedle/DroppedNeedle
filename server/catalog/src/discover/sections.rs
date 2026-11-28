@@ -8,7 +8,7 @@
 
 use std::collections::HashSet;
 
-use droppedneedle_kernel::db::Db;
+use droppedneedle_kernel::db::{Db, DbError};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -468,6 +468,25 @@ pub fn find(page: Page, key: SectionKey) -> Option<&'static SectionDef> {
 /// The sections of `page` the user switched off. A failed read shows
 /// every section, with a log line.
 pub async fn switched_off(db: &Db, user_id: &str, page: Page) -> HashSet<SectionKey> {
+    read_switched_off(db, user_id, page)
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, page = page.as_str(), "section settings unreadable; showing every section");
+            HashSet::new()
+        })
+}
+
+/// The sections of `page` the user switched off, for work that waits
+/// rather than act as if every section were on.
+///
+/// # Errors
+///
+/// The read's failure.
+pub async fn read_switched_off(
+    db: &Db,
+    user_id: &str,
+    page: Page,
+) -> Result<HashSet<SectionKey>, DbError> {
     let rows: Vec<String> = read_all(
         db,
         "discover.sections.switched_off",
@@ -475,15 +494,12 @@ pub async fn switched_off(db: &Db, user_id: &str, page: Page) -> HashSet<Section
         (user_id.to_owned(), page.as_str()),
         |row| row.get(0),
     )
-    .await
-    .unwrap_or_else(|error| {
-        tracing::warn!(%error, page = page.as_str(), "section settings unreadable; showing every section");
-        Vec::new()
-    });
-    rows.iter()
+    .await?;
+    Ok(rows
+        .iter()
         .filter_map(|name| SectionKey::named(name))
         .filter(|key| find(page, *key).is_some())
-        .collect()
+        .collect())
 }
 
 /// The keys in `off`, sorted, as a saved build lists them.

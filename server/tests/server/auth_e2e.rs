@@ -292,6 +292,7 @@ impl E2e {
                 media.stream.engine.clone(),
                 library.scans.clone(),
                 &catalog_setup,
+                library.sound.clone(),
             ),
         );
         let backup_dir = p.config.root_app_dir.join("backups");

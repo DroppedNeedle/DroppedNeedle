@@ -21,6 +21,8 @@
 //! - [`weekly`]: the `discover.weekly_set` job kind and the routes' answers,
 //!   and [`weekly_store`] its tables: each person's weekly sets, kept as a
 //!   record once built, and their set day.
+//! - [`app_lists`]: the `discover.app_lists` job kind, the playlists kept
+//!   for a person's apps from their newest set and their shelves.
 //! - [`archive`]: past weeks, each set read back as it was shown, and the
 //!   albums kept from them.
 //! - [`schedule`]: who is due a build, asked by
@@ -29,6 +31,7 @@
 //! What the library holds is the other half of what a person knows, and is
 //! read live where it is needed, never copied here.
 
+pub mod app_lists;
 pub mod archive;
 pub mod candidate;
 pub mod evidence;

@@ -158,7 +158,14 @@ async fn build_pool(deps: &DiscoverDeps) {
 
 async fn choose(deps: &DiscoverDeps, set_day: SetDay, depth: Depth) {
     deps.weekly
-        .save_prefs("user-1", DiscoverPrefs { set_day, depth })
+        .save_prefs(
+            "user-1",
+            DiscoverPrefs {
+                set_day,
+                depth,
+                app_playlists: true,
+            },
+        )
         .await
         .expect("the prefs are kept");
 }

@@ -162,6 +162,14 @@ fn endpoint_normalization_and_sets_match_v2() {
     assert!(!binary("ping"));
     assert!(public("getopensubsonicextensions"));
     assert!(!public("ping"));
+    // The sonicSimilarity methods need sign-in, like every other but the
+    // extensions list, and answer envelopes.
+    for name in ["getsonicsimilartracks", "findsonicpath"] {
+        assert!(endpoint(name).is_some(), "{name} is in the table");
+        assert!(!public(name) && !binary(name), "{name}");
+        assert!(dispatch_uses_envelope(NOT_FOUND, name), "{name}");
+        assert!(dispatch_uses_envelope(WRONG_CREDENTIALS, name), "{name}");
+    }
 }
 
 #[test]

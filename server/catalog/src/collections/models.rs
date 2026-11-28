@@ -119,6 +119,10 @@ pub enum PlaylistKind {
     WeeklyMix,
     /// A list on rotation the app makes from the owner's library.
     Rotation,
+    /// A list Discover keeps for its owner's apps: the library's tracks of
+    /// their weekly set, their own shelves or a Daily Mix. The web list
+    /// leaves these out.
+    Discover,
 }
 
 /// A list on rotation, as its owner reads it.

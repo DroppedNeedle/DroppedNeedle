@@ -1478,6 +1478,10 @@ pub struct DiscoverPrefs {
     /// chose another; a new depth rebuilds their pool, and this week's set
     /// stays as it is.
     pub depth: Depth,
+    /// Whether Discover keeps their playlists for their apps ("This week's
+    /// set", "From your shelves", their Daily Mixes). On unless they turned
+    /// it off; off removes them.
+    pub app_playlists: bool,
 }
 
 // ---------------------------------------------------------------------------

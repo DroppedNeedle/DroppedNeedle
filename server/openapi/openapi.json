@@ -48461,9 +48461,14 @@
         "description": "How the person's weekly set is made.",
         "required": [
           "set_day",
-          "depth"
+          "depth",
+          "app_playlists"
         ],
         "properties": {
+          "app_playlists": {
+            "type": "boolean",
+            "description": "Whether Discover keeps their playlists for their apps (\"This week's\nset\", \"From your shelves\", their Daily Mixes). On unless they turned\nit off; off removes them."
+          },
           "depth": {
             "$ref": "#/components/schemas/Depth",
             "description": "How far from what they know their picks go. Next door unless they\nchose another; a new depth rebuilds their pool, and this week's set\nstays as it is."
@@ -64806,7 +64811,8 @@
           "own",
           "imported",
           "weekly_mix",
-          "rotation"
+          "rotation",
+          "discover"
         ]
       },
       "PlaylistListItem": {

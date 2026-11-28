@@ -317,6 +317,7 @@ async fn discover_week_the_set_day_builds_one_set_that_holds_still() {
             DiscoverPrefs {
                 set_day: SetDay::Monday,
                 depth: Depth::NextDoor,
+                app_playlists: true,
             },
         )
         .await

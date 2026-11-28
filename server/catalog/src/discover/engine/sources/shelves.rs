@@ -87,6 +87,38 @@ fn album(
     }
 }
 
+/// The library albums on `user_id`'s shelves at `now_ms`, the played list
+/// first, each in its order: what their app playlist plays.
+///
+/// # Errors
+///
+/// A read's failure.
+pub(crate) async fn albums(db: &Db, user_id: &str, now_ms: i64) -> Result<Vec<String>, DbError> {
+    let user = user_id.to_owned();
+    let mut albums = read_all(
+        db,
+        "discover.shelves.played_albums",
+        sql::SHELF_PLAYED.text(),
+        (user.clone(), PLAYED_MIN, now_ms - IDLE_MS, PER_LIST),
+        |row| row.get::<_, String>("local_id"),
+    )
+    .await?;
+    let never = read_all(
+        db,
+        "discover.shelves.never_played_albums",
+        sql::SHELF_NEVER_PLAYED.text(),
+        (user, now_ms - ARRIVED_MS, PER_LIST),
+        |row| row.get::<_, String>("local_id"),
+    )
+    .await?;
+    for album in never {
+        if !albums.contains(&album) {
+            albums.push(album);
+        }
+    }
+    Ok(albums)
+}
+
 /// `user_id`'s shelves at `now_ms`; `None` when both lists are empty.
 ///
 /// # Errors

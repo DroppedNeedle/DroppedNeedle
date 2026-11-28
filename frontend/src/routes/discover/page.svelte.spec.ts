@@ -94,7 +94,11 @@ function routes(week: Week | (() => Week)): FakeRoutes {
 		}),
 		'GET /api/v3/discover/later': () => ({ items: [], next_cursor: null, total: 0 }),
 		'GET /api/v3/discover/stated-artists': () => ({ items: [], limit: 30 }),
-		'GET /api/v3/discover/prefs': () => ({ set_day: 'friday', depth: 'next_door' }),
+		'GET /api/v3/discover/prefs': () => ({
+			set_day: 'friday',
+			depth: 'next_door',
+			app_playlists: true
+		}),
 		'GET /api/v3/me/section-prefs': () => ({ pages: {} }),
 		'POST /api/v3/discover/activity': () => ({
 			source_mode: 'official',

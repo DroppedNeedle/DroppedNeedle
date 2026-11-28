@@ -7,6 +7,7 @@
 //! handlers read.
 
 pub mod db;
+pub mod discover_lists;
 mod entry_cover;
 pub mod error;
 pub mod handlers;

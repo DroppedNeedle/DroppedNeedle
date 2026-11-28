@@ -9,10 +9,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::library::{CompatError, CompatLibrary, ImageBytes, cover_version, whole};
+use crate::library::{CompatError, CompatLibrary, ImageBytes, SoundSeed, cover_version, whole};
 use crate::playback::{CompatPlayback, Reporter};
 use crate::queues::CompatQueues;
 use crate::settings::LiveSettings;
+use crate::sound::CompatSound;
 use crate::subsonic::advanced;
 use crate::subsonic::ids::{IdKind, without_cover_version};
 use crate::subsonic::picture::PictureSigner;
@@ -847,6 +848,40 @@ impl SubsonicStore {
         });
         ranked.truncate(count);
         self.tracks_for_caller(ranked).await
+    }
+
+    /// The sound engine apps read.
+    pub fn sound(&self) -> &CompatSound {
+        &self.library.sound
+    }
+
+    /// Up to `count` tracks that sound like `seed` for `user_id`, in a
+    /// station's walking order; empty while the engine does not answer.
+    pub async fn sound_similar(
+        &self,
+        user_id: &str,
+        seed: SoundSeed<'_>,
+        count: usize,
+    ) -> Result<Vec<ViewTrack>, CompatError> {
+        let ids = self.library.sound_similar(user_id, seed, count).await?;
+        self.get_tracks_in_order(&ids).await
+    }
+
+    /// Tracks by file id, in the order asked; missing ids drop out.
+    pub async fn get_tracks_in_order(&self, ids: &[String]) -> Result<Vec<ViewTrack>, CompatError> {
+        let tracks = self.library.tracks_in_order(ids).await?;
+        self.tracks_for_caller(tracks).await
+    }
+
+    /// Up to `count` library artists like the artist with MusicBrainz id
+    /// `artist_mbid`, from kept rows only.
+    pub async fn similar_artists(
+        &self,
+        artist_mbid: &str,
+        count: usize,
+    ) -> Result<Vec<ViewArtist>, CompatError> {
+        let artists = self.library.similar_artists(artist_mbid, count).await?;
+        self.artists_for_caller(artists).await
     }
 
     /// Similar songs for an artist mbid.

@@ -4415,3 +4415,223 @@ async fn jellyfin_played_marks_are_the_callers_and_leave_plays_alone() {
     );
     rig.stop().await;
 }
+
+/// An artist starred in an app is a seed in its person's next taste
+/// build, as a heart from the web UI is. The library's tracks of their
+/// weekly set reach their apps as "This week's set", made by the app and
+/// read-only, listed for nobody else, and gone after "Forget my history".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn app_stars_are_taste_and_the_set_reaches_its_owners_apps() {
+    const RADIOHEAD: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
+    const MEZZANINE: &str = "6ee4a7b4-1f2c-3d5e-8a9b-0c1d2e3f4a5b";
+    const MASSIVE_ATTACK: &str = "10adbe5e-a2c0-4bf3-8249-2b4cbf6e6ca8";
+    const SET_NAME: &str = "This week's set";
+    let rig = CompatApp::start("compat-discover-apps").await;
+    let auth = rig.subsonic_auth("journey");
+    let alice: String = rig
+        .app
+        .db()
+        .query_row(
+            "SELECT id FROM auth_users WHERE username = ?1",
+            [PLAYER],
+            |row| row.get(0),
+        )
+        .expect("the player's account");
+    rig.app
+        .seed(format!(
+            "INSERT OR REPLACE INTO local_artist_external_identities \
+             (local_artist_id, provider, provider_artist_id, decision_source, selected_at) \
+             SELECT id, 'musicbrainz', '{RADIOHEAD}', 'manual', 1000 FROM local_artists \
+             WHERE display_name = 'Radiohead';
+             INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, decision_source, selected_at) \
+             SELECT id, 'musicbrainz', '{MEZZANINE}', 'manual', 1 FROM local_albums \
+             WHERE title = 'Mezzanine';"
+        ))
+        .await;
+
+    let seeded = || {
+        rig.app
+            .db()
+            .query_row(
+                "SELECT COALESCE(MAX(is_seed), 0) FROM catalog_taste_artists \
+                 WHERE user_id = ?1 AND artist_mbid_lower = ?2",
+                [alice.as_str(), RADIOHEAD],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("taste rows read")
+            == 1
+    };
+    let rebuild = || async {
+        rig.app
+            .state()
+            .catalog
+            .discover
+            .taste
+            .run_once(&alice, |_| Ok(()))
+            .await
+            .expect("the taste build runs");
+    };
+    rebuild().await;
+    assert!(!seeded(), "Radiohead is no seed before the star");
+    let artists = subsonic(&rig, "getArtists", &auth).await;
+    let radiohead = artists["artists"]["index"]
+        .as_array()
+        .expect("index")
+        .iter()
+        .flat_map(|index| index["artist"].as_array().cloned().unwrap_or_default())
+        .find(|artist| artist["name"] == "Radiohead")
+        .expect("Radiohead listed")["id"]
+        .as_str()
+        .expect("artist id")
+        .to_owned();
+    let starred = subsonic(&rig, &format!("star?artistId={radiohead}"), &auth).await;
+    assert_eq!(starred["status"], "ok", "{starred}");
+    rebuild().await;
+    assert!(seeded(), "the star made Radiohead a seed");
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("after 1970")
+        .as_millis() as i64;
+    let week_start = now_ms - 86_400_000;
+    rig.app
+        .seed(format!(
+            "INSERT INTO catalog_weekly_sets (user_id, week_start_at, built_at, short_reason, \
+             plays_counted, seeds, shelf_artists, shelf_albums, linked, tastes) \
+             VALUES ('{alice}', {week_start}, {week_start}, NULL, 3, 1, 0, 0, 0, '{{}}');
+             INSERT INTO catalog_weekly_set_picks (user_id, week_start_at, pick_no, \
+             release_group_mbid_lower, release_group_mbid, title, artist_mbid, artist_name, \
+             reason_line, evidence) VALUES ('{alice}', {week_start}, 1, '{MEZZANINE}', \
+             '{MEZZANINE}', 'Mezzanine', '{MASSIVE_ATTACK}', 'Massive Attack', 'Close to Radiohead.', \
+             '{{}}');"
+        ))
+        .await;
+    let (status, body) = rig
+        .app
+        .call_through_busy(
+            "POST",
+            "/api/v3/auth/login",
+            &[],
+            Some(json!({
+                "username": PLAYER,
+                "password": format!("{PLAYER}-password-1234"),
+                "transport": "bearer",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let web = format!("Bearer {}", body["token"].as_str().expect("session token"));
+    for on in [false, true] {
+        let (status, body) = rig
+            .app
+            .call_through_busy(
+                "PUT",
+                "/api/v3/discover/prefs",
+                &[("authorization", web.as_str())],
+                Some(json!({"set_day": "friday", "depth": "next_door", "app_playlists": on})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    let playlists = |auth: String| {
+        let rig = &rig;
+        async move {
+            let listed = subsonic(rig, "getPlaylists", &auth).await;
+            listed["playlists"]["playlist"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+        }
+    };
+    let set = rig
+        .app
+        .until("the set's playlist", || async {
+            playlists(auth.clone())
+                .await
+                .into_iter()
+                .find(|playlist| playlist["name"] == SET_NAME)
+        })
+        .await;
+    let id = set["id"].as_str().expect("playlist id").to_owned();
+    let songs = subsonic(&rig, &format!("getPlaylist?id={id}"), &auth).await;
+    let titles: Vec<&str> = songs["playlist"]["entry"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .map(|song| song["title"].as_str().expect("title"))
+        .collect();
+    assert_eq!(titles, ["Teardrop"], "the set's album the library holds");
+    let renamed = subsonic(
+        &rig,
+        &format!("updatePlaylist?playlistId={id}&name=Mine"),
+        &auth,
+    )
+    .await;
+    assert_eq!(renamed["status"], "failed", "{renamed}");
+
+    let (status, listed) = rig
+        .app
+        .call_through_busy(
+            "GET",
+            "/api/v3/playlists",
+            &[("authorization", web.as_str())],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert!(
+        listed["playlists"]
+            .as_array()
+            .expect("playlists")
+            .iter()
+            .all(|playlist| playlist["name"] != SET_NAME),
+        "the web leaves it out: {listed}"
+    );
+    let (status, refused) = rig
+        .app
+        .call_through_busy(
+            "POST",
+            "/api/v3/playlists",
+            &[("authorization", web.as_str())],
+            Some(json!({"name": "Mine", "source_ref": "discover-list:week-set"})),
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "nobody makes one by hand: {refused}"
+    );
+
+    let bob = rig.app.login_user("bob").await;
+    let bob_auth = format!(
+        "u=bob&p={}&v=1.16.1&c=journey&f=json",
+        rig.app_password(&bob.authorization).await
+    );
+    assert!(
+        playlists(bob_auth)
+            .await
+            .iter()
+            .all(|playlist| playlist["name"] != SET_NAME),
+        "another person never sees it"
+    );
+
+    let (status, body) = rig
+        .app
+        .call(
+            "DELETE",
+            "/api/v3/discover/history",
+            &[("authorization", web.as_str())],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert!(
+        playlists(auth.clone())
+            .await
+            .iter()
+            .all(|playlist| playlist["name"] != SET_NAME),
+        "forgotten with the set it was built from"
+    );
+    rig.stop().await;
+}

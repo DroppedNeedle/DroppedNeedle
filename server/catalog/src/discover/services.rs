@@ -128,6 +128,10 @@ pub struct DiscoverDeps {
     pub pool: Arc<crate::discover::engine::pool::PoolJobs>,
     /// The Daily Mixes job, for the jobs table to run.
     pub mixes: Arc<crate::discover::mixes::MixJobs>,
+    /// The app playlists' refresh, for the jobs table to run.
+    pub app_lists: Arc<crate::discover::engine::app_lists::AppListJobs>,
+    /// Where work another area's write makes due is queued.
+    pub due: Arc<crate::discover::due::Due>,
     /// What "Why this?" opens for a pick.
     pub evidence: crate::discover::engine::evidence::Evidence,
     /// How people tuned what Discover offers them.
@@ -401,6 +405,7 @@ pub async fn forget_history(deps: &DiscoverDeps, user_id: &str) -> Result<(), Se
         pool = forgotten.pool,
         weekly_sets = forgotten.weekly_sets,
         mixes = forgotten.mixes,
+        app_playlists = forgotten.app_playlists,
         pages = forgotten.pages,
         "a person's history forgotten"
     );

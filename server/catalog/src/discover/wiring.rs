@@ -66,6 +66,9 @@ pub struct DiscoverInputs {
     pub history: Arc<HistoryStore>,
     /// The search over how the library's tracks sound, for radio.
     pub sound: droppedneedle_library::sound::SoundSearch,
+    /// Playlists and the library's tracks, for the lists Discover keeps
+    /// for a person's apps.
+    pub collections: crate::collections::CollectionsState,
 }
 
 /// The live listening reads production makes.
@@ -159,21 +162,12 @@ fn deps_with(
         Arc::clone(&inputs.clock),
         settings.clone(),
     ));
-    let mixes = Arc::new(mixes::MixJobs::new(mixes::MixInputs {
-        db: inputs.db.clone(),
-        clock: Arc::clone(&inputs.clock),
-        forgets: forgets.clone(),
-        sound: inputs.sound.clone(),
-        catalog: catalog.clone(),
-        facts: kept.clone(),
-        youtube: config.live(),
-    }));
     let radio = radio::LiveRadio::new(radio::RadioInputs {
         listening: listening.clone(),
         queue_db: queue::store::QueueDb::new(inputs.db.clone()),
         settings,
         db: inputs.db.clone(),
-        catalog,
+        catalog: catalog.clone(),
         previews: inputs.providers.previews.clone(),
         cache: inputs.providers.cache.clone(),
         clock: Arc::clone(&inputs.clock),
@@ -204,13 +198,29 @@ fn deps_with(
     let fresh_feed = listening.fresh().clone();
     let new_releases =
         crate::discover::new_releases::NewReleaseLists::new(inputs.db.clone(), listening.clone());
-    let fact_jobs = Arc::new(facts::job::FactJobs::new(kept, network));
+    let fact_jobs = Arc::new(facts::job::FactJobs::new(kept.clone(), network));
     let due = Arc::new(due::Due::new(
         inputs.db.clone(),
         inputs.jobs.clone(),
         Arc::clone(&inputs.clock),
         inputs.discover_warmer,
         (fact_jobs.due(), inputs.history.clone(), fresh_feed.clone()),
+    ));
+    let mixes = Arc::new(mixes::MixJobs::new(mixes::MixInputs {
+        db: inputs.db.clone(),
+        clock: Arc::clone(&inputs.clock),
+        forgets: forgets.clone(),
+        sound: inputs.sound.clone(),
+        catalog: catalog.clone(),
+        facts: kept.clone(),
+        youtube: config.live(),
+        due: Arc::clone(&due),
+    }));
+    let app_lists = Arc::new(engine::app_lists::AppListJobs::new(
+        inputs.db.clone(),
+        inputs.collections.clone(),
+        Arc::clone(&inputs.clock),
+        forgets.clone(),
     ));
     let taste = Arc::new(engine::jobs::TasteJobs::new(engine::jobs::TasteInputs {
         db: inputs.db.clone(),
@@ -273,6 +283,8 @@ fn deps_with(
         taste,
         pool,
         mixes,
+        app_lists,
+        due: Arc::clone(&due),
         evidence: engine::evidence::Evidence::new(inputs.db.clone()),
         tunings: tunings::Tunings::new(
             inputs.db.clone(),

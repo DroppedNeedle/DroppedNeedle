@@ -1393,7 +1393,8 @@ fn jellyfin_router(rig: &Rig, ids: &JellyfinIds) -> axum::Router {
         &acquire,
         rig.playback.clone(),
     );
-    let library = CompatLibrary::from_catalog(&rig.catalog_setup, rig.platform.db.clone());
+    let library =
+        CompatLibrary::from_catalog(&rig.catalog_setup, &rig.platform, rig.library.sound.clone());
     rig.platform
         .settings
         .save_blocking(ConnectApps {

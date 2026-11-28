@@ -17,7 +17,7 @@
 //! |---|---|---|---|
 //! | ping | ok | yes | auth probe |
 //! | getLicense | license | yes | static valid:true |
-//! | getOpenSubsonicExtensions | openSubsonicExtensions | PUBLIC | 7 extensions; songLyrics 1 and 2, the rest v1 |
+//! | getOpenSubsonicExtensions | openSubsonicExtensions | PUBLIC | 7 extensions, sonicSimilarity the 8th while sound serves apps; songLyrics 1 and 2, the rest v1 |
 //! | getMusicFolders | musicFolders | yes | only folder 1; others 70 |
 //! | getArtists/getIndexes | artists/indexes | yes | article-stripped A-Z buckets |
 //! | getArtist/getAlbum/getSong | artist/album/song | yes | artist embeds albums, album embeds songs |
@@ -41,7 +41,7 @@
 //! | getPlayQueue/savePlayQueue | playQueue/ok | yes | <=500; current consistency |
 //! | getPlayQueueByIndex/savePlayQueueByIndex | playQueueByIndex/ok | yes | extension indexBasedQueue:1 |
 //! | getBookmarks/createBookmark/deleteBookmark | bookmarks/ok | yes | pinned bookmark fields |
-//! | getArtistInfo[2]/getAlbumInfo[2] | artistInfo[2]/albumInfo | yes | projected MBIDs + sized open picture links |
+//! | getArtistInfo[2]/getAlbumInfo[2] | artistInfo[2]/albumInfo | yes | projected MBIDs + sized open picture links; similar artists the library holds, from kept rows |
 //! | getAvatar | bytes | yes, self-only | non-self -> 403-as-text |
 //! | getLyricsBySongId | lyricsList | yes | extension songLyrics:1; `enhanced` gives songLyrics:2 |
 //! | getLyrics | lyrics | yes | exact title (+artist) match; miss -> empty value |
@@ -49,7 +49,8 @@
 //! | getUser | user | yes | username param ignored, returns caller |
 //! | getScanStatus/startScan | scanStatus | yes | startScan admin-only -> 50 |
 //! | getTopSongs | topSongs | yes | exact artist-name match else 70 |
-//! | getSimilarSongs[2] | similarSongs[2] | yes | an artist id, or a song or album id for its album artist |
+//! | getSimilarSongs[2] | similarSongs[2] | yes | by sound while it serves apps, in walk order; else an artist id, or a song or album id for its album artist |
+//! | getSonicSimilarTracks/findSonicPath | sonicMatch | yes | extension sonicSimilarity:1; plain 404 while sound does not serve apps |
 //! | getPodcasts/getNewestPodcasts | podcasts/newestPodcasts | yes | always empty |
 //! | getInternetRadioStations | internetRadioStations | yes | always empty |
 //!
@@ -89,8 +90,10 @@
 //! - getOpenSubsonicExtensions lists every served extension, at version 1
 //!   except songLyrics (1 and 2): apiKeyAuthentication, formPost,
 //!   transcodeOffset, songLyrics, playbackReport, indexBasedQueue,
-//!   transcoding. Feishin asks `getLyricsBySongId` for word timing only
-//!   when songLyrics lists version 2.
+//!   transcoding, and sonicSimilarity only while sound analysis is on and
+//!   has analysed nine in ten of the library's tracks. Feishin asks
+//!   `getLyricsBySongId` for word timing only when songLyrics lists
+//!   version 2.
 //!
 //! # What the handlers call (built in `compat::setup`)
 //!
@@ -279,6 +282,10 @@ pub static ENDPOINTS: &[Endpoint] = &[
     Endpoint::envelope("gettopsongs", |c| Box::pin(library::top_songs(c))),
     Endpoint::envelope("getsimilarsongs2", |c| Box::pin(library::similar_songs2(c))),
     Endpoint::envelope("getsimilarsongs", |c| Box::pin(library::similar_songs(c))),
+    Endpoint::envelope("getsonicsimilartracks", |c| {
+        Box::pin(library::sonic_similar_tracks(c))
+    }),
+    Endpoint::envelope("findsonicpath", |c| Box::pin(library::find_sonic_path(c))),
     Endpoint::envelope("getpodcasts", |_| {
         Box::pin(library::nothing_kept("podcasts", "channel"))
     }),
@@ -566,6 +573,9 @@ pub enum Outcome {
         /// The live body.
         body: crate::body::LiveBody,
     },
+    /// The method is not served now: a plain 404, as for a method the
+    /// server does not know.
+    NotServed,
 }
 
 impl Outcome {
@@ -614,6 +624,7 @@ pub async fn run(endpoint: &Endpoint, ctx: &Ctx<'_>) -> Result<Rendered, Subsoni
             body: Vec::new(),
             stream: Some(body),
         }),
+        Outcome::NotServed => Ok(value::render_unknown_method()),
     }
 }
 

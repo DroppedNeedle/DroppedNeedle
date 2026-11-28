@@ -19,11 +19,14 @@
 //!   when one is due, their Daily Mixes when due, and that person's own
 //!   work, whether the warm cycle runs or not.
 //! - [`Due::queue_now`], inside another write: one kind for one key (a
-//!   person's id, or the install's one key), due now.
+//!   person's id, or the install's one key), due now. Saving a person's
+//!   section switches queues their app playlists this way.
 //!
-//! Today the daily work is the pick record's outcomes job, for each person
-//! with rows in it. A person's job is queued at most once a UTC day; after
-//! a restart it may run once more, which a job may always do.
+//! Today the daily work is the pick record's outcomes job and the app
+//! playlists' refresh ([`app_lists`]), for each person with rows in the
+//! pick record; a visit queues the refresh for anyone. A person's jobs are
+//! queued at most once a UTC day; after a restart they may run once more,
+//! which a job may always do.
 //!
 //! A person with a taste build is due their Daily Mixes ([`mixes::KIND`])
 //! once a UTC day, and once more the day their first pool build lands, so
@@ -38,6 +41,7 @@ use droppedneedle_kernel::jobs::queue::{JobError, JobKind, JobQueue};
 use droppedneedle_media::history::HistoryStore;
 use rusqlite::Transaction;
 
+use crate::discover::engine::app_lists;
 use crate::discover::engine::schedule::TasteDue;
 use crate::discover::facts::job::{self as facts, FactsDue};
 use crate::discover::facts::plan::SEEN_WINDOW_MS;
@@ -65,8 +69,10 @@ pub struct Due {
     history: Arc<HistoryStore>,
     /// The UTC day the clock last passed; [`NOT_YET`] before the first.
     passed: Mutex<i64>,
-    /// The UTC day each person's work was last queued.
+    /// The UTC day each person's outcomes job was last queued.
     queued: Mutex<HashMap<String, i64>>,
+    /// The UTC day each person's app playlists' refresh was last queued.
+    lists_queued: Mutex<HashMap<String, i64>>,
     /// The UTC day each person's mixes were last queued, and whether they
     /// had a pool build then.
     mixes: Mutex<HashMap<String, (i64, bool)>>,
@@ -102,6 +108,7 @@ impl Due {
             history,
             passed: Mutex::new(NOT_YET),
             queued: Mutex::new(HashMap::new()),
+            lists_queued: Mutex::new(HashMap::new()),
             mixes: Mutex::new(HashMap::new()),
         }
     }
@@ -272,6 +279,7 @@ impl Due {
                 let mut queued = Vec::new();
                 for user in users.into_iter().filter(|user| !done.contains(user)) {
                     queue.enqueue(tx, outcomes::KIND, &user, &())?;
+                    queue.enqueue(tx, app_lists::KIND, &user, &())?;
                     queued.push(user);
                 }
                 Ok::<_, JobError>(queued)
@@ -279,9 +287,12 @@ impl Due {
             .await;
         match queued {
             Ok(users) => {
+                let mut lists = lock(&self.lists_queued);
+                lists.retain(|_, day| *day == today);
                 let mut marks = lock(&self.queued);
                 marks.retain(|_, day| *day == today);
                 for user in users {
+                    lists.insert(user.clone(), today);
                     marks.insert(user, today);
                 }
                 *lock(&self.passed) = today;
@@ -295,9 +306,9 @@ impl Due {
     /// A person's visit: the kept facts' refresh when it has work, the
     /// fresh releases' read when it is due, their ListenBrainz history,
     /// their taste or pool build or weekly set when one is due (a person
-    /// with no picks yet included), their mixes when due, and their
-    /// outcomes job, when they have
-    /// rows in the pick record and it was not queued today. Runs whether
+    /// with no picks yet included), their mixes when due, and, when not
+    /// queued today, their app playlists' refresh and their outcomes job,
+    /// the second only when they have rows in the pick record. Runs whether
     /// the warm cycle is on or not. A failed write is logged; the next
     /// visit or pass tries again.
     pub async fn visit(&self, user_id: &str) {
@@ -311,36 +322,54 @@ impl Due {
             .await;
         self.mixes_pass(vec![user_id.to_owned()]).await;
         let today = self.today();
-        if lock(&self.queued).get(user_id) == Some(&today) {
+        let outcomes_due = lock(&self.queued).get(user_id) != Some(&today);
+        let lists_due = lock(&self.lists_queued).get(user_id) != Some(&today);
+        if !outcomes_due && !lists_due {
             return;
         }
-        let user = user_id.to_owned();
-        let has_rows: Result<bool, DbError> = self
-            .db
-            .read("discover.due.has_picks", move |conn| {
-                conn.query_row(sql::USER_HAS_PICKS.text(), [&user], |row| row.get(0))
-                    .map_err(DbError::from)
-            })
-            .await;
-        match has_rows {
-            Ok(true) => {}
-            Ok(false) => return,
-            Err(error) => {
-                tracing::warn!(%error, "a visitor's picks unreadable; their work not queued");
-                return;
+        let has_rows = if outcomes_due {
+            let user = user_id.to_owned();
+            let has_rows: Result<bool, DbError> = self
+                .db
+                .read("discover.due.has_picks", move |conn| {
+                    conn.query_row(sql::USER_HAS_PICKS.text(), [&user], |row| row.get(0))
+                        .map_err(DbError::from)
+                })
+                .await;
+            match has_rows {
+                Ok(has_rows) => has_rows,
+                Err(error) => {
+                    tracing::warn!(%error, "a visitor's picks unreadable; their work not queued");
+                    return;
+                }
             }
+        } else {
+            false
+        };
+        if !has_rows && !lists_due {
+            return;
         }
         let (queue, user) = (self.queue.clone(), user_id.to_owned());
         let queued = self
             .db
             .write(Lane::Background, "discover.due.visit", move |tx| {
-                queue.enqueue(tx, outcomes::KIND, &user, &())?;
+                if has_rows {
+                    queue.enqueue(tx, outcomes::KIND, &user, &())?;
+                }
+                if lists_due {
+                    queue.enqueue(tx, app_lists::KIND, &user, &())?;
+                }
                 Ok::<_, JobError>(())
             })
             .await;
         match queued {
             Ok(()) => {
-                lock(&self.queued).insert(user_id.to_owned(), today);
+                if has_rows {
+                    lock(&self.queued).insert(user_id.to_owned(), today);
+                }
+                if lists_due {
+                    lock(&self.lists_queued).insert(user_id.to_owned(), today);
+                }
             }
             Err(error) => tracing::warn!(%error, "a visitor's discover work not queued"),
         }

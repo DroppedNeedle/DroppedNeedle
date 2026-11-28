@@ -24,13 +24,13 @@ use crate::collections::models::{
     PlaylistListItem, PlaylistListResponse, PlaylistSummary, PlaylistTrack, RedactedPlaylist,
     ResolveSourcesResponse, RotationInfo, TrackInput, UpdatePlaylistBody, UpdateTrackBody,
 };
-use crate::collections::rotation;
 use crate::collections::sql::PlaylistExportRow;
 use crate::collections::store::PlaylistStore;
 pub use crate::collections::store::playlists::SavedPlaylist;
 use crate::collections::store::playlists::{
     CoverImage, EntryNames, Listed, NewEntry, PlaylistRow, Written,
 };
+use crate::collections::{discover_lists, rotation};
 use crate::local::player::PlayerTrack;
 use crate::metadata::clean_recording;
 use droppedneedle_kernel::playlist_files::{self, Entry};
@@ -148,11 +148,12 @@ fn can_delete(owner_id: Option<&str>, user_id: &str, admin: bool) -> bool {
 }
 
 /// Where a playlist came from: a list on rotation by its row, the Weekly
-/// Mix and imports by their provenance.
+/// Mix, Discover's lists and imports by their provenance.
 fn kind(row: &PlaylistRow) -> PlaylistKind {
     match (&row.rotation, row.source_ref.as_deref()) {
         (Some(_), _) => PlaylistKind::Rotation,
         (None, Some(source)) if source.starts_with(WEEKLY_MIX_PREFIX) => PlaylistKind::WeeklyMix,
+        (None, Some(source)) if discover_lists::is_discover_list(source) => PlaylistKind::Discover,
         (None, Some(_)) => PlaylistKind::Imported,
         (None, None) => PlaylistKind::Own,
     }
@@ -170,15 +171,15 @@ fn rotation_info(row: &PlaylistRow, now_ms: i64) -> Option<RotationInfo> {
 }
 
 /// Whether the caller may change the playlist's songs: they own it or it
-/// is shared with them to edit, and it is not a list on rotation.
+/// is shared with them to edit, and it is not a list only the app writes.
 fn can_edit(row: &PlaylistRow, user_id: &str) -> bool {
-    row.rotation.is_none() && (owns(row, user_id) || row.shared_to_edit)
+    !row.app_kept() && (owns(row, user_id) || row.shared_to_edit)
 }
 
 impl Visible {
     /// Whether the caller may change its songs.
     pub fn can_edit(&self) -> bool {
-        self.row.rotation.is_none() && (self.is_owner || self.row.shared_to_edit)
+        !self.row.app_kept() && (self.is_owner || self.row.shared_to_edit)
     }
 }
 
@@ -249,6 +250,13 @@ fn detail(
 pub(super) fn rotation_read_only() -> CollectionsError {
     CollectionsError::Forbidden {
         message: "Lists on rotation are made by the app and can't be changed".to_owned(),
+    }
+}
+
+/// The 403 for a change to a list Discover keeps for its owner's apps.
+fn discover_list_read_only() -> CollectionsError {
+    CollectionsError::Forbidden {
+        message: "Discover makes this playlist for your apps; it can't be changed".to_owned(),
     }
 }
 
@@ -415,6 +423,15 @@ impl CollectionsService<'_> {
                 {
                     return Err(rotation_read_only());
                 }
+                if self
+                    .playlists()
+                    .owned_by(user_id)
+                    .get(playlist_id)
+                    .await?
+                    .is_some_and(|row| row.app_kept())
+                {
+                    return Err(discover_list_read_only());
+                }
                 Err(CollectionsError::NotFound)
             }
         }
@@ -476,7 +493,9 @@ impl CollectionsService<'_> {
     }
 
     /// The native list: full summaries plus redacted stubs. `admin` adds the
-    /// private playlists with no owner, which only an admin can act on.
+    /// private playlists with no owner, which only an admin can act on. The
+    /// lists Discover keeps for the caller's apps are left out: the web UI
+    /// does not show them.
     pub async fn list_playlists(
         &self,
         user_id: &str,
@@ -489,6 +508,8 @@ impl CollectionsService<'_> {
             .list(admin)
             .await?
             .into_iter()
+            // The lists Discover keeps for apps are for apps alone.
+            .filter(|listed| !matches!(listed, Listed::Readable(row) if kind(row) == PlaylistKind::Discover))
             .map(|listed| match listed {
                 Listed::Readable(row) => PlaylistListItem::Full(summary(&row, user_id, admin, now)),
                 Listed::Hidden {
@@ -850,12 +871,20 @@ impl CollectionsService<'_> {
         self.found(user_id, playlist_id, written).await
     }
 
-    /// Create a playlist (native body).
+    /// Create a playlist (native body). A provenance only the app's own
+    /// lists carry is refused: a person never makes one of those.
     pub async fn create_playlist(
         &self,
         user_id: &str,
         body: &CreatePlaylistBody,
     ) -> Result<PlaylistDetail, CollectionsError> {
+        if body.source_ref.as_deref().is_some_and(|source| {
+            discover_lists::is_discover_list(source) || source.starts_with(WEEKLY_MIX_PREFIX)
+        }) {
+            return Err(CollectionsError::InvalidInput {
+                message: "That source is kept for playlists the app makes".to_owned(),
+            });
+        }
         let id = self
             .create_named(user_id, &body.name, body.source_ref.as_deref())
             .await?;

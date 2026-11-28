@@ -699,6 +699,27 @@ droppedneedle_kernel::sql! {
          SELECT history_from_at AS at FROM catalog_taste_builds WHERE user_id = ?1 \
          UNION ALL SELECT MIN(played_at) FROM library_play_history WHERE user_id = ?1)";
 
+    // -- the lists Discover keeps for a person's apps ---------------------------
+
+    /// The library's tracks of person `?1`'s newest set: for each pick in
+    /// order, the tracks of the first album that owns its group, by disc
+    /// and track.
+    pub(in crate::discover) APP_LIST_SET_TRACKS = "SELECT t.id FROM (\
+         SELECT k.pick_no AS pick_no, (SELECT o.album_id FROM ("
+        + (owns_group!("= +k.release_group_mbid_lower"))
+        + ") o ORDER BY o.album_id LIMIT 1) AS album_id \
+         FROM catalog_weekly_set_picks k WHERE k.user_id = ?1 AND k.week_start_at = \
+           (SELECT MAX(week_start_at) FROM catalog_weekly_sets WHERE user_id = ?1)) s \
+         JOIN local_tracks t ON t.local_album_id = s.album_id \
+         WHERE t.availability = 'indexed' \
+         ORDER BY s.pick_no, t.disc_number, t.track_number, t.id";
+    /// The indexed tracks of the albums in the JSON array `?1`, album by
+    /// album in its order, each by disc and track.
+    pub(in crate::discover) APP_LIST_ALBUM_TRACKS = "SELECT t.id FROM json_each(?1) a \
+         JOIN local_tracks t ON t.local_album_id = a.value \
+         WHERE +t.availability = 'indexed' \
+         ORDER BY a.key, t.disc_number, t.track_number, t.id";
+
     // -- the weekly set ----------------------------------------------------------
 
     /// What a person's weekly set is built from and when: their set day,
@@ -772,22 +793,25 @@ droppedneedle_kernel::sql! {
          ON CONFLICT (user_id) DO UPDATE SET \
            history_wait_from_at = excluded.history_wait_from_at \
          WHERE catalog_discover_prefs.history_wait_from_at IS NULL";
-    /// A person's set day and depth; no row while they have chosen
-    /// neither.
-    pub(in crate::discover) PREFS_READ = "SELECT set_day, depth FROM catalog_discover_prefs \
-         WHERE user_id = ?1";
+    /// A person's set day, depth and whether Discover keeps their app
+    /// playlists; no row while they have chosen none of them.
+    pub(in crate::discover) PREFS_READ = "SELECT set_day, depth, app_playlists \
+         FROM catalog_discover_prefs WHERE user_id = ?1";
     pub(in crate::discover) row PrefsRow for [PREFS_READ] {
         set_day: SetDay,
         depth: Depth,
+        app_playlists: bool,
     }
     /// A person's depth; no row while they have not chosen one.
     pub(in crate::discover) PREFS_DEPTH = "SELECT depth FROM catalog_discover_prefs \
          WHERE user_id = ?1";
-    /// Keep person `?1`'s set day `?2` and depth `?3`, chosen at `?4`.
+    /// Keep person `?1`'s set day `?2`, depth `?3` and app playlists
+    /// switch `?5`, chosen at `?4`.
     pub(in crate::discover) PREFS_SAVE = "INSERT INTO catalog_discover_prefs \
-         (user_id, set_day, depth, updated_at) VALUES (?1, ?2, ?3, ?4) \
+         (user_id, set_day, depth, updated_at, app_playlists) VALUES (?1, ?2, ?3, ?4, ?5) \
          ON CONFLICT (user_id) DO UPDATE SET set_day = excluded.set_day, \
-           depth = excluded.depth, updated_at = excluded.updated_at";
+           depth = excluded.depth, updated_at = excluded.updated_at, \
+           app_playlists = excluded.app_playlists";
     /// A person's taste groups with their anchors and shares.
     pub(in crate::discover) SET_TASTE_GROUPS = "SELECT group_no, anchor_artist_mbid, \
          anchor_name, share FROM catalog_taste_groups WHERE user_id = ?1 ORDER BY group_no";

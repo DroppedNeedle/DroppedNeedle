@@ -8,6 +8,8 @@ use axum::response::Response;
 use droppedneedle_auth::compat_auth::jellyfin::server_id;
 use droppedneedle_kernel::error::ApiError;
 
+use crate::library::SoundSeed;
+
 use super::builders::{self, Builder, LIBRARY_INTERNAL_ID};
 use super::models::{BaseItemDto, BaseItemDtoQueryResult};
 use super::params::{self, CiParams, SortKey};
@@ -727,10 +729,13 @@ pub(super) async fn single_item_legacy(
 
 // ===== Discovery (owned-only) =====
 
-/// Similar and both InstantMix routes share one handler:
-/// resolves the artist from an artist/track/album id and serves same-artist
-/// tracks. Unknown ids and unresolvable kinds yield an empty result, not a
-/// 404. (No real similarity ranking is bound yet.)
+/// Similar and both InstantMix routes share one handler. While the sound
+/// engine answers apps, a track seeds itself, an album its tracks and an
+/// artist some of its tracks, and the library's tracks that sound like
+/// them answer in a station's walking order. Otherwise, or when nothing
+/// sounds near enough, it resolves the artist from an artist/track/album
+/// id and serves same-artist tracks. Unknown ids and unresolvable kinds
+/// yield an empty result, not a 404.
 pub(super) async fn similar(
     State(state): State<JellyfinState>,
     Path(item_id): Path<String>,
@@ -752,6 +757,22 @@ pub(super) async fn similar(
     let Some((kind, internal)) = state.ids.from_jf(&item_id).await? else {
         return Ok(json(StatusCode::OK, &empty));
     };
+    let seed = match kind.as_str() {
+        "track" => Some(SoundSeed::Track(&internal)),
+        "album" => Some(SoundSeed::Album(&internal)),
+        "artist" => Some(SoundSeed::Artist(&internal)),
+        _ => None,
+    };
+    if let Some(seed) = seed {
+        let tracks = state
+            .library
+            .sound_similar(&ctx.principal.id, seed, limit)
+            .await?;
+        if !tracks.is_empty() {
+            let b = builder(&state);
+            return Ok(result(build_tracks(&b, &tracks).await, None, 0));
+        }
+    }
     let artist_id = match kind.as_str() {
         "artist" => Some(internal),
         "track" => state

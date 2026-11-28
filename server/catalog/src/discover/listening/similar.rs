@@ -605,6 +605,43 @@ fn rank(rows: Vec<Neighbour>, counts: &HashMap<String, Counts>) -> Vec<ScoredArt
     ranked
 }
 
+/// `artist_mbid`'s neighbours from its kept list and their kept counts
+/// only, best first in the one order. It reads nothing else, notes nothing
+/// as wanted and never dials out: an artist with no kept list answers an
+/// empty list.
+///
+/// # Errors
+///
+/// A read's failure.
+pub async fn kept_neighbours(
+    facts: &KeptFacts,
+    artist_mbid: &str,
+) -> Result<Vec<ScoredArtist>, droppedneedle_kernel::db::DbError> {
+    let artist = lower(artist_mbid);
+    if !is_valid_mbid(&artist) {
+        return Ok(Vec::new());
+    }
+    let Some(Kept::Found(rows)) = facts
+        .neighbours(std::slice::from_ref(&artist))
+        .await?
+        .remove(&artist)
+        .map(|looked| looked.kept)
+    else {
+        return Ok(Vec::new());
+    };
+    let ids: Vec<String> = rows.iter().map(|row| row.mbid.clone()).collect();
+    let counts = facts
+        .listeners(&ids)
+        .await?
+        .into_iter()
+        .filter_map(|(id, looked)| match looked.kept {
+            Kept::Found(counts) => Some((id, counts)),
+            _ => None,
+        })
+        .collect();
+    Ok(rank(rows, &counts))
+}
+
 /// How much of an artist's answer is kept, fresh or stale.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Held {

@@ -43,6 +43,7 @@ pub use live::LiveNetwork;
 pub use network::{ListeningNetwork, Read};
 pub use policy::SourcePolicy;
 pub use rows::*;
+pub use similar::kept_neighbours;
 
 use std::collections::HashMap;
 use std::future::Future;

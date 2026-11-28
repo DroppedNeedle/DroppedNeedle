@@ -21,7 +21,7 @@ use crate::jellyfin::views::{
     LyricsView, PlaylistDetail, PlaylistEntry, PlaylistView, ReadFailed, TrackFilter, TrackView,
     WriteRefusal,
 };
-use crate::library::{CompatError, CompatLibrary, cover_version};
+use crate::library::{CompatError, CompatLibrary, SoundSeed, cover_version};
 use crate::subsonic::views::song_path;
 use droppedneedle_catalog::collections::service::Visible;
 use droppedneedle_catalog::collections::store::play_marks::MarkScope;
@@ -464,6 +464,22 @@ impl JellyfinLibrary {
         ids: &[String],
     ) -> Result<Vec<TrackView>, ReadFailed> {
         Ok(self.read_tracks(user_id, ids).await?)
+    }
+
+    /// Up to `limit` tracks that sound like `seed`, in a station's walking
+    /// order; empty while the sound engine does not answer apps or finds
+    /// nothing near enough.
+    pub async fn sound_similar(
+        &self,
+        user_id: &str,
+        seed: SoundSeed<'_>,
+        limit: usize,
+    ) -> Result<Vec<TrackView>, ReadFailed> {
+        let ids = self.library.sound_similar(user_id, seed, limit).await?;
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.tracks_by_ids(user_id, &ids).await
     }
 
     pub async fn track(

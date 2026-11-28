@@ -33,6 +33,10 @@
 	import type { MusicSource } from '$lib/stores/musicSource';
 	import { createForgetDiscoverHistoryMutation } from '$lib/features/profile/queries/discover-history.svelte';
 	import {
+		createSaveDiscoverPrefsMutation,
+		getDiscoverPrefsQuery
+	} from '$lib/features/discover/queries/week.svelte';
+	import {
 		createImportListeningHistoryMutation,
 		createUploadListeningHistoryMutation,
 		getListeningHistoryQuery
@@ -76,6 +80,12 @@
 	const refreshMixMutation = createRefreshPersonalMixMutation();
 	const forgetHistoryMutation = createForgetDiscoverHistoryMutation();
 	let forgetOpen = $state(false);
+
+	const discoverPrefsQuery = getDiscoverPrefsQuery();
+	const discoverPrefs = $derived(discoverPrefsQuery.data);
+	const saveDiscoverPrefs = createSaveDiscoverPrefsMutation();
+	// The switch just moved shows while it saves.
+	let appPlaylistsChosen = $state<boolean | null>(null);
 
 	const historyQuery = getListeningHistoryQuery();
 	const uploadHistoryMutation = createUploadListeningHistoryMutation();
@@ -733,6 +743,27 @@
 					<p class="grow-0 text-xs text-muted">{mixRefreshMessage}</p>
 				{/if}
 			</div>
+		</div>
+
+		<hr class="border-line" />
+
+		<div class="px-1">
+			<ToggleRow
+				label="Discover playlists in apps"
+				description="Your weekly set, shelves and Daily Mixes, in your Subsonic and Jellyfin apps."
+				disabled={!discoverPrefs || saveDiscoverPrefs.isPending}
+				bind:checked={
+					() => appPlaylistsChosen ?? discoverPrefs?.app_playlists ?? true,
+					(checked) => {
+						if (!discoverPrefs) return;
+						appPlaylistsChosen = checked;
+						saveDiscoverPrefs.mutate(
+							{ ...discoverPrefs, app_playlists: checked },
+							{ onSettled: () => (appPlaylistsChosen = null) }
+						);
+					}
+				}
+			/>
 		</div>
 
 		<hr class="border-line" />

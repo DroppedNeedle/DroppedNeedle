@@ -1148,3 +1148,220 @@ async fn an_unlinked_person_gets_no_new_tracks_and_sends_nothing() {
         .expect("reads counted");
     assert_eq!(counted, 0);
 }
+
+/// `user`'s app playlists from Discover: each one's name and its library
+/// tracks in order.
+async fn app_lists(rig: &AuthRig, user: &str) -> Vec<(String, Vec<String>)> {
+    let user = user.to_owned();
+    rig.platform
+        .db
+        .read("test.app_lists", move |conn| {
+            let lists: Vec<(String, String)> = conn
+                .prepare(
+                    "SELECT id, name FROM catalog_playlists WHERE user_id = ?1 \
+                     AND source_ref LIKE 'discover-list:mix:%' ORDER BY source_ref",
+                )?
+                .query_map([&user], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?;
+            let mut out = Vec::new();
+            for (id, name) in lists {
+                let tracks = conn
+                    .prepare(
+                        "SELECT library_file_id FROM catalog_playlist_tracks \
+                         WHERE playlist_id = ?1 ORDER BY position",
+                    )?
+                    .query_map([&id], |row| row.get(0))?
+                    .collect::<rusqlite::Result<Vec<String>>>()?;
+                out.push((name, tracks));
+            }
+            Ok::<_, DbError>(out)
+        })
+        .await
+        .expect("app playlists read")
+}
+
+/// A kept Daily Mix reaches its owner's apps as a playlist named as the
+/// mix, its library tracks in the mix's order and its new tracks left out;
+/// nobody else gets it, and with the person's switch off it is gone.
+#[tokio::test]
+async fn a_kept_mix_is_a_playlist_in_its_owners_apps() {
+    use droppedneedle_catalog::discover::engine::weekly::{Depth, SetDay};
+    use droppedneedle_catalog::discover::models::DiscoverPrefs;
+
+    let rig = AuthRig::new("mixes-app-lists").await;
+    let mut tracks = Vec::new();
+    for artist in [1, 2] {
+        tracks.extend(by(artist, 2, None));
+    }
+    plant(&rig, tracks).await;
+    insert(
+        &rig.platform.db,
+        kept_mix(
+            "user-1",
+            "Artist 1, Artist 2 and more",
+            &[
+                ("a2-t1", "artist", 2, None),
+                ("Fresh one", "new", 3, Some(group_of(9))),
+                ("a1-t0", "artist", 1, None),
+                ("a2-t0", "sound", 2, None),
+            ],
+        ),
+    )
+    .await;
+    let dir = crate::common::ScratchDir::new("mixes-app-lists");
+    let deps = deps(&rig, &dir);
+    for user in ["user-1", "user-2"] {
+        deps.app_lists
+            .refresh(user, |_| Ok(()))
+            .await
+            .expect("app playlists refreshed");
+    }
+    assert_eq!(
+        app_lists(&rig, "user-1").await,
+        [(
+            "Artist 1, Artist 2 and more".to_owned(),
+            vec!["a2-t1".to_owned(), "a1-t0".to_owned(), "a2-t0".to_owned()]
+        )]
+    );
+    assert!(
+        app_lists(&rig, "user-2").await.is_empty(),
+        "only its owner's"
+    );
+
+    deps.weekly
+        .save_prefs(
+            "user-1",
+            DiscoverPrefs {
+                set_day: SetDay::Friday,
+                depth: Depth::NextDoor,
+                app_playlists: false,
+            },
+        )
+        .await
+        .expect("the switch is saved");
+    deps.app_lists
+        .refresh("user-1", |_| Ok(()))
+        .await
+        .expect("app playlists refreshed");
+    assert!(
+        app_lists(&rig, "user-1").await.is_empty(),
+        "the switch off takes it away"
+    );
+}
+
+/// A refresh that read the person's mixes before they forgot their history
+/// keeps nothing once the forget has run: the forgotten mix does not come
+/// back as a playlist.
+#[tokio::test]
+async fn an_app_playlists_refresh_across_a_forget_keeps_nothing() {
+    let rig = AuthRig::new("mixes-app-lists-forget").await;
+    plant(&rig, by(1, 2, None)).await;
+    insert(
+        &rig.platform.db,
+        kept_mix(
+            "user-1",
+            "Artist 1 and more",
+            &[("a1-t0", "artist", 1, None), ("a1-t1", "artist", 1, None)],
+        ),
+    )
+    .await;
+    let dir = crate::common::ScratchDir::new("mixes-app-lists-forget");
+    let deps = deps(&rig, &dir);
+    let began = deps.app_lists.forgets_now("user-1");
+    droppedneedle_catalog::discover::forget::forget(&deps, "user-1")
+        .await
+        .expect("forgotten");
+    // The mix the refresh read is put back, so only the forget count keeps
+    // the refresh from writing it.
+    insert(
+        &rig.platform.db,
+        kept_mix(
+            "user-1",
+            "Artist 1 and more",
+            &[("a1-t0", "artist", 1, None), ("a1-t1", "artist", 1, None)],
+        ),
+    )
+    .await;
+    deps.app_lists
+        .refresh_from("user-1", began, |_| Ok(()))
+        .await
+        .expect("the refresh ends");
+    assert!(
+        app_lists(&rig, "user-1").await.is_empty(),
+        "a refresh claimed before the forget kept nothing"
+    );
+    deps.app_lists
+        .refresh("user-1", |_| Ok(()))
+        .await
+        .expect("app playlists refreshed");
+    assert_eq!(
+        app_lists(&rig, "user-1").await.len(),
+        1,
+        "a later one keeps"
+    );
+}
+
+/// A list is made only once it has songs: someone with no set, shelves or
+/// mix tracks gets none. One whose songs all go stays, empty, under the
+/// same id, so an app that pinned it keeps it.
+#[tokio::test]
+async fn an_app_playlist_is_made_with_songs_and_kept_when_it_empties() {
+    let rig = AuthRig::new("mixes-app-lists-empty").await;
+    plant(&rig, by(1, 1, None)).await;
+    insert(
+        &rig.platform.db,
+        kept_mix(
+            "user-1",
+            "Artist 1 and more",
+            &[("a1-t0", "artist", 1, None)],
+        ),
+    )
+    .await;
+    let dir = crate::common::ScratchDir::new("mixes-app-lists-empty");
+    let deps = deps(&rig, &dir);
+    let lists = |user: &'static str| {
+        let db = rig.platform.db.clone();
+        async move {
+            db.read("test.discover_lists", move |conn| {
+                conn.prepare(
+                    "SELECT id FROM catalog_playlists WHERE user_id = ?1 \
+                     AND source_ref LIKE 'discover-list:%' ORDER BY id",
+                )?
+                .query_map([user], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(DbError::from)
+            })
+            .await
+            .expect("lists read")
+        }
+    };
+    for user in ["user-1", "user-2"] {
+        deps.app_lists
+            .refresh(user, |_| Ok(()))
+            .await
+            .expect("app playlists refreshed");
+    }
+    assert!(lists("user-2").await.is_empty(), "nothing to play, no list");
+    let made = lists("user-1").await;
+    assert_eq!(made.len(), 1, "only the mix has songs");
+
+    // Their one artist hidden from Discover leaves the mix with no song.
+    insert(
+        &rig.platform.db,
+        format!(
+            "INSERT INTO catalog_discover_feedback (user_id, target, target_mbid_lower, kind, \
+             created_at) VALUES ('user-1', 'artist', '{}', 'not_artist', 1);",
+            mbid(1)
+        ),
+    )
+    .await;
+    deps.app_lists
+        .refresh("user-1", |_| Ok(()))
+        .await
+        .expect("app playlists refreshed");
+    assert_eq!(lists("user-1").await, made, "the emptied list stays");
+    assert!(
+        app_lists(&rig, "user-1").await[0].1.is_empty(),
+        "and holds no song"
+    );
+}

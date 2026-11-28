@@ -271,6 +271,54 @@ impl CompatApp {
         assert_eq!(status, StatusCode::OK, "{saved}");
     }
 
+    /// Give the library's track `title` a sound pointing along `degrees`
+    /// in one plane, written straight into the analysis table for its
+    /// current bytes: the cosine distance between two planted tracks is one
+    /// minus the cosine of the angle between them.
+    pub async fn plant_sound(&self, title: &str, degrees: f64) {
+        let radians = degrees.to_radians();
+        let mut vector = vec![0.0f32; 200];
+        vector[0] = radians.cos() as f32;
+        vector[1] = radians.sin() as f32;
+        let vector: Vec<u8> = vector
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect();
+        // Every track's strongest five tags are the first five.
+        let tags: Vec<u8> = (0..50).map(|tag| if tag < 5 { 200 } else { 10 }).collect();
+        let planted = self
+            .app
+            .seed_with(
+                "INSERT INTO library_sound_analyses (local_track_id, analysis_version, \
+                 stat_revision, model, outcome, vector, tags, analysed_seconds, analysed_at) \
+                 SELECT id, 1, stat_revision, 'MSD_musicnn', 'analysed', ?1, ?2, 1.0, 1 \
+                 FROM local_tracks WHERE title = ?3",
+                [
+                    rusqlite::types::Value::Blob(vector),
+                    rusqlite::types::Value::Blob(tags),
+                    rusqlite::types::Value::Text(title.to_owned()),
+                ],
+            )
+            .await;
+        assert_eq!(planted, 1, "{title} has one sound");
+    }
+
+    /// Turn sound analysis on (paused, so nothing is read from the files)
+    /// or off, as the admin does.
+    pub async fn set_sound_analysis(&self, on: bool) {
+        let admin = self.app.login_admin().await;
+        let (status, body) = self
+            .app
+            .call_through_busy(
+                "PUT",
+                "/api/v3/settings/library/sound-analysis",
+                &[("authorization", admin.as_str())],
+                Some(json!({"sound_analysis_enabled": on, "sound_analysis_paused": true})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
     /// What the ffmpeg stand-in ran for sources in the folder of the
     /// layout's track `key`, one `<muxer> <bitrate>` line per run.
     pub fn ffmpeg_runs(&self, key: &str) -> Vec<String> {

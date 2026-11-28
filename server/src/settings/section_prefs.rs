@@ -22,6 +22,7 @@ use droppedneedle_catalog::discover::sections::{self, Page};
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::time::Millis;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
+use droppedneedle_kernel::jobs::queue::JobError;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
 /// One entry of the section settings.
@@ -97,13 +98,47 @@ pub struct SectionPrefs {
     db: Db,
     clock: Arc<dyn Clock>,
     lastfm: LastFmLinks,
+    app_lists: QueueAppLists,
+}
+
+/// Queues a person's Discover app playlists' refresh inside the caller's
+/// write: production's is Discover's [`Due::queue_now`] for
+/// [`app_lists::KIND`]. A function rather than the `Due` itself, so the
+/// settings rigs need no Discover of their own.
+///
+/// [`Due::queue_now`]: droppedneedle_catalog::discover::due::Due::queue_now
+/// [`app_lists::KIND`]: droppedneedle_catalog::discover::engine::app_lists::KIND
+pub type QueueAppLists =
+    Arc<dyn Fn(&rusqlite::Transaction, &str) -> Result<(), JobError> + Send + Sync>;
+
+/// Production's [`QueueAppLists`]: through `due`.
+pub fn queue_through(due: Arc<droppedneedle_catalog::discover::due::Due>) -> QueueAppLists {
+    Arc::new(move |tx, user_id| {
+        due.queue_now(
+            tx,
+            droppedneedle_catalog::discover::engine::app_lists::KIND,
+            user_id,
+        )
+    })
 }
 
 impl SectionPrefs {
     /// The prefs over the database and the Last.fm link store; `clock`
-    /// stamps each change.
-    pub fn new(db: Db, clock: Arc<dyn Clock>, lastfm: LastFmLinks) -> Self {
-        Self { db, clock, lastfm }
+    /// stamps each change, and a save queues the person's Discover app
+    /// playlists' refresh through `app_lists`, which follows their
+    /// sections.
+    pub fn new(
+        db: Db,
+        clock: Arc<dyn Clock>,
+        lastfm: LastFmLinks,
+        app_lists: QueueAppLists,
+    ) -> Self {
+        Self {
+            db,
+            clock,
+            lastfm,
+            app_lists,
+        }
     }
 
     /// The disabled keys for one user page.
@@ -119,17 +154,19 @@ impl SectionPrefs {
             .await
     }
 
-    /// Replace one user page's disabled set.
+    /// Replace one user page's disabled set, and queue their app playlists'
+    /// refresh in the same write.
     async fn set_disabled(
         &self,
         user_id: &str,
         page: SectionPage,
         disabled: &HashSet<String>,
-    ) -> Result<(), DbError> {
+    ) -> Result<(), JobError> {
         let (user_id, page) = (user_id.to_owned(), page.as_str().to_owned());
         let mut disabled: Vec<String> = disabled.iter().cloned().collect();
         disabled.sort();
         let now = Millis(self.clock.now_ms());
+        let app_lists = Arc::clone(&self.app_lists);
         self.db
             .write(
                 Lane::Foreground,
@@ -145,6 +182,7 @@ impl SectionPrefs {
                             rusqlite::params![user_id, page, key, now],
                         )?;
                     }
+                    app_lists(tx, &user_id)?;
                     Ok(())
                 },
             )
@@ -293,7 +331,10 @@ pub async fn save_page(
     prefs
         .set_disabled(user_id, update.page, &disabled)
         .await
-        .map_err(|cause| store_failure("section prefs write", cause))?;
+        .map_err(|error| match error {
+            JobError::Db(cause) => store_failure("section prefs write", cause),
+            other => SettingsError::internal(&format_args!("section prefs write: {other}")),
+        })?;
     page(prefs, user_id, update.page, masters).await
 }
 

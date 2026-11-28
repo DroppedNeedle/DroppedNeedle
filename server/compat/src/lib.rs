@@ -31,6 +31,8 @@
 //!   over the stored table ([`ids`](jellyfin::ids)),
 //!   which compat's one loop ([`LOOPS`]) fills.
 //! - Settings: [`LiveSettings`](settings::LiveSettings), read per request.
+//! - Sound: [`CompatSound`](sound::CompatSound), the library's similar-tracks
+//!   search behind similar songs, instant mixes and `sonicSimilarity`.
 //!
 //! # What is where
 //!
@@ -71,6 +73,7 @@ pub mod queues;
 pub mod settings;
 pub mod setup;
 pub mod shared;
+pub mod sound;
 pub mod sql;
 pub mod subsonic;
 #[cfg(any(test, feature = "test-support"))]

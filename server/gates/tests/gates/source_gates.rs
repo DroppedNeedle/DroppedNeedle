@@ -919,6 +919,8 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("catalog/src/artwork/warm.rs", 1, WARM_ENQUEUE),
     ("compat/src/library.rs", 1, REQUEST),
     ("compat/src/subsonic/store.rs", 1, REQUEST),
+    // The sound coverage read and the index load and search.
+    ("compat/src/sound.rs", 2, REQUEST),
     ("kernel/src/disk.rs", 1, DISK_WATCH_READ),
     ("kernel/src/runtime_config/store.rs", 3, AWAITED),
     ("library/src/contrib/live.rs", 1, LOOP_STEP),

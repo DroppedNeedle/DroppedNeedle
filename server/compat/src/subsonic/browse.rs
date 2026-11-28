@@ -88,10 +88,11 @@ pub async fn license(_ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
 /// Public (no auth).
 /// The set is owned by `compat::shared::extensions`: every served
 /// extension.
-pub async fn extensions(_ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
+pub async fn extensions(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
+    let sonic = ctx.store.sound().serves().await;
     Outcome::keyed(
         "openSubsonicExtensions",
-        crate::shared::extensions::ADVERTISED
+        crate::shared::extensions::advertised(sonic)
             .iter()
             .map(|ext| SOpenSubsonicExtension {
                 name: ext.name.to_string(),

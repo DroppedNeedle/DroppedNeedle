@@ -30,11 +30,17 @@ use droppedneedle_catalog::local::stores::{
 };
 use droppedneedle_catalog::metadata::Catalog;
 use droppedneedle_catalog::metadata::song_links;
-use droppedneedle_kernel::db::{Db, DbError};
+use droppedneedle_kernel::db::DbError;
 use droppedneedle_library::tags::lyrics::Lyrics;
 
+use crate::sound::CompatSound;
 use crate::sql;
 use crate::user_settings::UserSettings;
+use droppedneedle_catalog::discover::facts::KeptFacts;
+use droppedneedle_catalog::discover::listening::kept_neighbours;
+use droppedneedle_kernel::platform::Platform;
+use droppedneedle_kernel::runtime_config::sections::SoundAnalysisSettings;
+use droppedneedle_library::sound::SoundAnalysis;
 
 /// A compat read or write failed. Client faults keep their kind so each
 /// protocol answers its own code (Subsonic 70/50/10/0, Jellyfin
@@ -171,6 +177,20 @@ impl From<CompatError> for crate::jellyfin::views::ReadFailed {
 /// Cover bytes plus content type.
 pub type ImageBytes = (Vec<u8>, String);
 
+/// What a sound search grows from, by library id.
+#[derive(Debug, Clone, Copy)]
+pub enum SoundSeed<'a> {
+    /// One track.
+    Track(&'a str),
+    /// An album's tracks.
+    Album(&'a str),
+    /// Some of an artist's tracks.
+    Artist(&'a str),
+}
+
+/// Most tracks of an artist a sound search grows from.
+pub const ARTIST_SEED_TRACKS: u64 = 20;
+
 /// Everything compat reads, behind one cheap clone.
 #[derive(Clone)]
 pub struct CompatLibrary {
@@ -191,6 +211,10 @@ pub struct CompatLibrary {
     pub shuffles: Arc<ShuffleSeeds>,
     /// Each person's choices for their apps.
     pub user_settings: UserSettings,
+    /// The library's similar-tracks search.
+    pub sound: CompatSound,
+    /// The provider facts Discover keeps, read for an artist's neighbours.
+    pub facts: KeptFacts,
 }
 
 /// Covers in a made playlist picture: a two by two grid.
@@ -273,12 +297,22 @@ pub fn whole(seconds: Option<f64>) -> Option<i64> {
 
 impl CompatLibrary {
     /// Everything compat reads, from the native catalog bundle: the same
-    /// catalog, collections, lyrics and cover art the web UI uses.
+    /// catalog, collections, lyrics and cover art the web UI uses, and the
+    /// sound analysis behind similar songs.
     pub fn from_catalog(
         catalog_setup: &droppedneedle_catalog::wiring::CatalogSetup,
-        db: Db,
+        platform: &Platform,
+        sound: SoundAnalysis,
     ) -> Self {
+        let db = platform.db.clone();
         Self {
+            sound: CompatSound::new(
+                sound,
+                platform.settings.live::<SoundAnalysisSettings>(),
+                db.clone(),
+                platform.clock.clone(),
+            ),
+            facts: KeptFacts::new(db.clone(), platform.clock.clone()),
             catalog: catalog_setup.local.catalog.clone(),
             collections: catalog_setup.collections.clone(),
             lyrics: catalog_setup.local.lyrics.clone(),
@@ -307,6 +341,86 @@ impl CompatLibrary {
             .list_artists(scope, query, ArtistSort::Name, false, limit, offset)
             .await?;
         Ok((artists, total))
+    }
+
+    /// The library tracks a sound search grows from for `seed`: a track
+    /// itself, an album's tracks, an artist's first [`ARTIST_SEED_TRACKS`]
+    /// in album order.
+    pub async fn sound_seeds(&self, seed: SoundSeed<'_>) -> Result<Vec<String>, CompatError> {
+        let tracks = match seed {
+            SoundSeed::Track(id) => return Ok(vec![id.to_owned()]),
+            SoundSeed::Album(id) => self.album_tracks(id).await?,
+            SoundSeed::Artist(id) => {
+                let query = TrackQuery {
+                    artist_ids: vec![id.to_owned()],
+                    ..TrackQuery::default()
+                };
+                self.track_page(&query, TrackOrder::Album, ARTIST_SEED_TRACKS, 0)
+                    .await?
+            }
+        };
+        Ok(tracks.into_iter().map(|track| track.id).collect())
+    }
+
+    /// Up to `count` library tracks that sound like `seed`, for `user_id`,
+    /// in a station's walking order; empty while the sound engine does not
+    /// answer apps, finds nothing near enough or its sounds fail to load
+    /// (a busy database stays an error).
+    pub async fn sound_similar(
+        &self,
+        user_id: &str,
+        seed: SoundSeed<'_>,
+        count: usize,
+    ) -> Result<Vec<String>, CompatError> {
+        if !self.sound.serves().await {
+            return Ok(Vec::new());
+        }
+        let seeds = self.sound_seeds(seed).await?;
+        match self.sound.similar(user_id, &seeds, count).await {
+            // The sounds did not load: the answer apps had before analysis.
+            Err(CompatError::Internal(cause)) => {
+                tracing::warn!(%cause, "track sounds unreadable; similar songs answer by artist");
+                Ok(Vec::new())
+            }
+            other => other,
+        }
+    }
+
+    /// Tracks by id, in the order asked; missing ids drop out.
+    pub async fn tracks_in_order(&self, ids: &[String]) -> Result<Vec<PlayerTrack>, CompatError> {
+        let mut by_id: HashMap<String, PlayerTrack> = self
+            .tracks_by_ids(ids)
+            .await?
+            .into_iter()
+            .map(|track| (track.id.clone(), track))
+            .collect();
+        Ok(ids.iter().filter_map(|id| by_id.remove(id)).collect())
+    }
+
+    /// The library artists among the kept neighbours of the artist with
+    /// MusicBrainz id `artist_mbid`, in the one similar-artists order, at
+    /// most `count`. Kept rows only: an artist with none answers an empty
+    /// list, and nothing is asked of a provider or wanted for later.
+    pub async fn similar_artists(
+        &self,
+        artist_mbid: &str,
+        count: usize,
+    ) -> Result<Vec<ArtistRecord>, CompatError> {
+        let neighbours: Vec<String> = kept_neighbours(&self.facts, artist_mbid)
+            .await?
+            .into_iter()
+            .filter_map(|neighbour| neighbour.artist.mbid)
+            .map(|mbid| mbid.to_lowercase())
+            .collect();
+        let held = self.catalog.artists_for_mbids(&neighbours).await?;
+        let mut seen = HashSet::new();
+        let ids: Vec<String> = neighbours
+            .iter()
+            .filter_map(|mbid| held.get(mbid).cloned())
+            .filter(|id| seen.insert(id.clone()))
+            .take(count)
+            .collect();
+        Ok(self.catalog.artists_by_ids(&ids).await?)
     }
 
     /// One artist.
