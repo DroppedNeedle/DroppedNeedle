@@ -536,10 +536,19 @@ impl Catalog {
                         {
                             match catalog.artist_detail(&mbid, priority).await {
                                 Ok(Some(detail)) if !detail.name.is_empty() => Some(detail.name),
-                                _ => None,
+                                Ok(_) => None,
+                                Err(_) => {
+                                    return Err(ProviderError::Unavailable {
+                                        provider: droppedneedle_providers::audiodb::SOURCE,
+                                        retry_after: None,
+                                    });
+                                }
                             }
                         } else {
-                            None
+                            return Err(ProviderError::Unavailable {
+                                provider: droppedneedle_providers::audiodb::SOURCE,
+                                retry_after: None,
+                            });
                         };
                         if let Some(resolved_name) = resolved_name {
                             found = client.search_artist(&resolved_name, priority).await?;

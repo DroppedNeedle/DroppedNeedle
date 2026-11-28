@@ -737,7 +737,6 @@ async fn follow_poll_baselines_then_emits() {
         ),
         providers.cache.clone(),
         providers.cache.clock(),
-        None,
     );
     let library = Arc::new(LibraryPresence::over_catalog(db.db().clone()));
     library.add(&["rg-owned"]);
@@ -1068,7 +1067,6 @@ async fn follow_rig(
         ),
         providers.cache.clone(),
         providers.cache.clock(),
-        None,
     );
     let downloads = dispatch(db, settings);
     let requests = Arc::new(RequestsService::new(&RequestsState {
@@ -1559,7 +1557,6 @@ async fn follow_poll_reads_fresh_feed_without_musicbrainz_calls_and_caches_fallb
         ),
         providers.cache.clone(),
         providers.cache.clock(),
-        None,
     );
     let settings = settings(&db);
     let downloads = dispatch(&db, &settings);

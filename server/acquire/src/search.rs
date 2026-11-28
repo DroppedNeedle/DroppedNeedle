@@ -37,35 +37,25 @@ pub struct MusicBrainzReleasePoll {
     client: MusicBrainzView,
     cache: ProviderCacheStore,
     clock: Arc<dyn Clock>,
-    source: Option<LiveSource>,
     fresh_memo: Mutex<Option<(i64, Arc<FreshFeed>)>>,
 }
 
 impl MusicBrainzReleasePoll {
-    /// Poll over one client with shared provider cache, clock, and optional
-    /// live source (used for the MusicBrainz cache namespace).
-    pub fn new(
-        client: MusicBrainzView,
-        cache: ProviderCacheStore,
-        clock: Arc<dyn Clock>,
-        source: Option<LiveSource>,
-    ) -> Self {
+    /// Poll over one client with shared provider cache and clock.
+    pub fn new(client: MusicBrainzView, cache: ProviderCacheStore, clock: Arc<dyn Clock>) -> Self {
         Self {
             client,
             cache,
             clock,
-            source,
             fresh_memo: Mutex::new(None),
         }
     }
 
     fn cache_key(&self, followed: &str) -> Result<CacheKey, String> {
-        let namespace = match &self.source {
-            Some(source) => source
-                .cache_namespace()
-                .ok_or_else(|| "musicbrainz settings cannot be read".to_owned())?,
-            None => "fixed".to_owned(),
-        };
+        let namespace = self
+            .client
+            .cache_namespace()
+            .ok_or_else(|| "musicbrainz settings cannot be read".to_owned())?;
         Ok(CacheKey::new(
             Source::MusicBrainz,
             &[&namespace, "follow_poll", followed],
@@ -231,9 +221,8 @@ pub fn live_release_poll(
     MusicBrainzReleasePoll::new(
         providers
             .musicbrainz
-            .live(source.clone(), RequestPriority::BackgroundSync),
+            .live(source, RequestPriority::BackgroundSync),
         providers.cache.clone(),
         providers.cache.clock(),
-        Some(source),
     )
 }

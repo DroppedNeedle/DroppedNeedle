@@ -215,6 +215,17 @@ impl MusicBrainzView {
         }
     }
 
+    /// What a cache key for answers from this view should carry: the live
+    /// source's id and generation, or a fixed source's base URL. `None` while
+    /// the settings do not read.
+    pub fn cache_namespace(&self) -> Option<String> {
+        match &self.source {
+            Choice::Live(live) => live.cache_namespace(),
+            Choice::Fixed(MbSource::Unreadable) => None,
+            Choice::Fixed(source) => Some(format!("fixed:{}", source.base_url())),
+        }
+    }
+
     /// Search artists by free text, the way v2's artist search asked:
     /// name and accent-folded name boosted, aliases next, then any field.
     /// The text is escaped, so quotes and Lucene operators match literally.

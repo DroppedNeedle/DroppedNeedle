@@ -206,6 +206,7 @@ impl Catalog {
             WikidataPictures::NoMatch { failed } => candidates.incomplete |= failed,
         }
         if !priority.is_user_facing() && !self.has_background_mb_budget().await {
+            candidates.incomplete = true;
             return candidates;
         }
         let detail = match self.artist_detail(mbid, priority).await {
