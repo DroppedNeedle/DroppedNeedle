@@ -355,8 +355,9 @@ Run from the repo root. `make help` lists every target.
   pick record, how their plays ended, their imported ListenBrainz history
   (its import marked `forgotten` and its jobs cancelled in the same write),
   their Discover activity, their taste and candidate pool, their weekly sets
-  (and when their first set began waiting) and their saved pages, by user id
-  and safe to run again. It keeps plays, the library, requests and what the
+  (and when their first set began waiting), their Daily Mixes, the playlists
+  Discover keeps for their apps and their saved pages, by user id and safe
+  to run again. It keeps plays, the library, requests and what the
   person chose themselves: their answers to Discover, their tunings, their
   Later pile, the artists they named, their set day and how far their picks
   go. Every table with a column ending `user_id` is listed in
@@ -386,7 +387,9 @@ Run from the repo root. `make help` lists every target.
   are rebuilt whole by their job and written only by `rebuild` in
   `engine/taste_store.rs` and `engine/pool_store.rs`; the weekly set is
   computed once and written only by `weekly_store::keep`, which never
-  replaces a week's set. Besides these, only Forget deletes their rows.
+  replaces a week's set; each person's Daily Mixes are rebuilt whole once a
+  UTC day by the `discover.mixes` job and written only by `keep` in
+  `discover/mixes/store.rs`. Besides these, only Forget deletes their rows.
 
 **Background work and outbound HTTP**
 - Loops are cancellable, back off with jitter and re-read settings each
@@ -397,7 +400,11 @@ Run from the repo root. `make help` lists every target.
 - Discover's background work is queued only from
   `catalog/src/discover/due.rs`: `clock_pass` from the demand tick (nothing
   while `DISCOVER_WARMER_ENABLED` is off), `visit` where the page records a
-  person's activity, and `queue_now` inside another write. Who is due a
+  person's activity, and `queue_now` inside another write. A person's
+  Daily Mixes (`discover.mixes`) and the playlists Discover keeps for their
+  apps (`discover.app_lists`) are queued there too: the mixes once a UTC day
+  and again the day their first pool lands, the app lists after the mixes,
+  the weekly set and a section switch save. Who is due a
   taste build, a pool build or a weekly set is decided in
   `engine/schedule.rs`, which only those first two ask. A person's
   ListenBrainz history jobs (`listens.import`, `listens.sync`) are queued
@@ -1047,6 +1054,13 @@ Run from the repo root. `make help` lists every target.
 - A Discover build never drops a section that was good: a section whose own
   reads failed keeps the one the saved page showed (same variant, under a
   week old) and says so in `section_states`.
+- Each person's Daily Mixes (`catalog/src/discover/mixes/`) are one mix per
+  taste group, built from stored rows by their job and read by the page,
+  which builds none. A track found by sound is always a library track; a
+  new track is a song from an album the person's pool proposed for that
+  group, taken only while a source an admin set up plays what the library
+  lacks and the person's own ListenBrainz link answers, and the read of its
+  artist's songs is counted in `catalog_background_read_days`.
 
 **Compat, plugins, upgrade, readiness**
 - Compat support means the tested matrix and its golden traces, for the apps
@@ -1055,6 +1069,14 @@ Run from the repo root. `make help` lists every target.
 - Which Jellyfin routes are public is the one route table in
   `compat/src/jellyfin/router.rs`; every other row is signed in by its
   layer before the handler runs, and the limiter reads the same table.
+- The apps' similar songs and instant mix (Subsonic `getSimilarSongs`,
+  `sonicSimilarity`, Jellyfin `Similar` and `InstantMix`) answer from the
+  library's sound search, library tracks only, with no provider call and
+  nothing recorded as wanted, while sound analysis covers nine in ten
+  indexed tracks; otherwise, and for a seed with no sound, the album
+  artist's tracks as before. The playlists Discover keeps for apps carry the
+  `discover-list:` source, are read-only, hidden on the web, and written
+  only by `collections/discover_lists.rs`.
 - A Jellyfin id is stored in `compat_jellyfin_ids` by compat's fill loop, or
   carried from v2 by the upgrade, and never minted again, a data-key reset
   included. A request resolves ids from that table and never lists the
