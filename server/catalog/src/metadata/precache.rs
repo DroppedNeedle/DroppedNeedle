@@ -62,6 +62,88 @@ impl Catalog {
         })
     }
 
+    /// Identified artists and albums added or identified at or after
+    /// `since_ms` (unix ms), for automatic post-scan precache passes.
+    pub async fn precache_library_since(&self, since_ms: i64) -> Result<PrecacheLibrary, String> {
+        let artists = self
+            .local()
+            .identified_artists_since(since_ms)
+            .await
+            .map_err(|error| format!("Could not read the library's artists: {error}"))?;
+        let albums = self
+            .local()
+            .identified_albums_since(since_ms)
+            .await
+            .map_err(|error| format!("Could not read the library's albums: {error}"))?;
+        Ok(PrecacheLibrary {
+            artists: artists
+                .into_iter()
+                .map(|(mbid, name)| LibraryArtist { mbid, name })
+                .collect(),
+            albums: albums
+                .into_iter()
+                .map(|(release_group_mbid, title, artist_name)| LibraryAlbum {
+                    release_group_mbid,
+                    title,
+                    artist_name,
+                })
+                .collect(),
+        })
+    }
+
+    /// Whether each artist's MusicBrainz page data (detail + release groups)
+    /// is held, checked in two batched cache reads.
+    async fn artist_pages_held(&self, artists: &[LibraryArtist]) -> Vec<bool> {
+        let detail_keys: Vec<_> = artists
+            .iter()
+            .map(|artist| self.artist_detail_key(&artist.mbid))
+            .collect();
+        let group_keys: Vec<_> = artists
+            .iter()
+            .map(|artist| self.release_groups_key(&artist.mbid))
+            .collect();
+        let cache = self.upstream().cache();
+        let details = cache.peek_many::<serde::de::IgnoredAny>(&detail_keys).await;
+        let groups = cache.peek_many::<serde::de::IgnoredAny>(&group_keys).await;
+        details
+            .into_iter()
+            .zip(groups)
+            .map(|(d, g)| d.is_some() && g.is_some())
+            .collect()
+    }
+
+    /// Whether each album's MusicBrainz release-group detail is held, checked
+    /// in one batched cache read.
+    async fn album_pages_held(&self, albums: &[LibraryAlbum]) -> Vec<bool> {
+        let keys: Vec<_> = albums
+            .iter()
+            .map(|album| self.group_key(&album.release_group_mbid))
+            .collect();
+        self.upstream()
+            .cache()
+            .peek_many::<serde::de::IgnoredAny>(&keys)
+            .await
+            .into_iter()
+            .map(|entry| entry.is_some())
+            .collect()
+    }
+
+    /// Whether each artist's TheAudioDB answer is held, checked in one
+    /// batched cache read.
+    async fn audiodb_artists_held(&self, artists: &[LibraryArtist]) -> Vec<bool> {
+        let keys: Vec<_> = artists
+            .iter()
+            .map(|artist| self.audiodb_artist_key(&artist.mbid))
+            .collect();
+        self.upstream()
+            .cache()
+            .peek_many::<serde::de::IgnoredAny>(&keys)
+            .await
+            .into_iter()
+            .map(|entry| entry.is_some())
+            .collect()
+    }
+
     /// Whether the artist page's MusicBrainz data is held, fresh or stale:
     /// a visit refreshes a stale page, so the precache fills only what is
     /// missing.
@@ -445,6 +527,13 @@ impl CatalogPrecache {
     }
 }
 
+/// Whether the configured AudioDB API key is a personal/paid key rather than
+/// empty or one of TheAudioDB's shared public free keys (`1`, `2`, `123`).
+fn has_custom_audiodb_key(settings: &AdvancedSettings) -> bool {
+    let key = settings.audiodb_api_key.expose().trim();
+    !key.is_empty() && !matches!(key, "1" | "2" | "123")
+}
+
 impl PrecacheSources for CatalogPrecache {
     fn tuning(&self) -> PrecacheTuning {
         // Unreadable settings never prewarm AudioDB, whose switch and key
@@ -457,6 +546,7 @@ impl PrecacheSources for CatalogPrecache {
             });
         PrecacheTuning {
             audiodb_enabled: settings.audiodb_enabled,
+            audiodb_custom_key: has_custom_audiodb_key(&settings),
             ..PrecacheTuning::default()
         }
     }
@@ -469,10 +559,30 @@ impl PrecacheSources for CatalogPrecache {
         })
     }
 
+    fn library_since(&self, since_ms: i64) -> BoxFuture<'_, Result<PrecacheLibrary, String>> {
+        Box::pin(async move {
+            *self.access.lock().await = None;
+            self.catalog.precache_library_since(since_ms).await
+        })
+    }
+
     fn artist_cached<'a>(&'a self, artist: &'a LibraryArtist) -> BoxFuture<'a, bool> {
         Box::pin(async move {
             self.catalog.artist_page_cached(&artist.mbid).await
                 && self.artwork.artist_image_cached(&artist.mbid).await
+        })
+    }
+
+    fn uncached_artists<'a>(&'a self, artists: &'a [LibraryArtist]) -> BoxFuture<'a, Vec<usize>> {
+        Box::pin(async move {
+            let pages = self.catalog.artist_pages_held(artists).await;
+            let mut needed = Vec::new();
+            for (index, (artist, page_held)) in artists.iter().zip(pages).enumerate() {
+                if !page_held || !self.artwork.artist_image_cached(&artist.mbid).await {
+                    needed.push(index);
+                }
+            }
+            needed
         })
     }
 
@@ -522,6 +632,24 @@ impl PrecacheSources for CatalogPrecache {
         })
     }
 
+    fn uncached_albums<'a>(&'a self, albums: &'a [LibraryAlbum]) -> BoxFuture<'a, Vec<usize>> {
+        Box::pin(async move {
+            let pages = self.catalog.album_pages_held(albums).await;
+            let mut needed = Vec::new();
+            for (index, (album, page_held)) in albums.iter().zip(pages).enumerate() {
+                if !page_held
+                    || !self
+                        .artwork
+                        .release_group_cover_cached(&album.release_group_mbid)
+                        .await
+                {
+                    needed.push(index);
+                }
+            }
+            needed
+        })
+    }
+
     fn warm_album<'a>(&'a self, album: &'a LibraryAlbum) -> BoxFuture<'a, ()> {
         Box::pin(async move {
             let (_, _) = tokio::join!(
@@ -536,16 +664,41 @@ impl PrecacheSources for CatalogPrecache {
                             .await;
                     }
                 },
-                self.artwork.warm_release_group_cover(
-                    &album.release_group_mbid,
-                    droppedneedle_providers::RequestPriority::BackgroundSync
-                ),
+                async {
+                    if !self
+                        .artwork
+                        .release_group_cover_cached(&album.release_group_mbid)
+                        .await
+                    {
+                        self.artwork
+                            .warm_release_group_cover(
+                                &album.release_group_mbid,
+                                droppedneedle_providers::RequestPriority::BackgroundSync,
+                            )
+                            .await;
+                    }
+                },
             );
         })
     }
 
     fn audiodb_artist_cached<'a>(&'a self, artist: &'a LibraryArtist) -> BoxFuture<'a, bool> {
         Box::pin(self.catalog.artist_images_known(&artist.mbid))
+    }
+
+    fn uncached_audiodb_artists<'a>(
+        &'a self,
+        artists: &'a [LibraryArtist],
+    ) -> BoxFuture<'a, Vec<usize>> {
+        Box::pin(async move {
+            self.catalog
+                .audiodb_artists_held(artists)
+                .await
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, held)| (!held).then_some(index))
+                .collect()
+        })
     }
 
     fn warm_audiodb_artist<'a>(&'a self, artist: &'a LibraryArtist) -> BoxFuture<'a, ()> {

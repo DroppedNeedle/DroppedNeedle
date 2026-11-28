@@ -95,17 +95,31 @@ pub struct PrecacheTrigger {
     status: CacheSyncStatus,
     sources: Arc<dyn PrecacheSources>,
     scans: ScansEnded,
+    clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
 }
 
 impl PrecacheTrigger {
-    /// Start one supervised run, started by `user_id` when a person asked
-    /// for it. Rejected while a run is live, like any duplicate job name.
-    /// The status settles when the run lands, however it ends.
+    /// Start one supervised full-library run, started by `user_id` when a
+    /// person asked for it. Rejected while a run is live, like any duplicate
+    /// job name. The status settles when the run lands, however it ends.
     pub async fn run(
         &self,
         user_id: Option<String>,
     ) -> Result<precache::PrecacheHandle, AlreadyRunning> {
         let work = LibraryPrecache::new(self.sources.clone(), self.status.clone(), user_id);
+        let settler = work.settler();
+        precache::spawn_run(&self.supervisor, work, self.limits(), move |outcome| {
+            settler.settle(outcome);
+        })
+    }
+
+    /// Start one supervised automatic post-scan run scoped only to artists
+    /// and albums added or identified at or after `since_ms` (unix ms).
+    pub async fn run_since(
+        &self,
+        since_ms: i64,
+    ) -> Result<precache::PrecacheHandle, AlreadyRunning> {
+        let work = LibraryPrecache::new_since(self.sources.clone(), self.status.clone(), since_ms);
         let settler = work.settler();
         precache::spawn_run(&self.supervisor, work, self.limits(), move |outcome| {
             settler.settle(outcome);
@@ -136,6 +150,7 @@ impl PrecacheTrigger {
     /// scans go quiet for [`SCAN_PRECACHE_DEBOUNCE`]. A run already going
     /// is left alone.
     pub fn spawn_after_scan(&self) -> Result<(), AlreadyRunning> {
+        let watermark_ms = self.clock.now_ms();
         self.supervisor.on_wakeup(
             precache::AFTER_SCAN_JOB,
             self.scans.0.subscribe(),
@@ -143,6 +158,7 @@ impl PrecacheTrigger {
             AfterScanTick {
                 trigger: self.clone(),
                 folded: *self.scans.0.borrow(),
+                watermark_ms,
             },
         )
     }
@@ -151,9 +167,13 @@ impl PrecacheTrigger {
 /// One turn of the post-scan wait. `folded` is the scan count the last run
 /// already covered: scans that ended during a quiet wait restart that wait
 /// and leave the loop woken, and the turn that follows finds nothing new.
+/// `watermark_ms` scopes each automatic run to artists and albums added or
+/// identified since the last completed kick (initialized at boot so a restart
+/// does not re-precache an existing library).
 struct AfterScanTick {
     trigger: PrecacheTrigger,
     folded: u64,
+    watermark_ms: i64,
 }
 
 impl Tick for AfterScanTick {
@@ -176,8 +196,12 @@ impl Tick for AfterScanTick {
             }
         }
         self.folded = *later.borrow_and_update();
-        match self.trigger.run(None).await {
-            Ok(_) => tracing::info!("library image refresh started after a scan"),
+        let next_watermark = self.trigger.clock.now_ms();
+        match self.trigger.run_since(self.watermark_ms).await {
+            Ok(_) => {
+                self.watermark_ms = next_watermark;
+                tracing::info!("library image refresh started after a scan");
+            }
             Err(_) => tracing::debug!("library image refresh already running; scan kick skipped"),
         }
         Ok(Next::Continue)
@@ -378,6 +402,7 @@ impl JobsSetup {
             status: self.cache_sync.clone(),
             sources: Arc::clone(&self.precache_sources),
             scans: self.scans.clone(),
+            clock: self.queues.clock(),
         }
     }
 

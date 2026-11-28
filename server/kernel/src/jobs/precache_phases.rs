@@ -38,6 +38,8 @@ use super::precache::{PrecacheOutcome, PrecacheWork, Progress};
 /// Cache checks between two watchdog beats while a phase sorts out what
 /// still needs fetching.
 pub const CHECK_BEAT_EVERY: usize = 25;
+/// Cache keys checked per batched lookup chunk.
+pub const CHECK_BATCH_SIZE: usize = 500;
 
 /// One library artist.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +88,10 @@ pub struct PrecacheTuning {
     pub discovery_delay: Duration,
     /// Whether TheAudioDB is on (`audiodb_enabled`).
     pub audiodb_enabled: bool,
+    /// Whether the admin configured a personal/paid AudioDB API key (rather
+    /// than the default/shared free key). Automatic post-scan precache skips
+    /// bulk AudioDB prewarming on the shared free key.
+    pub audiodb_custom_key: bool,
     /// AudioDB workers.
     pub audiodb_workers: usize,
     /// Pause before each AudioDB lookup.
@@ -105,6 +111,7 @@ impl Default for PrecacheTuning {
             discovery_workers: 5,
             discovery_delay: Duration::from_millis(200),
             audiodb_enabled: true,
+            audiodb_custom_key: true,
             audiodb_workers: 4,
             audiodb_delay: Duration::from_millis(300),
         }
@@ -118,8 +125,26 @@ pub trait PrecacheSources: Send + Sync + 'static {
     fn tuning(&self) -> PrecacheTuning;
     /// The library's identified artists and albums.
     fn library(&self) -> BoxFuture<'_, Result<PrecacheLibrary, String>>;
+    /// Identified artists and albums added or identified at or after
+    /// `since_ms` (unix ms), for automatic post-scan precache passes.
+    fn library_since(&self, _since_ms: i64) -> BoxFuture<'_, Result<PrecacheLibrary, String>> {
+        self.library()
+    }
     /// Whether the artist's page data and image are both cached.
     fn artist_cached<'a>(&'a self, artist: &'a LibraryArtist) -> BoxFuture<'a, bool>;
+    /// Indices into `artists` whose page data or image still needs warming.
+    /// Production overrides this to batch provider-cache checks.
+    fn uncached_artists<'a>(&'a self, artists: &'a [LibraryArtist]) -> BoxFuture<'a, Vec<usize>> {
+        Box::pin(async move {
+            let mut needed = Vec::new();
+            for (index, artist) in artists.iter().enumerate() {
+                if !self.artist_cached(artist).await {
+                    needed.push(index);
+                }
+            }
+            needed
+        })
+    }
     /// Fetch and cache the artist's page data and image.
     fn warm_artist<'a>(&'a self, artist: &'a LibraryArtist) -> BoxFuture<'a, ()>;
     /// Whether the artist's discovery sections are cached as `user_id`
@@ -129,15 +154,58 @@ pub trait PrecacheSources: Send + Sync + 'static {
         user_id: &'a str,
         artist_mbid: &'a str,
     ) -> BoxFuture<'a, bool>;
+    /// Indices into `artists` whose discovery sections still need warming.
+    fn uncached_discovery<'a>(
+        &'a self,
+        user_id: &'a str,
+        artists: &'a [LibraryArtist],
+    ) -> BoxFuture<'a, Vec<usize>> {
+        Box::pin(async move {
+            let mut needed = Vec::new();
+            for (index, artist) in artists.iter().enumerate() {
+                if !self.discovery_cached(user_id, &artist.mbid).await {
+                    needed.push(index);
+                }
+            }
+            needed
+        })
+    }
     /// Fetch and cache the artist's discovery sections as `user_id` sees
     /// them.
     fn warm_discovery<'a>(&'a self, user_id: &'a str, artist_mbid: &'a str) -> BoxFuture<'a, ()>;
     /// Whether the album's page data and cover are both cached.
     fn album_cached<'a>(&'a self, album: &'a LibraryAlbum) -> BoxFuture<'a, bool>;
+    /// Indices into `albums` whose page data or cover still needs warming.
+    fn uncached_albums<'a>(&'a self, albums: &'a [LibraryAlbum]) -> BoxFuture<'a, Vec<usize>> {
+        Box::pin(async move {
+            let mut needed = Vec::new();
+            for (index, album) in albums.iter().enumerate() {
+                if !self.album_cached(album).await {
+                    needed.push(index);
+                }
+            }
+            needed
+        })
+    }
     /// Fetch and cache the album's page data and cover.
     fn warm_album<'a>(&'a self, album: &'a LibraryAlbum) -> BoxFuture<'a, ()>;
     /// Whether TheAudioDB's answer for the artist is cached.
     fn audiodb_artist_cached<'a>(&'a self, artist: &'a LibraryArtist) -> BoxFuture<'a, bool>;
+    /// Indices into `artists` whose AudioDB answer is not cached yet.
+    fn uncached_audiodb_artists<'a>(
+        &'a self,
+        artists: &'a [LibraryArtist],
+    ) -> BoxFuture<'a, Vec<usize>> {
+        Box::pin(async move {
+            let mut needed = Vec::new();
+            for (index, artist) in artists.iter().enumerate() {
+                if !self.audiodb_artist_cached(artist).await {
+                    needed.push(index);
+                }
+            }
+            needed
+        })
+    }
     /// Ask TheAudioDB about the artist and cache the answer and image.
     fn warm_audiodb_artist<'a>(&'a self, artist: &'a LibraryArtist) -> BoxFuture<'a, ()>;
     /// Whether TheAudioDB's answer for the album is cached.
@@ -151,12 +219,13 @@ pub struct LibraryPrecache {
     sources: Arc<dyn PrecacheSources>,
     status: CacheSyncStatus,
     user_id: Option<String>,
+    since_ms: Option<i64>,
     generation: Arc<Mutex<Option<u64>>>,
 }
 
 impl LibraryPrecache {
-    /// A run reporting to `status`. `user_id` is whoever started it; the
-    /// discovery phase reads as them and is skipped without one.
+    /// A full-library run reporting to `status`. `user_id` is whoever started
+    /// it; the discovery phase reads as them and is skipped without one.
     pub fn new(
         sources: Arc<dyn PrecacheSources>,
         status: CacheSyncStatus,
@@ -166,6 +235,23 @@ impl LibraryPrecache {
             sources,
             status,
             user_id,
+            since_ms: None,
+            generation: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// An automatic post-scan run scoped only to artists and albums added or
+    /// identified at or after `since_ms` (unix ms).
+    pub fn new_since(
+        sources: Arc<dyn PrecacheSources>,
+        status: CacheSyncStatus,
+        since_ms: i64,
+    ) -> Self {
+        Self {
+            sources,
+            status,
+            user_id: None,
+            since_ms: Some(since_ms),
             generation: Arc::new(Mutex::new(None)),
         }
     }
@@ -180,7 +266,10 @@ impl LibraryPrecache {
     }
 
     async fn run_phases(&self, progress: Progress) -> Result<(), String> {
-        let library = self.sources.library().await?;
+        let library = match self.since_ms {
+            Some(since_ms) => self.sources.library_since(since_ms).await?,
+            None => self.sources.library().await?,
+        };
         let artists = dedupe(library.artists, |artist| artist.mbid.clone());
         let albums = dedupe(library.albums, |album| album.release_group_mbid.clone());
         let generation = self
@@ -195,6 +284,7 @@ impl LibraryPrecache {
             status: &self.status,
             progress: &progress,
             generation,
+            automatic: self.since_ms.is_some(),
         };
         run.artists(&artists).await;
         match &self.user_id {
@@ -256,6 +346,7 @@ struct Run<'a> {
     status: &'a CacheSyncStatus,
     progress: &'a Progress,
     generation: u64,
+    automatic: bool,
 }
 
 impl Run<'_> {
@@ -266,6 +357,10 @@ impl Run<'_> {
         if index.is_multiple_of(CHECK_BEAT_EVERY) {
             self.progress.beat(None);
         }
+    }
+
+    fn audiodb_allowed(&self, tuning: PrecacheTuning) -> bool {
+        tuning.audiodb_enabled && (!self.automatic || tuning.audiodb_custom_key)
     }
 
     fn skip(&self, phase: &str) {
@@ -280,10 +375,12 @@ impl Run<'_> {
 
     async fn artists(&self, artists: &[LibraryArtist]) {
         let mut needed = Vec::new();
-        for (index, artist) in artists.iter().enumerate() {
-            self.checked(index);
-            if !self.sources.artist_cached(artist).await {
-                needed.push(artist);
+        for chunk in artists.chunks(CHECK_BATCH_SIZE) {
+            self.progress.beat(None);
+            for index in self.sources.uncached_artists(chunk).await {
+                if let Some(artist) = chunk.get(index) {
+                    needed.push(artist);
+                }
             }
         }
         if needed.is_empty() {
@@ -320,10 +417,12 @@ impl Run<'_> {
 
     async fn discovery(&self, user_id: &str, artists: &[LibraryArtist]) {
         let mut needed = Vec::new();
-        for (index, artist) in artists.iter().enumerate() {
-            self.checked(index);
-            if !self.sources.discovery_cached(user_id, &artist.mbid).await {
-                needed.push(artist);
+        for chunk in artists.chunks(CHECK_BATCH_SIZE) {
+            self.progress.beat(None);
+            for index in self.sources.uncached_discovery(user_id, chunk).await {
+                if let Some(artist) = chunk.get(index) {
+                    needed.push(artist);
+                }
             }
         }
         if needed.is_empty() {
@@ -346,10 +445,12 @@ impl Run<'_> {
 
     async fn albums(&self, albums: &[LibraryAlbum]) {
         let mut needed = Vec::new();
-        for (index, album) in albums.iter().enumerate() {
-            self.checked(index);
-            if !self.sources.album_cached(album).await {
-                needed.push(album);
+        for chunk in albums.chunks(CHECK_BATCH_SIZE) {
+            self.progress.beat(None);
+            for index in self.sources.uncached_albums(chunk).await {
+                if let Some(album) = chunk.get(index) {
+                    needed.push(album);
+                }
             }
         }
         if needed.is_empty() {
@@ -393,14 +494,16 @@ impl Run<'_> {
     }
 
     async fn audiodb(&self, artists: &[LibraryArtist], albums: &[LibraryAlbum]) {
-        if !self.sources.tuning().audiodb_enabled {
+        if !self.audiodb_allowed(self.sources.tuning()) {
             return self.skip("audiodb_prewarm");
         }
         let mut needed_artists = Vec::new();
-        for (index, artist) in artists.iter().enumerate() {
-            self.checked(index);
-            if !self.sources.audiodb_artist_cached(artist).await {
-                needed_artists.push(artist);
+        for chunk in artists.chunks(CHECK_BATCH_SIZE) {
+            self.progress.beat(None);
+            for index in self.sources.uncached_audiodb_artists(chunk).await {
+                if let Some(artist) = chunk.get(index) {
+                    needed_artists.push(artist);
+                }
             }
         }
         let mut needed_albums = Vec::new();
@@ -432,7 +535,7 @@ impl Run<'_> {
             .for_each_concurrent(workers, |artist| async move {
                 // Re-read per item: turning AudioDB off stops the phase.
                 let tuning = self.sources.tuning();
-                if tuning.audiodb_enabled {
+                if self.audiodb_allowed(tuning) {
                     tokio::time::sleep(tuning.audiodb_delay).await;
                     self.sources.warm_audiodb_artist(artist).await;
                 }
@@ -442,7 +545,7 @@ impl Run<'_> {
         stream::iter(needed_albums)
             .for_each_concurrent(workers, |album| async move {
                 let tuning = self.sources.tuning();
-                if tuning.audiodb_enabled {
+                if self.audiodb_allowed(tuning) {
                     tokio::time::sleep(tuning.audiodb_delay).await;
                     self.sources.warm_audiodb_album(album).await;
                 }
@@ -486,5 +589,179 @@ impl AdaptiveBatch {
                 self.size = (self.size + 1).min(self.max);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::clock::SystemClock;
+    use crate::events::EventHub;
+    use crate::jobs::precache::PrecacheWork;
+
+    struct CountingSources {
+        custom_key: bool,
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl CountingSources {
+        fn new(custom_key: bool) -> Self {
+            Self {
+                custom_key,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn push(&self, entry: String) {
+            self.calls.lock().unwrap().push(entry);
+        }
+
+        fn calls(&self) -> Vec<String> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl PrecacheSources for CountingSources {
+        fn tuning(&self) -> PrecacheTuning {
+            PrecacheTuning {
+                artist_delay: Duration::ZERO,
+                album_delay: Duration::ZERO,
+                discovery_delay: Duration::ZERO,
+                audiodb_delay: Duration::ZERO,
+                audiodb_enabled: true,
+                audiodb_custom_key: self.custom_key,
+                ..PrecacheTuning::default()
+            }
+        }
+
+        fn library(&self) -> BoxFuture<'_, Result<PrecacheLibrary, String>> {
+            Box::pin(async {
+                self.push("library:full".to_owned());
+                Ok(PrecacheLibrary {
+                    artists: vec![
+                        LibraryArtist {
+                            mbid: "a-old".to_owned(),
+                            name: "Old".to_owned(),
+                        },
+                        LibraryArtist {
+                            mbid: "a-new".to_owned(),
+                            name: "New".to_owned(),
+                        },
+                    ],
+                    albums: vec![
+                        LibraryAlbum {
+                            release_group_mbid: "rg-old".to_owned(),
+                            title: "Old".to_owned(),
+                            artist_name: "Old".to_owned(),
+                        },
+                        LibraryAlbum {
+                            release_group_mbid: "rg-new".to_owned(),
+                            title: "New".to_owned(),
+                            artist_name: "New".to_owned(),
+                        },
+                    ],
+                })
+            })
+        }
+
+        fn library_since(&self, since_ms: i64) -> BoxFuture<'_, Result<PrecacheLibrary, String>> {
+            Box::pin(async move {
+                self.push(format!("library:since:{since_ms}"));
+                Ok(PrecacheLibrary {
+                    artists: vec![LibraryArtist {
+                        mbid: "a-new".to_owned(),
+                        name: "New".to_owned(),
+                    }],
+                    albums: vec![LibraryAlbum {
+                        release_group_mbid: "rg-new".to_owned(),
+                        title: "New".to_owned(),
+                        artist_name: "New".to_owned(),
+                    }],
+                })
+            })
+        }
+
+        fn artist_cached<'a>(&'a self, _artist: &'a LibraryArtist) -> BoxFuture<'a, bool> {
+            Box::pin(async { false })
+        }
+
+        fn warm_artist<'a>(&'a self, artist: &'a LibraryArtist) -> BoxFuture<'a, ()> {
+            Box::pin(async move { self.push(format!("artist:{}", artist.mbid)) })
+        }
+
+        fn discovery_cached<'a>(&'a self, _u: &'a str, _a: &'a str) -> BoxFuture<'a, bool> {
+            Box::pin(async { true })
+        }
+
+        fn warm_discovery<'a>(&'a self, _u: &'a str, _a: &'a str) -> BoxFuture<'a, ()> {
+            Box::pin(async {})
+        }
+
+        fn album_cached<'a>(&'a self, _album: &'a LibraryAlbum) -> BoxFuture<'a, bool> {
+            Box::pin(async { false })
+        }
+
+        fn warm_album<'a>(&'a self, album: &'a LibraryAlbum) -> BoxFuture<'a, ()> {
+            Box::pin(async move { self.push(format!("album:{}", album.release_group_mbid)) })
+        }
+
+        fn audiodb_artist_cached<'a>(&'a self, _artist: &'a LibraryArtist) -> BoxFuture<'a, bool> {
+            Box::pin(async { false })
+        }
+
+        fn warm_audiodb_artist<'a>(&'a self, artist: &'a LibraryArtist) -> BoxFuture<'a, ()> {
+            Box::pin(async move { self.push(format!("audiodb-artist:{}", artist.mbid)) })
+        }
+
+        fn audiodb_album_cached<'a>(&'a self, _album: &'a LibraryAlbum) -> BoxFuture<'a, bool> {
+            Box::pin(async { false })
+        }
+
+        fn warm_audiodb_album<'a>(&'a self, album: &'a LibraryAlbum) -> BoxFuture<'a, ()> {
+            Box::pin(
+                async move { self.push(format!("audiodb-album:{}", album.release_group_mbid)) },
+            )
+        }
+    }
+
+    #[tokio::test]
+    async fn automatic_precache_scopes_to_new_items_and_skips_shared_audiodb_key() {
+        let shared = Arc::new(CountingSources::new(false));
+        let status = CacheSyncStatus::new(EventHub::new(), Arc::new(SystemClock));
+        let work = LibraryPrecache::new_since(shared.clone(), status, 4_000);
+        work.run(Progress::new("start")).await.unwrap();
+        let calls = shared.calls();
+        assert!(
+            calls.contains(&"library:since:4000".to_owned()),
+            "{calls:?}"
+        );
+        assert!(calls.contains(&"artist:a-new".to_owned()), "{calls:?}");
+        assert!(calls.contains(&"album:rg-new".to_owned()), "{calls:?}");
+        assert!(!calls.contains(&"artist:a-old".to_owned()), "{calls:?}");
+        assert!(!calls.contains(&"album:rg-old".to_owned()), "{calls:?}");
+        assert!(
+            !calls.iter().any(|c| c.starts_with("audiodb-")),
+            "automatic precache must skip bulk AudioDB on shared free key: {calls:?}"
+        );
+
+        let custom = Arc::new(CountingSources::new(true));
+        let status = CacheSyncStatus::new(EventHub::new(), Arc::new(SystemClock));
+        let work = LibraryPrecache::new_since(custom.clone(), status, 4_000);
+        work.run(Progress::new("start")).await.unwrap();
+        let calls = custom.calls();
+        assert!(
+            calls.contains(&"audiodb-artist:a-new".to_owned())
+                && calls.contains(&"audiodb-album:rg-new".to_owned()),
+            "custom AudioDB key should still run AudioDB prewarm: {calls:?}"
+        );
+
+        let manual = Arc::new(CountingSources::new(false));
+        let status = CacheSyncStatus::new(EventHub::new(), Arc::new(SystemClock));
+        let work = LibraryPrecache::new(manual.clone(), status, None);
+        work.run(Progress::new("start")).await.unwrap();
+        let calls = manual.calls();
+        assert!(calls.contains(&"library:full".to_owned()), "{calls:?}");
+        assert!(calls.contains(&"artist:a-old".to_owned()), "{calls:?}");
+        assert!(calls.contains(&"album:rg-old".to_owned()), "{calls:?}");
     }
 }

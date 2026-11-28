@@ -2668,6 +2668,61 @@ async fn warm_song_group_falls_back_to_search_for_compilation_only_recording() {
     );
 }
 
+#[tokio::test]
+async fn precache_library_since_filters_by_watermark() {
+    use droppedneedle_kernel::db::Lane;
+
+    let dir = crate::common::ScratchDir::new("reads-catalog-precache-since");
+    let db_path = dir.join("app.db");
+    crate::common::migrated_db(&db_path);
+    let db = droppedneedle_kernel::db::Db::open_for_tests(&db_path).unwrap();
+    db.write(Lane::Foreground, "seed old and new albums", move |tx| {
+        tx.execute_batch(&format!(
+            "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) VALUES \
+               ('a-old', 'Old Band', 'old band', 'group', 1000, 1000), \
+               ('a-new', 'New Band', 'new band', 'group', 5000, 5000); \
+             INSERT INTO local_artist_external_identities (local_artist_id, provider, provider_artist_id, decision_source, selected_at) VALUES \
+               ('a-old', 'musicbrainz', '{ARTIST}', 'manual', 1000), \
+               ('a-new', 'musicbrainz', '{PORTISHEAD_ID}', 'manual', 5000); \
+             INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, album_artist_name, album_artist_name_folded, album_artist_id, grouping_source, created_at, updated_at, has_indexed_track) VALUES \
+               ('al-old', 'r1', 'g-old', 'Old Album', 'old album', 'Old Band', 'old band', 'a-old', 'automatic', 1000, 1000, 1), \
+               ('al-new', 'r1', 'g-new', 'New Album', 'new album', 'New Band', 'new band', 'a-new', 'automatic', 5000, 5000, 1); \
+             INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role, credited_name) VALUES \
+               ('al-old', 0, 'a-old', 'main', 'Old Band'), \
+               ('al-new', 0, 'a-new', 'main', 'New Band'); \
+             INSERT INTO local_album_external_identities (local_album_id, provider, release_group_mbid, decision_source, selected_at) VALUES \
+               ('al-old', 'musicbrainz', '{OK_COMPUTER}', 'manual', 1000), \
+               ('al-new', 'musicbrainz', '{KID_A}', 'manual', 5000);"
+        ))?;
+        Ok::<_, droppedneedle_kernel::db::DbError>(())
+    })
+    .await
+    .unwrap();
+
+    let rig = AuthRig::new("reads-catalog-precache-since").await;
+    let catalog = catalog_on(
+        Upstream::new(
+            Arc::new(Providers::closed()),
+            Arc::new(TestSettings {
+                mb_url: "http://127.0.0.1:9/ws/2".to_owned(),
+            }),
+            rig.deps.clone(),
+            crate::common::listening_store(&rig.platform),
+        ),
+        &dir,
+    );
+
+    let full = catalog.precache_library().await.unwrap();
+    assert_eq!(full.artists.len(), 2);
+    assert_eq!(full.albums.len(), 2);
+
+    let incremental = catalog.precache_library_since(3000).await.unwrap();
+    assert_eq!(incremental.artists.len(), 1);
+    assert_eq!(incremental.artists[0].mbid, PORTISHEAD_ID);
+    assert_eq!(incremental.albums.len(), 1);
+    assert_eq!(incremental.albums[0].release_group_mbid, KID_A);
+}
+
 /// Now, by the system clock the cache under test runs on.
 fn unix_now() -> u64 {
     use droppedneedle_kernel::clock::Clock as _;

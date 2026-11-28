@@ -855,6 +855,17 @@ droppedneedle_kernel::sql! {
         JOIN local_albums b ON b.id = credit.local_album_id \
         WHERE a.retired_into_artist_id IS NULL AND " + (musicbrainz!("e")) + " AND "
         + (owned_album!("b")) + " GROUP BY lower(e.provider_artist_id) ORDER BY 2";
+    /// Identified artists credited on an owned album that was added or
+    /// identified at or after `?1` (unix ms).
+    pub(crate) IDENTIFIED_ARTISTS_SINCE = "SELECT lower(e.provider_artist_id), \
+        MIN(a.display_name) FROM local_artist_external_identities e \
+        JOIN local_artists a ON a.id = e.local_artist_id \
+        JOIN local_album_artists credit ON credit.local_artist_id = e.local_artist_id \
+        JOIN local_albums b ON b.id = credit.local_album_id \
+        WHERE a.retired_into_artist_id IS NULL AND " + (musicbrainz!("e")) + " AND "
+        + (owned_album!("b"))
+        + " AND (b.created_at >= ?1 OR e.selected_at >= ?1 OR a.created_at >= ?1) \
+        GROUP BY lower(e.provider_artist_id) ORDER BY 2";
     /// Every identified owned album: lowercase release group, title and
     /// album artist name.
     pub(crate) IDENTIFIED_ALBUMS = "SELECT lower(e.release_group_mbid), MIN(b.title), \
@@ -862,6 +873,14 @@ droppedneedle_kernel::sql! {
         FROM local_album_external_identities e \
         JOIN local_albums b ON b.id = e.local_album_id WHERE " + (musicbrainz!("e"))
         + " AND " + (owned_album!("b")) + " GROUP BY lower(e.release_group_mbid) ORDER BY 3, 2";
+    /// Identified owned albums added or identified at or after `?1` (unix ms).
+    pub(crate) IDENTIFIED_ALBUMS_SINCE = "SELECT lower(e.release_group_mbid), MIN(b.title), \
+        MIN(COALESCE(b.album_artist_name, '')) \
+        FROM local_album_external_identities e \
+        JOIN local_albums b ON b.id = e.local_album_id WHERE " + (musicbrainz!("e"))
+        + " AND " + (owned_album!("b"))
+        + " AND (b.created_at >= ?1 OR e.selected_at >= ?1) \
+        GROUP BY lower(e.release_group_mbid) ORDER BY 3, 2";
     /// Owned artists among a list of lowercase MBIDs.
     family OWNED_ARTISTS_IN = owned_artists_in;
     /// Whether an artist (lowercase MBID) only appears on the library's

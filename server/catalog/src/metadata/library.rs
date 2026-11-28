@@ -188,11 +188,41 @@ impl LocalCatalog {
         .await
     }
 
+    /// Identified artists credited on an owned album added or identified at
+    /// or after `since_ms` (unix ms).
+    pub async fn identified_artists_since(
+        &self,
+        since_ms: i64,
+    ) -> Result<Vec<(String, String)>, StoreError> {
+        let values = vec![Value::Integer(since_ms)];
+        self.read("catalog.library.identified_artists_since", move |conn| {
+            rows(conn, sql::IDENTIFIED_ARTISTS_SINCE.text(), &values, |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+        })
+        .await
+    }
+
     /// Every identified owned album: (lowercase release-group MBID, title,
     /// album artist name).
     pub async fn identified_albums(&self) -> Result<Vec<(String, String, String)>, StoreError> {
         self.read("catalog.library.identified_albums", |conn| {
             rows(conn, sql::IDENTIFIED_ALBUMS.text(), &[], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+        })
+        .await
+    }
+
+    /// Identified owned albums added or identified at or after `since_ms`
+    /// (unix ms).
+    pub async fn identified_albums_since(
+        &self,
+        since_ms: i64,
+    ) -> Result<Vec<(String, String, String)>, StoreError> {
+        let values = vec![Value::Integer(since_ms)];
+        self.read("catalog.library.identified_albums_since", move |conn| {
+            rows(conn, sql::IDENTIFIED_ALBUMS_SINCE.text(), &values, |row| {
                 Ok((row.get(0)?, row.get(1)?, row.get(2)?))
             })
         })
