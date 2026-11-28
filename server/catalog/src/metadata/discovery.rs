@@ -781,13 +781,26 @@ impl Catalog {
         source: Option<ListenSource>,
         priority: RequestPriority,
     ) -> Result<TopSongsResponse, CatalogError> {
+        let mut response = self
+            .top_songs_raw(user_id, mbid, count, source, priority)
+            .await?;
+        self.fill_track_numbers(&mut response.songs).await;
+        Ok(response)
+    }
+
+    async fn top_songs_raw(
+        &self,
+        user_id: &str,
+        mbid: &str,
+        count: u32,
+        source: Option<ListenSource>,
+        priority: RequestPriority,
+    ) -> Result<TopSongsResponse, CatalogError> {
         let answer = self
             .artist_section(user_id, mbid, count, source, Section::TopSongs, priority)
             .await?;
-        let mut songs = answer.rows.songs;
-        self.fill_track_numbers(&mut songs).await;
         Ok(TopSongsResponse {
-            songs,
+            songs: answer.rows.songs,
             source: answer.source,
             configured: answer.configured,
             asked_source: answer.asked,
@@ -796,10 +809,10 @@ impl Catalog {
         })
     }
 
-    /// The artist page's top songs: [`Self::top_songs`] at user priority,
-    /// with an album for songs that name none, so they show a cover, and
-    /// songs the library holds pointed at the user's copy, so they play.
-    /// Only the page looks songs' albums up; radio and the precache do not.
+    /// The artist page's top songs: owned library copies are applied first so
+    /// songs the library already holds never trigger remote MusicBrainz release
+    /// or recording lookups; remaining unowned songs then fill track numbers
+    /// and release groups in the background.
     pub async fn artist_page_top_songs(
         &self,
         user_id: &str,
@@ -809,7 +822,7 @@ impl Catalog {
     ) -> Result<TopSongsResponse, CatalogError> {
         let artist = checked_mbid(mbid, "artist")?;
         let mut answer = self
-            .top_songs(
+            .top_songs_raw(
                 user_id,
                 &artist,
                 count,
@@ -817,8 +830,9 @@ impl Catalog {
                 RequestPriority::UserInitiated,
             )
             .await?;
-        self.fill_song_groups(&artist, &mut answer.songs).await;
         self.prefer_owned_songs(&artist, &mut answer.songs).await;
+        self.fill_track_numbers(&mut answer.songs).await;
+        self.fill_song_groups(&artist, &mut answer.songs).await;
         Ok(answer)
     }
 
@@ -831,6 +845,9 @@ impl Catalog {
     async fn fill_track_numbers(&self, songs: &mut [TopSong]) {
         let mut releases: Vec<String> = Vec::new();
         for song in songs.iter() {
+            if song.disc_number.is_some() && song.track_number.is_some() {
+                continue;
+            }
             if let Some(release) = song.original_release_mbid.as_deref()
                 && is_mbid(release)
                 && !releases
@@ -967,13 +984,12 @@ impl Catalog {
                                 .unwrap_or_default(),
                             None => Vec::new(),
                         };
-                        // Words, not a phrase: titles differ in punctuation
-                        // ("été, L'Après-midi" against "été : L’Après‐midi");
-                        // the folded title comparison then keeps the same
-                        // song only. Folded words hold no Lucene syntax. A
-                        // title with no words is not searched.
+                        // Skip the extra recording search when the named
+                        // recording already sits on an official studio album
+                        // or EP. Otherwise search by folded title words to
+                        // handle unknown recordings or compilation-only ids.
                         let words = title_key(&song.title);
-                        let hits = if words.is_empty() {
+                        let hits = if words.is_empty() || has_official_studio_release(&named) {
                             Vec::new()
                         } else {
                             let query = format!("recording:({words}) AND arid:{}", song.artist);
@@ -1836,6 +1852,29 @@ fn best_group<'a>(
         })
         .min()
         .map(|(_, group)| group)
+}
+
+/// Whether `named` already carries an official studio album or EP release,
+/// making a fallback recording-title search unnecessary.
+fn has_official_studio_release(named: &[RecordingRelease]) -> bool {
+    named.iter().any(|release| {
+        let official = release
+            .status
+            .as_deref()
+            .is_some_and(|status| status.eq_ignore_ascii_case("official"));
+        let Some(group) = release.release_group.as_ref() else {
+            return false;
+        };
+        let gathered = group.secondary_types.iter().any(|kind| {
+            ["compilation", "live", "dj-mix", "remix", "mixtape/street"]
+                .contains(&kind.to_ascii_lowercase().as_str())
+        });
+        official
+            && !gathered
+            && group.primary_type.as_deref().is_some_and(|primary| {
+                primary.eq_ignore_ascii_case("album") || primary.eq_ignore_ascii_case("ep")
+            })
+    })
 }
 
 /// The best release group for a song among the releases of the recording

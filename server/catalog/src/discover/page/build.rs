@@ -48,8 +48,6 @@ use crate::discover::{mixes, new_releases, ownership};
 
 /// Bound on any one upstream read in a build.
 const TASK_TIMEOUT: Duration = Duration::from_secs(25);
-/// Bound on resolving weekly playlist covers.
-const RESOLVE_BUDGET: Duration = Duration::from_secs(15);
 /// Bound on one radio shelf.
 const RADIO_BUDGET: Duration = Duration::from_secs(18);
 /// Learned genres: the user's top genres whose artists are read.
@@ -960,48 +958,14 @@ pub async fn weekly_exploration(
             .as_deref()
             .and_then(|r| by_recording.get(&r.to_ascii_lowercase()).cloned())
     };
-    let mut releases: Vec<String> = playlist
-        .tracks
-        .iter()
-        .filter(|track| group_of(&track.recording_mbid).is_none())
-        .filter_map(|track| track.caa_release_mbid.clone())
-        .collect();
-    releases.sort();
-    releases.dedup();
-    let release_groups: HashMap<String, String> = match tokio::time::timeout(
-        RESOLVE_BUDGET,
-        join_all(releases.iter().map(|release| async move {
-            let group = listening
-                .release_group_of(release, ask)
-                .await
-                .ok()
-                .flatten();
-            (release.clone(), group)
-        })),
-    )
-    .await
-    {
-        Ok(found) => found
-            .into_iter()
-            .filter_map(|(release, group)| Some((release, group?)))
-            .collect(),
-        Err(_) => {
-            tracing::warn!(
-                "weekly exploration cover lookups ran out of time; using release covers"
-            );
-            HashMap::new()
-        }
-    };
+    // Tracks whose recording did not resolve to a release group still render
+    // covers directly from `caa_release_mbid` without an unbatched MusicBrainz
+    // release-lookup fan-out.
     let tracks = playlist
         .tracks
         .into_iter()
         .map(|track| {
-            let group = group_of(&track.recording_mbid).or_else(|| {
-                track
-                    .caa_release_mbid
-                    .as_ref()
-                    .and_then(|release| release_groups.get(release).cloned())
-            });
+            let group = group_of(&track.recording_mbid);
             let cover_url = match (&group, &track.caa_release_mbid) {
                 (Some(group), _) => Some(format!("/api/v3/covers/release-group/{group}?size=250")),
                 (None, Some(release)) => Some(format!("/api/v3/covers/release/{release}?size=250")),
