@@ -252,6 +252,7 @@ impl MediaSetup {
             remotes: Arc::new(queue),
             sessions: SessionStore::new(),
             presence,
+            handoff: Default::default(),
             dedup: ScrobbleDedup::new(),
             clock: platform.clock.clone(),
             events: Arc::new(crate::playback::plugin_events::PluginPlayEvents(plugins)),

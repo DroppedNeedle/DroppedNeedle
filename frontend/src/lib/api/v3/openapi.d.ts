@@ -6819,6 +6819,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/playback/handoff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start a local queue transfer between two of the caller's active players. */
+        post: operations["start_handoff"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/playback/handoff/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Sign this player up for handoff, read peers and acknowledge any outstanding transfer. */
+        post: operations["sync_handoff"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/playback/progress": {
         parameters: {
             query?: never;
@@ -17047,6 +17081,92 @@ export interface components {
         HandBackResponse: {
             /** @description False when DroppedNeedle had not stepped back from the album. */
             handed_back: boolean;
+        };
+        HandoffCommand: {
+            /** @enum {string} */
+            kind: "offer";
+            transfer_id: string;
+        } | {
+            /** @enum {string} */
+            kind: "receive";
+            queue: components["schemas"]["HandoffQueue"];
+            transfer_id: string;
+        } | {
+            destination_id: string;
+            /** @enum {string} */
+            kind: "release";
+            transfer_id: string;
+        } | {
+            /** @enum {string} */
+            kind: "failed";
+            transfer_id: string;
+        };
+        HandoffHeartbeat: {
+            /** @description Whether the player has a local queue it can transfer. */
+            can_send: boolean;
+            disconnect?: boolean;
+            name: string;
+            /** @description A UUID chosen by this running player. */
+            player_id: string;
+            receipt?: null | components["schemas"]["HandoffReceipt"];
+        };
+        HandoffPlayer: {
+            can_send: boolean;
+            id: string;
+            name: string;
+        };
+        HandoffQueue: {
+            /** @description Zero-based position in `tracks`. */
+            index: number;
+            playing: boolean;
+            /** Format: int64 */
+            position_ms: number;
+            /** @description In playback order, including repeated tracks. */
+            tracks: components["schemas"]["HandoffTrack"][];
+        };
+        HandoffReceipt: {
+            /** @enum {string} */
+            kind: "offered";
+            queue: components["schemas"]["HandoffQueue"];
+            transfer_id: string;
+        } | {
+            /** @enum {string} */
+            kind: "accepted";
+            transfer_id: string;
+        } | {
+            /** @enum {string} */
+            kind: "released";
+            transfer_id: string;
+        } | {
+            /** @enum {string} */
+            kind: "declined";
+            transfer_id: string;
+        };
+        HandoffRequest: {
+            destination_id: string;
+            /** @description The initiating player, either the source or the destination. */
+            player_id: string;
+            source_id: string;
+            /** @description A fresh UUID for this transfer, reused when retrying this request. */
+            transfer_id: string;
+        };
+        HandoffTrack: {
+            album: string;
+            album_id?: string | null;
+            artist: string;
+            artist_id?: string | null;
+            /**
+             * Format: double
+             * @description Duration in seconds, when known.
+             */
+            duration?: number | null;
+            /** @description Local library track ID. Each player constructs its own authenticated stream address. */
+            id: string;
+            title: string;
+        };
+        HandoffUpdate: {
+            command?: null | components["schemas"]["HandoffCommand"];
+            players: components["schemas"]["HandoffPlayer"][];
         };
         /**
          * @description Health payload. The route is public, so it says nothing about the
@@ -47660,6 +47780,124 @@ export interface operations {
             };
             /** @description Not authenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    start_handoff: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HandoffRequest"];
+            };
+        };
+        responses: {
+            /** @description Transfer queued */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid transfer */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Player unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Transfer busy or source unavailable */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    sync_handoff: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HandoffHeartbeat"];
+            };
+        };
+        responses: {
+            /** @description Your active players and this player's next step */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HandoffUpdate"];
+                };
+            };
+            /** @description Invalid player identity or name */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Player unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Player capacity reached */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
