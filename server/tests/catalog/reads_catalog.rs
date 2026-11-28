@@ -2723,6 +2723,116 @@ async fn precache_library_since_filters_by_watermark() {
     assert_eq!(incremental.albums[0].release_group_mbid, KID_A);
 }
 
+#[tokio::test]
+async fn background_artist_images_skips_live_audiodb_on_shared_key() {
+    use droppedneedle_providers::test_support::ScriptedWire;
+    use droppedneedle_providers::{
+        ProviderEndpoints, RequestPriority, audiodb, musicbrainz, wikidata,
+    };
+
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        &format!("{}/123/artist-mb.php", audiodb::DEFAULT_BASE_URL),
+        200,
+        &[],
+        audiodb_fixture("artist_mb_found.json"),
+    );
+    wire.answer(
+        &format!(
+            "{}/custom-paid-key/artist-mb.php",
+            audiodb::DEFAULT_BASE_URL
+        ),
+        200,
+        &[],
+        audiodb_fixture("artist_mb_found.json"),
+    );
+    wire.answer(
+        &format!("{}/w/api.php", wikidata::WIKIDATA_BASE),
+        200,
+        &[],
+        include_str!("../fixtures/wikidata/search_p434_no_hits.json"),
+    );
+    wire.answer(
+        &format!("{}/artist/{ARTIST}", musicbrainz::MB_API_BASE),
+        200,
+        &[],
+        fixture("mb_artist.json"),
+    );
+    wire.answer(
+        &format!("{}/w/api.php", wikidata::WIKIDATA_BASE),
+        200,
+        &[],
+        wikidata_fixture("claims_p18_found.json"),
+    );
+    wire.answer(
+        &format!("{}/w/api.php", wikidata::COMMONS_BASE),
+        200,
+        &[],
+        wikidata_fixture("commons_imageinfo_credit.json"),
+    );
+    let providers = Arc::new(Providers::over_wire(
+        wire.clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ProviderEndpoints {
+            musicbrainz: musicbrainz::MB_API_BASE.to_owned(),
+            audiodb: audiodb::DEFAULT_BASE_URL.to_owned(),
+            wikidata: wikidata::WIKIDATA_BASE.to_owned(),
+            commons: wikidata::COMMONS_BASE.to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    ));
+    let dir = crate::common::ScratchDir::new("reads-catalog-bg-audiodb-key");
+    crate::common::migrated_db(&dir.join("app.db"));
+    let rig = AuthRig::new("reads-catalog-bg-audiodb-key").await;
+    let settings = Arc::new(KeyedSettings {
+        inner: TestSettings {
+            mb_url: musicbrainz::MB_API_BASE.to_owned(),
+        },
+        audiodb_key: Mutex::new("123".to_owned()),
+    });
+    let catalog = catalog_on(
+        Upstream::new(
+            providers,
+            settings.clone(),
+            rig.deps.clone(),
+            crate::common::listening_store(&rig.platform),
+        ),
+        &dir,
+    );
+
+    let shared = catalog
+        .artist_image_candidates(ARTIST, RequestPriority::BackgroundSync)
+        .await;
+    assert!(
+        !shared.images.is_empty(),
+        "still resolves Wikidata/Commons fallback"
+    );
+    let audiodb_hits_shared = wire
+        .sent()
+        .iter()
+        .filter(|s| s.url.as_str().contains("theaudiodb.com"))
+        .count();
+    assert_eq!(
+        audiodb_hits_shared, 0,
+        "background warming must not dial AudioDB on the shared free key"
+    );
+
+    *settings.audiodb_key.lock().unwrap() = "custom-paid-key".to_owned();
+    let custom = catalog
+        .artist_image_candidates(ARTIST, RequestPriority::BackgroundSync)
+        .await;
+    assert!(!custom.images.is_empty());
+    let audiodb_hits_custom = wire
+        .sent()
+        .iter()
+        .filter(|s| s.url.as_str().contains("custom-paid-key"))
+        .count();
+    assert_eq!(
+        audiodb_hits_custom, 1,
+        "background warming dials AudioDB when a custom key is configured"
+    );
+}
+
 /// Now, by the system clock the cache under test runs on.
 fn unix_now() -> u64 {
     use droppedneedle_kernel::clock::Clock as _;

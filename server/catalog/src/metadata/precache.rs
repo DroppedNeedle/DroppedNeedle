@@ -103,8 +103,12 @@ impl Catalog {
             .map(|artist| self.release_groups_key(&artist.mbid))
             .collect();
         let cache = self.upstream().cache();
-        let details = cache.peek_many::<serde::de::IgnoredAny>(&detail_keys).await;
-        let groups = cache.peek_many::<serde::de::IgnoredAny>(&group_keys).await;
+        let details = cache
+            .peek_many::<super::artist::ArtistDetail>(&detail_keys)
+            .await;
+        let groups = cache
+            .peek_many::<super::artist::ReleaseGroupList>(&group_keys)
+            .await;
         details
             .into_iter()
             .zip(groups)
@@ -121,7 +125,7 @@ impl Catalog {
             .collect();
         self.upstream()
             .cache()
-            .peek_many::<serde::de::IgnoredAny>(&keys)
+            .peek_many::<super::album::GroupDetail>(&keys)
             .await
             .into_iter()
             .map(|entry| entry.is_some())
@@ -137,7 +141,7 @@ impl Catalog {
             .collect();
         self.upstream()
             .cache()
-            .peek_many::<serde::de::IgnoredAny>(&keys)
+            .peek_many::<super::models::ArtistImages>(&keys)
             .await
             .into_iter()
             .map(|entry| entry.is_some())
@@ -248,7 +252,8 @@ impl Catalog {
     /// Wikidata link leads to. A page reads TheAudioDB from the cache only
     /// and queues a fill on a miss, so a cold page asks neither MusicBrainz
     /// nor TheAudioDB when Wikidata knows the MBID; background work asks
-    /// TheAudioDB directly.
+    /// TheAudioDB directly only with a custom API key, and otherwise reuses
+    /// any cached TheAudioDB answer.
     pub async fn artist_image_candidates(
         &self,
         mbid: &str,
@@ -266,16 +271,27 @@ impl Catalog {
         } else {
             let advanced = self.upstream().settings().advanced();
             if self.upstream().audiodb(&advanced).is_some() {
-                match self.artist_images_lookup(mbid, "", priority).await {
-                    Some(images) => {
-                        if let Some(thumb) = images.and_then(|images| images.thumb_url) {
-                            candidates
-                                .images
-                                .push(ArtistImageCandidate::uncredited(thumb));
-                            return candidates;
+                if has_custom_audiodb_key(&advanced) {
+                    match self.artist_images_lookup(mbid, "", priority).await {
+                        Some(images) => {
+                            if let Some(thumb) = images.and_then(|images| images.thumb_url) {
+                                candidates
+                                    .images
+                                    .push(ArtistImageCandidate::uncredited(thumb));
+                                return candidates;
+                            }
                         }
+                        None => candidates.incomplete = true,
                     }
-                    None => candidates.incomplete = true,
+                } else if let Some(thumb) = self
+                    .cached_artist_images(mbid)
+                    .await
+                    .and_then(|images| images.thumb_url)
+                {
+                    candidates
+                        .images
+                        .push(ArtistImageCandidate::uncredited(thumb));
+                    return candidates;
                 }
             }
         }

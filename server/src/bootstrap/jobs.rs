@@ -17,6 +17,7 @@
 //! sweep, library precache and the personal mix.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
 use tokio::sync::watch;
@@ -115,13 +116,20 @@ impl PrecacheTrigger {
 
     /// Start one supervised automatic post-scan run scoped only to artists
     /// and albums added or identified at or after `since_ms` (unix ms).
-    pub async fn run_since(
+    /// Advances `watermark` to `next_watermark` only when the run finishes
+    /// cleanly (`PrecacheOutcome::Done`).
+    async fn run_since(
         &self,
         since_ms: i64,
+        watermark: Arc<AtomicI64>,
+        next_watermark: i64,
     ) -> Result<precache::PrecacheHandle, AlreadyRunning> {
         let work = LibraryPrecache::new_since(self.sources.clone(), self.status.clone(), since_ms);
         let settler = work.settler();
         precache::spawn_run(&self.supervisor, work, self.limits(), move |outcome| {
+            if matches!(outcome, precache::PrecacheOutcome::Done) {
+                watermark.fetch_max(next_watermark, Ordering::SeqCst);
+            }
             settler.settle(outcome);
         })
     }
@@ -150,7 +158,7 @@ impl PrecacheTrigger {
     /// scans go quiet for [`SCAN_PRECACHE_DEBOUNCE`]. A run already going
     /// is left alone.
     pub fn spawn_after_scan(&self) -> Result<(), AlreadyRunning> {
-        let watermark_ms = self.clock.now_ms();
+        let watermark_ms = Arc::new(AtomicI64::new(self.clock.now_ms()));
         self.supervisor.on_wakeup(
             precache::AFTER_SCAN_JOB,
             self.scans.0.subscribe(),
@@ -168,12 +176,12 @@ impl PrecacheTrigger {
 /// already covered: scans that ended during a quiet wait restart that wait
 /// and leave the loop woken, and the turn that follows finds nothing new.
 /// `watermark_ms` scopes each automatic run to artists and albums added or
-/// identified since the last completed kick (initialized at boot so a restart
-/// does not re-precache an existing library).
+/// identified since the last run that completed cleanly (initialized at boot
+/// so a restart does not re-precache an existing library).
 struct AfterScanTick {
     trigger: PrecacheTrigger,
     folded: u64,
-    watermark_ms: i64,
+    watermark_ms: Arc<AtomicI64>,
 }
 
 impl Tick for AfterScanTick {
@@ -196,12 +204,14 @@ impl Tick for AfterScanTick {
             }
         }
         self.folded = *later.borrow_and_update();
+        let since_ms = self.watermark_ms.load(Ordering::SeqCst);
         let next_watermark = self.trigger.clock.now_ms();
-        match self.trigger.run_since(self.watermark_ms).await {
-            Ok(_) => {
-                self.watermark_ms = next_watermark;
-                tracing::info!("library image refresh started after a scan");
-            }
+        match self
+            .trigger
+            .run_since(since_ms, Arc::clone(&self.watermark_ms), next_watermark)
+            .await
+        {
+            Ok(_) => tracing::info!("library image refresh started after a scan"),
             Err(_) => tracing::debug!("library image refresh already running; scan kick skipped"),
         }
         Ok(Next::Continue)

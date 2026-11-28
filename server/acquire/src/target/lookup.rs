@@ -151,13 +151,14 @@ impl AlbumLookup for MusicBrainzAlbums {
         Box::pin(async move {
             let asked = recording_mbid.trim().to_ascii_lowercase();
             let client = self.client.clone();
+            let asked_fetch = asked.clone();
             let fetch = move || {
                 let client = client.clone();
-                let asked = asked.clone();
+                let asked_fetch = asked_fetch.clone();
                 async move {
                     let found = client
                         .lookup_recording(
-                            &asked,
+                            &asked_fetch,
                             &["releases", "release-groups"],
                             Criticality::IdentityCritical,
                         )
@@ -183,17 +184,16 @@ impl AlbumLookup for MusicBrainzAlbums {
                     }))
                 }
             };
-            let asked_key = recording_mbid.trim().to_ascii_lowercase();
             let Some(namespace) = self
                 .client
                 .cache_namespace()
-                .filter(|_| is_valid_mbid(&asked_key))
+                .filter(|_| is_valid_mbid(&asked))
             else {
                 return fetch().await;
             };
             let key = CacheKey::new(
                 Source::MusicBrainz,
-                &[&namespace, "acquire_rec_releases", &asked_key],
+                &[&namespace, "acquire_rec_releases", &asked],
             );
             self.cache
                 .get_or_fetch(
@@ -218,13 +218,14 @@ impl AlbumLookup for MusicBrainzAlbums {
         Box::pin(async move {
             let asked = release_mbid.trim().to_ascii_lowercase();
             let client = self.client.clone();
+            let asked_fetch = asked.clone();
             let fetch = move || {
                 let client = client.clone();
-                let asked = asked.clone();
+                let asked_fetch = asked_fetch.clone();
                 async move {
                     let found = client
                         .lookup_exact_release(
-                            &asked,
+                            &asked_fetch,
                             &RELEASE_INCLUDES,
                             Criticality::IdentityCritical,
                         )
@@ -233,17 +234,16 @@ impl AlbumLookup for MusicBrainzAlbums {
                     Ok::<_, LookupError>(found.and_then(|lookup| album_release(lookup.entity)))
                 }
             };
-            let asked_key = release_mbid.trim().to_ascii_lowercase();
             let Some(namespace) = self
                 .client
                 .cache_namespace()
-                .filter(|_| is_valid_mbid(&asked_key))
+                .filter(|_| is_valid_mbid(&asked))
             else {
                 return fetch().await;
             };
             let key = CacheKey::new(
                 Source::MusicBrainz,
-                &[&namespace, "acquire_release", &asked_key],
+                &[&namespace, "acquire_release", &asked],
             );
             self.cache
                 .get_or_fetch(
@@ -268,12 +268,13 @@ impl AlbumLookup for MusicBrainzAlbums {
         Box::pin(async move {
             let asked = release_group_mbid.trim().to_ascii_lowercase();
             let client = self.client.clone();
+            let asked_fetch = asked.clone();
             let fetch = move || {
                 let client = client.clone();
-                let asked = asked.clone();
+                let asked_fetch = asked_fetch.clone();
                 async move {
                     let found = client
-                        .lookup_release_group(&asked, &[], Criticality::IdentityCritical)
+                        .lookup_release_group(&asked_fetch, &[], Criticality::IdentityCritical)
                         .await
                         .map_err(|error| LookupError(error.to_string()))?;
                     Ok::<_, LookupError>(
@@ -283,17 +284,16 @@ impl AlbumLookup for MusicBrainzAlbums {
                     )
                 }
             };
-            let asked_key = release_group_mbid.trim().to_ascii_lowercase();
             let Some(namespace) = self
                 .client
                 .cache_namespace()
-                .filter(|_| is_valid_mbid(&asked_key))
+                .filter(|_| is_valid_mbid(&asked))
             else {
                 return fetch().await;
             };
             let key = CacheKey::new(
                 Source::MusicBrainz,
-                &[&namespace, "acquire_rg_date", &asked_key],
+                &[&namespace, "acquire_rg_date", &asked],
             );
             self.cache
                 .get_or_fetch(

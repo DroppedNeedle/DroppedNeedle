@@ -504,9 +504,9 @@ impl ProviderCacheStore {
             // A kept answer beats one the fetch could not finish: a
             // "nothing there" made past a failure, or a part of the answer
             // where a whole one was kept.
-            (Ok(Fetched::Missing), Some(answer)) if !clean => {
+            (Ok(Fetched::Missing), Some(Some(answer))) if !clean => {
                 relay(&landed.notes, true);
-                Ok(answer)
+                Ok(Some(answer))
             }
             (Ok(Fetched::Partial(_)), Some(Some(answer))) => {
                 relay(&landed.notes, true);
@@ -519,7 +519,7 @@ impl ProviderCacheStore {
                     Fetched::Missing => None,
                 })
             }
-            (Err(_), Some(answer)) => {
+            (Err(_), Some(Some(answer))) => {
                 relay(&landed.notes, true);
                 if clean {
                     degradation::record_current(
@@ -528,9 +528,9 @@ impl ProviderCacheStore {
                         false,
                     );
                 }
-                Ok(answer)
+                Ok(Some(answer))
             }
-            (Err(error), None) => {
+            (Err(error), None | Some(None)) => {
                 relay(&landed.notes, false);
                 Err(error.clone())
             }
@@ -1150,5 +1150,35 @@ mod tests {
             1,
             "overlapping id 'a' must only be fetched once"
         );
+    }
+
+    /// An expired "nothing there" row inside the keep window never masks an
+    /// upstream error as a fresh miss.
+    #[tokio::test]
+    async fn an_expired_missing_row_does_not_swallow_upstream_errors() {
+        let (store, clock) = store();
+        let initial = store
+            .get_or_fetch(
+                &key(),
+                Policy::MUSICBRAINZ_ENTITY,
+                RequestPriority::BackgroundSync,
+                |_| async { Ok::<_, String>(Fetched::<String>::Missing) },
+            )
+            .await;
+        assert_eq!(initial, Ok(None));
+        settle(&store).await;
+        assert_eq!(store.peek::<String>(&key()).await, Some(None));
+
+        // Advance past the miss fresh TTL while still inside the keep window.
+        clock.advance(duration_ms(Policy::MUSICBRAINZ_ENTITY.miss) + 1);
+        let outage = store
+            .get_or_fetch(
+                &key(),
+                Policy::MUSICBRAINZ_ENTITY,
+                RequestPriority::BackgroundSync,
+                |_| async { Err::<Fetched<String>, _>("503 unavailable".to_owned()) },
+            )
+            .await;
+        assert_eq!(outage, Err("503 unavailable".to_owned()));
     }
 }

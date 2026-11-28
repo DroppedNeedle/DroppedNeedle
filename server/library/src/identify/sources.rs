@@ -888,12 +888,16 @@ impl ReleaseSource for CachedMusicBrainz {
             };
             let limit = query.limit.to_string();
             let offset = query.offset.to_string();
+            let group_tag = match &query.release_group_mbid {
+                Some(id) => format!("g:{id}"),
+                None => "none".to_owned(),
+            };
             let key = CacheKey::hashed(
                 CacheSource::MusicBrainz,
                 "identify_search_editions",
                 &[
                     &namespace,
-                    query.release_group_mbid.as_deref().unwrap_or(""),
+                    &group_tag,
                     &query.title,
                     &query.artist,
                     &limit,
@@ -906,7 +910,7 @@ impl ReleaseSource for CachedMusicBrainz {
                 .cache
                 .get_or_fetch(&key, Policy::SEARCH, self.priority, move |_| async move {
                     let page = ReleaseSource::search_editions(&view, &owned).await?;
-                    Ok(if page.items.is_empty() {
+                    Ok(if page.items.is_empty() && page.total == 0 {
                         Fetched::Missing
                     } else {
                         Fetched::Found(page)

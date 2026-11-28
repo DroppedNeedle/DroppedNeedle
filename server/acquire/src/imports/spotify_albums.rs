@@ -318,7 +318,12 @@ impl AlbumResolver {
         let clean_spotify_id = spotify_id.map(str::trim).filter(|id| !id.is_empty());
         if let Some(id) = clean_spotify_id {
             let id_key = CacheKey::new(Source::MusicBrainz, &[&namespace, "spotify_album_id", id]);
-            if let Some(Some(group)) = self.cache.peek::<String>(&id_key).await {
+            if let Some(group) = self
+                .cache
+                .get_bytes(&id_key)
+                .await
+                .and_then(|bytes| serde_json::from_slice::<String>(&bytes).ok())
+            {
                 return Ok(Some(group));
             }
         }
@@ -377,7 +382,11 @@ impl AlbumResolver {
         }
         let namespace = format!("{}:g{}", settings.source_id, settings.generation);
         let key = CacheKey::new(Source::MusicBrainz, &[&namespace, "rg_studio", &group]);
-        self.cache.peek::<bool>(&key).await == Some(Some(true))
+        self.cache
+            .get_bytes(&key)
+            .await
+            .and_then(|bytes| serde_json::from_slice::<bool>(&bytes).ok())
+            == Some(true)
     }
 
     /// The cached ISRC reads over the MusicBrainz source the settings name
