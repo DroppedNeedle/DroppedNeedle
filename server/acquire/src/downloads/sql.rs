@@ -98,6 +98,20 @@ droppedneedle_kernel::sql! {
                  completed_at = CASE WHEN ?4 THEN ?3 ELSE completed_at END, \
                  updated_at = ?3 \
              WHERE id = ?5 AND status NOT IN ('completed', 'partial', 'failed', 'cancelled')";
+    /// A settled task's (`?1`) counts from its landings, not its last poll:
+    /// the files imported, out of those plus what the newest import found
+    /// still missing. Left alone when nothing was imported.
+    pub(super) SETTLE_FILE_COUNTS = "UPDATE download_tasks SET \
+                 files_completed = (SELECT SUM(files_imported) \
+                     FROM download_import_decisions WHERE task_id = ?1), \
+                 files_total = (SELECT SUM(files_imported) \
+                     FROM download_import_decisions WHERE task_id = ?1) \
+                   + COALESCE((SELECT json_array_length(missing_positions) \
+                     FROM download_import_decisions WHERE task_id = ?1 \
+                       AND outcome IN ('imported', 'partial') \
+                     ORDER BY decided_at DESC, id DESC LIMIT 1), 0) \
+             WHERE id = ?1 AND (SELECT SUM(files_imported) \
+                     FROM download_import_decisions WHERE task_id = ?1) > 0";
     /// Record a poll without a status change.
     pub(super) TOUCH_POLL = "UPDATE download_tasks SET last_polled_at = ?1, updated_at = ?1 \
              WHERE id = ?2";
@@ -424,6 +438,7 @@ droppedneedle_kernel::sql! {
     /// A failed or short task (`?2`) a person made whole by hand completes.
     pub(super) COMPLETE_AFTER_MANUAL_IMPORT = "UPDATE download_tasks \
              SET status = 'completed', error_message = NULL, outcome_code = NULL, \
+                 files_completed = files_total, \
                  completed_at = ?1, updated_at = ?1 \
              WHERE id = ?2 AND status IN ('failed', 'partial')";
     /// Stop retrying an album's (`?1`) failed and short tasks made at or
