@@ -13,12 +13,14 @@
 		FolderSync,
 		Play,
 		Plus,
+		Radio,
 		RefreshCw,
 		Square,
 		Trash2,
 		TrendingUp,
 		TriangleAlert
 	} from 'lucide-svelte';
+	import { startRadio } from '$lib/features/player/playback/launchRadio';
 	import { createRescanAlbumMutation } from '$lib/features/library/queries/LibraryMutations.svelte';
 	import { createRequestUpgradeAlbumMutation } from '$lib/features/downloads/queries/UpgradeQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -229,6 +231,13 @@
 
 	const menuItems = $derived.by(() => {
 		const items: MenuItem[] = [];
+		if (album.musicbrainz_id) {
+			items.push({
+				label: 'Start radio',
+				icon: Radio,
+				onclick: () => void startRadio({ seed_type: 'album', seed_id: album.musicbrainz_id })
+			});
+		}
 		if (inLibrary || isRequested) {
 			items.push({
 				label: refreshing ? 'Refreshing...' : 'Refresh album status',

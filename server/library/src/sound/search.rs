@@ -72,6 +72,31 @@ impl Closeness {
     }
 }
 
+/// What the sound bench is first tuned to.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BenchSeed {
+    /// The analysis version serving now.
+    pub analysis_version: i64,
+    /// Whether any track has a sound at that version.
+    pub analysed: bool,
+    /// The most played analysed track, when there is one.
+    pub seed: Option<BenchSeedTrack>,
+}
+
+/// The library track the sound bench is first tuned to.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BenchSeedTrack {
+    /// The local track id.
+    pub track_id: String,
+    pub title: String,
+    pub artist_name: String,
+    /// The local album id.
+    pub album_id: String,
+    pub album_title: Option<String>,
+    /// Its length in seconds, when known.
+    pub duration_seconds: Option<f64>,
+}
+
 /// One track a search found.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Neighbour {
@@ -415,6 +440,45 @@ impl SoundSearch {
     pub fn enabled(&self) -> Result<bool, SoundError> {
         self.switch().ok_or_else(|| {
             SoundError::Failed("the sound analysis settings cannot be read".to_owned())
+        })
+    }
+
+    /// The sound bench's first tuning for `user_id`: the analysis version
+    /// serving now, whether any track has a sound at it, and the library
+    /// track with a sound at that version for its current bytes they played
+    /// most since `since_ms`. Reads the rows only; the index stays as it is.
+    ///
+    /// # Errors
+    ///
+    /// The read's failure.
+    pub async fn bench_seed(&self, user_id: &str, since_ms: i64) -> Result<BenchSeed, SoundError> {
+        let user_id = user_id.to_owned();
+        let row = self
+            .db
+            .read("library.sound_bench_seed", move |conn| {
+                conn.prepare_cached(sql::BENCH_SEED.text())?
+                    .query_row(
+                        rusqlite::params![user_id, since_ms, ANALYSIS_VERSION],
+                        sql::BenchSeedRow::read,
+                    )
+                    .map_err(SoundError::from)
+            })
+            .await?;
+        let seed = match (row.track_id, row.title, row.album_id) {
+            (Some(track_id), Some(title), Some(album_id)) => Some(BenchSeedTrack {
+                track_id,
+                title,
+                artist_name: row.artist_name.unwrap_or_default(),
+                album_id,
+                album_title: row.album_title,
+                duration_seconds: row.duration_seconds,
+            }),
+            _ => None,
+        };
+        Ok(BenchSeed {
+            analysis_version: row.analysis_version,
+            analysed: row.analysed,
+            seed,
         })
     }
 

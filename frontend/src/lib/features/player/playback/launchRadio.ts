@@ -17,6 +17,7 @@ import {
 import { upcomingIndexes } from '$lib/features/player/state/playerQueueOps';
 import { audioFocus } from '$lib/features/player/state/audioFocus.svelte';
 import { toastStore } from '$lib/stores/toast';
+import { readIntegrationStatus } from '$lib/features/home/queries/home.svelte';
 import { getCoverUrl } from '$lib/utils/errorHandling';
 import {
 	needsHydration,
@@ -85,7 +86,8 @@ export function planTrackToQueueItem(
 			format: track.file_format ?? undefined,
 			duration: track.duration_s ?? undefined,
 			queueOrigin: 'context',
-			playlistTrackId: radioTrackKey(track)
+			playlistTrackId: radioTrackKey(track),
+			reason: track.reason ?? null
 		};
 	}
 	if (ytConfigured) {
@@ -102,7 +104,8 @@ export function planTrackToQueueItem(
 			artistId: track.artist_mbid || undefined,
 			recordingIds: recordingFor('youtube', track.recording_mbid),
 			queueOrigin: 'context',
-			playlistTrackId: radioTrackKey(track)
+			playlistTrackId: radioTrackKey(track),
+			reason: track.reason ?? null
 		};
 	}
 	return null;
@@ -119,8 +122,25 @@ function toPlanTrack(track: components['schemas']['RadioPlanTrack']): RadioPlanT
 		in_library: track.in_library ?? false,
 		local_file_id: track.local_file_id ?? null,
 		file_format: track.file_format ?? null,
-		duration_s: track.duration_s ?? null
+		duration_s: track.duration_s ?? null,
+		reason: track.reason ?? null
 	};
+}
+
+/** The stations already told they play the library only. */
+const toldLibraryOnly = new WeakSet<object>();
+
+/**
+ * Says once a station that asked for tracks the library lacks plays the
+ * library only, because no source is set up to play the rest.
+ */
+function tellLibraryOnly(station: object, plan: RadioPlanResponse): void {
+	if (!plan.library_only || toldLibraryOnly.has(station)) return;
+	toldLibraryOnly.add(station);
+	toastStore.notify(
+		'This station plays your library only: nothing is set up to play tracks you do not have.',
+		'info'
+	);
 }
 
 async function fetchPlan(
@@ -135,7 +155,8 @@ async function fetchPlan(
 	};
 }
 
-function isStationItem(item: QueueItem): boolean {
+/** Whether `item` is one of a station's own tracks, not one queued beside it. */
+export function isStationItem(item: QueueItem): boolean {
 	return !!item.playlistTrackId?.startsWith('radio:');
 }
 
@@ -224,6 +245,7 @@ export async function extendRadio(replace = false): Promise<boolean> {
 		);
 		if (!radioSession.isCurrentAsk(turn)) return false;
 		if ((playerStore.queue as QueueItem[]).length === 0) return false;
+		tellLibraryOnly(station, plan);
 		const replaced = replace ? upcomingStationItems() : [];
 		const going = new Set(replaced.map(({ index }) => index));
 		const inQueue = new Set(
@@ -272,6 +294,14 @@ export async function steerRadio(kind: 'more_like' | 'not_this', item: QueueItem
 	radioSession.steer(kind, id);
 	if (kind === 'not_this') playerStore.nextTrack();
 	await extendRadio(true);
+}
+
+/** What the playing station grew from, or null when none plays. */
+export function playingStation(): Pick<StationSeed, 'seed_type' | 'seed_id'> | null {
+	const station = radioSession.station;
+	return station
+		? { seed_type: station.request.seed_type, seed_id: station.request.seed_id }
+		: null;
 }
 
 function dedupeTracks(tracks: RadioPlanTrack[]): RadioPlanTrack[] {
@@ -348,7 +378,17 @@ export async function launchRadio(
 	const station = { request: { ...seed, mode }, ytConfigured: effectiveYt, playedFrom };
 	if (!radioSession.start(launch.generation, station)) return false;
 	playerStore.playQueue(items, 0, options.shuffle ?? false);
+	tellLibraryOnly(radioSession.station ?? station, plan);
 	startRadioHydration(() => void extendRadio());
 	notePlaying();
 	return true;
+}
+
+/**
+ * Starts a station from a page's "Start radio": an artist, an album, a library
+ * track or a playlist. It plays tracks the library lacks through YouTube when
+ * that is set up.
+ */
+export function startRadio(seed: Pick<StationSeed, 'seed_type' | 'seed_id'>): Promise<boolean> {
+	return launchRadio(seed, !!readIntegrationStatus()?.youtube_api);
 }

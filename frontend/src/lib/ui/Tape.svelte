@@ -4,8 +4,9 @@
 	beside it ("FURTHER OUT", "EXTRA", or both on one tape, so a card never
 	holds three), `warn` an amber notice that always carries its warning
 	sign (heard as "Warning"), and `embossed` a raised black label with white letters and a small
-	trace, the mark of something found by sound. The tilt goes under reduced
-	motion and the torn ends under high contrast.
+	trace, the mark of something found by sound. `sm` is a small label for a
+	row or a player bar. The tilt goes under reduced motion and the torn ends
+	under high contrast.
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
@@ -13,15 +14,16 @@
 
 	interface Props {
 		look?: 'acid' | 'ink' | 'warn' | 'embossed';
+		size?: 'md' | 'sm';
 		/** Layout only: margin, flex. */
 		class?: string;
 		children: Snippet;
 	}
 
-	let { look = 'acid', class: className = '', children }: Props = $props();
+	let { look = 'acid', size = 'md', class: className = '', children }: Props = $props();
 </script>
 
-<span class="dn-tape {className}" data-look={look}>
+<span class="dn-tape {className}" data-look={look} data-size={size}>
 	{#if look === 'warn'}
 		<TriangleAlert class="dn-tape__icon" role="img" aria-label="Warning" />
 	{:else if look === 'embossed'}
@@ -116,8 +118,19 @@
 		stroke-linejoin: round;
 	}
 
+	.dn-tape[data-size='sm'] {
+		padding: 0.125rem 0.5rem 0.125rem 0.375rem;
+		font-size: 0.5625rem;
+		letter-spacing: 0.16em;
+		gap: 0.3rem;
+	}
+	.dn-tape[data-size='sm'] .dn-tape__trace {
+		width: 1.125rem;
+		height: 0.5rem;
+	}
+
 	@media (max-width: 639px) {
-		.dn-tape {
+		.dn-tape:not([data-size='sm']) {
 			padding: 0.3rem 0.75rem;
 			font-size: 0.6875rem;
 			letter-spacing: 0.12em;

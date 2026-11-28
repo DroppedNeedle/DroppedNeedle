@@ -62,9 +62,11 @@
 		ListMusic,
 		ListPlus,
 		Play,
+		Radio,
 		RefreshCw,
 		Shuffle
 	} from 'lucide-svelte';
+	import { startRadio } from '$lib/features/player/playback/launchRadio';
 	import {
 		SCROBBLING_PLACE,
 		listeningSourceNotice
@@ -408,7 +410,13 @@
 	);
 
 	const menuItems = $derived.by<MenuItem[]>(() => {
-		const items: MenuItem[] = [];
+		const items: MenuItem[] = [
+			{
+				label: 'Start radio',
+				icon: Radio,
+				onclick: () => void startRadio({ seed_type: 'artist', seed_id: data.artistId })
+			}
+		];
 		if (canPlayAll) {
 			items.push(
 				{

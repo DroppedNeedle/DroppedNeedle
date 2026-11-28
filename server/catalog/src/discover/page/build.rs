@@ -27,6 +27,7 @@ use super::library::{LibraryReads, fold};
 use super::memo::{BuildMemo, MemoKey};
 use super::shelves::{self, RowMut, album, genre, one, shelf};
 use droppedneedle_kernel::db::Db;
+use droppedneedle_library::sound::SoundSearch;
 
 use crate::discover::cache::Variant;
 use crate::discover::engine::sources::{gaps, shelves as shelves_source};
@@ -99,6 +100,8 @@ pub struct Builder<'a> {
     pub feedback: &'a Feedback,
     /// Library reads.
     pub library: &'a LibraryReads,
+    /// The search over how the library's tracks sound, for the bench.
+    pub sound: &'a SoundSearch,
     /// The Daily Mixes memo.
     pub memo: &'a BuildMemo,
     /// What the page is built for, which the memo is kept under.
@@ -269,7 +272,7 @@ fn required_service(def: &SectionDef) -> Option<ListenSource> {
     match def.requires {
         Some(Requires::Listenbrainz) => Some(ListenSource::Listenbrainz),
         Some(Requires::Lastfm) => Some(ListenSource::Lastfm),
-        Some(Requires::Library) | None => None,
+        Some(Requires::Library | Requires::SoundAnalysis) | None => None,
     }
 }
 
@@ -587,6 +590,9 @@ impl Builder<'_> {
                 ListenSource::Listenbrainz,
             ),
             Some(Requires::Lastfm) => needs(lastfm_on, lfm_user.is_some(), ListenSource::Lastfm),
+            // The bench is built whenever analysis is on and has read a
+            // track; otherwise it is simply not on the page.
+            Some(Requires::SoundAnalysis) => Some(None),
             _ if listens && lb_user.is_none() && lfm_user.is_none() && !user.jellyfin => {
                 if listenbrainz_on {
                     Some(Some(ListenSource::Listenbrainz))
@@ -637,6 +643,7 @@ impl Builder<'_> {
             SectionKey::NewFromYourArtists => self.new_from_your_artists(user_id).await,
             SectionKey::GapsInYourArtists => self.gaps(user_id).await,
             SectionKey::FromYourShelves => self.own_shelves(user_id).await,
+            SectionKey::SoundBench => self.sound_bench(user_id).await,
             SectionKey::GenreList => one(genre_list(shared.genres.as_deref())),
             _ => None,
         }
@@ -1071,6 +1078,20 @@ impl Builder<'_> {
             Ok(content) => content,
             Err(error) => {
                 tracing::warn!(%error, "shelves unreadable; the page keeps its section");
+                self.ask.note_failure();
+                None
+            }
+        }
+    }
+
+    /// By ear, while sound analysis is on. A read that failed fails the
+    /// section, so the page keeps the one it showed.
+    async fn sound_bench(&self, user_id: &str) -> Option<SectionContent> {
+        let now_ms = (self.now * 1000.0) as i64;
+        match super::bench::section(self.sound, user_id, now_ms).await {
+            Ok(content) => content,
+            Err(error) => {
+                tracing::warn!(%error, "sound bench unreadable; the page keeps its section");
                 self.ask.note_failure();
                 None
             }

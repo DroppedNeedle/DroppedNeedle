@@ -37,6 +37,7 @@
 //! [`DiscoverPages`]'s registration. Each kept page queues a background
 //! warm of its covers and artist images.
 
+pub mod bench;
 pub mod build;
 pub mod library;
 pub mod memo;
@@ -70,6 +71,7 @@ use build::{Builder, Outcome, PageSettings, mark_ownership, on_page};
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::runtime_config::{Live, secret_sections::AdvancedSettings};
+use droppedneedle_library::sound::SoundSearch;
 use library::LibraryReads;
 use memo::BuildMemo;
 
@@ -125,6 +127,10 @@ pub struct BuiltPage {
     health: Option<PageHealth>,
     #[serde(default)]
     source: Option<String>,
+    /// The sections the build was asked for; a page that lacks one now
+    /// wanted, and did not skip it, is built again.
+    #[serde(default)]
+    built: Vec<SectionKey>,
 }
 
 /// Everything the page reads from.
@@ -146,6 +152,8 @@ pub struct PageInputs {
     /// Each person's forget count, shared with every page cache and the
     /// forget.
     pub forgets: ForgetCounts,
+    /// The search over how the library's tracks sound, for the bench.
+    pub sound: SoundSearch,
 }
 
 struct Inner {
@@ -157,6 +165,7 @@ struct Inner {
     advanced: Live<AdvancedSettings>,
     integrations: IntegrationSettings,
     warm: CoverWarm,
+    sound: SoundSearch,
 }
 
 /// The discover pages: their cache and their build.
@@ -193,8 +202,21 @@ impl DiscoverPages {
                 advanced: inputs.advanced,
                 integrations: inputs.integrations,
                 warm: inputs.warm,
+                sound: inputs.sound,
             }),
         }
+    }
+
+    /// The sections of the user's Discover page that are off: those they
+    /// switched off, and the bench while sound analysis is not on, so it is
+    /// neither built nor served, state and all.
+    async fn switched_off(&self, user_id: &str) -> HashSet<SectionKey> {
+        let mut off =
+            sections::switched_off(self.inner.library.db(), user_id, Page::Discover).await;
+        if self.inner.sound.switch() != Some(true) {
+            off.insert(SectionKey::SoundBench);
+        }
+        off
     }
 
     /// Home's discover teaser: the week's next pick, from local reads only.
@@ -271,7 +293,7 @@ impl DiscoverPages {
         settings: PageSettings,
     ) -> Option<BuiltPage> {
         let started = tokio::time::Instant::now();
-        let off = sections::switched_off(self.inner.library.db(), user_id, Page::Discover).await;
+        let off = self.switched_off(user_id).await;
         // The page this build replaces, which the health's repeats count.
         let previous = self.inner.cache.load(user_id, variant).await;
         let source = self.inner.listening.source();
@@ -284,6 +306,7 @@ impl DiscoverPages {
             queue_db: &self.inner.queue_db,
             feedback: &feedback,
             library: &self.inner.library,
+            sound: &self.inner.sound,
             memo: &self.inner.memo,
             variant,
             generation,
@@ -337,6 +360,7 @@ impl DiscoverPages {
         Some(BuiltPage {
             page,
             skipped: sections::sorted(&off),
+            built: wanted.iter().map(|def| def.key).collect(),
             incomplete: built.incomplete,
             health: Some(health),
             source: Some(variant.source.clone()),
@@ -377,7 +401,7 @@ impl LiveDiscover {
     /// more than an hour old.
     pub async fn page(&self, user_id: &str, status: IntegrationStatus) -> DiscoverResponse {
         let inner = &self.pages.inner;
-        let off = sections::switched_off(inner.library.db(), user_id, Page::Discover).await;
+        let off = self.pages.switched_off(user_id).await;
         let variant = Variant::for_user(&inner.listening, user_id).await;
         // The ListenBrainz card asks the person to link their own account,
         // so it shows only while reads are on and they have no link.
@@ -390,6 +414,9 @@ impl LiveDiscover {
         let now = inner.cache.now_ms();
         let current = saved.as_ref().filter(|saved| {
             saved.value.skipped.iter().all(|key| off.contains(key))
+                && sections::wanted(Page::Discover, &off).iter().all(|def| {
+                    saved.value.built.contains(&def.key) || saved.value.skipped.contains(&def.key)
+                })
                 && !(saved.value.incomplete && now - saved.built_at > TIMING.retry_ms)
         });
         if inner.cache.due(user_id, current) {
@@ -595,7 +622,8 @@ fn row_ids(content: &SectionContent) -> Vec<String> {
         SectionContent::Weekly { .. }
         | SectionContent::NewReleases { .. }
         | SectionContent::Gaps { .. }
-        | SectionContent::OwnShelves { .. } => {}
+        | SectionContent::OwnShelves { .. }
+        | SectionContent::SoundBench { .. } => {}
         _ => {
             for shelf in content.shelves() {
                 ids.extend(shelf.items.iter().filter_map(row_id));
@@ -622,7 +650,8 @@ fn drop_rows(content: &mut SectionContent, shown: &HashSet<String>) {
         SectionContent::Weekly { .. }
         | SectionContent::NewReleases { .. }
         | SectionContent::Gaps { .. }
-        | SectionContent::OwnShelves { .. } => {}
+        | SectionContent::OwnShelves { .. }
+        | SectionContent::SoundBench { .. } => {}
         SectionContent::Shelves { shelves } => {
             for shelf in shelves.iter_mut() {
                 shelf.items.retain(|item| unseen(row_id(item)));
@@ -645,6 +674,7 @@ fn size(content: &SectionContent) -> usize {
         SectionContent::OwnShelves { own_shelves } => {
             own_shelves.played_a_lot.len() + own_shelves.never_played.len()
         }
+        SectionContent::SoundBench { .. } => 1,
     }
 }
 
@@ -754,6 +784,7 @@ mod tests {
                 incomplete: false,
                 health: None,
                 source: Some("source".to_owned()),
+                built: Vec::new(),
             },
             built_at,
         }

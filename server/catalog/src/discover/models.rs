@@ -587,6 +587,39 @@ pub enum SectionContent {
         /// Its two lists.
         own_shelves: OwnShelves,
     },
+    /// By ear: the sound bench, shown only while sound analysis is on.
+    SoundBench {
+        /// What the bench is first tuned to.
+        sound_bench: SoundBench,
+    },
+}
+
+/// The sound bench's first tuning.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct SoundBench {
+    /// The person's most played analysed library track of the last 30
+    /// days; none while they have played none, when the bench asks them
+    /// to pick a track.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<BenchTrack>,
+    /// The sound model the library's files were read with.
+    pub model: String,
+    /// The analysis version the library's sound was read at.
+    pub analysis_version: i64,
+}
+
+/// A library track on the sound bench.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct BenchTrack {
+    /// The local track id.
+    pub track_id: String,
+    pub title: String,
+    pub artist_name: String,
+    /// The local album id.
+    pub album_id: String,
+    pub album_title: Option<String>,
+    /// Its length in whole seconds, when known.
+    pub duration_seconds: Option<i64>,
 }
 
 /// One release on a person's list of new releases from their artists.
@@ -1643,7 +1676,7 @@ pub struct RadioPlanTrack {
     /// MusicBrainz recording id, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recording_mbid: Option<String>,
-    /// MusicBrainz release id, when known.
+    /// MusicBrainz release group id of its album, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub album_mbid: Option<String>,
     /// Album title, when known.

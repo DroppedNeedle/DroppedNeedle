@@ -38,7 +38,8 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
     SlskdConnection, YouTubeConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::{
-    DeemixConnection, DownloadPolicy, LibraryScanSchedule, SecuritySettings, listenbrainz_reads_on,
+    DeemixConnection, DownloadPolicy, LibraryScanSchedule, SecuritySettings, SoundAnalysisSettings,
+    listenbrainz_reads_on,
 };
 use droppedneedle_library::management::script_preview::{
     self, ScriptPreviewRequest, ScriptPreviewResponse,
@@ -1374,12 +1375,17 @@ pub async fn put_section_prefs(
     }))
 }
 
-/// The admin switches behind section availability. A ListenBrainz
-/// section that does not read counts as off.
+/// The admin switches behind section availability. A ListenBrainz or
+/// sound analysis section that does not read counts as off.
 fn section_masters(settings: &SettingsSetup) -> Result<super::section_prefs::Masters, ApiError> {
     let service = settings.service();
     Ok(super::section_prefs::Masters {
         lastfm: service.get_masked::<LastFmSettings>()?.into_inner().enabled,
         listenbrainz: listenbrainz_reads_on(&service.store.live()),
+        sound_analysis: service
+            .store
+            .live::<SoundAnalysisSettings>()
+            .read()
+            .is_some_and(|settings| settings.sound_analysis_enabled),
     })
 }

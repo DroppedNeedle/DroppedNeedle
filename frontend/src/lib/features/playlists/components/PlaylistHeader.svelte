@@ -40,8 +40,10 @@
 		Trash2,
 		Users,
 		FileMusic,
-		FileSpreadsheet
+		FileSpreadsheet,
+		Radio
 	} from 'lucide-svelte';
+	import { startRadio } from '$lib/features/player/playback/launchRadio';
 	import JellyfinIcon from '$lib/media/icons/JellyfinIcon.svelte';
 	import NavidromeIcon from '$lib/media/icons/NavidromeIcon.svelte';
 	import PlexIcon from '$lib/media/icons/PlexIcon.svelte';
@@ -237,7 +239,13 @@
 	let exportModal = $state<ReturnType<typeof PlaylistExportModal> | null>(null);
 
 	const menuItems = $derived.by(() => {
-		const items: MenuItem[] = [];
+		const items: MenuItem[] = [
+			{
+				label: 'Start radio',
+				icon: Radio,
+				onclick: () => void startRadio({ seed_type: 'playlist', seed_id: playlist.id })
+			}
+		];
 		if (canEdit) {
 			items.push({ label: 'Edit name', icon: PencilLine, onclick: startEditName });
 			items.push({ label: 'Share', icon: Users, onclick: () => onshare?.() });

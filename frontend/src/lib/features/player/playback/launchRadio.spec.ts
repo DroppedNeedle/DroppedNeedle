@@ -291,5 +291,47 @@ describe('launchRadio', () => {
 			expect(playerMock.appendQueueSilent).not.toHaveBeenCalled();
 			expect(playerMock.playQueue).toHaveBeenCalledOnce();
 		});
+
+		it('carries each track reason onto its queue item', async () => {
+			const reason = {
+				kind: 'sounds_like' as const,
+				line: 'Sounds close to Supernatural',
+				seed_name: 'Supernatural',
+				seed_track_id: 't1',
+				closeness: 'close' as const
+			};
+			playerMock.playQueue.mockImplementation((items: unknown[]) => {
+				playerMock.queue = items;
+			});
+			apiMock.post.mockResolvedValueOnce({ title: 'Radio', tracks: [{ ...owned(2), reason }] });
+			await launchRadio({ seed_type: 'track', seed_id: 't1' }, false);
+			const [items] = playerMock.playQueue.mock.calls[0];
+			expect(items[0].reason).toEqual(reason);
+		});
+
+		it('says once that a station plays the library only when nothing plays the rest', async () => {
+			await playing(6);
+			expect(toastMock.notify).not.toHaveBeenCalled();
+			radioSession.end();
+
+			playerMock.playQueue.mockClear();
+			apiMock.post.mockResolvedValueOnce({
+				title: 'Radio',
+				tracks: [owned(1), owned(2)],
+				library_only: true
+			});
+			await launchRadio({ seed_type: 'track', seed_id: 't1' }, false);
+			expect(toastMock.notify).toHaveBeenCalledTimes(1);
+			expect(toastMock.notify.mock.calls[0][0]).toMatch(/your library/i);
+
+			playerMock.upcomingQueueLength = 1;
+			apiMock.post.mockResolvedValueOnce({
+				title: 'Radio',
+				tracks: [owned(3)],
+				library_only: true
+			});
+			await extendRadio();
+			expect(toastMock.notify).toHaveBeenCalledTimes(1);
+		});
 	});
 });

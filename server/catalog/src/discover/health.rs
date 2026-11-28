@@ -74,7 +74,7 @@ impl BuildFacts<'_> {
         match def.requires {
             Some(Requires::Listenbrainz) => self.listenbrainz,
             Some(Requires::Lastfm) => self.lastfm,
-            Some(Requires::Library) | None => true,
+            Some(Requires::Library | Requires::SoundAnalysis) | None => true,
         }
     }
 }

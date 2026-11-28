@@ -176,4 +176,42 @@ droppedneedle_kernel::sql! {
         duration_seconds: Option<f64>,
         recording_mbid: Option<String>,
     }
+    /// The sound bench's first tuning for person `?1`: the analysis version
+    /// serving now (the newest other than `?3` that has rows, else `?3`),
+    /// whether any track has a sound at it, and the library track with a
+    /// sound at that version for its current bytes, as the sound search
+    /// reads them, that they played most since `?2` (then latest played).
+    /// One row; the seed's columns are NULL when they played no such track.
+    pub(super) BENCH_SEED = "WITH v AS (SELECT COALESCE(MAX(analysis_version), ?3) AS version \
+         FROM library_sound_analyses WHERE analysis_version <> ?3), \
+         played AS (SELECT local_track_id AS id, COUNT(*) AS plays, MAX(played_at) AS last_at \
+         FROM library_play_history WHERE user_id = ?1 AND played_at >= ?2 \
+         AND local_track_id IS NOT NULL GROUP BY local_track_id), \
+         seed AS (SELECT t.id AS track_id, t.title AS title, \
+         COALESCE(NULLIF(t.artist_name, ''), t.album_artist_name, '') AS artist_name, \
+         t.local_album_id AS album_id, t.album_title AS album_title, \
+         t.duration_seconds AS duration_seconds \
+         FROM played p JOIN local_tracks t ON t.id = p.id \
+         JOIN library_sound_analyses s ON s.local_track_id = t.id \
+         AND s.stat_revision = t.stat_revision \
+         WHERE s.analysis_version = (SELECT version FROM v) AND s.outcome = 'analysed' \
+         AND t.availability = 'indexed' \
+         ORDER BY p.plays DESC, p.last_at DESC, p.id LIMIT 1) \
+         SELECT v.version AS analysis_version, \
+         EXISTS (SELECT 1 FROM library_sound_analyses a JOIN local_tracks lt \
+         ON lt.id = a.local_track_id AND lt.stat_revision = a.stat_revision \
+         WHERE a.analysis_version = v.version AND a.outcome = 'analysed' \
+         AND lt.availability = 'indexed') AS analysed, \
+         seed.track_id, seed.title, seed.artist_name, seed.album_id, seed.album_title, \
+         seed.duration_seconds FROM v LEFT JOIN seed ON 1 = 1";
+    pub(super) row BenchSeedRow for [BENCH_SEED] {
+        analysis_version: i64,
+        analysed: bool,
+        track_id: Option<String>,
+        title: Option<String>,
+        artist_name: Option<String>,
+        album_id: Option<String>,
+        album_title: Option<String>,
+        duration_seconds: Option<f64>,
+    }
 }

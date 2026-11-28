@@ -7,6 +7,7 @@
 use axum::Router;
 use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
+use droppedneedle_kernel::clock::Clock as _;
 use droppedneedle_kernel::db::{DbError, Lane};
 use droppedneedle_kernel::runtime_config::sections::SoundAnalysisSettings;
 use droppedneedle_library::sound::{Closeness, SoundSearch};
@@ -759,4 +760,187 @@ async fn similar_tracks_answer_in_order_with_their_closeness() {
     assert_eq!(many["tracks"].as_array().map(Vec::len), Some(8), "{many}");
     let (status, _) = similar("/api/v3/library/tracks/unanalysed/similar".to_owned()).await;
     assert_eq!(status, 404);
+}
+
+/// The Discover page once a build for the signed-in person has settled.
+async fn settled_page(app: &Router) -> Value {
+    tokio::time::timeout(crate::common::PATIENCE, async {
+        loop {
+            let (_, page) = call(app, "GET", "/api/v3/discover", None).await;
+            if page["refreshing"] == false && page["generated_at"].is_number() {
+                return page;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the page was built")
+}
+
+/// The bench's section on `page`, and whether it has a state line.
+fn bench(page: &Value) -> (Option<&Value>, bool) {
+    let find = |list: &str| {
+        page[list]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["key"] == "sound_bench"))
+    };
+    (
+        find("sections").map(|section| &section["content"]["sound_bench"]),
+        find("section_states").is_some(),
+    )
+}
+
+/// By ear is on Discover only while sound analysis is on, tuned to the
+/// person's most played track of the last 30 days that has been analysed:
+/// not one played more but longer ago, nor one not analysed. Someone with
+/// no such plays gets the bench with no seed. Turning analysis off takes
+/// it off the page at once, with no state line.
+#[tokio::test]
+async fn the_bench_is_tuned_to_the_most_played_analysed_track() {
+    let rig = AuthRig::new("radio-bench-seed").await;
+    let mut tracks = circle();
+    tracks.push(planted("unanalysed", 20, 40.0));
+    plant(&rig, tracks).await;
+    let now = rig.clock().now_ms();
+    let day = 86_400_000_i64;
+    rig.platform
+        .db
+        .write(Lane::Foreground, "test.bench", move |tx| {
+            tx.execute(
+                "DELETE FROM library_sound_analyses WHERE local_track_id = 'unanalysed'",
+                [],
+            )?;
+            tx.execute(
+                "INSERT INTO auth_users (id, display_name, role, created_at) \
+                 VALUES ('user-2', 'Bea', 'user', 0)",
+                [],
+            )?;
+            for (track, count, at) in [
+                ("unanalysed", 9, now - 2 * day),
+                ("c1", 6, now - 40 * day),
+                ("c3", 3, now - 2 * day),
+                ("c5", 2, now - day),
+            ] {
+                for n in 0..count {
+                    tx.execute(
+                        "INSERT INTO library_play_history (id, user_id, local_track_id, \
+                         track_name, artist_name, played_at) \
+                         VALUES (?1, 'user-1', ?2, ?2, 'Someone', ?3)",
+                        rusqlite::params![format!("{track}-{n}"), track, at - n * 60_000],
+                    )?;
+                }
+            }
+            Ok::<_, DbError>(())
+        })
+        .await
+        .expect("plays written");
+    sound_on(&rig, true);
+    crate::discover_queue::seen_now(&rig, "user-1").await;
+    crate::discover_queue::seen_now(&rig, "user-2").await;
+    let dir = crate::common::ScratchDir::new("radio-bench-seed");
+    let deps = discover_deps(&rig, &dir, Providers::closed(), |_| {});
+    let app = discover_routes(deps.clone());
+
+    let page = settled_page(&app).await;
+    let (section, stated) = bench(&page);
+    let section = section.expect("the bench is on the page");
+    assert_eq!(section["seed"]["track_id"], "c3", "{page}");
+    assert_eq!(section["seed"]["album_id"], "album-3");
+    assert_eq!(section["analysis_version"], 1);
+    assert!(!stated, "{page}");
+
+    let bea = with_test_principal(
+        droppedneedle_catalog::discover::routes()
+            .with_state(deps)
+            .into_router(),
+        test_principal("user-2", Role::User, "sess-bea", SessionKind::Standard),
+    );
+    let page = settled_page(&bea).await;
+    let section = bench(&page).0.expect("the bench is on Bea's page too");
+    assert!(section.get("seed").is_none(), "{page}");
+
+    sound_on(&rig, false);
+    let (_, page) = call(&app, "GET", "/api/v3/discover", None).await;
+    assert_eq!(bench(&page), (None, false), "{page}");
+}
+
+/// A page built while sound analysis was off is built again once it is
+/// turned on, and the next page has the bench; so is a page saved before
+/// the bench existed.
+#[tokio::test]
+async fn turning_sound_analysis_on_brings_the_bench_to_a_built_page() {
+    let rig = AuthRig::new("radio-bench-on").await;
+    plant(&rig, circle()).await;
+    // Nine plays of an album long ago put From your shelves on the page, so
+    // a build with analysis off has something to keep.
+    let long_ago = rig.clock().now_ms() - 100 * 86_400_000;
+    rig.platform
+        .db
+        .write(Lane::Foreground, "test.shelves", move |tx| {
+            for n in 0..9 {
+                tx.execute(
+                    "INSERT INTO library_play_history (id, user_id, local_track_id, \
+                     local_album_id, track_name, artist_name, played_at) \
+                     VALUES (?1, 'user-1', 'c1', 'album-1', 'c1', 'Someone', ?2)",
+                    rusqlite::params![format!("old-{n}"), long_ago - n * 60_000],
+                )?;
+            }
+            Ok::<_, DbError>(())
+        })
+        .await
+        .expect("plays written");
+    sound_on(&rig, false);
+    crate::discover_queue::seen_now(&rig, "user-1").await;
+    let dir = crate::common::ScratchDir::new("radio-bench-on");
+    let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |_| {}));
+
+    let page = settled_page(&app).await;
+    assert_eq!(bench(&page), (None, false), "{page}");
+
+    sound_on(&rig, true);
+    let (_, asked) = call(&app, "GET", "/api/v3/discover", None).await;
+    assert_eq!(
+        asked["refreshing"], true,
+        "the old page is built again: {asked}"
+    );
+    let page = settled_page(&app).await;
+    let section = bench(&page).0.expect("the bench is on the new page");
+    assert_eq!(section["analysis_version"], 1, "{page}");
+    assert_eq!(section["model"], "MSD_musicnn");
+    // A page saved before the bench existed names it as neither built nor
+    // skipped: it is built again too.
+    rig.platform
+        .db
+        .write(Lane::Foreground, "test.older_page", |tx| {
+            let payload: Vec<u8> = tx.query_row(
+                "SELECT payload FROM catalog_cached_pages WHERE user_id = 'user-1' \
+                 AND page = 'discover'",
+                [],
+                |row| row.get(0),
+            )?;
+            let mut saved: Value = serde_json::from_slice(&payload).expect("a saved page");
+            let without = |list: &mut Value| {
+                if let Some(rows) = list.as_array_mut() {
+                    rows.retain(|row| row != "sound_bench" && row["key"] != "sound_bench");
+                }
+            };
+            without(&mut saved["built"]);
+            without(&mut saved["page"]["sections"]);
+            tx.execute(
+                "UPDATE catalog_cached_pages SET payload = ?1 WHERE user_id = 'user-1' \
+                 AND page = 'discover'",
+                [serde_json::to_vec(&saved).expect("encodes")],
+            )?;
+            Ok::<_, DbError>(())
+        })
+        .await
+        .expect("page made older");
+    let (_, asked) = call(&app, "GET", "/api/v3/discover", None).await;
+    assert_eq!(bench(&asked).0, None, "{asked}");
+    assert_eq!(
+        asked["refreshing"], true,
+        "a page that never built the bench is built again: {asked}"
+    );
+    let page = settled_page(&app).await;
+    assert!(bench(&page).0.is_some(), "{page}");
 }

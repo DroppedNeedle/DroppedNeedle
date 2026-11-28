@@ -36,12 +36,14 @@
 		Shuffle,
 		ListPlus,
 		ListStart,
+		Radio,
 		LoaderCircle,
 		Music2,
 		Heart,
 		Search,
 		X
 	} from 'lucide-svelte';
+	import { startRadio } from '$lib/features/player/playback/launchRadio';
 	import type { TrackView } from '$lib/features/library/queries/types';
 	import LibraryFilterMenu, {
 		type FormatMode,
@@ -242,7 +244,12 @@
 	function getTrackMenuItems(track: TrackView): MenuItem[] {
 		return [
 			{ label: 'Add to Queue', icon: ListPlus, onclick: () => addTrackToQueue(track) },
-			{ label: 'Play Next', icon: ListStart, onclick: () => playTrackNext(track) }
+			{ label: 'Play Next', icon: ListStart, onclick: () => playTrackNext(track) },
+			{
+				label: 'Start radio',
+				icon: Radio,
+				onclick: () => void startRadio({ seed_type: 'track', seed_id: track.id })
+			}
 		];
 	}
 

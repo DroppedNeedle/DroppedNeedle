@@ -21,6 +21,7 @@ export type WeeklyExploration = Schemas['WeeklyExploration'];
 export type NewReleaseSheet = Schemas['NewReleaseSheet'];
 export type Gap = Schemas['Gap'];
 export type OwnShelves = Schemas['OwnShelves'];
+export type SoundBench = Schemas['SoundBench'];
 export type OwnShelfAlbum = Schemas['OwnShelfAlbum'];
 export type WeeklyTrack = Schemas['WeeklyTrack'];
 export type GenreArtwork = Schemas['GenreArtwork'];

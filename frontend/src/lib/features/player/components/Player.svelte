@@ -7,7 +7,10 @@
 	player" is a tab on the bar's top edge. Phones get the cover, the names,
 	the heart and previous, play and next, and a queue tab beside "Close
 	player" that opens the drawer (its own tabs hold the lyrics and the
-	sound settings).
+	sound settings). While a station plays (not on a phone), the track's
+	reason, the "Found by sound" mark on a track found by sound, More like
+	this and Not this for a library track, and Keep for one the library lacks,
+	which asks for its album at once.
 -->
 <script lang="ts">
 	import { isValidMbid } from '$lib/utils/formatting';
@@ -35,6 +38,17 @@
 	import RatingStars from '$lib/ui/RatingStars.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 	import PlayerTrackMarks from '$lib/features/player/components/PlayerTrackMarks.svelte';
+	import Tape from '$lib/ui/Tape.svelte';
+	import {
+		isStationItem,
+		playingStation,
+		steerRadio
+	} from '$lib/features/player/playback/launchRadio';
+	import {
+		createRequestAlbumMutation,
+		createRequestTrackMutation
+	} from '$lib/features/downloads/queries/DownloadMutations.svelte';
+	import { libraryStore } from '$lib/stores/library';
 	import { skipByRating } from '$lib/features/player/state/skipByRating.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { playedAlbumHref, playedArtistHref } from '$lib/utils/entityRoutes';
@@ -58,7 +72,10 @@
 		SlidersHorizontal,
 		FileText,
 		ListFilter,
-		Star
+		Star,
+		Plus,
+		Ban,
+		Download
 	} from 'lucide-svelte';
 
 	const floor = $derived(skipByRating.floor);
@@ -171,6 +188,68 @@
 		playerStore.duration > 0 ? Math.min(100, (shownProgress / playerStore.duration) * 100) : 0
 	);
 
+	// ---------- a station ----------
+
+	// What the bar shows of a station is about the station's own track
+	// playing now, never one queued beside it.
+	const onStation = $derived(playingStation() !== null);
+	const stationItem = $derived.by(() => {
+		const item = onStation ? playerStore.currentQueueItem : null;
+		return item && isStationItem(item) ? item : null;
+	});
+	const reason = $derived(stationItem?.reason ?? null);
+	const bySound = $derived(!!reason?.seed_track_id);
+	const steerable = $derived(stationItem?.sourceType === 'local' && !!stationItem.trackSourceId);
+	// Keep asks for the album of a track the library lacks, or for the song
+	// itself when only its recording is known; with neither there is no Keep.
+	const keepWhat = $derived.by((): { album?: string; recording?: string } | null => {
+		if (!stationItem || stationItem.sourceType === 'local') return null;
+		if (isValidMbid(stationItem.albumId)) return { album: stationItem.albumId };
+		const recording = stationItem.recordingIds?.youtube;
+		return recording && isValidMbid(recording) ? { recording } : null;
+	});
+	const albumRequest = createRequestAlbumMutation();
+	const songRequest = createRequestTrackMutation();
+	let asked = $state<string[]>([]);
+	const keptId = $derived(keepWhat ? (keepWhat.album ?? keepWhat.recording) : null);
+	const kept = $derived(
+		!!keptId && (asked.includes(keptId) || libraryStore.isRequested(keepWhat?.album))
+	);
+
+	function keep(): void {
+		const item = stationItem;
+		const what = keepWhat;
+		const id = keptId;
+		if (!item || !what || !id || kept) return;
+		// Marked at once; a refused request takes the mark back.
+		asked = [...asked, id];
+		const undo = () => (asked = asked.filter((one) => one !== id));
+		if (what.album) {
+			albumRequest
+				.mutateAsync({
+					release_group_mbid: what.album,
+					artist_name: item.artistName || undefined,
+					album_title: item.albumName,
+					artist_mbid: item.artistId,
+					made_from: 'radio'
+				})
+				.then((answer) => {
+					if (!answer.success) undo();
+				})
+				.catch(undo);
+		} else if (what.recording) {
+			songRequest
+				.mutateAsync({
+					recording_mbid: what.recording,
+					artist_name: item.artistName,
+					track_title: item.trackName,
+					album_title: item.albumName || null,
+					artist_mbid: item.artistId ?? null
+				})
+				.catch(undo);
+		}
+	}
+
 	const playPauseIcon = $derived(
 		isError
 			? CircleAlert
@@ -266,6 +345,44 @@
 						<p class="dn-player__mono mt-0.5 hidden sm:block">
 							Track {playerStore.currentTrackNumber} of {playerStore.queueLength}
 						</p>
+					{/if}
+					{#if stationItem}
+						<div class="dn-player__station">
+							{#if bySound}
+								<Tape look="embossed" size="sm">Found by sound</Tape>
+							{/if}
+							{#if reason}
+								<p class="dn-player__why truncate" title={reason.line}>{reason.line}</p>
+							{/if}
+							{#if steerable}
+								<Button
+									variant="ghost"
+									size="xs"
+									icon={Plus}
+									onclick={() => stationItem && void steerRadio('more_like', stationItem)}
+								>
+									More like this
+								</Button>
+								<Button
+									variant="ghost"
+									size="xs"
+									icon={Ban}
+									onclick={() => stationItem && void steerRadio('not_this', stationItem)}
+								>
+									Not this
+								</Button>
+							{:else if keepWhat}
+								<Button
+									variant="primary"
+									size="xs"
+									icon={kept ? Check : Download}
+									disabled={kept}
+									onclick={keep}
+								>
+									{kept ? 'Requested' : 'Keep'}
+								</Button>
+							{/if}
+						</div>
 					{/if}
 					{#if isError}
 						<p class="line-clamp-2 text-xs font-semibold text-error" title={unplayableNote}>
@@ -612,6 +729,26 @@
 		font-weight: 600;
 		letter-spacing: 0.14em;
 		text-transform: uppercase;
+		color: var(--dn-muted);
+	}
+
+	/* a station's line and its steering, on a pointer-sized bar only */
+	.dn-player__station {
+		display: none;
+		align-items: center;
+		gap: 0.375rem;
+		min-width: 0;
+		margin-top: 0.25rem;
+	}
+	@media (min-width: 640px) {
+		.dn-player__station {
+			display: flex;
+		}
+	}
+	.dn-player__why {
+		min-width: 0;
+		margin: 0;
+		font-size: 0.75rem;
 		color: var(--dn-muted);
 	}
 

@@ -73,6 +73,8 @@ pub enum SectionKey {
     /// Discover: the person's own albums played a lot but not lately, and
     /// the ones they asked for and never played.
     FromYourShelves,
+    /// Discover: the sound bench, more like one track by how it sounds.
+    SoundBench,
     /// Home: library albums with a round birthday this year.
     Anniversaries,
 }
@@ -138,6 +140,8 @@ pub enum Requires {
     Lastfm,
     /// The library.
     Library,
+    /// Sound analysis, switched on by an admin.
+    SoundAnalysis,
 }
 
 impl Requires {
@@ -147,6 +151,7 @@ impl Requires {
             Self::Listenbrainz => "listenbrainz",
             Self::Lastfm => "lastfm",
             Self::Library => "library",
+            Self::SoundAnalysis => "sound_analysis",
         }
     }
 }
@@ -430,6 +435,14 @@ pub const SECTIONS: &[SectionDef] = &[
         "From your shelves",
         "Your albums played a lot but not lately, and ones you asked for and haven't played.",
         Some(Requires::Library),
+        B::OwnHistory,
+    ),
+    discover(
+        K::SoundBench,
+        Z::FromYourLibrary,
+        "By ear",
+        "More like one of your tracks, found by how your own files sound.",
+        Some(Requires::SoundAnalysis),
         B::OwnHistory,
     ),
     discover(

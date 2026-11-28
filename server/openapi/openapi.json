@@ -44708,6 +44708,46 @@
           "playlist"
         ]
       },
+      "BenchTrack": {
+        "type": "object",
+        "description": "A library track on the sound bench.",
+        "required": [
+          "track_id",
+          "title",
+          "artist_name",
+          "album_id"
+        ],
+        "properties": {
+          "album_id": {
+            "type": "string",
+            "description": "The local album id."
+          },
+          "album_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "artist_name": {
+            "type": "string"
+          },
+          "duration_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Its length in whole seconds, when known."
+          },
+          "title": {
+            "type": "string"
+          },
+          "track_id": {
+            "type": "string",
+            "description": "The local track id."
+          }
+        }
+      },
       "BinAlbumView": {
         "type": "object",
         "description": "The album a group of files came from.",
@@ -67422,7 +67462,7 @@
               "string",
               "null"
             ],
-            "description": "MusicBrainz release id, when known."
+            "description": "MusicBrainz release group id of its album, when known."
           },
           "album_name": {
             "type": [
@@ -73024,6 +73064,26 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "By ear: the sound bench, shown only while sound analysis is on.",
+            "required": [
+              "sound_bench",
+              "shape"
+            ],
+            "properties": {
+              "shape": {
+                "type": "string",
+                "enum": [
+                  "sound_bench"
+                ]
+              },
+              "sound_bench": {
+                "$ref": "#/components/schemas/SoundBench",
+                "description": "What the bench is first tuned to."
+              }
+            }
           }
         ],
         "description": "A section's rows, tagged by `shape`."
@@ -73146,6 +73206,7 @@
           "new_from_your_artists",
           "gaps_in_your_artists",
           "from_your_shelves",
+          "sound_bench",
           "anniversaries"
         ]
       },
@@ -74418,6 +74479,36 @@
               }
             ],
             "description": "With `waiting`: what it waits for. It carries on by itself."
+          }
+        }
+      },
+      "SoundBench": {
+        "type": "object",
+        "description": "The sound bench's first tuning.",
+        "required": [
+          "model",
+          "analysis_version"
+        ],
+        "properties": {
+          "analysis_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The analysis version the library's sound was read at."
+          },
+          "model": {
+            "type": "string",
+            "description": "The sound model the library's files were read with."
+          },
+          "seed": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BenchTrack"
+              }
+            ],
+            "description": "The person's most played analysed library track of the last 30\ndays; none while they have played none, when the bench asks them\nto pick a track."
           }
         }
       },

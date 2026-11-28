@@ -34,7 +34,8 @@ pub struct CatalogEntry {
     pub description: &'static str,
     /// Layout zone.
     pub zone: &'static str,
-    /// Service requirement (`listenbrainz`, `lastfm`, or `library`).
+    /// Service requirement (`listenbrainz`, `lastfm`, `library` or
+    /// `sound_analysis`).
     pub requires: Option<&'static str>,
 }
 
@@ -190,13 +191,15 @@ pub struct Masters {
     pub lastfm: bool,
     /// ListenBrainz reads are switched on.
     pub listenbrainz: bool,
+    /// Sound analysis is switched on.
+    pub sound_analysis: bool,
 }
 
 /// Build one page: catalog entries overlaid with the disabled set,
 /// `available` from requirements plus link state. The Last.fm switch
-/// gates `lastfm` sections (v2 required global creds, which v3 dropped)
-/// and the ListenBrainz reads switch gates `listenbrainz` ones; the
-/// library is always present.
+/// gates `lastfm` sections (v2 required global creds, which v3 dropped),
+/// the ListenBrainz reads switch gates `listenbrainz` ones and the sound
+/// analysis switch `sound_analysis` ones; the library is always present.
 pub async fn page(
     prefs: &SectionPrefs,
     user_id: &str,
@@ -213,10 +216,12 @@ pub async fn page(
         ("listenbrainz", listenbrainz),
         ("lastfm", lastfm),
         ("library", true),
+        ("sound_analysis", masters.sound_analysis),
     ]);
     let switched_on: HashMap<&str, bool> = HashMap::from([
         ("listenbrainz", masters.listenbrainz),
         ("lastfm", masters.lastfm),
+        ("sound_analysis", masters.sound_analysis),
     ]);
     Ok(catalog(page)
         .into_iter()

@@ -96,7 +96,8 @@ impl SectionContent {
             Self::Weekly { .. }
             | Self::NewReleases { .. }
             | Self::Gaps { .. }
-            | Self::OwnShelves { .. } => Vec::new(),
+            | Self::OwnShelves { .. }
+            | Self::SoundBench { .. } => Vec::new(),
         }
     }
 
@@ -108,7 +109,8 @@ impl SectionContent {
             Self::Weekly { .. }
             | Self::NewReleases { .. }
             | Self::Gaps { .. }
-            | Self::OwnShelves { .. } => Vec::new(),
+            | Self::OwnShelves { .. }
+            | Self::SoundBench { .. } => Vec::new(),
         }
     }
 
@@ -158,6 +160,8 @@ impl SectionContent {
             Self::OwnShelves { own_shelves } => {
                 own_shelves.played_a_lot.is_empty() && own_shelves.never_played.is_empty()
             }
+            // With no seed the bench still shows, asking for a track.
+            Self::SoundBench { .. } => false,
             _ => self
                 .shelves()
                 .iter()

@@ -102,6 +102,10 @@
 		scheduleSave();
 	}
 
+	// The settings tab a requirement's switch lives on.
+	const settingsTab = (requires: string | null | undefined) =>
+		requires === 'sound_analysis' ? 'library' : requires;
+
 	// Scrobble accounts are each user's own, on /profile. Anything else is
 	// an admin's settings tab, so a member is told to ask instead.
 	function connectLink(requires: string): { href: string; label: string } | null {
@@ -112,7 +116,7 @@
 			return { href: withBasePath('/profile#scrobbling'), label: 'Connect ListenBrainz' };
 		}
 		if (!authStore.isAdmin) return null;
-		return { href: withBasePath(`/settings?tab=${requires}`), label: 'Open settings' };
+		return { href: withBasePath(`/settings?tab=${settingsTab(requires)}`), label: 'Open settings' };
 	}
 
 	onDestroy(() => {
@@ -186,7 +190,7 @@
 											Turned off.
 											{#if authStore.isAdmin}
 												<a
-													href={withBasePath(`/settings?tab=${section.requires}`)}
+													href={withBasePath(`/settings?tab=${settingsTab(section.requires)}`)}
 													class="link inline-flex items-center gap-1 text-primary/80"
 												>
 													Settings

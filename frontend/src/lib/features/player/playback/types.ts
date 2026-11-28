@@ -157,4 +157,9 @@ export interface QueueItem {
 	isPreview?: boolean;
 	/** What the queue this item joined was started from; unset reads `unknown`. */
 	playedFrom?: PlayedFrom;
+	/** Why a station put it there. */
+	reason?: RadioReason | null;
 }
+
+/** Why a station put a track on: its line, and the seed track for one found by sound. */
+export type RadioReason = components['schemas']['RadioReason'];

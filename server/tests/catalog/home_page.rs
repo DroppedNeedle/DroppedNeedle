@@ -29,6 +29,7 @@ use droppedneedle_catalog::discover::queue::store::QueueDb;
 use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::db::{DbError, Lane};
 use droppedneedle_kernel::test_support::ManualClock;
+use droppedneedle_library::sound::SoundSearch;
 
 use crate::discover_queue::{Script, after_commits};
 
@@ -174,6 +175,7 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
                 integrations: integrations(),
                 warm: warm.clone(),
                 forgets: Default::default(),
+                sound: SoundSearch::new(db.clone(), settings.live()),
             }),
             forgets: Default::default(),
         })
@@ -314,6 +316,7 @@ async fn home_shows_weekly(date: &str) -> bool {
             integrations: integrations(),
             warm,
             forgets: Default::default(),
+            sound: SoundSearch::new(db.clone(), settings.live()),
         }),
         forgets: Default::default(),
     });
@@ -420,6 +423,7 @@ async fn top_albums_after_plays(albums: usize) -> ((String, Vec<String>), usize)
             integrations: integrations(),
             warm,
             forgets: Default::default(),
+            sound: SoundSearch::new(db.clone(), settings.live()),
         }),
         forgets: Default::default(),
     });
@@ -554,6 +558,7 @@ async fn home_teaser_is_the_next_pick_and_anniversaries_are_home() {
             integrations: integrations(),
             warm,
             forgets: Default::default(),
+            sound: SoundSearch::new(db.clone(), settings.live()),
         }),
         forgets: Default::default(),
     });

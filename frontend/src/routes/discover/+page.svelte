@@ -47,6 +47,7 @@
 	import PastWeeksRow from '$lib/features/discover/components/PastWeeksRow.svelte';
 	import GapsShelf from '$lib/features/discover/components/GapsShelf.svelte';
 	import FromYourShelves from '$lib/features/discover/components/FromYourShelves.svelte';
+	import SoundBench from '$lib/features/discover/components/SoundBench.svelte';
 	import StatedArtists from '$lib/features/discover/components/StatedArtists.svelte';
 	import { getStatedArtistsQuery } from '$lib/features/discover/queries/statedArtists.svelte';
 	import { getDiscoverHomeV3Query } from '$lib/features/discover/queries/DiscoverV3Queries.svelte';
@@ -81,6 +82,7 @@
 		NewReleaseSheet,
 		OwnShelves,
 		PageSection,
+		SoundBench as Bench,
 		SectionKey,
 		SectionState,
 		SectionZone
@@ -642,6 +644,7 @@
 		| { kind: 'new-releases'; sheet: NewReleaseSheet }
 		| { kind: 'gaps'; gaps: Gap[] }
 		| { kind: 'own-shelves'; shelves: OwnShelves }
+		| { kind: 'sound-bench'; bench: Bench }
 		| { kind: 'state'; title: string; state: SectionState }
 	);
 
@@ -729,6 +732,8 @@
 				place({ id, kind: 'gaps', width: 'wide', kicker, gaps: content.gaps });
 			} else if (content.shape === 'own_shelves') {
 				place({ id, kind: 'own-shelves', width: 'wide', kicker, shelves: content.own_shelves });
+			} else if (content.shape === 'sound_bench') {
+				place({ id, kind: 'sound-bench', width: 'wide', kicker, bench: content.sound_bench });
 			} else if (content.shape === 'shelf') {
 				place({
 					id,
@@ -1119,6 +1124,10 @@
 	{:else if block.kind === 'own-shelves'}
 		{@render kickerRow(block.kicker)}
 		<FromYourShelves shelves={block.shelves} />
+	{:else if block.kind === 'sound-bench'}
+		<SoundBench bench={block.bench}>
+			{#snippet head()}{@render kickerRow(block.kicker)}{/snippet}
+		</SoundBench>
 	{:else if block.kind === 'genres-browse' && genreList}
 		{@render kickerRow(block.kicker)}
 		<div class="dn-discover-genres" class:dn-discover-genres--paired={paired}>

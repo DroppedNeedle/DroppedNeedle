@@ -1,7 +1,8 @@
 <!--
 	The drawer's Queue tab: the queue in play order, the playing track
 	outlined, then "Up next" with the rows that can be dragged, moved with
-	the arrow keys on their handle, or removed. Rows the rating floor will
+	the arrow keys on their handle, or removed. A track a station found by
+	sound carries sound's small plum trace. Rows the rating floor will
 	pass over are dimmed and marked Skips, and still play when picked. Clear
 	empties what is upcoming and calls `oncleared`, which shuts the drawer.
 -->
@@ -14,7 +15,14 @@
 		type UnplayableReason
 	} from '$lib/features/player/state/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import { CircleSlash, GripVertical, ListMusic, Shuffle, Trash2 } from 'lucide-svelte';
+	import {
+		AudioWaveform,
+		CircleSlash,
+		GripVertical,
+		ListMusic,
+		Shuffle,
+		Trash2
+	} from 'lucide-svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
@@ -259,7 +267,11 @@
 					/>
 
 					<div class="min-w-0 flex-1">
-						<p class="dn-queue-title truncate">{item.trackName || item.albumName}</p>
+						<p class="dn-queue-title truncate">
+							{#if item.reason?.seed_track_id}
+								<AudioWaveform class="dn-queue-sound" role="img" aria-label="Found by sound" />
+							{/if}{item.trackName || item.albumName}
+						</p>
 						<p class="dn-queue-artist truncate text-xs text-muted">{item.artistName}</p>
 					</div>
 
@@ -351,6 +363,14 @@
 	.dn-queue-title {
 		font-size: 0.875rem;
 		font-weight: 600;
+	}
+	.dn-queue-title :global(.dn-queue-sound) {
+		display: inline;
+		width: 0.875rem;
+		height: 0.875rem;
+		margin-right: 0.25rem;
+		vertical-align: -0.125rem;
+		color: var(--color-secondary);
 	}
 	.dn-queue-pos,
 	.dn-queue-handle {

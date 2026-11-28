@@ -76,6 +76,11 @@ export const DiscoverQueryKeyFactory = {
 		trackPreview: (userId: DiscoverV3UserId, artist: string, track: string) =>
 			[...root(userId), 'track-preview', artist, track] as const,
 		youtubeTrackSearch: (userId: DiscoverV3UserId, artist: string, track: string) =>
-			[...root(userId), 'youtube-track-search', artist, track] as const
+			[...root(userId), 'youtube-track-search', artist, track] as const,
+		// The sound bench: the tracks that sound like one, and one track's measures.
+		soundSimilar: (userId: DiscoverV3UserId, trackId: string) =>
+			[...root(userId), 'sound', 'similar', trackId] as const,
+		soundMeasures: (userId: DiscoverV3UserId, trackId: string, version: number) =>
+			[...root(userId), 'sound', 'measures', trackId, version] as const
 	}
 };

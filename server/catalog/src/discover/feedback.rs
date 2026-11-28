@@ -492,6 +492,8 @@ impl Feedback {
             SectionContent::Gaps { gaps } => gaps.retain(|gap| !self.hides_album_row(&gap.album)),
             // The person's own albums: nothing there is a recommendation.
             SectionContent::OwnShelves { .. } => {}
+            // The person's own tracks, picked by sound when they tune.
+            SectionContent::SoundBench { .. } => {}
         }
     }
 

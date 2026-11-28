@@ -436,6 +436,7 @@ async fn a_switch_for_a_section_that_has_gone_never_fails_a_save() {
     let masters = Masters {
         lastfm: false,
         listenbrainz: true,
+        sound_analysis: false,
     };
     let switch = |key: &str, enabled| SectionPrefsUpdate {
         page: SectionPage::Discover,
@@ -472,6 +473,39 @@ async fn a_switch_for_a_section_that_has_gone_never_fails_a_save() {
         matches!(stale, Err(SettingsError::InvalidInput { .. })),
         "{stale:?}"
     );
+}
+
+/// By ear follows the sound analysis switch in the section settings: turned
+/// off while analysis is off, and there to switch while it is on.
+#[tokio::test]
+async fn the_sound_bench_is_turned_off_while_sound_analysis_is() {
+    let rig = AuthRig::new("section-prefs-sound").await;
+    let db = rig.platform.db.clone();
+    let user = rig.seed_user("ada", Role::User).await;
+    let prefs = SectionPrefs::new(
+        db.clone(),
+        rig.platform.clock.clone(),
+        LastFmLinks::new(&AuthDb::new(&db, rig.platform.clock.clone())),
+    );
+    let bench = |sound_analysis| {
+        let prefs = &prefs;
+        let user = &user.id;
+        async move {
+            let masters = Masters {
+                lastfm: false,
+                listenbrainz: true,
+                sound_analysis,
+            };
+            section_prefs::page(prefs, user, SectionPage::Discover, masters)
+                .await
+                .expect("the page reads")
+                .into_iter()
+                .find(|item| item.key == "sound_bench")
+                .map(|item| (item.available, item.turned_off))
+        }
+    };
+    assert_eq!(bench(false).await, Some((false, true)));
+    assert_eq!(bench(true).await, Some((true, false)));
 }
 
 /// Two saves holding the same revision: exactly one lands, the other is

@@ -13069,6 +13069,21 @@ export interface components {
          * @enum {string}
          */
         BatchSource: "discover" | "playlist";
+        /** @description A library track on the sound bench. */
+        BenchTrack: {
+            /** @description The local album id. */
+            album_id: string;
+            album_title?: string | null;
+            artist_name: string;
+            /**
+             * Format: int64
+             * @description Its length in whole seconds, when known.
+             */
+            duration_seconds?: number | null;
+            title: string;
+            /** @description The local track id. */
+            track_id: string;
+        };
         /** @description The album a group of files came from. */
         BinAlbumView: {
             artist?: string | null;
@@ -23569,7 +23584,7 @@ export interface components {
         };
         /** @description One planned radio track. */
         RadioPlanTrack: {
-            /** @description MusicBrainz release id, when known. */
+            /** @description MusicBrainz release group id of its album, when known. */
             album_mbid?: string | null;
             /** @description Album title, when known. */
             album_name?: string | null;
@@ -25998,6 +26013,11 @@ export interface components {
             own_shelves: components["schemas"]["OwnShelves"];
             /** @enum {string} */
             shape: "own_shelves";
+        } | {
+            /** @enum {string} */
+            shape: "sound_bench";
+            /** @description What the bench is first tuned to. */
+            sound_bench: components["schemas"]["SoundBench"];
         };
         /** @description One row inside a section, tagged by `kind`. */
         SectionItem: (components["schemas"]["ArtistRef"] & {
@@ -26017,7 +26037,7 @@ export interface components {
          * @description One section of the home or discover page.
          * @enum {string}
          */
-        SectionKey: "popular_albums" | "trending_artists" | "weekly_exploration" | "your_top_albums" | "recently_played" | "recently_added" | "genre_list" | "favorite_artists" | "library_artists" | "library_albums" | "weekly_set" | "playlist_discovery" | "daily_mixes" | "radio_sections" | "new_from_your_artists" | "gaps_in_your_artists" | "from_your_shelves" | "anniversaries";
+        SectionKey: "popular_albums" | "trending_artists" | "weekly_exploration" | "your_top_albums" | "recently_played" | "recently_added" | "genre_list" | "favorite_artists" | "library_artists" | "library_albums" | "weekly_set" | "playlist_discovery" | "daily_mixes" | "radio_sections" | "new_from_your_artists" | "gaps_in_your_artists" | "from_your_shelves" | "sound_bench" | "anniversaries";
         /**
          * @description What a section's rows are.
          * @enum {string}
@@ -26651,6 +26671,22 @@ export interface components {
             tracks: number;
             /** @description With `waiting`: what it waits for. It carries on by itself. */
             waiting_for?: null | components["schemas"]["SoundWaitReason"];
+        };
+        /** @description The sound bench's first tuning. */
+        SoundBench: {
+            /**
+             * Format: int64
+             * @description The analysis version the library's sound was read at.
+             */
+            analysis_version: number;
+            /** @description The sound model the library's files were read with. */
+            model: string;
+            /**
+             * @description The person's most played analysed library track of the last 30
+             *     days; none while they have played none, when the bench asks them
+             *     to pick a track.
+             */
+            seed?: null | components["schemas"]["BenchTrack"];
         };
         /** @description The last file sound analysis could not read. */
         SoundNotAnalysedView: {

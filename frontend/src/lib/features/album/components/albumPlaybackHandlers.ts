@@ -21,7 +21,8 @@ import { launchRemotePlayback } from '$lib/features/player/playback/launchRemote
 import { launchLocalPlayback } from '$lib/features/player/playback/launchLocalPlayback';
 import { playerStore } from '$lib/features/player/state/player.svelte';
 import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
-import { ListPlus, ListStart, ListMusic, Download, Trash2 } from 'lucide-svelte';
+import { ListPlus, ListStart, ListMusic, Download, Radio, Trash2 } from 'lucide-svelte';
+import { startRadio } from '$lib/features/player/playback/launchRadio';
 import {
 	downloadAlbumArchive,
 	downloadTrackFile
@@ -219,6 +220,13 @@ export function getTrackContextMenuItems(
 			disabled: !hasSource
 		}
 	];
+	if (resolvedLocal) {
+		items.push({
+			label: 'Start radio',
+			icon: Radio,
+			onclick: () => void startRadio({ seed_type: 'track', seed_id: resolvedLocal.track_file_id })
+		});
+	}
 	if (resolvedLocal && showDownload) {
 		items.push({
 			label: 'Download',

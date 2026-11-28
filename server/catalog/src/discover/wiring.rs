@@ -180,6 +180,7 @@ fn deps_with(
         integrations: content::IntegrationSettings::new(config, inputs.download_readiness.clone()),
         warm: inputs.warm.clone(),
         forgets: forgets.clone(),
+        sound: inputs.sound.clone(),
     });
     let (home, genre_art, charts) = home::wire(home::HomeWiring {
         db: inputs.db.clone(),
