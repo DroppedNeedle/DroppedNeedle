@@ -1293,3 +1293,59 @@ impl droppedneedle_catalog::artwork::ArtistImageSource for NoArtistImages {
         Box::pin(async { false })
     }
 }
+
+#[tokio::test]
+async fn fill_artist_image_skips_source_when_blob_already_cached() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CountingArtistImages(Arc<AtomicUsize>);
+    impl droppedneedle_catalog::artwork::ArtistImageSource for CountingArtistImages {
+        fn candidates<'a>(
+            &'a self,
+            _artist_mbid: &'a str,
+            _priority: droppedneedle_providers::RequestPriority,
+        ) -> futures_util::future::BoxFuture<
+            'a,
+            droppedneedle_catalog::artwork::ArtistImageCandidates,
+        > {
+            Box::pin(async { Default::default() })
+        }
+
+        fn fill<'a>(&'a self, _artist_mbid: &'a str) -> futures_util::future::BoxFuture<'a, bool> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { true })
+        }
+    }
+
+    let rig = rig(None).await;
+    let fill_calls = Arc::new(AtomicUsize::new(0));
+    let config = crate::common::config_store(&rig.dir.join("settings-fill"));
+    let cache = ArtworkCache::new(
+        rig.dir.join("covers"),
+        1024 * 1024,
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
+    let mbid = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
+    cache
+        .put(
+            Some(&format!("artist:{mbid}")),
+            PNG_BYTES.to_vec(),
+            "image/png",
+        )
+        .await;
+    let service = ArtworkService::new(
+        cache,
+        LocalArtwork::new(rig.runtime.db().clone()),
+        Arc::new(rig.archive.providers.coverart.clone()),
+        config.live(),
+        Arc::new(rig.archive.providers.images.clone()),
+        Arc::new(CountingArtistImages(Arc::clone(&fill_calls))),
+    );
+
+    service.fill_artist_image(mbid).await;
+    assert_eq!(
+        fill_calls.load(Ordering::SeqCst),
+        0,
+        "cached artist portrait blob must short-circuit fill_artist_image before calling MB/AudioDB"
+    );
+}

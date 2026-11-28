@@ -183,26 +183,36 @@ impl Catalog {
                 return candidates;
             }
         } else {
-            let found = match self.artist_detail(mbid, priority).await {
-                Ok(Some(found)) => found,
-                Ok(None) => return ArtistImageCandidates::default(),
-                Err(error) => return musicbrainz_unavailable(mbid, &error),
-            };
-            match self
-                .artist_images_lookup(&found.mbid, &found.name, priority)
-                .await
-            {
-                Some(images) => {
-                    if let Some(thumb) = images.and_then(|images| images.thumb_url) {
-                        candidates
-                            .images
-                            .push(ArtistImageCandidate::uncredited(thumb));
-                        return candidates;
+            let advanced = self.upstream().settings().advanced();
+            if self.upstream().audiodb(&advanced).is_some() {
+                let (lookup_mbid, lookup_name) = if advanced.audiodb_name_search_fallback {
+                    match self.artist_detail(mbid, priority).await {
+                        Ok(Some(found)) => {
+                            let pair = (found.mbid.clone(), found.name.clone());
+                            detail = Some(found);
+                            pair
+                        }
+                        Ok(None) => return ArtistImageCandidates::default(),
+                        Err(error) => return musicbrainz_unavailable(mbid, &error),
                     }
+                } else {
+                    (mbid.to_owned(), String::new())
+                };
+                match self
+                    .artist_images_lookup(&lookup_mbid, &lookup_name, priority)
+                    .await
+                {
+                    Some(images) => {
+                        if let Some(thumb) = images.and_then(|images| images.thumb_url) {
+                            candidates
+                                .images
+                                .push(ArtistImageCandidate::uncredited(thumb));
+                            return candidates;
+                        }
+                    }
+                    None => candidates.incomplete = true,
                 }
-                None => candidates.incomplete = true,
             }
-            detail = Some(found);
         }
         let canonical = detail.as_ref().map_or(mbid, |found| found.mbid.as_str());
         match self.wikidata_artist_pictures(canonical, priority).await {
@@ -312,8 +322,27 @@ impl Catalog {
 
     /// Fetch and cache TheAudioDB's answer for an artist at background
     /// priority. True when it names a thumbnail. Safe to repeat: a cached
-    /// answer is not asked again.
+    /// answer is not asked again, and MusicBrainz is only consulted when
+    /// AudioDB is enabled and name-search fallback actually needs the name.
     pub async fn fill_artist_images(&self, mbid: &str) -> bool {
+        let advanced = self.upstream().settings().advanced();
+        if self.upstream().audiodb(&advanced).is_none() {
+            return false;
+        }
+        let cache = self.upstream().cache();
+        if cache.fresh(&self.audiodb_artist_key(mbid)).await {
+            return self
+                .cached_artist_images(mbid)
+                .await
+                .is_some_and(|images| images.thumb_url.is_some());
+        }
+        if !advanced.audiodb_name_search_fallback {
+            return self
+                .artist_images_lookup(mbid, "", BACKGROUND)
+                .await
+                .flatten()
+                .is_some_and(|images| images.thumb_url.is_some());
+        }
         let detail = match self.artist_detail(mbid, BACKGROUND).await {
             Ok(Some(detail)) => detail,
             Ok(None) => return false,

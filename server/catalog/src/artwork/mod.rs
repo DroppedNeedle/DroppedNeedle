@@ -384,18 +384,17 @@ impl ArtworkService {
         )
     }
 
-    /// Fill the artist's background-only sources (TheAudioDB). When they
-    /// name a picture and no image is stored, the image is resolved now,
-    /// past any "none" marker; a stored image is kept until the cache
-    /// lets it go.
+    /// Fill the artist's background-only sources (TheAudioDB). A stored image
+    /// is kept until the cache lets it go, so when a portrait blob is already
+    /// on disk nothing is asked from MusicBrainz or TheAudioDB.
     pub async fn fill_artist_image(&self, artist_mbid: &str) {
-        if !self.artist_source.fill(artist_mbid).await {
-            return;
-        }
         let key = artist_key(artist_mbid);
         if let Some(KeyEntry::Hit { hash, .. }) = self.cache.key(&key).await
             && self.cache.has_blob(&hash).await
         {
+            return;
+        }
+        if !self.artist_source.fill(artist_mbid).await {
             return;
         }
         self.resolve_artist_original(

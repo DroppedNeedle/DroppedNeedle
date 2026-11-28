@@ -308,8 +308,9 @@ impl Catalog {
                         &["aliases", "tags", "url-rels"],
                         Criticality::IdentityCritical,
                     )
-                    .await
-                    .map_err(mb_error)?;
+                    .await;
+                catalog.count_page(priority).await;
+                let found = found.map_err(mb_error)?;
                 Ok(match found {
                     None => Fetched::Missing,
                     Some(lookup) => Fetched::Found(ArtistDetail::from_wire(lookup.entity)),
