@@ -25,7 +25,7 @@ use crate::discover::feedback::Feedback;
 use crate::discover::listening::fresh::{FEED_DAYS, STALE_AFTER_MS};
 use crate::discover::listening::{ListeningData, gate};
 use crate::discover::models::{
-    NewRelease, NewReleaseSheet, PageSection, SecondaryKind, SectionContent,
+    AlbumRef, MixTrackKind, NewRelease, NewReleaseSheet, PageSection, SecondaryKind, SectionContent,
 };
 use crate::discover::page::shelves;
 use crate::discover::{read_all, sql};
@@ -282,9 +282,16 @@ pub(crate) async fn list(
 /// Mark which of `releases` the library holds and which have an open
 /// request, as they stand now.
 async fn mark(db: &Db, releases: &mut [NewRelease]) -> Result<(), DbError> {
-    let ids: Vec<String> = releases
+    let mut albums: Vec<&mut AlbumRef> = releases.iter_mut().map(|row| &mut row.album).collect();
+    mark_albums(db, &mut albums).await
+}
+
+/// Mark `albums` held by the library (with their library id) or asked for,
+/// as they stand now.
+async fn mark_albums(db: &Db, albums: &mut [&mut AlbumRef]) -> Result<(), DbError> {
+    let ids: Vec<String> = albums
         .iter()
-        .filter_map(|row| row.album.musicbrainz_id.clone())
+        .filter_map(|album| album.musicbrainz_id.clone())
         .collect();
     if ids.is_empty() {
         return Ok(());
@@ -301,8 +308,7 @@ async fn mark(db: &Db, releases: &mut [NewRelease]) -> Result<(), DbError> {
     .into_iter()
     .map(|row| (row.mbid, (row.local_id, row.requested)))
     .collect();
-    for row in releases {
-        let album = &mut row.album;
+    for album in albums.iter_mut() {
         let (local_id, requested) = album
             .musicbrainz_id
             .as_ref()
@@ -344,14 +350,31 @@ pub(crate) fn stale_since(content: &SectionContent, now_ms: i64) -> Option<i64> 
     (now_ms - read_at * 1000 > STALE_AFTER_MS).then_some(read_at)
 }
 
-/// Mark the releases of the served `sections` owned or requested as they
-/// stand now. A failed read leaves them as built, with a log line.
+/// Mark the new releases and the mixes' new albums of the served `sections`
+/// owned or requested as they stand now. A failed read leaves them as built,
+/// with a log line.
 pub(crate) async fn mark_served(db: &Db, sections: &mut [PageSection]) {
     for section in sections {
-        if let SectionContent::NewReleases { new_releases } = &mut section.content
-            && let Err(error) = mark(db, &mut new_releases.releases).await
-        {
-            tracing::warn!(%error, "new releases' marks unreadable; served as built");
+        match &mut section.content {
+            SectionContent::NewReleases { new_releases } => {
+                if let Err(error) = mark(db, &mut new_releases.releases).await {
+                    tracing::warn!(%error, "new releases' marks unreadable; served as built");
+                }
+            }
+            // A mix's new albums, so Keep and Download all leave out one
+            // already asked for.
+            SectionContent::Mixes { mixes } => {
+                let mut albums: Vec<&mut AlbumRef> = mixes
+                    .iter_mut()
+                    .flat_map(|mix| mix.tracks.iter_mut())
+                    .filter(|track| track.kind == MixTrackKind::New)
+                    .map(|track| &mut track.album)
+                    .collect();
+                if let Err(error) = mark_albums(db, &mut albums).await {
+                    tracing::warn!(%error, "mix albums' marks unreadable; served as built");
+                }
+            }
+            _ => {}
         }
     }
 }

@@ -1,5 +1,5 @@
 //! Pure dealing from pools of similar artists' albums, for radio, the
-//! Radio shelves, Daily Mixes and playlist suggestions: shuffling and
+//! Radio shelves and playlist suggestions: shuffling and
 //! round-robin selection across the pools.
 
 use std::collections::{HashMap, HashSet};

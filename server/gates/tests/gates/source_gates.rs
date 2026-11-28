@@ -728,8 +728,8 @@ const TAG_GROUP_READS: IdentityRead = IdentityRead {
     sites: &[
         (
             "catalog/src/discover/sql.rs",
-            1,
-            "radio sends an unidentified album's tag group, as the players do",
+            2,
+            "radio and the Daily Mixes send an unidentified album's tag group, as the players do",
         ),
         (
             "catalog/src/local/sql.rs",
@@ -902,6 +902,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("catalog/src/metadata/search.rs", 1, CATALOG_WARM),
     ("catalog/src/discover/content.rs", 1, DISCOVER_BUILD),
     ("catalog/src/discover/home/mod.rs", 1, DISCOVER_BUILD),
+    ("catalog/src/discover/mixes/mod.rs", 1, AWAITED),
     ("catalog/src/discover/page/mod.rs", 2, DISCOVER_BUILD),
     ("catalog/src/discover/radio/mod.rs", 1, REQUEST),
     ("catalog/src/discover/record/outcomes.rs", 1, AWAITED),

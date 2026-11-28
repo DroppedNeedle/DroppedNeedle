@@ -72,7 +72,7 @@ fn schema_rows(connection: &Connection) -> Vec<(String, String, String, Option<S
 fn fresh_migrate_marks_version_and_seeds() {
     let connection = migrated();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), latest_version());
-    assert_eq!(table_names(&connection).len(), 209);
+    assert_eq!(table_names(&connection).len(), 211);
     assert_eq!(
         scalar(
             &connection,
@@ -505,6 +505,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0183_library_sound_analyses.sql",
         "4500e209fc37c4f063ff0482460ec9b9b356c312cdd797ce65c2be2b983e90ee",
+    ),
+    (
+        "0184_daily_mixes.sql",
+        "4966b349ce02691b4531ecd62d5ead95d4fd9ea5c041749ba71fa00f08892e28",
     ),
 ];
 
@@ -5348,6 +5352,215 @@ fn sound_analyses_upgrade_adds_one_empty_table() {
     );
 }
 
+/// 0184 adds the Daily Mixes' two tables, empty, and rebuilds the page
+/// cache without its mixes memo: Home's rows and a Discover page that does
+/// not name the mixes are copied with their rowids; the memo and a Discover
+/// page holding the mixes in their old shape go. A person's mixes go with
+/// their account, a mix's tracks with their mix, and a track is a library
+/// track or a new one with its reason and album, never both.
+#[test]
+fn daily_mixes_upgrade_adds_two_tables_and_drops_the_memo() {
+    let dir = ScratchDir::new("daily-mixes-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 184)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    let page = |sections: &str| {
+        format!(
+            r#"{{"page": {{"sections": [{sections}], "section_states": [],
+                "weekly_set_enabled": true, "service_prompts": [], "genre_artwork": {{}},
+                "genre_artwork_schema_version": "v2", "refreshing": false}},
+                "skipped": []}}"#
+        )
+    };
+    let radio = r#"{"key": "radio_sections", "zone": "made_for_you",
+        "content": {"shape": "shelves", "shelves": []}}"#;
+    let mixes = r#"{"key": "daily_mixes", "zone": "made_for_you",
+        "content": {"shape": "shelves", "shelves": []}}"#;
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, created_at) VALUES ('u1', 'One', 1),
+                 ('u2', 'Two', 1);",
+        )
+        .unwrap();
+    for (user, kind, payload) in [
+        ("u1", "discover", page(radio)),
+        ("u2", "discover", page(&format!("{radio}, {mixes}"))),
+        (
+            "u1",
+            "home",
+            r#"{"sections": [], "skipped": []}"#.to_owned(),
+        ),
+        ("u1", "daily_mixes", "[]".to_owned()),
+    ] {
+        connection
+            .execute(
+                "INSERT INTO catalog_cached_pages (user_id, page, source, listenbrainz,
+                     lastfm, payload, built_at) VALUES (?1, ?2, 'source', 1, 0,
+                     CAST(?3 AS BLOB), 5)",
+                rusqlite::params![user, kind, payload],
+            )
+            .unwrap();
+    }
+    let columns = "rowid, user_id, page, source, listenbrainz, lastfm, \
+        CAST(payload AS TEXT), built_at";
+    // In insert order: u1's Discover page and Home.
+    let kept: Vec<String> = table_rows(&connection, "catalog_cached_pages", columns)
+        .into_iter()
+        .enumerate()
+        .filter(|(at, _)| [0, 2].contains(at))
+        .map(|(_, row)| row)
+        .collect();
+    let before = schema_rows(&connection);
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON")
+        .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 184);
+    assert_eq!(
+        table_rows(&connection, "catalog_cached_pages", columns),
+        kept
+    );
+    let others = |rows: &[(String, String, String, Option<String>)]| {
+        rows.iter()
+            .filter(|(_, _, table, _)| {
+                ![
+                    "catalog_cached_pages",
+                    "catalog_mixes",
+                    "catalog_mix_tracks",
+                ]
+                .contains(&table.as_str())
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let after = schema_rows(&connection);
+    assert_eq!(others(&after), others(&before), "nothing else changes");
+    for table in [
+        "catalog_cached_pages",
+        "catalog_mixes",
+        "catalog_mix_tracks",
+    ] {
+        let sql = after
+            .iter()
+            .find(|(kind, name, _, _)| kind == "table" && name == table)
+            .and_then(|(_, _, _, sql)| sql.clone())
+            .unwrap();
+        assert!(sql.ends_with("STRICT"), "{sql}");
+    }
+    assert!(
+        after
+            .iter()
+            .any(|(_, name, _, sql)| name == "catalog_cached_pages"
+                && sql
+                    .as_deref()
+                    .is_some_and(|sql| sql.contains("CHECK (page IN ('discover', 'home'))"))),
+        "the memo's kind is gone from the CHECK"
+    );
+    for table in ["catalog_mixes", "catalog_mix_tracks"] {
+        assert_eq!(
+            scalar(&connection, &format!("SELECT COUNT(*) FROM {table}")),
+            0,
+            "{table} starts empty"
+        );
+    }
+
+    let mix = |id: &str, user: &str| {
+        format!(
+            "INSERT INTO catalog_mixes (id, user_id, mix_no, day, built_at, name,
+                 group_anchor_mbid, named_artists, yours_count, new_count)
+             VALUES ('{id}', '{user}', 0, '2026-11-28', 1, 'A and more', 'a', '[]', 1, 1)"
+        )
+    };
+    let track = |mix: &str, position: i64, values: &str| {
+        format!(
+            "INSERT INTO catalog_mix_tracks (mix_id, position, kind, local_track_id,
+                 recording_mbid, release_group_mbid, title, artist_name, artist_mbid,
+                 album_title, reason)
+             VALUES ('{mix}', {position}, {values})"
+        )
+    };
+    connection
+        .execute_batch(&format!(
+            "{}; {}; {}; {};",
+            mix("m1", "u1"),
+            mix("m2", "u2"),
+            track(
+                "m1",
+                0,
+                "'artist', 't1', NULL, NULL, 'T', 'A', NULL, NULL, NULL"
+            ),
+            track(
+                "m1",
+                1,
+                "'new', NULL, 'r', 'g', 'N', 'B', 'b', 'Album', '{}'"
+            ),
+        ))
+        .unwrap();
+    for refused in [
+        mix("m3", "nobody"),
+        track(
+            "m2",
+            0,
+            "'new', 't1', 'r', 'g', 'N', 'B', 'b', 'Album', '{}'",
+        ),
+        track(
+            "m2",
+            0,
+            "'new', NULL, 'r', 'g', 'N', 'B', 'b', 'Album', NULL",
+        ),
+        track(
+            "m2",
+            0,
+            "'new', NULL, 'r', NULL, 'N', 'B', 'b', 'Album', '{}'",
+        ),
+        track(
+            "m2",
+            0,
+            "'sound', NULL, NULL, NULL, 'T', 'A', NULL, NULL, NULL",
+        ),
+        track(
+            "m2",
+            0,
+            "'sound', 't1', NULL, NULL, 'T', 'A', NULL, NULL, '{}'",
+        ),
+        track(
+            "m2",
+            0,
+            "'played', 't1', NULL, NULL, 'T', 'A', NULL, NULL, NULL",
+        ),
+        track(
+            "gone",
+            0,
+            "'artist', 't1', NULL, NULL, 'T', 'A', NULL, NULL, NULL",
+        ),
+    ] {
+        assert!(connection.execute_batch(&refused).is_err(), "{refused}");
+    }
+    connection
+        .execute("DELETE FROM auth_users WHERE id = 'u1'", [])
+        .unwrap();
+    assert_eq!(
+        texts(&connection, "SELECT user_id FROM catalog_mixes", []),
+        ["u2"],
+        "an account's mixes go with it"
+    );
+    assert_eq!(
+        scalar(&connection, "SELECT COUNT(*) FROM catalog_mix_tracks"),
+        0,
+        "a mix's tracks go with it"
+    );
+}
+
 /// Every foreign key and what deleting its parent does. A rebuild that
 /// drops or changes a key's action, or adds a key, fails here: the list
 /// changes in the same commit, on purpose.
@@ -5390,6 +5603,8 @@ const FOREIGN_KEYS: &[(&str, &str, &str, &str)] = &[
     ("catalog_event_seen_marks", "user_id", "auth_users", "CASCADE"),
     ("catalog_known_release_groups", "user_id", "auth_users", "CASCADE"),
     ("catalog_later_albums", "user_id", "auth_users", "CASCADE"),
+    ("catalog_mix_tracks", "mix_id", "catalog_mixes", "CASCADE"),
+    ("catalog_mixes", "user_id", "auth_users", "CASCADE"),
     ("catalog_new_release_seen_marks", "user_id", "auth_users", "CASCADE"),
     ("catalog_playlist_covers", "playlist_id", "catalog_playlists", "CASCADE"),
     ("catalog_playlist_members", "playlist_id", "catalog_playlists", "CASCADE"),
@@ -5980,6 +6195,7 @@ fn state_columns() -> Vec<StateColumn> {
     use droppedneedle_catalog::discover::engine::taste::Trend;
     use droppedneedle_catalog::discover::feedback::{FeedbackKind, FeedbackTarget};
     use droppedneedle_catalog::discover::facts::{FactKind, FactSource, ListSource, MeteredSource, Outcome};
+    use droppedneedle_catalog::discover::models::MixTrackKind;
     use droppedneedle_catalog::discover::record::MadeFrom;
     use droppedneedle_catalog::discover::tunings::TuningKind;
     use droppedneedle_catalog::discover::engine::weekly::{Depth, SetDay, ShortReason};
@@ -6070,6 +6286,7 @@ fn state_columns() -> Vec<StateColumn> {
         state("catalog_band_links", "kind", &BandLinkKind::ALL, BandLinkKind::as_str),
         state("catalog_artist_tm_attractions", "match_basis", &TmBasis::ALL, TmBasis::as_str),
         state("catalog_cached_pages", "page", &PageKind::ALL, PageKind::as_str),
+        state("catalog_mix_tracks", "kind", &MixTrackKind::ALL, MixTrackKind::as_str),
         state("catalog_discover_activity", "feature", &Feature::ALL, Feature::as_str),
         state("catalog_discover_candidate_paths", "fact_role", &BandLinkRole::ALL, BandLinkRole::as_str),
         state("catalog_discover_candidate_paths", "kind", &PathKind::ALL, PathKind::as_str),
@@ -6663,10 +6880,12 @@ fn every_registered_statement_prepares() {
 /// track's sound with its title, artist and recording, each when the
 /// analysis changed; and the counts and last file not read on its settings
 /// card, which an admin has open.
-/// Discover's four: radio's two track reads, which filter on ids worked out
-/// per track over the whole library, the check for any local file, which
-/// stops at the first row, and the owned groups with their album artist
-/// links, which read every tagged track for albums owned through their tags.
+/// Discover's five: radio's two track reads and the Daily Mixes' tracks by
+/// a taste's artists (once a day for each active person, in the
+/// background), which filter on ids worked out per track over the whole
+/// library, the check for any local file, which stops at the first row, and
+/// the owned groups with their album artist links, which read every tagged
+/// track for albums owned through their tags.
 /// The library policy settings' three: the save preview's totals, which count
 /// every track under the scopes asked about, the list of folders the catalog
 /// holds tracks for, and the check for any track, which stops at the first
@@ -6728,6 +6947,7 @@ const TRACK_WALKS: &[&str] = &[
     "droppedneedle_catalog::discover::sql::RADIO_TRACKS_BY_ARTISTS",
     "droppedneedle_catalog::discover::sql::RADIO_TRACKS_OF_ALBUMS",
     "droppedneedle_catalog::discover::sql::HAS_LOCAL_FILES",
+    "droppedneedle_catalog::discover::sql::MIX_ARTIST_TRACKS",
     "droppedneedle_catalog::discover::sql::LIBRARY_ALBUMS",
     "droppedneedle::settings::sql::SCOPE_TOTALS",
     "droppedneedle::settings::sql::CATALOG_ROOTS",

@@ -14368,6 +14368,35 @@ export interface components {
             upgrade_allowed: boolean;
         };
         /**
+         * @description One Daily Mix: the tracks built for one of the person's tastes on one
+         *     day, named by the taste's own artists.
+         */
+        DailyMix: {
+            /** @description The artists its name names, most played first. */
+            artists: components["schemas"]["PickReasonArtist"][];
+            /** @description The UTC day it was built for (`YYYY-MM-DD`). */
+            day: string;
+            /** @description Its id, the same for its place on the page from day to day. */
+            id: string;
+            /**
+             * @description Its name: the taste's most played artists, "Circa Survive, La
+             *     Dispute and more".
+             */
+            name: string;
+            /**
+             * Format: int32
+             * @description How many of its tracks are new to the library.
+             */
+            new: number;
+            /** @description Its tracks, in the order they play. */
+            tracks: components["schemas"]["MixTrack"][];
+            /**
+             * Format: int32
+             * @description How many of its tracks the library holds.
+             */
+            yours: number;
+        };
+        /**
          * @description One decade shelf. Shelves carry counts; fetch the shelf's albums
          *     through the album list with the same `decade` value.
          */
@@ -20146,6 +20175,44 @@ export interface components {
          * @enum {string}
          */
         MixRefreshStatus: "started" | "already_running";
+        /** @description One track of a Daily Mix, in the mix's order. */
+        MixTrack: {
+            /**
+             * @description Its album: the library's for one it holds, the release group from
+             *     the person's pool for a new one, with whether the library holds it
+             *     or a request for it is open as the page is served.
+             */
+            album: components["schemas"]["AlbumRef"];
+            /** @description Its artist's MusicBrainz id, lowercased, when known. */
+            artist_mbid?: string | null;
+            /** @description Its artist's name. */
+            artist_name: string;
+            /**
+             * Format: int32
+             * @description Its length in whole seconds, for one the library holds.
+             */
+            duration_seconds?: number | null;
+            /** @description The library file's container, for one the library holds. */
+            file_format?: string | null;
+            /** @description How it came to be on the mix. */
+            kind: components["schemas"]["MixTrackKind"];
+            /** @description The library track, for one the library holds. */
+            local_track_id?: string | null;
+            /**
+             * @description Why a new track is offered, from the pool's evidence; none for a
+             *     library track.
+             */
+            reason?: null | components["schemas"]["PickReason"];
+            /** @description Its recording's MusicBrainz id, when known. */
+            recording_mbid?: string | null;
+            /** @description Its title. */
+            title: string;
+        };
+        /**
+         * @description How a track came to be on a Daily Mix.
+         * @enum {string}
+         */
+        MixTrackKind: "artist" | "sound" | "new";
         /** @description `GET /albums/{album_id}/more-by-artist`. */
         MoreByArtistResponse: {
             /** @description Other release groups by the artist, in MusicBrainz browse order. */
@@ -25981,7 +26048,7 @@ export interface components {
          *     reasons, for the page's sections.
          * @enum {string}
          */
-        SectionCondition: "building" | "kept" | "source_down" | "needs_link" | "thin" | "empty";
+        SectionCondition: "building" | "kept" | "source_down" | "needs_link" | "thin" | "empty" | "needs_taste";
         /** @description A section's rows, tagged by `shape`. */
         SectionContent: {
             /** @enum {string} */
@@ -26018,6 +26085,11 @@ export interface components {
             shape: "sound_bench";
             /** @description What the bench is first tuned to. */
             sound_bench: components["schemas"]["SoundBench"];
+        } | {
+            /** @description The mixes, in page order. */
+            mixes: components["schemas"]["DailyMix"][];
+            /** @enum {string} */
+            shape: "mixes";
         };
         /** @description One row inside a section, tagged by `kind`. */
         SectionItem: (components["schemas"]["ArtistRef"] & {

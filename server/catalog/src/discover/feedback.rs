@@ -494,6 +494,27 @@ impl Feedback {
             SectionContent::OwnShelves { .. } => {}
             // The person's own tracks, picked by sound when they tune.
             SectionContent::SoundBench { .. } => {}
+            // A track of an album or artist they hid goes, whatever put it
+            // on the mix.
+            SectionContent::Mixes { mixes } => {
+                for mix in mixes.iter_mut() {
+                    let (tracks, artists) = (mix.tracks.len(), mix.artists.len());
+                    mix.tracks.retain(|track| {
+                        !self.hides_album(
+                            track.album.musicbrainz_id.as_deref(),
+                            track.artist_mbid.as_deref(),
+                        )
+                    });
+                    mix.artists
+                        .retain(|artist| !self.hides_artist(Some(&artist.artist_mbid)));
+                    crate::discover::mixes::store::recount(mix);
+                    // A name that named an artist they hid is made again.
+                    if (tracks, artists) != (mix.tracks.len(), mix.artists.len()) {
+                        crate::discover::mixes::store::rename(mix);
+                    }
+                }
+                mixes.retain(|mix| !mix.tracks.is_empty());
+            }
         }
     }
 

@@ -38,6 +38,25 @@ pub async fn refresh_pick_outcomes(
     crate::discover::record::outcomes::run(db, user_id, now_ms, |_| Ok(())).await
 }
 
+/// A mixes run for `user_id` claimed before they forget their history: it
+/// begins, the forget runs, then `between`, then the run writes what it
+/// built.
+pub async fn mixes_across_a_forget(
+    deps: &crate::discover::services::DiscoverDeps,
+    user_id: &str,
+    between: impl std::future::Future<Output = ()>,
+) -> Result<(), String> {
+    let began = deps.mixes.forgets_now(user_id);
+    crate::discover::forget::forget(deps, user_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    between.await;
+    deps.mixes
+        .run_from(user_id, began, |_| Ok(()))
+        .await
+        .map_err(|error| error.to_string())
+}
+
 /// `user_id`'s seed artists at `now_ms`, heaviest first, as a page build
 /// weighs them from `listening` and `db` under the default settings: each
 /// one's MusicBrainz id.

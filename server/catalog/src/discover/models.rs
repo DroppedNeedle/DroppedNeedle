@@ -522,6 +522,8 @@ pub enum SectionCondition {
     Thin,
     /// Every read answered, with nothing to show.
     Empty,
+    /// It is built from the person's tastes, which are not worked out yet.
+    NeedsTaste,
 }
 
 /// How one section of a page stands, when it is not plainly built.
@@ -561,7 +563,7 @@ pub enum SectionContent {
         /// The shelf.
         shelf: ChartSection,
     },
-    /// Several shelves (Daily Mixes, radio).
+    /// Several shelves (radio).
     Shelves {
         /// The shelves.
         shelves: Vec<ChartSection>,
@@ -591,6 +593,11 @@ pub enum SectionContent {
     SoundBench {
         /// What the bench is first tuned to.
         sound_bench: SoundBench,
+    },
+    /// The person's Daily Mixes, one for each of their tastes.
+    Mixes {
+        /// The mixes, in page order.
+        mixes: Vec<DailyMix>,
     },
 }
 
@@ -720,6 +727,81 @@ pub struct OwnShelfAlbum {
     /// none for one never played.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_played: Option<String>,
+}
+
+/// How a track came to be on a Daily Mix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MixTrackKind {
+    /// A library track by one of the taste's own artists.
+    Artist,
+    /// A library track found by how it sounds: close to the taste's
+    /// library tracks. Only library tracks are ever found by sound.
+    Sound,
+    /// A track from an album in the person's pool for this taste, one the
+    /// library does not hold.
+    New,
+}
+
+droppedneedle_kernel::spelled!(MixTrackKind {
+    Artist => "artist",
+    Sound => "sound",
+    New => "new",
+});
+
+/// One track of a Daily Mix, in the mix's order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct MixTrack {
+    /// How it came to be on the mix.
+    pub kind: MixTrackKind,
+    /// Its title.
+    pub title: String,
+    /// Its artist's name.
+    pub artist_name: String,
+    /// Its artist's MusicBrainz id, lowercased, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artist_mbid: Option<String>,
+    /// Its recording's MusicBrainz id, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recording_mbid: Option<String>,
+    /// The library track, for one the library holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_track_id: Option<String>,
+    /// The library file's container, for one the library holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_format: Option<String>,
+    /// Its length in whole seconds, for one the library holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_seconds: Option<u32>,
+    /// Its album: the library's for one it holds, the release group from
+    /// the person's pool for a new one, with whether the library holds it
+    /// or a request for it is open as the page is served.
+    pub album: AlbumRef,
+    /// Why a new track is offered, from the pool's evidence; none for a
+    /// library track.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<PickReason>,
+}
+
+/// One Daily Mix: the tracks built for one of the person's tastes on one
+/// day, named by the taste's own artists.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct DailyMix {
+    /// Its id, the same for its place on the page from day to day.
+    pub id: String,
+    /// Its name: the taste's most played artists, "Circa Survive, La
+    /// Dispute and more".
+    pub name: String,
+    /// The artists its name names, most played first.
+    pub artists: Vec<PickReasonArtist>,
+    /// The UTC day it was built for (`YYYY-MM-DD`).
+    pub day: String,
+    /// How many of its tracks the library holds.
+    pub yours: u32,
+    /// How many of its tracks are new to the library.
+    pub new: u32,
+    /// Its tracks, in the order they play.
+    pub tracks: Vec<MixTrack>,
 }
 
 /// Discover: its sections, in page order, plus the page-level fields. A
@@ -1048,8 +1130,8 @@ pub enum PickReasonKind {
     Source,
     /// A fact about one of the person's artists leads to it: its band.
     Fact,
-    /// One of the person's own tracks sounds like it. Not written yet: the
-    /// mixes by sound write it. Sound finds only what the library holds,
+    /// One of the person's own tracks sounds like it. Not written: sound
+    /// finds only what the library holds, and a library track is no pick,
     /// so no weekly set pick ever has it.
     Sound,
 }
@@ -1088,7 +1170,7 @@ pub enum FoundBy {
     /// MusicBrainz links them.
     BandLink,
     /// By how the person's own files sound. Nothing left this server. Not
-    /// written yet: the mixes by sound write it.
+    /// written: sound finds only what the library holds, never a pick.
     Sound,
 }
 

@@ -69,7 +69,7 @@ pub enum MadeFrom {
     /// Radio. Not written yet: radio writes it once it can ask for an
     /// album.
     Radio,
-    /// A mix. Not written yet: the mixes write it.
+    /// A Daily Mix: Keep or Download all on its new albums.
     Mix,
     /// Listen first. Not written yet: listening before owning writes it.
     ListenFirst,

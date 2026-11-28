@@ -663,6 +663,10 @@ pub(crate) async fn build_on(
             catalog_setup.discover.weekly.clone(),
         )
         .with(
+            droppedneedle_catalog::discover::mixes::SPEC,
+            catalog_setup.discover.mixes.clone(),
+        )
+        .with(
             droppedneedle_acquire::imports::jobs::SPEC,
             acquire.spotify_import_jobs.clone(),
         )

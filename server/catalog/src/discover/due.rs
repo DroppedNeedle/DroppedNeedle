@@ -9,21 +9,25 @@
 //!   build for each person seen in seven days who is due one, a weekly set
 //!   for each person seen in thirty days whose week is due one, the
 //!   ListenBrainz history work media decides is due
-//!   ([`HistoryStore::tick`]), and once per UTC day each person's daily
-//!   work. Nothing while the warm cycle is switched off
-//!   (`DISCOVER_WARMER_ENABLED`).
+//!   ([`HistoryStore::tick`]), each person seen in seven days whose Daily
+//!   Mixes are due, and once per UTC day each person's daily work. Nothing
+//!   while the warm cycle is switched off (`DISCOVER_WARMER_ENABLED`).
 //! - [`Due::visit`], where the page records a person's activity: the kept
 //!   facts' refresh when it has work, the fresh releases' read when it is
 //!   due, their ListenBrainz history
 //!   ([`HistoryStore::visit`]), their taste or pool build or weekly set
-//!   when one is due, and that person's own work, whether the warm cycle
-//!   runs or not.
+//!   when one is due, their Daily Mixes when due, and that person's own
+//!   work, whether the warm cycle runs or not.
 //! - [`Due::queue_now`], inside another write: one kind for one key (a
 //!   person's id, or the install's one key), due now.
 //!
 //! Today the daily work is the pick record's outcomes job, for each person
 //! with rows in it. A person's job is queued at most once a UTC day; after
 //! a restart it may run once more, which a job may always do.
+//!
+//! A person with a taste build is due their Daily Mixes ([`mixes::KIND`])
+//! once a UTC day, and once more the day their first pool build lands, so
+//! a new account's mixes take in its pool the day it is built.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -36,7 +40,9 @@ use rusqlite::Transaction;
 
 use crate::discover::engine::schedule::TasteDue;
 use crate::discover::facts::job::{self as facts, FactsDue};
+use crate::discover::facts::plan::SEEN_WINDOW_MS;
 use crate::discover::listening::fresh::{self, FreshFeedReads};
+use crate::discover::mixes;
 use crate::discover::record::outcomes;
 use crate::discover::sql;
 
@@ -61,6 +67,9 @@ pub struct Due {
     passed: Mutex<i64>,
     /// The UTC day each person's work was last queued.
     queued: Mutex<HashMap<String, i64>>,
+    /// The UTC day each person's mixes were last queued, and whether they
+    /// had a pool build then.
+    mixes: Mutex<HashMap<String, (i64, bool)>>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -93,6 +102,7 @@ impl Due {
             history,
             passed: Mutex::new(NOT_YET),
             queued: Mutex::new(HashMap::new()),
+            mixes: Mutex::new(HashMap::new()),
         }
     }
 
@@ -151,11 +161,80 @@ impl Due {
         }
     }
 
+    /// The Daily Mixes due among `people`: each with a taste build whose
+    /// mixes were not queued here today, or were queued today before their
+    /// first pool build. One write queues them all; a failure is logged and
+    /// the next pass or visit tries again.
+    async fn mixes_pass(&self, people: Vec<String>) {
+        if people.is_empty() {
+            return;
+        }
+        let asked = match serde_json::to_string(&people) {
+            Ok(asked) => asked,
+            Err(error) => {
+                tracing::warn!(%error, "who to ask about is unwritable; no mixes queued");
+                return;
+            }
+        };
+        let rows: Result<Vec<sql::MixDue>, DbError> = self
+            .db
+            .read("discover.mixes.due", move |conn| {
+                conn.prepare_cached(sql::MIXES_DUE.text())?
+                    .query_map([asked], sql::MixDue::read)?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .map_err(DbError::from)
+            })
+            .await;
+        let rows = match rows {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::warn!(%error, "who is due their mixes is unreadable");
+                return;
+            }
+        };
+        let today = self.today();
+        let due: Vec<(String, bool)> = {
+            let marks = lock(&self.mixes);
+            rows.into_iter()
+                .filter(|row| {
+                    marks
+                        .get(&row.user_id)
+                        .is_none_or(|(day, had_pool)| *day != today || (!had_pool && row.has_pool))
+                })
+                .map(|row| (row.user_id, row.has_pool))
+                .collect()
+        };
+        if due.is_empty() {
+            return;
+        }
+        let queue = self.queue.clone();
+        let users: Vec<String> = due.iter().map(|(user, _)| user.clone()).collect();
+        let queued = self
+            .db
+            .write(Lane::Background, "discover.due.mixes", move |tx| {
+                for user in &users {
+                    queue.enqueue(tx, mixes::KIND, user, &())?;
+                }
+                Ok::<_, JobError>(())
+            })
+            .await;
+        match queued {
+            Ok(()) => {
+                let mut marks = lock(&self.mixes);
+                marks.retain(|_, (day, _)| *day == today);
+                for (user, has_pool) in due {
+                    marks.insert(user, (today, has_pool));
+                }
+            }
+            Err(error) => tracing::warn!(%error, "mixes not queued; trying next pass"),
+        }
+    }
+
     /// The clock's pass: the kept facts' refresh when it has work, the
     /// fresh releases' read when it is due, the taste builds due, the
-    /// history work that is due, then, on the first pass of each UTC day,
-    /// every person with rows in the pick record whose job was not queued
-    /// today gets one, in one write. Nothing while the warm cycle is off.
+    /// history work that is due, the mixes due, then, on the first pass of
+    /// each UTC day, every person with rows in the pick record whose job was
+    /// not queued today gets one, in one write. Nothing while the warm cycle is off.
     /// A failed write is logged and the next pass tries again.
     pub async fn clock_pass(&self) {
         if !self.enabled {
@@ -167,6 +246,12 @@ impl Due {
             .pass(&self.db, &self.queue, self.clock.now_ms())
             .await;
         self.history.tick().await;
+        match droppedneedle_auth::sqlite::seen_since(&self.db, self.clock.now_ms() - SEEN_WINDOW_MS)
+            .await
+        {
+            Ok(seen) => self.mixes_pass(seen).await,
+            Err(error) => tracing::warn!(%error, "who was seen is unreadable; no mixes this pass"),
+        }
         let today = self.today();
         if *lock(&self.passed) == today {
             return;
@@ -210,7 +295,8 @@ impl Due {
     /// A person's visit: the kept facts' refresh when it has work, the
     /// fresh releases' read when it is due, their ListenBrainz history,
     /// their taste or pool build or weekly set when one is due (a person
-    /// with no picks yet included), and their outcomes job, when they have
+    /// with no picks yet included), their mixes when due, and their
+    /// outcomes job, when they have
     /// rows in the pick record and it was not queued today. Runs whether
     /// the warm cycle is on or not. A failed write is logged; the next
     /// visit or pass tries again.
@@ -223,6 +309,7 @@ impl Due {
         self.taste
             .visit(&self.db, &self.queue, user_id, self.clock.now_ms())
             .await;
+        self.mixes_pass(vec![user_id.to_owned()]).await;
         let today = self.today();
         if lock(&self.queued).get(user_id) == Some(&today) {
             return;

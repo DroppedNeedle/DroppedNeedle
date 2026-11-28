@@ -1,6 +1,5 @@
-//! One per-user page cache for discover: the discover page, home's
-//! provider shelves, and the Daily Mixes and Top Picks a discover build
-//! reuses.
+//! One per-user page cache for discover: the discover page and home's
+//! provider shelves.
 //!
 //! Each page is one row of `catalog_cached_pages`, the only copy: nothing
 //! is kept in memory over it, so every page survives a restart. A page
@@ -44,28 +43,18 @@ pub enum PageKind {
     Discover,
     /// Home's provider shelves.
     Home,
-    /// The Daily Mixes a discover build reuses.
-    DailyMixes,
 }
 
 droppedneedle_kernel::spelled!(PageKind {
     Discover => "discover",
     Home => "home",
-    DailyMixes => "daily_mixes",
 });
 
-impl PageKind {
-    /// Whether a page built for `saved` may be served to a user who now
-    /// has `wanted`. Linking or unlinking a service starts the pages over.
-    /// The discover page and home are served from the old MusicBrainz
-    /// source while the new one builds; the memos are not.
-    fn fits(self, saved: &Variant, wanted: &Variant) -> bool {
-        let services = saved.listenbrainz == wanted.listenbrainz && saved.lastfm == wanted.lastfm;
-        match self {
-            Self::Discover | Self::Home => services,
-            Self::DailyMixes => services && saved.source == wanted.source,
-        }
-    }
+/// Whether a page built for `saved` may be served to a user who now has
+/// `wanted`. Linking or unlinking a service starts the pages over. A page
+/// is served from the old MusicBrainz source while the new one builds.
+fn fits(saved: &Variant, wanted: &Variant) -> bool {
+    saved.listenbrainz == wanted.listenbrainz && saved.lastfm == wanted.lastfm
 }
 
 /// What a page was built for.
@@ -401,7 +390,7 @@ impl<T: Serialize + DeserializeOwned> UserPageCache<T> {
             (None, Some(row)) => (row.variant, row.payload, row.built_at),
             (None, None) => return None,
         };
-        if !self.inner.kind.fits(&variant, wanted) {
+        if !fits(&variant, wanted) {
             return None;
         }
         match serde_json::from_slice(&payload) {

@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use futures_util::FutureExt as _;
@@ -459,10 +459,146 @@ impl Catalog {
         true
     }
 
+    /// ListenBrainz's top `count` songs of an artist for Discover's
+    /// background work, under the same cached answer the artist page
+    /// reads, and how many ListenBrainz calls went out for them. It asks
+    /// ListenBrainz only, with `user_id`'s own link, and fills in no track
+    /// numbers, so it reads nothing else. Nothing is sent, and no songs
+    /// come, while ListenBrainz reads are off or the person has no link,
+    /// and none is sent when the answer is not held fresh and `may_send` is
+    /// false.
+    ///
+    /// # Errors
+    ///
+    /// A MusicBrainz id that is not one.
+    pub async fn background_top_songs(
+        &self,
+        user_id: &str,
+        raw_mbid: &str,
+        count: u32,
+        may_send: bool,
+    ) -> Result<(Vec<TopSong>, u64), CatalogError> {
+        let mbid = checked_mbid(raw_mbid, "artist")?;
+        let Some(client) = self.upstream().listenbrainz() else {
+            return Ok((Vec::new(), 0));
+        };
+        let lender = self.upstream().lender(user_id);
+        if !shared::has_token(&lender.credentials().await) {
+            return Ok((Vec::new(), 0));
+        }
+        let key = self.section_key(ListenSource::Listenbrainz, &mbid, count, Section::TopSongs);
+        let cache = self.upstream().cache();
+        if !may_send && !cache.fresh(&key).await {
+            return Ok((Vec::new(), 0));
+        }
+        let sent = Arc::new(AtomicU64::new(0));
+        let catalog = self.clone();
+        let counted = Arc::clone(&sent);
+        let priority = RequestPriority::BackgroundSync;
+        let rows = self
+            .cached(
+                &key,
+                Policy::LISTENBRAINZ_ARTIST,
+                priority,
+                move |priority| async move {
+                    let mut hold = CacheHold::default();
+                    let creds = lender.credentials().await;
+                    let rows = catalog
+                        .top_song_rows(
+                            &client,
+                            &creds,
+                            (&mbid, count as usize, priority),
+                            &mut hold,
+                            Some(&counted),
+                        )
+                        .await;
+                    section_answer(rows.ok(), hold)
+                },
+            )
+            .await;
+        let songs = match rows {
+            Ok(rows) => rows.map(|rows: SectionRows| rows.songs).unwrap_or_default(),
+            Err(error) => {
+                tracing::debug!(%error, "an artist's popular songs unavailable");
+                Vec::new()
+            }
+        };
+        Ok((songs, sent.load(Ordering::Relaxed)))
+    }
+
     /// Whether `user_id` can read Last.fm (their own key or the
     /// instance's). Decrypts the user's key, so callers ask once.
     pub(super) async fn lastfm_readable(&self, user_id: &str) -> bool {
         self.upstream().lastfm(user_id).await.is_some()
+    }
+
+    /// ListenBrainz's top `count` songs of `mbid`, each with the release
+    /// group its listens point at. `sent`, when given, counts the calls
+    /// that went out: the list, and one for each batch of recordings whose
+    /// group is not held.
+    async fn top_song_rows(
+        &self,
+        client: &super::upstream::CatalogListenBrainz,
+        creds: &listenbrainz::ListenBrainzCredentials,
+        (mbid, count, priority): (&str, usize, RequestPriority),
+        hold: &mut CacheHold,
+        sent: Option<&AtomicU64>,
+    ) -> Result<SectionRows, ProviderError> {
+        let recordings = client
+            .artist_top_recordings(mbid, count, creds, priority)
+            .await;
+        if let Some(sent) = sent
+            && !matches!(recordings, Err(ProviderError::NotConfigured { .. }))
+        {
+            sent.fetch_add(1, Ordering::Relaxed);
+        }
+        let recordings = recordings?;
+        let ids: Vec<String> = recordings
+            .iter()
+            .filter_map(|recording| recording.recording_mbid.clone())
+            .collect();
+        if let Some(sent) = sent {
+            let (_, missing) = self
+                .upstream()
+                .cache()
+                .held_each::<String>(&ids, listenbrainz::recording_group_key)
+                .await;
+            let mut missing = missing;
+            missing.sort();
+            missing.dedup();
+            let batches = missing.len().div_ceil(listenbrainz::RECORDING_BATCH);
+            sent.fetch_add(
+                u64::try_from(batches).unwrap_or(u64::MAX),
+                Ordering::Relaxed,
+            );
+        }
+        let groups = client
+            .cached_recording_groups(self.upstream().cache(), &ids, creds, priority)
+            .await
+            .unwrap_or_else(|error| {
+                hold.provider(&error);
+                HashMap::new()
+            });
+        Ok(SectionRows {
+            songs: recordings
+                .into_iter()
+                .map(|recording| TopSong {
+                    release_group_mbid: recording
+                        .recording_mbid
+                        .as_ref()
+                        .and_then(|id| groups.get(id).cloned()),
+                    title: recording.title,
+                    artist_name: recording.artist_name,
+                    recording_mbid: recording.recording_mbid,
+                    original_release_mbid: recording.release_mbid,
+                    release_name: recording.release_name,
+                    listen_count: Some(recording.listen_count),
+                    disc_number: None,
+                    track_number: None,
+                })
+                .collect(),
+            ..SectionRows::default()
+        })
     }
 
     /// ListenBrainz rows for one section, or the failure of its read, the
@@ -499,40 +635,8 @@ impl Catalog {
             }
             Section::TopSongs => {
                 let creds = &lender.credentials().await;
-                let recordings = client
-                    .artist_top_recordings(mbid, count, creds, priority)
-                    .await?;
-                let ids: Vec<String> = recordings
-                    .iter()
-                    .filter_map(|recording| recording.recording_mbid.clone())
-                    .collect();
-                let groups = client
-                    .cached_recording_groups(self.upstream().cache(), &ids, creds, priority)
+                self.top_song_rows(client, creds, (mbid, count, priority), hold, None)
                     .await
-                    .unwrap_or_else(|error| {
-                        hold.provider(&error);
-                        HashMap::new()
-                    });
-                Ok(SectionRows {
-                    songs: recordings
-                        .into_iter()
-                        .map(|recording| TopSong {
-                            release_group_mbid: recording
-                                .recording_mbid
-                                .as_ref()
-                                .and_then(|id| groups.get(id).cloned()),
-                            title: recording.title,
-                            artist_name: recording.artist_name,
-                            recording_mbid: recording.recording_mbid,
-                            original_release_mbid: recording.release_mbid,
-                            release_name: recording.release_name,
-                            listen_count: Some(recording.listen_count),
-                            disc_number: None,
-                            track_number: None,
-                        })
-                        .collect(),
-                    ..SectionRows::default()
-                })
             }
             Section::TopAlbums => {
                 let creds = &lender.credentials().await;

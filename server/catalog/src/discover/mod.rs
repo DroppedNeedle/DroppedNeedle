@@ -24,6 +24,7 @@ pub mod health;
 pub mod home;
 pub mod later;
 pub mod listening;
+pub mod mixes;
 pub mod models;
 pub mod new_releases;
 pub mod ownership;

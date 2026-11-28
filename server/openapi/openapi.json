@@ -47402,6 +47402,59 @@
           }
         }
       },
+      "DailyMix": {
+        "type": "object",
+        "description": "One Daily Mix: the tracks built for one of the person's tastes on one\nday, named by the taste's own artists.",
+        "required": [
+          "id",
+          "name",
+          "artists",
+          "day",
+          "yours",
+          "new",
+          "tracks"
+        ],
+        "properties": {
+          "artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PickReasonArtist"
+            },
+            "description": "The artists its name names, most played first."
+          },
+          "day": {
+            "type": "string",
+            "description": "The UTC day it was built for (`YYYY-MM-DD`)."
+          },
+          "id": {
+            "type": "string",
+            "description": "Its id, the same for its place on the page from day to day."
+          },
+          "name": {
+            "type": "string",
+            "description": "Its name: the taste's most played artists, \"Circa Survive, La\nDispute and more\"."
+          },
+          "new": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many of its tracks are new to the library.",
+            "minimum": 0
+          },
+          "tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MixTrack"
+            },
+            "description": "Its tracks, in the order they play."
+          },
+          "yours": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many of its tracks the library holds.",
+            "minimum": 0
+          }
+        }
+      },
       "DecadeShelf": {
         "type": "object",
         "description": "One decade shelf. Shelves carry counts; fetch the shelf's albums\nthrough the album list with the same `decade` value.",
@@ -60036,6 +60089,91 @@
         "enum": [
           "started",
           "already_running"
+        ]
+      },
+      "MixTrack": {
+        "type": "object",
+        "description": "One track of a Daily Mix, in the mix's order.",
+        "required": [
+          "kind",
+          "title",
+          "artist_name",
+          "album"
+        ],
+        "properties": {
+          "album": {
+            "$ref": "#/components/schemas/AlbumRef",
+            "description": "Its album: the library's for one it holds, the release group from\nthe person's pool for a new one, with whether the library holds it\nor a request for it is open as the page is served."
+          },
+          "artist_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its artist's MusicBrainz id, lowercased, when known."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Its artist's name."
+          },
+          "duration_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Its length in whole seconds, for one the library holds.",
+            "minimum": 0
+          },
+          "file_format": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The library file's container, for one the library holds."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MixTrackKind",
+            "description": "How it came to be on the mix."
+          },
+          "local_track_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The library track, for one the library holds."
+          },
+          "reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PickReason"
+              }
+            ],
+            "description": "Why a new track is offered, from the pool's evidence; none for a\nlibrary track."
+          },
+          "recording_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its recording's MusicBrainz id, when known."
+          },
+          "title": {
+            "type": "string",
+            "description": "Its title."
+          }
+        }
+      },
+      "MixTrackKind": {
+        "type": "string",
+        "description": "How a track came to be on a Daily Mix.",
+        "enum": [
+          "artist",
+          "sound",
+          "new"
         ]
       },
       "MoreByArtistResponse": {
@@ -72934,7 +73072,8 @@
           "source_down",
           "needs_link",
           "thin",
-          "empty"
+          "empty",
+          "needs_taste"
         ]
       },
       "SectionContent": {
@@ -72961,7 +73100,7 @@
           },
           {
             "type": "object",
-            "description": "Several shelves (Daily Mixes, radio).",
+            "description": "Several shelves (radio).",
             "required": [
               "shelves",
               "shape"
@@ -73082,6 +73221,29 @@
               "sound_bench": {
                 "$ref": "#/components/schemas/SoundBench",
                 "description": "What the bench is first tuned to."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The person's Daily Mixes, one for each of their tastes.",
+            "required": [
+              "mixes",
+              "shape"
+            ],
+            "properties": {
+              "mixes": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/DailyMix"
+                },
+                "description": "The mixes, in page order."
+              },
+              "shape": {
+                "type": "string",
+                "enum": [
+                  "mixes"
+                ]
               }
             }
           }

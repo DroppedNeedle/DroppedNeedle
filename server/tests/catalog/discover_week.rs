@@ -154,7 +154,7 @@ fn deps(rig: &AuthRig, dir: &std::path::Path, script: Script) -> DiscoverDeps {
 }
 
 /// What queues Discover's work, with the warm cycle `enabled`.
-fn due(rig: &AuthRig, enabled: bool) -> Due {
+pub(crate) fn due(rig: &AuthRig, enabled: bool) -> Due {
     let (db, clock) = (rig.platform.db.clone(), rig.platform.clock.clone());
     Due::new(
         db.clone(),
@@ -170,7 +170,7 @@ fn due(rig: &AuthRig, enabled: bool) -> Due {
 }
 
 /// Whether `user`'s job of `kind` is queued, clearing that kind's jobs.
-fn queued(db: &Db, kind: &str, user: &str) -> bool {
+pub(crate) fn queued(db: &Db, kind: &str, user: &str) -> bool {
     let queued: i64 = db.one(
         "SELECT COUNT(*) FROM durable_jobs WHERE kind = ?1 AND idempotency_key = ?2 \
          AND state = 'queued'",
@@ -181,7 +181,7 @@ fn queued(db: &Db, kind: &str, user: &str) -> bool {
 }
 
 /// `user` was last seen at `at`.
-async fn seen_at(db: &Db, user: &str, at: i64) {
+pub(crate) async fn seen_at(db: &Db, user: &str, at: i64) {
     insert(
         db,
         format!(

@@ -215,6 +215,48 @@ impl RadioLibrary {
         .map_err(|error| format!("radio skips read: {error}"))
     }
 
+    /// `user_id`'s own Daily Mix `mix_id` as a station's seeds: its name,
+    /// its library tracks in order and its library tracks' artists, in
+    /// order of first appearance. `None` when it is not theirs.
+    pub async fn mix_seeds(
+        &self,
+        user_id: &str,
+        mix_id: &str,
+    ) -> Result<Option<(PlaylistSeeds, Vec<String>)>, String> {
+        let names = read_all(
+            &self.db,
+            "discover.radio.mix_name",
+            sql::RADIO_MIX_NAME.text(),
+            (mix_id.to_owned(), user_id.to_owned()),
+            |row| row.get::<_, String>(0),
+        )
+        .await
+        .map_err(|error| format!("mix read: {error}"))?;
+        let Some(name) = names.into_iter().next() else {
+            return Ok(None);
+        };
+        let rows = read_all(
+            &self.db,
+            "discover.radio.mix_tracks",
+            sql::RADIO_MIX_TRACKS.text(),
+            (mix_id.to_owned(),),
+            sql::RadioMixTrack::read,
+        )
+        .await
+        .map_err(|error| format!("mix tracks read: {error}"))?;
+        let mut artists: Vec<String> = Vec::new();
+        for artist in rows
+            .iter()
+            .filter_map(|row| seed_mbid(row.artist_mbid.as_deref()))
+        {
+            if !artists.contains(&artist) {
+                artists.push(artist);
+            }
+        }
+        let track_ids = rows.into_iter().map(|row| row.local_track_id).collect();
+        Ok(Some((PlaylistSeeds { name, track_ids }, artists)))
+    }
+
     /// `user_id`'s artists in one of their taste groups: each artist's
     /// group, by MusicBrainz id lowercased.
     pub async fn taste_groups(&self, user_id: &str) -> Result<HashMap<String, i64>, String> {

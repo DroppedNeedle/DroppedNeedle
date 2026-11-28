@@ -11,8 +11,8 @@ use std::sync::Arc;
 use crate::discover::listening::{ListeningData, ListeningNetwork, LiveNetwork};
 use crate::discover::services::DiscoverDeps;
 use crate::discover::{
-    cache, charts, content, due, engine, facts, feedback, forget, home, later, page, previews,
-    queue, radio, record, scheduler, stated, taste_page, tunings, youtube,
+    cache, charts, content, due, engine, facts, feedback, forget, home, later, mixes, page,
+    previews, queue, radio, record, scheduler, stated, taste_page, tunings, youtube,
 };
 use crate::metadata::library::LocalCatalog;
 use crate::metadata::ports::{NoDetails, NoFollows, NoPurchaseLinks};
@@ -159,6 +159,15 @@ fn deps_with(
         Arc::clone(&inputs.clock),
         settings.clone(),
     ));
+    let mixes = Arc::new(mixes::MixJobs::new(mixes::MixInputs {
+        db: inputs.db.clone(),
+        clock: Arc::clone(&inputs.clock),
+        forgets: forgets.clone(),
+        sound: inputs.sound.clone(),
+        catalog: catalog.clone(),
+        facts: kept.clone(),
+        youtube: config.live(),
+    }));
     let radio = radio::LiveRadio::new(radio::RadioInputs {
         listening: listening.clone(),
         queue_db: queue::store::QueueDb::new(inputs.db.clone()),
@@ -263,6 +272,7 @@ fn deps_with(
         fresh: Arc::new(fresh_feed),
         taste,
         pool,
+        mixes,
         evidence: engine::evidence::Evidence::new(inputs.db.clone()),
         tunings: tunings::Tunings::new(
             inputs.db.clone(),

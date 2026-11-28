@@ -61,7 +61,7 @@ pub enum SectionKey {
     WeeklySet,
     /// Discover: album suggestions from a playlist.
     PlaylistDiscovery,
-    /// Discover: genre-clustered mixes.
+    /// Discover: one mix of tracks for each of the person's tastes.
     DailyMixes,
     /// Discover: album radios per seed artist.
     RadioSections,
@@ -396,11 +396,10 @@ pub const SECTIONS: &[SectionDef] = &[
         K::DailyMixes,
         Z::MadeForYou,
         "Daily Mixes",
-        "Genre-clustered mixes of new and familiar albums.",
+        "One mix for each of your tastes, new each day.",
         Some(Requires::Library),
         B::Personal,
-    )
-    .reading(&[I::Seeds, I::Genres, I::LibraryAlbums], Dedupe::Albums(5)),
+    ),
     discover(
         K::RadioSections,
         Z::MadeForYou,

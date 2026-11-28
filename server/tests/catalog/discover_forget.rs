@@ -160,6 +160,18 @@ fn forgotten_row(table: &str, user: &str, at: i64) -> (String, &'static str) {
             ),
             "0",
         ),
+        "catalog_mixes" => (
+            format!(
+                "INSERT INTO catalog_mixes (id, user_id, mix_no, day, built_at, name, \
+                 group_anchor_mbid, named_artists, yours_count, new_count) VALUES \
+                 ('mix-{user}', '{user}', 0, '2026-11-28', {at}, 'Someone', \
+                 'cccccccc-0000-4000-8000-000000000001', '[]', 1, 0); \
+                 INSERT INTO catalog_mix_tracks (mix_id, position, kind, local_track_id, \
+                 title, artist_name) VALUES ('mix-{user}', 0, 'artist', 'track-1', 'Song', \
+                 'Someone');"
+            ),
+            "built_at",
+        ),
         // A pick needs its set; each is written once whichever comes first.
         "catalog_weekly_sets" | "catalog_weekly_set_picks" => (
             format!(

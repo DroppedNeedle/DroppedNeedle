@@ -12,6 +12,7 @@ use droppedneedle_kernel::db::time::Millis;
 use super::facts::{FactKind, FactSource};
 use super::feedback::{FeedbackKind, FeedbackTarget};
 use super::listening::band_links::{BandLinkKind, LinkDirection};
+use super::models::MixTrackKind;
 
 use crate::artwork::local::art_tracks_column;
 use crate::local::sql::{
@@ -452,6 +453,17 @@ droppedneedle_kernel::sql! {
     pub(super) VISIBLE_PLAYLIST_NAME = "SELECT name FROM catalog_playlists p \
          WHERE id = ?1 AND (user_id = ?2 OR is_public = 1 OR EXISTS (SELECT 1 \
          FROM catalog_playlist_members m WHERE m.playlist_id = p.id AND m.user_id = ?2))";
+    /// The name of Daily Mix `?1` when it is person `?2`'s.
+    pub(super) RADIO_MIX_NAME = "SELECT name FROM catalog_mixes WHERE id = ?1 AND user_id = ?2";
+    /// A Daily Mix's library tracks still in the library, in mix order.
+    pub(super) RADIO_MIX_TRACKS = "SELECT k.local_track_id AS local_track_id, \
+         k.artist_mbid AS artist_mbid FROM catalog_mix_tracks k \
+         JOIN local_tracks t ON t.id = k.local_track_id AND t.availability = 'indexed' \
+         WHERE k.mix_id = ?1 ORDER BY k.position";
+    pub(super) row RadioMixTrack for [RADIO_MIX_TRACKS] {
+        local_track_id: String,
+        artist_mbid: Option<String>,
+    }
     /// The library tracks a playlist's entries name, in playlist order.
     pub(super) PLAYLIST_LIBRARY_TRACKS = "SELECT p.library_file_id \
          FROM catalog_playlist_tracks p \
@@ -1248,6 +1260,171 @@ droppedneedle_kernel::sql! {
          FROM catalog_background_read_days WHERE day = ?1";
     /// Drop the read counts of days before ?1.
     pub(super) READ_DAYS_DROPPED = "DELETE FROM catalog_background_read_days WHERE day < ?1";
+
+    // -- Daily Mixes ---------------------------------------------------------
+
+    /// Person `?1`'s taste groups that have a share, by group number.
+    pub(super) MIX_GROUPS = "SELECT group_no, lower(anchor_artist_mbid) AS anchor_mbid, share \
+         FROM catalog_taste_groups WHERE user_id = ?1 AND share > 0 ORDER BY group_no";
+    pub(super) row MixGroup for [MIX_GROUPS] {
+        group_no: i64,
+        anchor_mbid: String,
+        share: f64,
+    }
+    /// Person `?1`'s seeds that sit in a taste group, each group's most
+    /// played first (their plays here and their imported listens).
+    pub(super) MIX_GROUP_ARTISTS = "SELECT group_no, artist_mbid_lower, name, \
+         plays + imported_listens AS played \
+         FROM catalog_taste_artists \
+         WHERE user_id = ?1 AND is_seed = 1 AND group_no IS NOT NULL \
+         ORDER BY group_no, played DESC, artist_mbid_lower";
+    pub(super) row MixGroupArtist for [MIX_GROUP_ARTISTS] {
+        group_no: i64,
+        artist_mbid_lower: String,
+        name: String,
+        played: i64,
+    }
+    /// The groups person `?1` made a statement of kind `?2` about, by their
+    /// anchor artist lowercased.
+    pub(super) MIX_GROUP_STATEMENTS = "SELECT DISTINCT lower(group_anchor_mbid) \
+         FROM catalog_discover_tunings \
+         WHERE user_id = ?1 AND kind = ?2 AND group_anchor_mbid IS NOT NULL";
+    /// The artists person `?1` made a statement of kind `?2` about,
+    /// lowercased: their own and every artist of a group they spoke of.
+    pub(super) MIX_STATED_ARTISTS = "SELECT DISTINCT lower(target) \
+         FROM catalog_discover_tunings WHERE user_id = ?1 AND kind = ?2";
+    /// When person `?1`'s taste and pool were last built.
+    pub(super) MIX_BUILDS = "SELECT \
+         (SELECT built_at FROM catalog_taste_builds WHERE user_id = ?1) AS taste_built_at, \
+         (SELECT built_at FROM catalog_discover_pool_builds WHERE user_id = ?1) \
+             AS pool_built_at";
+    pub(super) row MixBuilds for [MIX_BUILDS] {
+        taste_built_at: Option<Millis>,
+        pool_built_at: Option<Millis>,
+    }
+    /// Whether person `?1` has a taste group with a share.
+    pub(super) MIX_HAS_GROUPS = "SELECT EXISTS (SELECT 1 FROM catalog_taste_groups \
+         WHERE user_id = ?1 AND share > 0)";
+    /// Owned, indexed tracks with their album, MusicBrainz ids and
+    /// loudness: the ReplayGain track gain from the tags, and the blocks
+    /// the loudness loop measured for the track's current bytes.
+    fragment MIX_TRACK_SELECT = "SELECT t.id AS id, t.title AS title, \
+         COALESCE(NULLIF(t.artist_name, ''), t.album_artist_name, '') AS artist_name, \
+         t.local_album_id AS album_id, t.album_title AS album_title, "
+         + (recording_mbid!("te", "t"))
+         + " AS recording_mbid, \
+         lower(COALESCE(tae.provider_artist_id, t.embedded_artist_mbid, '')) AS artist_mbid, \
+         lower(COALESCE(aae.provider_artist_id, t.embedded_album_artist_mbid, '')) \
+             AS album_artist_mbid, \
+         lower(COALESCE(ae.release_group_mbid, CASE WHEN "
+         + (not_yet_identified!("a"))
+         + " THEN t.embedded_release_group_mbid END)) AS release_group_mbid, \
+         t.replaygain_track_gain AS track_gain, \
+         CASE WHEN m.outcome = 'measured' THEN m.blocks END AS measured_blocks \
+         FROM local_tracks t \
+         JOIN local_albums a ON a.id = t.local_album_id \
+         LEFT JOIN local_track_artists ta ON ta.local_track_id = t.id AND ta.position = 0 \
+         LEFT JOIN local_track_external_identities te ON te.local_track_id = t.id \
+             AND te.provider = 'musicbrainz' \
+         LEFT JOIN local_artist_external_identities tae ON tae.local_artist_id = ta.local_artist_id \
+             AND tae.provider = 'musicbrainz' \
+         LEFT JOIN local_artist_external_identities aae ON aae.local_artist_id = a.album_artist_id \
+             AND aae.provider = 'musicbrainz' \
+         LEFT JOIN local_album_external_identities ae ON ae.local_album_id = a.id \
+             AND ae.provider = 'musicbrainz' \
+         LEFT JOIN library_loudness_measurements m ON m.local_track_id = t.id \
+             AND m.stat_revision = t.stat_revision \
+         WHERE t.availability = 'indexed' AND a.retired_into_album_id IS NULL";
+    /// The owned tracks whose track or album artist is in the JSON list
+    /// `?1`, by id.
+    pub(super) MIX_ARTIST_TRACKS = "SELECT * FROM (" + MIX_TRACK_SELECT
+         + ") WHERE artist_mbid IN (SELECT value FROM json_each(?1)) \
+         OR album_artist_mbid IN (SELECT value FROM json_each(?1)) ORDER BY id";
+    /// The owned tracks whose id is in the JSON list `?1`, by id.
+    pub(super) MIX_TRACKS_BY_ID = "SELECT * FROM (" + MIX_TRACK_SELECT
+         + ") WHERE id IN (SELECT value FROM json_each(?1)) ORDER BY id";
+    pub(super) row MixLibraryTrack for [MIX_ARTIST_TRACKS, MIX_TRACKS_BY_ID] {
+        id: String,
+        title: String,
+        artist_name: String,
+        album_id: String,
+        album_title: Option<String>,
+        recording_mbid: Option<String>,
+        artist_mbid: String,
+        album_artist_mbid: String,
+        release_group_mbid: Option<String>,
+        track_gain: Option<f64>,
+        measured_blocks: Option<Vec<u8>>,
+    }
+    /// Person `?1`'s plays of library tracks since `?2`.
+    pub(super) MIX_PLAYS = "SELECT local_track_id, played_at FROM library_play_history \
+         WHERE user_id = ?1 AND local_track_id IS NOT NULL AND played_at >= ?2";
+    pub(super) row MixPlay for [MIX_PLAYS] {
+        local_track_id: String,
+        played_at: Millis,
+    }
+    /// Whether account `?1` is still there.
+    pub(super) MIX_USER_EXISTS = "SELECT EXISTS (SELECT 1 FROM auth_users WHERE id = ?1)";
+    /// Drop person `?1`'s mixes' tracks.
+    pub(super) MIX_TRACKS_DELETE = "DELETE FROM catalog_mix_tracks \
+         WHERE mix_id IN (SELECT id FROM catalog_mixes WHERE user_id = ?1)";
+    /// Drop person `?1`'s mixes.
+    pub(super) MIXES_DELETE = "DELETE FROM catalog_mixes WHERE user_id = ?1";
+    /// Keep one mix.
+    pub(super) MIX_INSERT = "INSERT INTO catalog_mixes (id, user_id, mix_no, day, built_at, \
+         name, group_anchor_mbid, named_artists, yours_count, new_count) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)";
+    /// Keep one track of a mix.
+    pub(super) MIX_TRACK_INSERT = "INSERT INTO catalog_mix_tracks (mix_id, position, kind, \
+         local_track_id, recording_mbid, release_group_mbid, title, artist_name, artist_mbid, \
+         album_title, reason) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)";
+    /// Person `?1`'s mixes, in page order.
+    pub(super) MIXES_KEPT = "SELECT id, day, name, named_artists \
+         FROM catalog_mixes WHERE user_id = ?1 ORDER BY mix_no";
+    pub(super) row KeptMix for [MIXES_KEPT] {
+        id: String,
+        day: String,
+        name: String,
+        named_artists: String,
+    }
+    /// Person `?1`'s mixes' tracks in page and mix order, each library
+    /// track with the file it is now, when it is still in the library.
+    pub(super) MIX_TRACKS_KEPT = "SELECT k.mix_id AS mix_id, k.kind AS kind, \
+         k.local_track_id AS local_track_id, k.recording_mbid AS recording_mbid, \
+         k.release_group_mbid AS release_group_mbid, k.title AS title, \
+         k.artist_name AS artist_name, k.artist_mbid AS artist_mbid, \
+         k.album_title AS album_title, k.reason AS reason, \
+         t.id IS NOT NULL AS present, t.local_album_id AS album_id, "
+         + (track_codec!("t"))
+         + " AS file_format, t.duration_seconds AS duration_seconds \
+         FROM catalog_mix_tracks k JOIN catalog_mixes x ON x.id = k.mix_id \
+         LEFT JOIN local_tracks t ON t.id = k.local_track_id AND t.availability = 'indexed' \
+         WHERE x.user_id = ?1 ORDER BY x.mix_no, k.position";
+    pub(super) row KeptMixTrack for [MIX_TRACKS_KEPT] {
+        mix_id: String,
+        kind: MixTrackKind,
+        local_track_id: Option<String>,
+        recording_mbid: Option<String>,
+        release_group_mbid: Option<String>,
+        title: String,
+        artist_name: String,
+        artist_mbid: Option<String>,
+        album_title: Option<String>,
+        reason: Option<String>,
+        present: bool,
+        album_id: Option<String>,
+        file_format: Option<String>,
+        duration_seconds: Option<f64>,
+    }
+    /// Of the people in the JSON list `?1`, each with a taste build, and
+    /// whether they have a pool build.
+    pub(super) MIXES_DUE = "SELECT b.user_id AS user_id, EXISTS (SELECT 1 \
+         FROM catalog_discover_pool_builds p WHERE p.user_id = b.user_id) AS has_pool \
+         FROM catalog_taste_builds b WHERE b.user_id IN (SELECT value FROM json_each(?1))";
+    pub(super) row MixDue for [MIXES_DUE] {
+        user_id: String,
+        has_pool: bool,
+    }
 }
 
 /// `len` placeholders for an `IN (...)` list.

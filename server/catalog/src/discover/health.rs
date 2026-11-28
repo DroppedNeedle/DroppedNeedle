@@ -15,7 +15,8 @@ use utoipa::ToSchema;
 
 use crate::discover::cache::{PageKind, StoredPage};
 use crate::discover::models::{
-    DiscoverHealthResponse, DiscoverResponse, PageHealthRow, SectionContent, SectionItem,
+    DiscoverHealthResponse, DiscoverResponse, MixTrackKind, PageHealthRow, SectionContent,
+    SectionItem,
 };
 use crate::discover::sections::{self, Basis, Page, Requires, SectionDef, SectionKey};
 
@@ -139,6 +140,19 @@ fn cards(content: &SectionContent) -> Vec<Card<'_>> {
                     id,
                     album: Some(id),
                     artist: known(row.album.artist_id.as_ref()),
+                })
+            })
+            .collect(),
+        SectionContent::Mixes { mixes } => mixes
+            .iter()
+            .flat_map(|mix| &mix.tracks)
+            .filter(|track| track.kind == MixTrackKind::New)
+            .filter_map(|track| {
+                let id = known(track.album.musicbrainz_id.as_ref())?;
+                Some(Card {
+                    id,
+                    album: Some(id),
+                    artist: known(track.artist_mbid.as_ref()),
                 })
             })
             .collect(),

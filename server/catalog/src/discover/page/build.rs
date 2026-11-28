@@ -5,9 +5,8 @@
 //! several sections share (seed artists, the user's genres, the library's
 //! identified albums), only those a wanted section needs, every read
 //! bounded to 25 seconds so one slow service only costs its own sections.
-//! The second builds the sections in parallel under the same bound (the
-//! Daily Mixes stop at it themselves and keep the mixes finished by then).
-//! Each section builds
+//! The second builds the sections in parallel under the same bound; the
+//! Daily Mixes only read the mixes their job kept. Each section builds
 //! under an ask of its own and says how it came out ([`Outcome`]): a read
 //! it needed failing, its own or a shared one, or its bound running out
 //! makes it failed. Each section about the person leaves out what they
@@ -15,7 +14,6 @@
 //! Ownership is marked when the page is served ([`mark_ownership`]), so a
 //! library change never makes a page wrong.
 
-use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::Mutex;
@@ -23,21 +21,19 @@ use std::time::Duration;
 
 use futures_util::future::join_all;
 
-use super::library::{LibraryReads, fold};
-use super::memo::{BuildMemo, MemoKey};
+use super::library::LibraryReads;
 use super::shelves::{self, RowMut, album, genre, one, shelf};
 use droppedneedle_kernel::db::Db;
 use droppedneedle_library::sound::SoundSearch;
 
-use crate::discover::cache::Variant;
 use crate::discover::engine::sources::{gaps, shelves as shelves_source};
 use crate::discover::feedback::{self, Feedback};
 use crate::discover::listening::{
     ArtistRow, Ask, ListenSource, ListeningData, TAG_PAGE, UserMusic,
 };
 use crate::discover::models::{
-    AlbumRef, ChartSection, DiscoverResponse, RadioSeedKind, SectionContent, SectionItem,
-    SectionKey, SectionKind, ServiceState, ShelfSource, WeeklyExploration, WeeklyTrack,
+    ChartSection, DiscoverResponse, RadioSeedKind, SectionContent, SectionItem, SectionKey,
+    SectionKind, ServiceState, ShelfSource, WeeklyExploration, WeeklyTrack,
 };
 use crate::discover::queue::QueueSettings;
 use crate::discover::queue::build::{
@@ -48,25 +44,14 @@ use crate::discover::queue::seeds::{SEEDS, links_listening, weighted_seeds};
 use crate::discover::queue::select::{MAX_PER_ARTIST, Shuffler, round_robin};
 use crate::discover::queue::store::QueueDb;
 use crate::discover::sections::{self, Input, Page, Requires, SectionDef};
-use crate::discover::{new_releases, ownership};
+use crate::discover::{mixes, new_releases, ownership};
 
 /// Bound on any one upstream read in a build.
 const TASK_TIMEOUT: Duration = Duration::from_secs(25);
-/// Bound on the Daily Mixes as a whole. They are built one after another,
-/// each from some 36 reads (three seeds, their similar artists and those
-/// artists' albums), so against a provider paced near one read a second
-/// [`TASK_TIMEOUT`] does not fit a single cold mix. The page builds in
-/// the background, so the longer bound keeps no one waiting.
-const MIXES_BUDGET: Duration = Duration::from_secs(120);
-/// Room past [`MIXES_BUDGET`] for the Daily Mixes, which stop at it
-/// themselves; the outer bound only catches a read that never returns.
-const MIXES_GRACE: Duration = Duration::from_secs(5);
 /// Bound on resolving weekly playlist covers.
 const RESOLVE_BUDGET: Duration = Duration::from_secs(15);
 /// Bound on one radio shelf.
 const RADIO_BUDGET: Duration = Duration::from_secs(18);
-/// Albums per Daily Mix.
-const MIX_SIZE: usize = 12;
 /// Learned genres: the user's top genres whose artists are read.
 const TOP_GENRES: usize = 3;
 /// Learned genres: a Last.fm user's seed artists whose tags are read.
@@ -102,12 +87,6 @@ pub struct Builder<'a> {
     pub library: &'a LibraryReads,
     /// The search over how the library's tracks sound, for the bench.
     pub sound: &'a SoundSearch,
-    /// The Daily Mixes memo.
-    pub memo: &'a BuildMemo,
-    /// What the page is built for, which the memo is kept under.
-    pub variant: &'a Variant,
-    /// What the build was claimed under.
-    pub generation: crate::discover::cache::Generation,
     /// Settings for this build.
     pub settings: PageSettings,
     /// Today's date (`YYYY-MM-DD`, UTC).
@@ -152,6 +131,8 @@ pub enum Outcome {
     Failed(Option<ListenSource>),
     /// It needs a service the person has not linked.
     NeedsLink(ListenSource),
+    /// It is built from the person's tastes, which are not worked out yet.
+    NeedsTaste,
     /// It was built from ListenBrainz rows kept since this time (unix
     /// seconds), whose daily read has missed since.
     Dated(i64),
@@ -276,48 +257,6 @@ fn required_service(def: &SectionDef) -> Option<ListenSource> {
     }
 }
 
-/// The outer bound on building one section.
-fn section_bound(key: SectionKey) -> Duration {
-    match key {
-        SectionKey::DailyMixes => MIXES_BUDGET + MIXES_GRACE,
-        _ => TASK_TIMEOUT,
-    }
-}
-
-/// When the Daily Mixes started at `now` stop building more.
-fn mixes_deadline(now: tokio::time::Instant) -> tokio::time::Instant {
-    now + MIXES_BUDGET
-}
-
-/// Run `builds` one after another until `deadline`, keeping what
-/// finished in time; the flag says whether every build finished.
-async fn in_order_until<T, B>(
-    deadline: tokio::time::Instant,
-    builds: impl IntoIterator<Item = B>,
-) -> (Vec<T>, bool)
-where
-    B: Future<Output = Option<T>>,
-{
-    let mut built = Vec::new();
-    for build in builds {
-        match tokio::time::timeout_at(deadline, build).await {
-            Ok(Some(item)) => built.push(item),
-            Ok(None) => {}
-            Err(_) => return (built, false),
-        }
-    }
-    (built, true)
-}
-
-/// A library read in a Daily Mixes build: a failure is noted on `ask`, so
-/// the mixes are not memoised, and reads as empty.
-fn noted<T: Default, E: std::fmt::Display>(ask: &Ask, what: &str, result: Result<T, E>) -> T {
-    if result.is_err() {
-        ask.note_failure();
-    }
-    or_empty(what, result)
-}
-
 /// What the first round fetched.
 #[derive(Default)]
 struct Shared {
@@ -334,30 +273,6 @@ struct Ctx<'c> {
     shared: &'c Shared,
     library_groups: &'c HashSet<String>,
     lb_user: Option<&'c str>,
-}
-
-/// Title-case a folded genre ("hip hop" to "Hip Hop").
-fn title_case(text: &str) -> String {
-    text.split(' ')
-        .map(|word| {
-            let mut chars = word.chars();
-            match chars.next() {
-                Some(first) => first.to_uppercase().chain(chars).collect(),
-                None => String::new(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-/// The week (Monday to Sunday, UTC) `today` (`YYYY-MM-DD`) falls in, as a
-/// key for a shuffler that holds for that week.
-fn week_of(today: &str) -> String {
-    let format = time::macros::format_description!("[year]-[month]-[day]");
-    match time::Date::parse(today, &format) {
-        Ok(date) => format!("week-{}", date.to_julian_day().div_euclid(7)),
-        Err(_) => today.to_owned(),
-    }
 }
 
 /// A shuffler fixed for one day and one purpose, so a rebuild the same
@@ -488,7 +403,7 @@ impl Builder<'_> {
             let content = bounded_by(
                 &section.ask,
                 &name,
-                section_bound(def.key),
+                TASK_TIMEOUT,
                 section.section(def.key, &ctx),
             )
             .await;
@@ -522,6 +437,8 @@ impl Builder<'_> {
                 Some(Outcome::Dated(since))
             } else if section.is_some() {
                 Some(Outcome::Built)
+            } else if def.key == SectionKey::DailyMixes && self.mixes_need_taste(user_id).await {
+                Some(Outcome::NeedsTaste)
             } else {
                 match self.missing_link(def, &user, lb_user.as_deref(), lfm_user.as_deref()) {
                     Some(Some(service)) => Some(Outcome::NeedsLink(service)),
@@ -617,18 +534,7 @@ impl Builder<'_> {
                     .map(|weekly| SectionContent::Weekly { weekly }),
                 None => None,
             },
-            SectionKey::DailyMixes => Some(SectionContent::Shelves {
-                shelves: self
-                    .daily_mixes(
-                        user_id,
-                        ctx.user,
-                        ctx.primary,
-                        ctx.seeds,
-                        shared,
-                        ctx.library_groups,
-                    )
-                    .await,
-            }),
+            SectionKey::DailyMixes => self.daily_mixes(user_id).await,
             SectionKey::RadioSections => Some(SectionContent::Shelves {
                 shelves: self
                     .radio_sections(
@@ -646,25 +552,6 @@ impl Builder<'_> {
             SectionKey::SoundBench => self.sound_bench(user_id).await,
             SectionKey::GenreList => one(genre_list(shared.genres.as_deref())),
             _ => None,
-        }
-    }
-
-    fn memo_key<'k>(
-        &'k self,
-        user_id: &'k str,
-        user: &UserMusic,
-        primary: ListenSource,
-    ) -> MemoKey<'k> {
-        MemoKey {
-            user_id,
-            variant: self.variant,
-            generation: self.generation,
-            listening: if self.blends(user) {
-                "blended"
-            } else {
-                primary.as_str()
-            },
-            today: &self.today,
         }
     }
 
@@ -738,243 +625,29 @@ impl Builder<'_> {
         }
     }
 
-    /// Three to five genre-clustered mixes, roughly 60% new to 40% owned,
-    /// built once a day per user and source. The mixes finished within the
-    /// task bound are kept; only a complete set built without a failed read
-    /// is memoised, so a slow or failing source is tried again next build.
-    async fn daily_mixes(
-        &self,
-        user_id: &str,
-        user: &UserMusic,
-        primary: ListenSource,
-        seeds: &[ArtistRow],
-        shared: &Shared,
-        library_groups: &HashSet<String>,
-    ) -> Vec<ChartSection> {
-        let key = self.memo_key(user_id, user, primary);
-        if let Some(mixes) = self.memo.mixes(&key).await {
-            return mixes;
+    /// The person's Daily Mixes as their job kept them: read from stored
+    /// rows only, never built here. A failed read fails the section.
+    async fn daily_mixes(&self, user_id: &str) -> Option<SectionContent> {
+        match mixes::store::kept(self.queue_db.db(), user_id).await {
+            Ok(mixes) => Some(SectionContent::Mixes { mixes }),
+            Err(error) => {
+                tracing::warn!(%error, "kept mixes unreadable; the section waits");
+                self.ask.note_failure();
+                None
+            }
         }
-        let deadline = mixes_deadline(tokio::time::Instant::now());
-        let ask = self.ask.watched();
-        let (mixes, finished) = self
-            .build_daily_mixes(
-                &ask,
-                deadline,
-                user_id,
-                user,
-                primary,
-                seeds,
-                shared,
-                library_groups,
-            )
-            .await;
-        if finished && !ask.met_failure() {
-            self.memo.store_mixes(&key, mixes.clone()).await;
-        } else {
-            self.ask.note_failure();
-            tracing::info!(
-                built = mixes.len(),
-                finished,
-                "daily mixes incomplete; not memoised, built again next time"
-            );
-        }
-        mixes
     }
 
-    /// The mixes built by `deadline`, and whether every one was.
-    #[allow(clippy::too_many_arguments)]
-    async fn build_daily_mixes(
-        &self,
-        ask: &Ask,
-        deadline: tokio::time::Instant,
-        user_id: &str,
-        user: &UserMusic,
-        primary: ListenSource,
-        seeds: &[ArtistRow],
-        shared: &Shared,
-        library_groups: &HashSet<String>,
-    ) -> (Vec<ChartSection>, bool) {
-        let mut preferred: Vec<String> = Vec::new();
-        for (name, _) in shared.genres.iter().flatten() {
-            let folded = fold(name);
-            if !preferred.contains(&folded) {
-                preferred.push(folded);
+    /// Whether the Daily Mixes are empty for want of a taste: the person
+    /// has no taste group. False when that cannot be told.
+    async fn mixes_need_taste(&self, user_id: &str) -> bool {
+        match mixes::store::has_groups(self.queue_db.db(), user_id).await {
+            Ok(has) => !has,
+            Err(error) => {
+                tracing::warn!(%error, "taste groups unreadable for the mixes' state");
+                false
             }
         }
-        if preferred.is_empty() {
-            let seed_mbids: Vec<String> = seeds.iter().filter_map(|s| s.mbid.clone()).collect();
-            let by_artist = noted(
-                ask,
-                "artist genres",
-                self.library.genres_for_artists(&seed_mbids).await,
-            );
-            for mbid in &seed_mbids {
-                for genre in by_artist.get(&mbid.to_lowercase()).into_iter().flatten() {
-                    let folded = fold(genre);
-                    if !preferred.contains(&folded) {
-                        preferred.push(folded);
-                    }
-                }
-            }
-        }
-        let top = noted(ask, "top genres", self.library.top_genres(20).await);
-        if top.is_empty() {
-            return (Vec::new(), true);
-        }
-        let mut ordered = preferred.clone();
-        for (genre, _) in &top {
-            if !ordered.contains(genre) {
-                ordered.push(genre.clone());
-            }
-        }
-        let names: Vec<String> = ordered.iter().take(10).cloned().collect();
-        let by_genre = noted(
-            ask,
-            "genre artists",
-            self.library.artists_for_genres(&names).await,
-        );
-        let mut seen = HashSet::new();
-        let mut clusters: Vec<(String, Vec<String>)> = Vec::new();
-        for genre in &ordered {
-            let unique: Vec<String> = by_genre
-                .get(genre)
-                .into_iter()
-                .flatten()
-                .filter(|mbid| droppedneedle_providers::musicbrainz::is_valid_mbid(mbid))
-                .filter(|mbid| !seen.contains(*mbid))
-                .cloned()
-                .collect();
-            if unique.len() < 3 {
-                continue;
-            }
-            seen.extend(unique.iter().cloned());
-            clusters.push((genre.clone(), unique));
-        }
-        clusters.sort_by_key(|a| Reverse(a.1.len()));
-        clusters.truncate(5);
-        let builds = clusters
-            .into_iter()
-            .enumerate()
-            .map(|(index, (genre, artists))| async move {
-                self.one_daily_mix(
-                    ask,
-                    user_id,
-                    user,
-                    primary,
-                    index,
-                    &genre,
-                    artists,
-                    library_groups,
-                )
-                .await
-            });
-        let (mixes, finished) = in_order_until(deadline, builds).await;
-        if !finished {
-            tracing::warn!(
-                built = mixes.len(),
-                "daily mixes ran out of time; keeping the ones built"
-            );
-        }
-        (mixes, finished)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn one_daily_mix(
-        &self,
-        ask: &Ask,
-        user_id: &str,
-        user: &UserMusic,
-        primary: ListenSource,
-        index: usize,
-        genre: &str,
-        mut artists: Vec<String>,
-        library_groups: &HashSet<String>,
-    ) -> Option<ChartSection> {
-        let label = title_case(genre);
-        // The seeds rotate weekly, so a week of mixes reads one set of
-        // similar artists; the picks from them are shuffled daily below.
-        daily_shuffler(&week_of(&self.today), &["daily-mix", user_id, genre]).shuffle(&mut artists);
-        artists.truncate(3);
-        let names = noted(
-            ask,
-            "artist names",
-            self.library.artist_names(&artists).await,
-        );
-        let seeds: Vec<ArtistRow> = artists
-            .iter()
-            .map(|mbid| ArtistRow {
-                name: names
-                    .get(mbid)
-                    .filter(|name| !name.is_empty())
-                    .cloned()
-                    .unwrap_or_else(|| format!("{label} artist")),
-                mbid: Some(mbid.clone()),
-                listen_count: None,
-            })
-            .collect();
-        let pools = self
-            .similar_pools(user_id, user, &seeds, library_groups, 10, 3, ask)
-            .await;
-        let mut seen = HashSet::new();
-        let mut picks = daily_shuffler(&self.today, &["daily-mix-picks", user_id, genre]);
-        let mut fresh: Vec<AlbumRef> = pools
-            .into_iter()
-            .flatten()
-            .filter(|item| seen.insert(item.musicbrainz_id.to_lowercase()))
-            .map(|item| {
-                album(
-                    Some(&item.musicbrainz_id),
-                    &item.title,
-                    Some(&item.artist_name),
-                    Some(&item.artist_id),
-                    None,
-                )
-            })
-            .collect();
-        let owned = noted(
-            ask,
-            "genre albums",
-            self.library.albums_by_genre(genre, 20).await,
-        );
-        let mut familiar: Vec<AlbumRef> = owned
-            .into_iter()
-            .filter(|row| {
-                let key = row
-                    .release_group_mbid
-                    .clone()
-                    .unwrap_or_else(|| row.local_id.clone())
-                    .to_lowercase();
-                seen.insert(key)
-            })
-            .map(|row| {
-                let mut item = album(
-                    row.release_group_mbid.as_deref(),
-                    &row.title,
-                    row.artist_name.as_deref(),
-                    row.artist_mbid.as_deref(),
-                    None,
-                );
-                item.local_id = Some(row.local_id);
-                item.in_library = true;
-                item
-            })
-            .collect();
-        picks.shuffle(&mut fresh);
-        picks.shuffle(&mut familiar);
-        let (new_count, familiar_count) = mix_split(fresh.len(), familiar.len());
-        let items: Vec<SectionItem> = fresh
-            .into_iter()
-            .take(new_count)
-            .chain(familiar.into_iter().take(familiar_count))
-            .map(SectionItem::Album)
-            .collect();
-        shelf(
-            &format!("Daily Mix {} - {label}", index + 1),
-            SectionKind::Albums,
-            items,
-            Some(primary.into()),
-        )
     }
 
     /// One radio shelf per seed artist: albums from similar artists, picked
@@ -1127,7 +800,7 @@ impl Builder<'_> {
     }
 
     /// Learn genres for the artists the user's top genres name, before
-    /// the sections that score genre overlap (the Daily Mixes, radio) run.
+    /// the sections that score genre overlap (radio) run.
     /// The reads are cached, so a rebuild makes no extra call. A
     /// ListenBrainz user's top genres each name the artists MusicBrainz
     /// tags with them; a Last.fm user's seed artists carry their own tags,
@@ -1235,18 +908,6 @@ fn lastfm_top_genres(tags: &[(&ArtistRow, Vec<String>)]) -> Vec<String> {
         }
     }
     genres
-}
-
-/// The 60/40 new-to-familiar split of a Daily Mix, topped up from
-/// whichever side has more when the other runs short.
-fn mix_split(fresh: usize, familiar: usize) -> (usize, usize) {
-    let mut new_count = fresh.min((MIX_SIZE as f64 * 0.6).round() as usize);
-    let mut familiar_count = familiar.min(MIX_SIZE - new_count);
-    if new_count + familiar_count < MIX_SIZE {
-        new_count += (fresh - new_count).min(MIX_SIZE - new_count - familiar_count);
-        familiar_count += (familiar - familiar_count).min(MIX_SIZE - new_count - familiar_count);
-    }
-    (new_count, familiar_count)
 }
 
 /// How old a weekly exploration playlist may be and still show: a week,
@@ -1500,24 +1161,4 @@ pub async fn mark_ownership(db: &Db, page: &mut DiscoverResponse) {
     }
     new_releases::mark_served(db, &mut page.sections).await;
     page.sections.retain(|section| !section.content.is_empty());
-}
-
-#[cfg(test)]
-mod tests {
-    use super::in_order_until;
-
-    /// The second mix never finishes: the first is kept, the third is not
-    /// reached, and the set is reported incomplete. The deadline has
-    /// passed already; a build that is ready when polled still counts.
-    #[tokio::test]
-    async fn a_cut_off_keeps_the_mixes_finished_before_it() {
-        let deadline = tokio::time::Instant::now();
-        let builds = [1, 2, 3].map(|n| async move {
-            if n == 2 {
-                std::future::pending::<()>().await;
-            }
-            Some(n)
-        });
-        assert_eq!(in_order_until(deadline, builds).await, (vec![1], false));
-    }
 }

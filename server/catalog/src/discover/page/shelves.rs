@@ -12,6 +12,10 @@ use crate::discover::models::{
 use crate::discover::queue::build::cover_url;
 use crate::discover::sections::{self, Dedupe, Page};
 
+/// The most mix tracks whose covers one page warms, so the mixes leave the
+/// warm room for the sections after them.
+const MIX_COVERS_WARMED: usize = 60;
+
 /// Rows a shelf shows at most.
 pub const SHELF_SIZE: usize = 15;
 
@@ -88,7 +92,7 @@ pub enum RowMut<'a> {
 
 impl SectionContent {
     /// The section's shelves; none for the weekly playlist, the new
-    /// releases, the gaps or the person's own shelves.
+    /// releases, the gaps, the person's own shelves or the mixes.
     pub fn shelves(&self) -> Vec<&ChartSection> {
         match self {
             Self::Shelf { shelf } => vec![shelf],
@@ -97,7 +101,8 @@ impl SectionContent {
             | Self::NewReleases { .. }
             | Self::Gaps { .. }
             | Self::OwnShelves { .. }
-            | Self::SoundBench { .. } => Vec::new(),
+            | Self::SoundBench { .. }
+            | Self::Mixes { .. } => Vec::new(),
         }
     }
 
@@ -110,7 +115,8 @@ impl SectionContent {
             | Self::NewReleases { .. }
             | Self::Gaps { .. }
             | Self::OwnShelves { .. }
-            | Self::SoundBench { .. } => Vec::new(),
+            | Self::SoundBench { .. }
+            | Self::Mixes { .. } => Vec::new(),
         }
     }
 
@@ -138,6 +144,13 @@ impl SectionContent {
                     .map(|row| RowMut::Album(&mut row.album))
                     .collect();
             }
+            Self::Mixes { mixes } => {
+                return mixes
+                    .iter_mut()
+                    .flat_map(|mix| mix.tracks.iter_mut())
+                    .map(|track| RowMut::Album(&mut track.album))
+                    .collect();
+            }
             _ => {}
         }
         self.shelves_mut()
@@ -162,6 +175,7 @@ impl SectionContent {
             }
             // With no seed the bench still shows, asking for a track.
             Self::SoundBench { .. } => false,
+            Self::Mixes { mixes } => mixes.is_empty(),
             _ => self
                 .shelves()
                 .iter()
@@ -197,6 +211,15 @@ impl SectionContent {
                     .chain(&own_shelves.never_played)
                 {
                     targets.cover(row.album.musicbrainz_id.as_deref());
+                }
+            }
+            Self::Mixes { mixes } => {
+                for track in mixes
+                    .iter()
+                    .flat_map(|mix| &mix.tracks)
+                    .take(MIX_COVERS_WARMED)
+                {
+                    targets.cover(track.album.musicbrainz_id.as_deref());
                 }
             }
             _ => {

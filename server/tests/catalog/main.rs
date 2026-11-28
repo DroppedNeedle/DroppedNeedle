@@ -9,6 +9,7 @@ mod discover_depth;
 mod discover_forget;
 mod discover_health;
 mod discover_later;
+mod discover_mixes;
 mod discover_new_releases;
 mod discover_page;
 mod discover_pool;

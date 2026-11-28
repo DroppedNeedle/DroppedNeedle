@@ -126,6 +126,8 @@ pub struct DiscoverDeps {
     pub taste: Arc<crate::discover::engine::jobs::TasteJobs>,
     /// The pool job, for the jobs table to run.
     pub pool: Arc<crate::discover::engine::pool::PoolJobs>,
+    /// The Daily Mixes job, for the jobs table to run.
+    pub mixes: Arc<crate::discover::mixes::MixJobs>,
     /// What "Why this?" opens for a pick.
     pub evidence: crate::discover::engine::evidence::Evidence,
     /// How people tuned what Discover offers them.
@@ -398,6 +400,7 @@ pub async fn forget_history(deps: &DiscoverDeps, user_id: &str) -> Result<(), Se
         taste = forgotten.taste,
         pool = forgotten.pool,
         weekly_sets = forgotten.weekly_sets,
+        mixes = forgotten.mixes,
         pages = forgotten.pages,
         "a person's history forgotten"
     );

@@ -1,8 +1,9 @@
 //! "Forget my history": a person removes what the app keeps about their
 //! listening and what Discover did for them, and everything built from it:
 //! the copy of their ListenBrainz history, their taste and candidate pool
-//! among it, and their weekly sets. Their next taste build makes the taste
-//! and pool again from what is left; their sets are gone for good.
+//! among it, their weekly sets and their Daily Mixes. Their next taste
+//! build makes the taste and pool again from what is left, and the next
+//! day's mixes are built from what is left; their sets are gone for good.
 //!
 //! One function runs every step, each deleting the person's rows by their
 //! id and safe to run again, so a forget cut off part way is finished by
@@ -19,7 +20,7 @@ use droppedneedle_media::playback::{events, sqlite::PlaybackStore};
 
 use crate::discover::cache::{self, ForgetCounts};
 use crate::discover::engine::{pool_store, taste_store, weekly_store};
-use crate::discover::{record, scheduler::activity::ActivityDb, services::DiscoverDeps};
+use crate::discover::{mixes, record, scheduler::activity::ActivityDb, services::DiscoverDeps};
 
 /// The stores a forget deletes from.
 #[derive(Clone)]
@@ -69,6 +70,8 @@ pub struct Forgotten {
     pub pool: usize,
     /// Their weekly sets and the sets' picks.
     pub weekly_sets: usize,
+    /// Their Daily Mixes and the mixes' tracks.
+    pub mixes: usize,
     /// Their saved Discover, home and queue pages.
     pub pages: usize,
 }
@@ -105,12 +108,12 @@ fn at<E: Into<StepError>>(step: &'static str) -> impl FnOnce(E) -> ForgetError {
 /// ListenBrainz history (its import is marked forgotten and its jobs
 /// cancelled in the same write, so an import running across the forget
 /// keeps nothing), the pick record, their Discover activity, their taste,
-/// their candidate pool, their weekly sets and their saved pages, in that
-/// order, then start one rebuild of their Discover page. Their forget count
-/// moves on before the first step and again inside the taste, the pool, the
-/// sets' and the pages steps' writes, so a build of theirs claimed before
-/// those commits keeps no taste, no pool, no set, no page and records no
-/// pick. While such a build runs no rebuild starts here: their next visit
+/// their candidate pool, their weekly sets, their Daily Mixes and their
+/// saved pages, in that order, then start one rebuild of their Discover
+/// page. Their forget count moves on before the first step and again inside
+/// the taste, the pool, the sets', the mixes' and the pages steps' writes,
+/// so a build of theirs claimed before those commits keeps no taste, no
+/// pool, no set, no mix, no page and records no pick. While such a build runs no rebuild starts here: their next visit
 /// builds the page, which is due because its row is gone. Fails at the first step that fails; the
 /// rebuild is asked for only once every step ran.
 pub async fn forget(deps: &DiscoverDeps, user_id: &str) -> Result<Forgotten, ForgetError> {
@@ -139,6 +142,9 @@ pub async fn forget(deps: &DiscoverDeps, user_id: &str) -> Result<Forgotten, For
     let weekly_sets = weekly_store::forget(&stores.db, &stores.forgets, user_id)
         .await
         .map_err(at("weekly sets"))?;
+    let mixes = mixes::store::forget(&stores.db, &stores.forgets, user_id)
+        .await
+        .map_err(at("daily mixes"))?;
     let pages = cache::forget_user(&stores.db, &stores.forgets, user_id)
         .await
         .map_err(at("saved pages"))?;
@@ -153,6 +159,7 @@ pub async fn forget(deps: &DiscoverDeps, user_id: &str) -> Result<Forgotten, For
         taste,
         pool,
         weekly_sets,
+        mixes,
         pages,
     })
 }

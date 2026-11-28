@@ -40,7 +40,6 @@
 pub mod bench;
 pub mod build;
 pub mod library;
-pub mod memo;
 pub mod shelves;
 
 use std::collections::{HashMap, HashSet};
@@ -49,9 +48,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::artwork::warm::{CoverWarm, WarmTargets};
-use crate::discover::cache::{
-    ForgetCounts, Generation, PageKind, Saved, Timing, UserPageCache, Variant,
-};
+use crate::discover::cache::{ForgetCounts, PageKind, Saved, Timing, UserPageCache, Variant};
 use crate::discover::content::IntegrationSettings;
 use crate::discover::engine::weekly;
 use crate::discover::feedback::Feedback;
@@ -73,7 +70,6 @@ use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::runtime_config::{Live, secret_sections::AdvancedSettings};
 use droppedneedle_library::sound::SoundSearch;
 use library::LibraryReads;
-use memo::BuildMemo;
 
 /// A page older than an hour is rebuilt behind the next visit: its reads
 /// are cached for hours, so a sooner rebuild repeats the same answers. A
@@ -85,11 +81,6 @@ const TIMING: Timing = Timing {
 /// How long a section is carried past failed builds at most, ms: a week.
 /// Past it the section is left out and says why.
 const CARRY_MS: i64 = 7 * 86_400_000;
-/// The memos age by their own rules; their cache never builds.
-const MEMO_TIMING: Timing = Timing {
-    fresh_ms: 0,
-    retry_ms: 0,
-};
 
 /// Genre artwork schema the frontend expects. Quirk (v2): the tag keeps v2's
 /// name.
@@ -161,7 +152,6 @@ struct Inner {
     queue_db: QueueDb,
     library: LibraryReads,
     cache: UserPageCache<BuiltPage>,
-    memo: BuildMemo,
     advanced: Live<AdvancedSettings>,
     integrations: IntegrationSettings,
     warm: CoverWarm,
@@ -177,15 +167,6 @@ pub struct DiscoverPages {
 impl DiscoverPages {
     /// The pages over their inputs.
     pub fn new(inputs: PageInputs) -> Self {
-        let memo = BuildMemo {
-            mixes: UserPageCache::new(
-                inputs.db.clone(),
-                inputs.clock.clone(),
-                PageKind::DailyMixes,
-                MEMO_TIMING,
-                inputs.forgets.clone(),
-            ),
-        };
         Self {
             inner: Arc::new(Inner {
                 library: LibraryReads::new(inputs.db.clone()),
@@ -198,7 +179,6 @@ impl DiscoverPages {
                 ),
                 listening: inputs.listening,
                 queue_db: inputs.queue_db,
-                memo,
                 advanced: inputs.advanced,
                 integrations: inputs.integrations,
                 warm: inputs.warm,
@@ -264,7 +244,7 @@ impl DiscoverPages {
         let pages = self.clone();
         let user_id = user_id.to_owned();
         tokio::spawn(async move {
-            let build = pages.build(&user_id, &variant, claim.generation(), settings);
+            let build = pages.build(&user_id, &variant, settings);
             pages.inner.cache.run(claim, &variant, build).await;
         });
     }
@@ -279,7 +259,7 @@ impl DiscoverPages {
         let Some(claim) = self.inner.cache.claim(user_id).await else {
             return false;
         };
-        let build = self.build(user_id, &variant, claim.generation(), settings);
+        let build = self.build(user_id, &variant, settings);
         self.inner.cache.run(claim, &variant, build).await
     }
 
@@ -289,7 +269,6 @@ impl DiscoverPages {
         &self,
         user_id: &str,
         variant: &Variant,
-        generation: Generation,
         settings: PageSettings,
     ) -> Option<BuiltPage> {
         let started = tokio::time::Instant::now();
@@ -307,9 +286,6 @@ impl DiscoverPages {
             feedback: &feedback,
             library: &self.inner.library,
             sound: &self.inner.sound,
-            memo: &self.inner.memo,
-            variant,
-            generation,
             settings,
             today,
             now,
@@ -470,13 +446,12 @@ impl LiveDiscover {
         page
     }
 
-    /// Ask for a fresh page now: forget the memoised shelves and rebuild.
+    /// Ask for a fresh page now.
     pub async fn refresh(&self, user_id: &str) {
         let inner = &self.pages.inner;
         if inner.cache.building(user_id).is_some() {
             return;
         }
-        inner.memo.clear_user(user_id).await;
         inner.cache.retry_now(user_id);
         let variant = Variant::for_user(&inner.listening, user_id).await;
         self.pages.start(user_id, variant).await;
@@ -579,6 +554,7 @@ fn settle(
             Outcome::NeedsLink(service) => {
                 Some(state(SectionCondition::NeedsLink, Some(service), None))
             }
+            Outcome::NeedsTaste => Some(state(SectionCondition::NeedsTaste, None, None)),
             Outcome::Dated(since) => Some(state(
                 SectionCondition::Kept,
                 Some(ListenSource::Listenbrainz),
@@ -623,7 +599,8 @@ fn row_ids(content: &SectionContent) -> Vec<String> {
         | SectionContent::NewReleases { .. }
         | SectionContent::Gaps { .. }
         | SectionContent::OwnShelves { .. }
-        | SectionContent::SoundBench { .. } => {}
+        | SectionContent::SoundBench { .. }
+        | SectionContent::Mixes { .. } => {}
         _ => {
             for shelf in content.shelves() {
                 ids.extend(shelf.items.iter().filter_map(row_id));
@@ -651,7 +628,8 @@ fn drop_rows(content: &mut SectionContent, shown: &HashSet<String>) {
         | SectionContent::NewReleases { .. }
         | SectionContent::Gaps { .. }
         | SectionContent::OwnShelves { .. }
-        | SectionContent::SoundBench { .. } => {}
+        | SectionContent::SoundBench { .. }
+        | SectionContent::Mixes { .. } => {}
         SectionContent::Shelves { shelves } => {
             for shelf in shelves.iter_mut() {
                 shelf.items.retain(|item| unseen(row_id(item)));
@@ -675,6 +653,7 @@ fn size(content: &SectionContent) -> usize {
             own_shelves.played_a_lot.len() + own_shelves.never_played.len()
         }
         SectionContent::SoundBench { .. } => 1,
+        SectionContent::Mixes { mixes } => mixes.len(),
     }
 }
 
@@ -865,7 +844,7 @@ mod tests {
     #[test]
     fn a_kept_section_repeats_nothing_a_fresh_one_shows() {
         let kept = SectionKey::RadioSections;
-        let fresh = SectionKey::DailyMixes;
+        let fresh = SectionKey::GenreList;
         let before = saved(page(vec![albums(kept, &["a", "b"])], Vec::new()), 0);
         let mut now = page(vec![albums(fresh, &["A"])], Vec::new());
         settle(

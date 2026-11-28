@@ -147,6 +147,15 @@ impl SoundTrack {
         &self.artist_key
     }
 
+    /// The names of its strongest tags, strongest first.
+    #[must_use]
+    pub fn top_tag_names(&self) -> Vec<&'static str> {
+        self.top_tags
+            .iter()
+            .filter_map(|tag| TAGS.get(usize::from(*tag)).copied())
+            .collect()
+    }
+
     /// Whether this and `other` are versions of one song: the same
     /// recording, or the same title by the same artist.
     fn same_song(&self, other: &Self) -> bool {
@@ -172,7 +181,8 @@ impl SoundTrack {
 
 /// A title folded for comparing versions: lowercased, cut before a
 /// bracket or a " - " (a remaster, a live take), letters and digits only.
-fn title_key(title: &str) -> String {
+#[must_use]
+pub fn title_key(title: &str) -> String {
     let lower = title.to_lowercase();
     let cut = [lower.find('('), lower.find('['), lower.find(" - ")]
         .into_iter()
@@ -332,15 +342,69 @@ impl SoundIndex {
         skip: &dyn Fn(&SoundTrack) -> bool,
     ) -> Option<Vec<Neighbour>> {
         let seed_at = *self.at.get(seed)?;
-        let seed_track = &self.tracks[seed_at];
+        let nearest = (0..self.tracks.len())
+            .filter(|at| *at != seed_at)
+            .map(|at| (self.between(seed_at, at), at))
+            .collect();
+        Some(self.listed(nearest, Some(seed_at), n, skip))
+    }
+
+    /// Up to `n` tracks that sound like the weighted mean of `members`
+    /// (track ids and their weights), nearest first, by the same rules as
+    /// [`Self::similar`]: one sound for a set of tracks, such as a person's
+    /// taste. Members are listed like any other track unless `skip` says
+    /// not. A member that is not analysed or weighs nothing counts for
+    /// nothing; `None` when none counts.
+    #[must_use]
+    pub fn near(
+        &self,
+        members: &[(String, f64)],
+        n: usize,
+        skip: &dyn Fn(&SoundTrack) -> bool,
+    ) -> Option<Vec<Neighbour>> {
+        let mut centre = vec![0.0f64; EMBEDDING];
+        let mut counted = false;
+        for (track_id, weight) in members {
+            let Some(at) = self.at.get(track_id) else {
+                continue;
+            };
+            if !weight.is_normal() || *weight < 0.0 {
+                continue;
+            }
+            counted = true;
+            for (sum, value) in centre.iter_mut().zip(self.vector(*at)) {
+                *sum += weight * f64::from(*value);
+            }
+        }
+        let norm = centre.iter().map(|value| value * value).sum::<f64>().sqrt();
+        if !counted || !norm.is_normal() {
+            return None;
+        }
+        let centre: Vec<f32> = centre.iter().map(|value| (value / norm) as f32).collect();
+        let nearest = (0..self.tracks.len())
+            .map(|at| {
+                let dot: f32 = centre.iter().zip(self.vector(at)).map(|(x, y)| x * y).sum();
+                ((1.0 - dot).max(0.0), at)
+            })
+            .collect();
+        Some(self.listed(nearest, None, n, skip))
+    }
+
+    /// The tracks of `nearest` (distances and places) a list keeps, by the
+    /// rules at the top of this file; `seed` is the seed track's place when
+    /// the list grows from one track.
+    fn listed(
+        &self,
+        mut nearest: Vec<(f32, usize)>,
+        seed: Option<usize>,
+        n: usize,
+        skip: &dyn Fn(&SoundTrack) -> bool,
+    ) -> Vec<Neighbour> {
+        let seed_track = seed.map(|at| &self.tracks[at]);
         // Enough that the artist cap and the versions dropped still leave
         // `n` (S4-01: the cap dropped up to 28 of 41 for one seed).
         let skipped: Vec<bool> = self.tracks.iter().map(skip).collect();
         let ask = n + (3 * n).max(20) + 1 + skipped.iter().filter(|skip| **skip).count();
-        let mut nearest: Vec<(f32, usize)> = (0..self.tracks.len())
-            .filter(|at| *at != seed_at)
-            .map(|at| (self.between(seed_at, at), at))
-            .collect();
         let by_distance = |a: &(f32, usize), b: &(f32, usize)| {
             a.0.total_cmp(&b.0)
                 .then_with(|| self.tracks[a.1].track_id.cmp(&self.tracks[b.1].track_id))
@@ -358,18 +422,19 @@ impl SoundIndex {
                 break;
             }
             let track = &self.tracks[at];
-            if track.same_song(seed_track)
+            if seed_track.is_some_and(|seed| track.same_song(seed))
                 || kept
                     .iter()
                     .any(|other| track.same_song(&self.tracks[*other]))
             {
                 continue;
             }
-            let previous = kept.last().copied().unwrap_or(seed_at);
-            let other = &self.tracks[previous];
-            let different_pieces = track.recording.is_some() && other.recording.is_some();
-            if self.between(at, previous) < SAME_SOUND && !different_pieces {
-                continue;
+            if let Some(previous) = kept.last().copied().or(seed) {
+                let other = &self.tracks[previous];
+                let different_pieces = track.recording.is_some() && other.recording.is_some();
+                if self.between(at, previous) < SAME_SOUND && !different_pieces {
+                    continue;
+                }
             }
             if skipped[at] {
                 // Kept, not listed: its copies stay out.
@@ -386,10 +451,10 @@ impl SoundIndex {
                 track_id: track.track_id.clone(),
                 distance,
                 closeness: Closeness::of(distance),
-                shared_tags: seed_track.shared_tags(track),
+                shared_tags: seed_track.map_or_else(Vec::new, |seed| seed.shared_tags(track)),
             });
         }
-        Some(found)
+        found
     }
 }
 

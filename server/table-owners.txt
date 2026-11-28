@@ -182,6 +182,8 @@ catalog_known_release_groups
 catalog_later_albums
 catalog_live_event_feed
 catalog_mbid_resolutions
+catalog_mix_tracks
+catalog_mixes
 catalog_new_release_seen_marks
 catalog_page_generations
 catalog_playlist_covers

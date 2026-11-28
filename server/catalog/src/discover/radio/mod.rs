@@ -614,21 +614,33 @@ impl LiveRadio {
                 ))
             }
             RadioSeedKind::Playlist => {
-                let found = self
+                let (found, artists) = match self
                     .tracks
                     .playlist_seeds(user_id, seed_id)
                     .await
                     .map_err(store)?
-                    .ok_or(RadioFailure::NotFound)?;
+                {
+                    Some(found) => {
+                        let (artists, _) = self
+                            .tracks
+                            .playlist_artists(user_id, seed_id)
+                            .await
+                            .map_err(store)?
+                            .unwrap_or_default();
+                        (found, artists)
+                    }
+                    // One of the person's Daily Mixes plays as a
+                    // playlist of its stored library tracks.
+                    None => self
+                        .tracks
+                        .mix_seeds(user_id, seed_id)
+                        .await
+                        .map_err(store)?
+                        .ok_or(RadioFailure::NotFound)?,
+                };
                 let mut ids = found.track_ids;
                 Shuffler::random().shuffle(&mut ids);
                 ids.truncate(SEED_TRACKS);
-                let (artists, _) = self
-                    .tracks
-                    .playlist_artists(user_id, seed_id)
-                    .await
-                    .map_err(store)?
-                    .unwrap_or_default();
                 let artists = artists
                     .into_iter()
                     .take(MAX_SEED_ARTISTS)

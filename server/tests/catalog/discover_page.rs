@@ -682,7 +682,7 @@ async fn both_services_blend_unless_the_server_turns_it_off() {
 }
 
 /// The user's saved discover page, once no build is running.
-async fn settled_page(_rig: &AuthRig, app: &Router, what: &str) -> Value {
+pub(crate) async fn settled_page(_rig: &AuthRig, app: &Router, what: &str) -> Value {
     // The build's last write comes before its in-flight mark clears, so no
     // commit follows the clear: this asks until the page says it has settled.
     tokio::time::timeout(std::time::Duration::from_secs(30), async {

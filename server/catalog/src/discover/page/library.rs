@@ -71,7 +71,7 @@ impl LibraryReads {
     }
 
     /// Every album that owns a release group, by the shared ownership rule.
-    /// The mixes and radio hide their groups.
+    /// Radio hides their groups.
     pub async fn owned_albums(&self) -> Result<Vec<LibraryAlbum>, String> {
         let rows = read_all(
             &self.db,

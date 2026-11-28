@@ -1,7 +1,7 @@
 //! What one build reads from, and the album pools other surfaces share.
 //!
 //! The pools of similar artists' albums ([`similar_artist_pools`],
-//! [`lastfm_pools`]) are what radio, the Radio shelves, Daily Mixes and
+//! [`lastfm_pools`]) are what radio, the Radio shelves and
 //! playlist suggestions deal from. Every provider read there may fail: the
 //! failure is logged and that pool is simply empty.
 
