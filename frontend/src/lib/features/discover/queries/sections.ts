@@ -1,5 +1,6 @@
 import type {
 	ChartSection,
+	DailyMix,
 	Gap,
 	NewReleaseSheet,
 	OwnShelves,
@@ -33,9 +34,14 @@ export function shelfOf(sections: Sections, key: SectionKey): ChartSection | nul
 	return contentOf(sections, key, 'shelf')?.shelf ?? null;
 }
 
-/** A section of several shelves (Daily Mixes, radio). */
+/** A section of several shelves (radio). */
 export function shelvesOf(sections: Sections, key: SectionKey): ChartSection[] {
 	return contentOf(sections, key, 'shelves')?.shelves ?? [];
+}
+
+/** The person's Daily Mixes, one for each of their tastes. */
+export function mixesOf(sections: Sections): DailyMix[] {
+	return contentOf(sections, 'daily_mixes', 'mixes')?.mixes ?? [];
 }
 
 /** New from your artists: the newest of the person's new releases. */

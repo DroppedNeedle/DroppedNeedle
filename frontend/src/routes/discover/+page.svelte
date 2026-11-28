@@ -13,7 +13,7 @@
 	} from 'lucide-svelte';
 	import HomeSection from '$lib/features/discover/components/HomeSection.svelte';
 	import ServiceErrorState from '$lib/ui/ServiceErrorState.svelte';
-	import DailyMixCard from '$lib/features/discover/components/DailyMixCard.svelte';
+	import DailyMixes from '$lib/features/discover/components/DailyMixes.svelte';
 	import RadioCard from '$lib/features/discover/components/RadioCard.svelte';
 	import PlayableSection from '$lib/features/discover/components/PlayableSection.svelte';
 	import JumpTabs from '$lib/ui/JumpTabs.svelte';
@@ -92,6 +92,7 @@
 	import { getSectionPrefsQuery } from '$lib/features/settings/queries/section-prefs.svelte';
 	import {
 		gapsOf,
+		mixesOf,
 		newReleasesOf,
 		ownShelvesOf,
 		shelfOf,
@@ -601,7 +602,7 @@
 
 	const sections = $derived(discoverData?.sections);
 	const weekly = $derived(weeklyOf(sections));
-	const dailyMixes = $derived(shelvesOf(sections, 'daily_mixes'));
+	const dailyMixes = $derived(mixesOf(sections));
 	const radioSections = $derived(shelvesOf(sections, 'radio_sections'));
 	const gaps = $derived(gapsOf(sections));
 	const genreList = $derived(shelfOf(sections, 'genre_list'));
@@ -777,7 +778,8 @@
 			...gaps.flatMap((gap) => [gap.album, ...gap.held]),
 			...(own ? [...own.played_a_lot, ...own.never_played].map((row) => row.album) : []),
 			...(newReleasesOf(sections)?.releases ?? []).map((row) => row.album),
-			...[...dailyMixes, ...radioSections].flatMap((shelf) => albumRows(shelf))
+			...dailyMixes.flatMap((mix) => mix.tracks.map((track) => track.album)),
+			...radioSections.flatMap((shelf) => albumRows(shelf))
 		]
 			.map((album) => album.musicbrainz_id)
 			.filter((id): id is string => !!id);
@@ -1086,12 +1088,7 @@
 		<DiscoverPlaylistBand covers={bandCovers} onopen={() => (playlistDiscoverOpen = true)} />
 	{:else if block.kind === 'mixes'}
 		{@render kickerRow(block.kicker)}
-		<SectionHead title="Daily Mixes" />
-		<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-			{#each dailyMixes as mix, i (`${mix.title}-${i}`)}
-				<DailyMixCard section={mix} />
-			{/each}
-		</div>
+		<DailyMixes mixes={dailyMixes} />
 	{:else if block.kind === 'radio'}
 		{@render kickerRow(block.kicker)}
 		<SectionHead title="Radio Stations" />

@@ -1,7 +1,7 @@
 <!--
 	One quiet line saying how a Discover section stands when it is not
 	plainly built: kept from an earlier build, its source down, waiting for a
-	linked account, thin, empty or still building. The counter uses it for
+	linked account or the person's tastes, thin, empty or still building. The counter uses it for
 	a week with nothing set out yet.
 -->
 <script lang="ts">
@@ -48,6 +48,8 @@
 				return `${down} This fills in when it's back.`;
 			case 'needs_link':
 				return `Connect ${service ?? 'a listening service'} to fill this.`;
+			case 'needs_taste':
+				return 'Play a few things and your mixes follow.';
 			case 'thin':
 				return "That's all for now.";
 			case 'empty':
