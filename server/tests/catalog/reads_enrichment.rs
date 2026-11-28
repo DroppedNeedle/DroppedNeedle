@@ -377,3 +377,86 @@ async fn a_switched_off_genre_source_is_off_and_an_unreachable_one_fails() {
         "a closed address is a failure"
     );
 }
+
+#[tokio::test]
+async fn lastfm_search_enrichment_uses_cache_on_repeat_calls() {
+    use axum::routing::get;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let hits = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&hits);
+    let stub = axum::Router::new().route(
+        "/lastfm/",
+        get(move || {
+            let counter = Arc::clone(&counter);
+            async move {
+                counter.fetch_add(1, Ordering::SeqCst);
+                (
+                    [(axum::http::header::CONTENT_TYPE, "application/json")],
+                    include_str!("../fixtures/lastfm/artist_getinfo.json"),
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, stub).await.unwrap() });
+    let app = crate::common::TestApp::start_with(
+        "search-counts-lastfm-cache",
+        crate::common::outbound_at(&origin),
+    )
+    .await;
+    let admin = app.login_admin().await;
+    let auth = [("authorization", admin.as_str())];
+    let (status, _) = app
+        .call(
+            "PUT",
+            "/api/v3/settings/listenbrainz",
+            &auth,
+            Some(serde_json::json!({"reads_enabled": false})),
+        )
+        .await;
+    assert!(status.is_success());
+    let (status, _) = app
+        .call(
+            "PUT",
+            "/api/v3/settings/lastfm",
+            &auth,
+            Some(serde_json::json!({
+                "enabled": true,
+                "api_key": "instance-key",
+                "shared_secret": "instance-secret",
+            })),
+        )
+        .await;
+    assert!(status.is_success());
+
+    let payload = serde_json::json!({
+        "artists": [{"musicbrainz_id": "artist-mbid-cache-1", "name": "Portishead"}],
+        "albums": [],
+    });
+    let (s1, b1) = app
+        .call(
+            "POST",
+            "/api/v3/search/enrich/batch",
+            &auth,
+            Some(payload.clone()),
+        )
+        .await;
+    assert!(s1.is_success(), "{s1} {b1}");
+    assert_eq!(b1["artists"][0]["listen_count"], 8_489_583);
+    // Give the async cache writer a brief beat to commit before the repeat call.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let (s2, b2) = app
+        .call("POST", "/api/v3/search/enrich/batch", &auth, Some(payload))
+        .await;
+    assert!(s2.is_success(), "{s2} {b2}");
+    assert_eq!(b2["artists"][0]["listen_count"], 8_489_583);
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        1,
+        "repeat Last.fm search enrichment must hit ProviderCacheStore"
+    );
+    server.abort();
+}

@@ -445,6 +445,7 @@ impl SearchService {
             });
         }
         let remote_limit = (limit * 3).div_ceil(5);
+        let run_remote = folded.trim().chars().count() >= 3;
         let local = async {
             Ok::<_, DbError>((
                 self.search_artists(&folded, limit).await?,
@@ -452,27 +453,40 @@ impl SearchService {
                 self.search_tracks(&folded, limit, 0).await?,
             ))
         };
-        let (local, remote_artists, remote_albums) = tokio::join!(
-            local,
-            self.remote_bucket(
-                Bucket::Artists,
-                query,
-                remote_limit,
-                0,
-                SUGGEST_DEADLINE,
-                OnEmpty::Stop,
-                true
-            ),
-            self.remote_bucket(
-                Bucket::Albums,
-                query,
-                remote_limit,
-                0,
-                SUGGEST_DEADLINE,
-                OnEmpty::Stop,
-                true
-            ),
-        );
+        let remote_artists_fut = async {
+            if run_remote {
+                self.remote_bucket(
+                    Bucket::Artists,
+                    query,
+                    remote_limit,
+                    0,
+                    SUGGEST_DEADLINE,
+                    OnEmpty::Stop,
+                    true,
+                )
+                .await
+            } else {
+                None
+            }
+        };
+        let remote_albums_fut = async {
+            if run_remote {
+                self.remote_bucket(
+                    Bucket::Albums,
+                    query,
+                    remote_limit,
+                    0,
+                    SUGGEST_DEADLINE,
+                    OnEmpty::Stop,
+                    true,
+                )
+                .await
+            } else {
+                None
+            }
+        };
+        let (local, remote_artists, remote_albums) =
+            tokio::join!(local, remote_artists_fut, remote_albums_fut);
         let (local_artists, local_albums, tracks) = local?;
         let status = worst_status(
             status_of(remote_artists.as_ref()),

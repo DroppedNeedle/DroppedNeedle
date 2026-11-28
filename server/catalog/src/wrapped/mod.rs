@@ -64,19 +64,19 @@ pub struct WrappedUsersResponse {
 }
 
 /// Top artist row.
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize, ToSchema)]
 pub struct WrappedArtist {
     /// Artist name.
     pub name: String,
     /// Listen count.
     pub listen_count: i64,
     /// MusicBrainz artist id when known.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artist_mbid: Option<String>,
 }
 
 /// Top track row.
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize, ToSchema)]
 pub struct WrappedTrack {
     /// Track name.
     pub name: String,
@@ -87,7 +87,7 @@ pub struct WrappedTrack {
 }
 
 /// Top album row.
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize, ToSchema)]
 pub struct WrappedAlbum {
     /// Album name.
     pub name: String,
@@ -96,12 +96,12 @@ pub struct WrappedAlbum {
     /// Listen count.
     pub listen_count: i64,
     /// MusicBrainz release-group id when known.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mbid: Option<String>,
 }
 
 /// Top genre row.
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize, ToSchema)]
 pub struct WrappedGenre {
     /// Genre label.
     pub genre: String,

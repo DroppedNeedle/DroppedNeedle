@@ -4,7 +4,8 @@ import type { Artist } from '$lib/features/search/queries/types';
 import {
 	ENRICH_COLLECTOR_DELAY_MS,
 	MAX_ENRICH_IDS_PER_BUCKET,
-	SearchEnrichCollector
+	SearchEnrichCollector,
+	mergeEnrichment
 } from './SearchV3Enrichment.svelte';
 
 const artist = (id: string, overrides: Partial<Artist> = {}): Artist => ({
@@ -54,6 +55,42 @@ describe('SearchEnrichCollector', () => {
 			vi.advanceTimersByTime(ENRICH_COLLECTOR_DELAY_MS);
 			expect(collector.body.artists).toHaveLength(MAX_ENRICH_IDS_PER_BUCKET);
 			collector.dispose();
+		}
+
+		{
+			// Sends only newly hovered ids on each flush instead of repeating earlier ones.
+			const collector = new SearchEnrichCollector();
+			collector.requestArtist(artist('a-1'));
+			vi.advanceTimersByTime(ENRICH_COLLECTOR_DELAY_MS);
+			expect(collector.body.artists?.map((item) => item.musicbrainz_id)).toEqual(['a-1']);
+
+			collector.requestArtist(artist('a-1'));
+			collector.requestArtist(artist('a-2'));
+			vi.advanceTimersByTime(ENRICH_COLLECTOR_DELAY_MS);
+			expect(collector.body.artists?.map((item) => item.musicbrainz_id)).toEqual(['a-2']);
+			collector.dispose();
+		}
+
+		{
+			// Merges delta enrichment payloads without dropping earlier cards.
+			const merged = mergeEnrichment(
+				{
+					artists: [{ musicbrainz_id: 'a-1', listen_count: 100 }],
+					albums: [],
+					source: 'lastfm',
+					degradations: []
+				},
+				{
+					artists: [{ musicbrainz_id: 'a-2', listen_count: 200 }],
+					albums: [],
+					source: 'lastfm',
+					degradations: []
+				}
+			);
+			expect(merged.artists.map((item) => [item.musicbrainz_id, item.listen_count])).toEqual([
+				['a-1', 100],
+				['a-2', 200]
+			]);
 		}
 
 		{

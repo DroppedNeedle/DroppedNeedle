@@ -76,17 +76,21 @@
 		debouncedQuery = '';
 		activeIndex = -1;
 
-		if (query.trim().length < 2) {
+		const trimmed = query.trim();
+		if (trimmed.length < 2) {
 			showDropdown = false;
 			return;
 		}
 
 		showDropdown = true;
 
+		// Two-character queries stay local-only on the server; wait slightly longer
+		// once remote MusicBrainz suggestions kick in at 3+ characters.
+		const delayMs = trimmed.length >= 3 ? 425 : 200;
 		debounceTimeout = setTimeout(() => {
-			debouncedQuery = query.trim();
+			debouncedQuery = trimmed;
 			queryEnabled = true;
-		}, 300);
+		}, delayMs);
 	}
 
 	function closeDropdown() {

@@ -173,7 +173,7 @@ impl CatalogSetup {
                 build_date: platform.config.build_date.clone(),
             },
         )));
-        let wrapped = wrapped_state(&users, settings, inputs);
+        let wrapped = wrapped_state(&users, settings, catalog.upstream().cache().clone(), inputs);
         let local = library_deps(
             catalog.local().clone(),
             catalog.clone(),
@@ -304,6 +304,7 @@ pub struct CatalogInputs {
 fn wrapped_state(
     users: &UsersDeps,
     settings: &droppedneedle_kernel::runtime_config::ConfigStore,
+    cache: droppedneedle_providers::ProviderCacheStore,
     inputs: CatalogInputs,
 ) -> wrapped::WrappedState {
     use wrapped::{ConfigWrappedKey, WrappedData, WrappedState, listenbrainz::ListenBrainzWrapped};
@@ -312,6 +313,7 @@ fn wrapped_state(
         users.users.clone(),
         inputs.listening,
         inputs.providers.listenbrainz.clone(),
+        cache,
         settings.live(),
         Arc::clone(&users.clock),
     ));

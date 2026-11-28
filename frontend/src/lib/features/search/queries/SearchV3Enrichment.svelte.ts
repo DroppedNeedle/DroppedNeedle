@@ -2,7 +2,7 @@ import type { components } from '$lib/api/v3/openapi';
 import type { Album } from '$lib/features/album/queries/types';
 import type { Artist } from '$lib/features/search/queries/types';
 import { SvelteMap } from 'svelte/reactivity';
-import type { EnrichmentBatchRequestV3 } from './SearchV3Queries.svelte';
+import type { EnrichmentBatchRequestV3, EnrichmentResponseV3 } from './SearchV3Queries.svelte';
 
 type ArtistEnrichItemV3 = components['schemas']['ArtistEnrichmentRequest'];
 type AlbumEnrichItemV3 = components['schemas']['AlbumEnrichmentRequest'];
@@ -14,15 +14,37 @@ export const MAX_ENRICH_IDS_PER_BUCKET = 10;
 
 const emptyBody = (): EnrichmentBatchRequestV3 => ({ artists: [], albums: [] });
 
+// Merge a delta enrichment response into previously collected enrichment rows.
+export function mergeEnrichment(
+	prev: EnrichmentResponseV3 | null,
+	next: EnrichmentResponseV3
+): EnrichmentResponseV3 {
+	if (!prev) return next;
+	const artists = new Map(prev.artists.map((item) => [item.musicbrainz_id, item]));
+	for (const item of next.artists) {
+		artists.set(item.musicbrainz_id, item);
+	}
+	const albums = new Map(prev.albums.map((item) => [item.musicbrainz_id, item]));
+	for (const item of next.albums) {
+		albums.set(item.musicbrainz_id, item);
+	}
+	return {
+		artists: [...artists.values()],
+		albums: [...albums.values()],
+		source: next.source ?? prev.source,
+		degradations: next.degradations
+	};
+}
+
 // Collects card hover/focus intent into the reactive body behind
-// getSearchEnrichBatchV3Query. Requests debounce into one fingerprint per
-// burst, so a sweep across cards sends a single POST for the accumulated
-// ids instead of one per hover.
+// getSearchEnrichBatchV3Query. Each flush commits only newly hovered ids so
+// earlier cards are never re-sent on later hovers.
 export class SearchEnrichCollector {
-	// The committed body. Every commit is cumulative: the query refires per
-	// fingerprint change and each answer covers every id collected so far.
+	// The latest delta batch to fetch.
 	body = $state<EnrichmentBatchRequestV3>(emptyBody());
 
+	#sentArtists = new Set<string>();
+	#sentAlbums = new Set<string>();
 	#pendingArtists = new SvelteMap<string, ArtistEnrichItemV3>();
 	#pendingAlbums = new SvelteMap<string, AlbumEnrichItemV3>();
 	#timer: ReturnType<typeof setTimeout> | null = null;
@@ -32,8 +54,13 @@ export class SearchEnrichCollector {
 		if (this.#disposed || artist.listen_count != null) return;
 		// Local-only rows carry no provider id, so enrichment has no key.
 		if (artist.local_id === artist.musicbrainz_id) return;
-		if (this.#artistIds().includes(artist.musicbrainz_id)) return;
-		if (this.#artistIds().length + this.#pendingArtists.size >= MAX_ENRICH_IDS_PER_BUCKET) return;
+		if (
+			this.#sentArtists.has(artist.musicbrainz_id) ||
+			this.#pendingArtists.has(artist.musicbrainz_id)
+		) {
+			return;
+		}
+		if (this.#sentArtists.size + this.#pendingArtists.size >= MAX_ENRICH_IDS_PER_BUCKET) return;
 		this.#pendingArtists.set(artist.musicbrainz_id, {
 			musicbrainz_id: artist.musicbrainz_id,
 			name: artist.title
@@ -44,8 +71,10 @@ export class SearchEnrichCollector {
 	requestAlbum(album: Album): void {
 		if (this.#disposed || album.listen_count != null) return;
 		if (album.local_id === album.musicbrainz_id) return;
-		if (this.#albumIds().includes(album.musicbrainz_id)) return;
-		if (this.#albumIds().length + this.#pendingAlbums.size >= MAX_ENRICH_IDS_PER_BUCKET) return;
+		if (this.#sentAlbums.has(album.musicbrainz_id) || this.#pendingAlbums.has(album.musicbrainz_id)) {
+			return;
+		}
+		if (this.#sentAlbums.size + this.#pendingAlbums.size >= MAX_ENRICH_IDS_PER_BUCKET) return;
 		this.#pendingAlbums.set(album.musicbrainz_id, {
 			musicbrainz_id: album.musicbrainz_id,
 			artist_name: album.artist ?? '',
@@ -57,6 +86,8 @@ export class SearchEnrichCollector {
 	reset(): void {
 		if (this.#timer !== null) clearTimeout(this.#timer);
 		this.#timer = null;
+		this.#sentArtists.clear();
+		this.#sentAlbums.clear();
 		this.#pendingArtists.clear();
 		this.#pendingAlbums.clear();
 		this.body = emptyBody();
@@ -66,16 +97,10 @@ export class SearchEnrichCollector {
 		this.#disposed = true;
 		if (this.#timer !== null) clearTimeout(this.#timer);
 		this.#timer = null;
+		this.#sentArtists.clear();
+		this.#sentAlbums.clear();
 		this.#pendingArtists.clear();
 		this.#pendingAlbums.clear();
-	}
-
-	#artistIds(): string[] {
-		return (this.body.artists ?? []).map((item) => item.musicbrainz_id);
-	}
-
-	#albumIds(): string[] {
-		return (this.body.albums ?? []).map((item) => item.musicbrainz_id);
 	}
 
 	#schedule(): void {
@@ -87,16 +112,11 @@ export class SearchEnrichCollector {
 		this.#timer = null;
 		if (this.#disposed) return;
 		if (this.#pendingArtists.size === 0 && this.#pendingAlbums.size === 0) return;
-		this.body = {
-			artists: [...(this.body.artists ?? []), ...this.#pendingArtists.values()].slice(
-				0,
-				MAX_ENRICH_IDS_PER_BUCKET
-			),
-			albums: [...(this.body.albums ?? []), ...this.#pendingAlbums.values()].slice(
-				0,
-				MAX_ENRICH_IDS_PER_BUCKET
-			)
-		};
+		const artists = [...this.#pendingArtists.values()];
+		const albums = [...this.#pendingAlbums.values()];
+		for (const item of artists) this.#sentArtists.add(item.musicbrainz_id);
+		for (const item of albums) this.#sentAlbums.add(item.musicbrainz_id);
+		this.body = { artists, albums };
 		this.#pendingArtists.clear();
 		this.#pendingAlbums.clear();
 	}

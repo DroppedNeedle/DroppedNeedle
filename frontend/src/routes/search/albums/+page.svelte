@@ -19,7 +19,11 @@
 		getSearchEnrichBatchV3Query,
 		type EnrichmentResponseV3
 	} from '$lib/features/search/queries/SearchV3Queries.svelte';
-	import { SearchEnrichCollector } from '$lib/features/search/queries/SearchV3Enrichment.svelte';
+	import { untrack } from 'svelte';
+	import {
+		SearchEnrichCollector,
+		mergeEnrichment
+	} from '$lib/features/search/queries/SearchV3Enrichment.svelte';
 	import { dedupeByMbid, toV1Album } from '$lib/features/search/queries/SearchV3Adapters';
 	import { Disc3 } from 'lucide-svelte';
 	import { SvelteMap } from 'svelte/reactivity';
@@ -124,7 +128,10 @@
 	$effect(() => {
 		const result = enrichQuery.data;
 		if (result) {
-			enrichment = result;
+			enrichment = mergeEnrichment(
+				untrack(() => enrichment),
+				result
+			);
 			enrichmentSource = result.source ?? null;
 		}
 	});

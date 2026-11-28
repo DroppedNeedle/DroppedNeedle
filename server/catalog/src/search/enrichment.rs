@@ -10,6 +10,8 @@
 //! one degradation note for its source: counts are optional, so they
 //! never fail a search.
 
+use std::time::Duration;
+
 use futures_util::stream::{self, StreamExt as _};
 
 use droppedneedle_auth::users::UsersDeps;
@@ -20,7 +22,10 @@ use droppedneedle_kernel::runtime_config::sections::ListenBrainzSettings;
 use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_providers::lastfm::{LastFmClient, LastFmCredentials};
 use droppedneedle_providers::listenbrainz::ListenBrainzClient;
-use droppedneedle_providers::{ProviderCacheStore, ProviderError, Providers, RequestPriority};
+use droppedneedle_providers::{
+    CacheKey, Fetched, Policy, ProviderCacheStore, ProviderError, Providers, RequestPriority,
+    Source as CacheSource,
+};
 
 use super::models::{
     AlbumEnrichment, AlbumEnrichmentRequest, ArtistEnrichment, ArtistEnrichmentRequest,
@@ -38,6 +43,11 @@ const IN_FLIGHT: usize = 2;
 const ARTIST_TOP_RELEASES: usize = 5;
 /// The fixed message of a degraded source.
 const DEGRADED_MESSAGE: &str = "Enrichment temporarily unavailable";
+/// Cached Last.fm search listener/play counts: 24h found, 6h missing.
+const LASTFM_COUNT_POLICY: Policy = Policy {
+    fresh: Duration::from_secs(24 * 3_600),
+    miss: Duration::from_secs(6 * 3_600),
+};
 
 /// Search-result counts over the ListenBrainz and Last.fm clients, with
 /// both settings read on every call.
@@ -250,7 +260,7 @@ impl SearchCounts {
     }
 
     /// Each artist's Last.fm listeners, by MusicBrainz id and then, when
-    /// Last.fm does not know the id, by name.
+    /// Last.fm does not know the id, by name, cached in `ProviderCacheStore`.
     async fn lastfm_artists(
         &self,
         creds: &LastFmCredentials,
@@ -262,18 +272,38 @@ impl SearchCounts {
                 .iter()
                 .map(|item| async move {
                     let priority = RequestPriority::UserInitiated;
-                    let name = item.name.trim();
-                    let by_id = self
-                        .lastfm
-                        .artist_info(creds, name, Some(&item.musicbrainz_id), priority)
-                        .await?;
-                    match by_id {
-                        Some(info) => Ok(Some(info)),
-                        None if !name.is_empty() => {
-                            self.lastfm.artist_info(creds, name, None, priority).await
-                        }
-                        None => Ok(None),
-                    }
+                    let name = item.name.trim().to_owned();
+                    let mbid = item.musicbrainz_id.clone();
+                    let key = CacheKey::hashed(
+                        CacheSource::LastFm,
+                        "search_artist_listeners",
+                        &[&mbid.to_ascii_lowercase(), &name.to_lowercase()],
+                    );
+                    let lastfm = self.lastfm.clone();
+                    let creds = creds.clone();
+                    self.cache
+                        .get_or_fetch(
+                            &key,
+                            LASTFM_COUNT_POLICY,
+                            priority,
+                            move |priority| async move {
+                                let by_id = lastfm
+                                    .artist_info(&creds, &name, Some(&mbid), priority)
+                                    .await?;
+                                let info = match by_id {
+                                    Some(info) => Some(info),
+                                    None if !name.is_empty() => {
+                                        lastfm.artist_info(&creds, &name, None, priority).await?
+                                    }
+                                    None => None,
+                                };
+                                Ok::<_, ProviderError>(match info.and_then(|info| info.listeners) {
+                                    Some(count) => Fetched::Found(count),
+                                    None => Fetched::Missing,
+                                })
+                            },
+                        )
+                        .await
                 })
                 .collect::<Vec<_>>(),
         )
@@ -284,18 +314,16 @@ impl SearchCounts {
             .into_iter()
             .zip(outcomes)
             .map(|(item, outcome)| ArtistEnrichment {
-                listen_count: notes
-                    .keep(outcome)
-                    .flatten()
-                    .and_then(|info| info.listeners),
+                listen_count: notes.keep(outcome).flatten(),
                 ..bare_artist(item)
             })
             .collect()
     }
 
-    /// Each album's Last.fm play count, by artist and album name: the
-    /// request carries a release-group id, which Last.fm does not key
-    /// albums by. A row without both names stays without a count.
+    /// Each album's Last.fm play count, by artist and album name, cached in
+    /// `ProviderCacheStore`: the request carries a release-group id, which
+    /// Last.fm does not key albums by. A row without both names stays without
+    /// a count.
     async fn lastfm_albums(
         &self,
         creds: &LastFmCredentials,
@@ -306,12 +334,35 @@ impl SearchCounts {
             albums
                 .iter()
                 .map(|item| async move {
-                    let (artist, album) = (item.artist_name.trim(), item.album_name.trim());
+                    let (artist, album) = (
+                        item.artist_name.trim().to_owned(),
+                        item.album_name.trim().to_owned(),
+                    );
                     if artist.is_empty() || album.is_empty() {
                         return Ok(None);
                     }
-                    self.lastfm
-                        .album_info(creds, artist, album, None, RequestPriority::UserInitiated)
+                    let key = CacheKey::hashed(
+                        CacheSource::LastFm,
+                        "search_album_playcount",
+                        &[&artist.to_lowercase(), &album.to_lowercase()],
+                    );
+                    let lastfm = self.lastfm.clone();
+                    let creds = creds.clone();
+                    self.cache
+                        .get_or_fetch(
+                            &key,
+                            LASTFM_COUNT_POLICY,
+                            RequestPriority::UserInitiated,
+                            move |priority| async move {
+                                let info = lastfm
+                                    .album_info(&creds, &artist, &album, None, priority)
+                                    .await?;
+                                Ok::<_, ProviderError>(match info.and_then(|info| info.playcount) {
+                                    Some(count) => Fetched::Found(count),
+                                    None => Fetched::Missing,
+                                })
+                            },
+                        )
                         .await
                 })
                 .collect::<Vec<_>>(),
@@ -323,10 +374,7 @@ impl SearchCounts {
             .into_iter()
             .zip(outcomes)
             .map(|(item, outcome)| AlbumEnrichment {
-                listen_count: notes
-                    .keep(outcome)
-                    .flatten()
-                    .and_then(|info| info.playcount),
+                listen_count: notes.keep(outcome).flatten(),
                 ..bare_album(item)
             })
             .collect()
