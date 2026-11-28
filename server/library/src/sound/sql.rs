@@ -195,13 +195,13 @@ droppedneedle_kernel::sql! {
          JOIN library_sound_analyses s ON s.local_track_id = t.id \
          AND s.stat_revision = t.stat_revision \
          WHERE s.analysis_version = (SELECT version FROM v) AND s.outcome = 'analysed' \
-         AND t.availability = 'indexed' \
+         AND +t.availability = 'indexed' \
          ORDER BY p.plays DESC, p.last_at DESC, p.id LIMIT 1) \
          SELECT v.version AS analysis_version, \
          EXISTS (SELECT 1 FROM library_sound_analyses a JOIN local_tracks lt \
          ON lt.id = a.local_track_id AND lt.stat_revision = a.stat_revision \
          WHERE a.analysis_version = v.version AND a.outcome = 'analysed' \
-         AND lt.availability = 'indexed') AS analysed, \
+         AND +lt.availability = 'indexed') AS analysed, \
          seed.track_id, seed.title, seed.artist_name, seed.album_id, seed.album_title, \
          seed.duration_seconds FROM v LEFT JOIN seed ON 1 = 1";
     pub(super) row BenchSeedRow for [BENCH_SEED] {
