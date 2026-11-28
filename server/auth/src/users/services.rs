@@ -50,8 +50,6 @@ pub const RECOVERY_ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 pub const RECOVERY_LEN: usize = 20;
 /// Allowed avatar image types, kept from v2.
 pub const ALLOWED_AVATAR_TYPES: &[&str] = &["image/jpeg", "image/png", "image/webp", "image/gif"];
-/// Upper bound for secrets offered for verification, kept from v2.
-pub const MAX_AUTH_VALUE_LEN: usize = 1024;
 /// Prefix marking companion rows in the shared token table, kept from v2.
 pub const COMPANION_LABEL_PREFIX: &str = "DroppedNeedle companion \u{b7} ";
 

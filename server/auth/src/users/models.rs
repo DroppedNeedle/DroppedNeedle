@@ -130,15 +130,6 @@ pub struct RecoveryCode {
     pub expires_at: i64,
 }
 
-/// The authenticated identity a compat shim verified.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AppPasswordAuth {
-    /// Owning user id.
-    pub user_id: String,
-    /// The app-password row that verified.
-    pub app_password_id: String,
-}
-
 /// Public account shape.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
 pub struct UserResponse {
