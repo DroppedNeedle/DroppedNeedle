@@ -141,9 +141,13 @@ COPY sdk/ ./sdk/
 COPY frontend/src/lib/stores/customCssRules.json ./frontend/src/lib/stores/customCssRules.json
 
 # Only the binaries stay in this layer, which keeps the build cache small. A
-# profile's output folder is target/<profile name>.
+# profile's output folder is target/<profile name>. Each binary links the
+# whole server, and two fat-LTO links at once run the 16 GB arm64 runner out
+# of memory: the tool links first, then the second command, with the same
+# features as the first, only links the server.
 RUN --mount=type=cache,id=droppedneedle-sccache,target=/sccache,sharing=locked \
-    with-sccache cargo build --profile "$CARGO_PROFILE" --locked --manifest-path server/Cargo.toml --bins -p droppedneedle -p droppedneedle-tool \
+    with-sccache cargo build --profile "$CARGO_PROFILE" --locked --manifest-path server/Cargo.toml --bins -p droppedneedle-tool \
+    && with-sccache cargo build --profile "$CARGO_PROFILE" --locked --manifest-path server/Cargo.toml --bins -p droppedneedle -p droppedneedle-tool \
     && mkdir /out \
     && cp "server/target/$CARGO_PROFILE/droppedneedle" "server/target/$CARGO_PROFILE/droppedneedle-tool" /out/ \
     && rm -rf server/target \
