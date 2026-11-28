@@ -783,7 +783,8 @@ Run from the repo root. `make help` lists every target.
   under a library folder, and a read takes one version. It gives way to
   scans, to the loudness loop while it has files due that it can read, and
   to anyone playing through a transcode. A sound vector is never a track's
-  identity: nothing merges, links or de-duplicates tracks by it, and only
+  identity: nothing merges, links or de-duplicates tracks by it (a list of
+  similar tracks may still leave out a near copy), and only
   `library/src/sound/` reads its table (`source_gates.rs`,
   `nothing_joins_tracks_on_a_sound_vector`).
 
