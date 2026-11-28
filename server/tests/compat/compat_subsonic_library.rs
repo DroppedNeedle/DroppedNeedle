@@ -720,6 +720,9 @@ async fn sound_answers_similar_songs_and_the_sonic_endpoints() {
     assert_eq!(steps[0]["similarity"], json!(1.0), "{steps}");
     assert_golden("subsonic_sonic_match.json", &trace.body());
 
+    let id = regex::Regex::new("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+        .expect("id pattern");
+    let time = regex::Regex::new(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z").expect("time");
     for (method, form) in [("GET", false), ("POST", true)] {
         let pairs = [("id", airbag.as_str()), ("count", "1")];
         let answer = if form {
@@ -728,9 +731,6 @@ async fn sound_answers_similar_songs_and_the_sonic_endpoints() {
             client.get("getSonicSimilarTracks", &pairs).await
         };
         assert_eq!(answer.content_type(), "application/xml", "{method}");
-        let id = regex::Regex::new("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
-            .expect("id pattern");
-        let time = regex::Regex::new(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z").expect("time");
         let xml = answer.text().replace(
             &format!("serverVersion=\"{}\"", env!("CARGO_PKG_VERSION")),
             "serverVersion=\"<version>\"",
