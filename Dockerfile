@@ -13,7 +13,7 @@ ARG SCCACHE=off
 # The Node base image names the exact version in .github/node-version, and
 # the Rust build installs the one rust-toolchain.toml names; CI fails when
 # they drift apart.
-FROM node:22.23.4-bookworm-slim AS frontend
+FROM node:26.13.1-bookworm-slim AS frontend
 
 WORKDIR /app/frontend
 
