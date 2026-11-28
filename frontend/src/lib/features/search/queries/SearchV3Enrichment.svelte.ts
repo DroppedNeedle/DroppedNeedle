@@ -77,7 +77,10 @@ export class SearchEnrichCollector {
 	requestAlbum(album: Album): void {
 		if (this.#disposed || album.listen_count != null) return;
 		if (album.local_id === album.musicbrainz_id) return;
-		if (this.#sentAlbums.has(album.musicbrainz_id) || this.#pendingAlbums.has(album.musicbrainz_id)) {
+		if (
+			this.#sentAlbums.has(album.musicbrainz_id) ||
+			this.#pendingAlbums.has(album.musicbrainz_id)
+		) {
 			return;
 		}
 		if (this.#sentAlbums.size + this.#pendingAlbums.size >= MAX_ENRICH_IDS_PER_BUCKET) return;
