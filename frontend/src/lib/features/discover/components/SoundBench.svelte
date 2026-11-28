@@ -200,8 +200,8 @@
 						<p class="dn-bench__seed-title">{seed.title}</p>
 						<p class="dn-bench__small">{seed.artist_name}</p>
 						<p class="dn-bench__small">
-							{#if length(seed.duration_seconds)}{length(seed.duration_seconds)} -
-							{/if}On your shelves
+							{#if length(seed.duration_seconds)}{`${length(seed.duration_seconds)} - `}{/if}On your
+							shelves
 						</p>
 					</div>
 				</div>
