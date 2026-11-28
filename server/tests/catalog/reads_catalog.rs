@@ -2264,6 +2264,410 @@ async fn a_song_nothing_places_is_asked_again_after_a_day() {
     assert_eq!(searches(), 2, "a miss older than a day is asked again");
 }
 
+#[tokio::test]
+async fn fill_artist_images_skips_mb_when_audiodb_off_or_name_fallback_off() {
+    use droppedneedle_providers::test_support::ScriptedWire;
+    use droppedneedle_providers::{ProviderEndpoints, audiodb};
+
+    struct AudioDbSettings {
+        inner: TestSettings,
+        enabled: bool,
+        name_fallback: bool,
+    }
+    impl CatalogSettings for AudioDbSettings {
+        fn musicbrainz(&self) -> Option<MusicBrainzSettings> {
+            self.inner.musicbrainz()
+        }
+        fn preferences(&self) -> UserPreferences {
+            self.inner.preferences()
+        }
+        fn advanced(&self) -> AdvancedSettings {
+            AdvancedSettings {
+                audiodb_enabled: self.enabled,
+                audiodb_name_search_fallback: self.name_fallback,
+                ..self.inner.advanced()
+            }
+        }
+        fn listenbrainz_enabled(&self) -> bool {
+            self.inner.listenbrainz_enabled()
+        }
+        fn store_region(&self) -> Option<String> {
+            self.inner.store_region()
+        }
+    }
+
+    let mb = "http://127.0.0.1:9/ws/2";
+    let wire = Arc::new(ScriptedWire::new());
+    let audiodb_url = format!("{}/123/artist-mb.php", audiodb::DEFAULT_BASE_URL);
+    wire.answer(
+        &audiodb_url,
+        200,
+        &[],
+        audiodb_fixture("artist_mb_found.json"),
+    );
+    let providers = Arc::new(Providers::over_wire(
+        wire.clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ProviderEndpoints {
+            audiodb: audiodb::DEFAULT_BASE_URL.to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    ));
+    let dir = crate::common::ScratchDir::new("reads-catalog-audiodb-fill");
+    crate::common::migrated_db(&dir.join("app.db"));
+    let rig = AuthRig::new("reads-catalog-audiodb-fill").await;
+
+    let off = catalog_on(
+        Upstream::new(
+            providers.clone(),
+            Arc::new(AudioDbSettings {
+                inner: TestSettings {
+                    mb_url: mb.to_owned(),
+                },
+                enabled: false,
+                name_fallback: false,
+            }),
+            rig.deps.clone(),
+            crate::common::listening_store(&rig.platform),
+        ),
+        &dir,
+    );
+    assert!(!off.fill_artist_images(ARTIST).await);
+    assert!(
+        wire.sent().is_empty(),
+        "audiodb_enabled = false must send 0 MB and 0 AudioDB calls"
+    );
+
+    let on_mbid_only = catalog_on(
+        Upstream::new(
+            providers,
+            Arc::new(AudioDbSettings {
+                inner: TestSettings {
+                    mb_url: mb.to_owned(),
+                },
+                enabled: true,
+                name_fallback: false,
+            }),
+            rig.deps.clone(),
+            crate::common::listening_store(&rig.platform),
+        ),
+        &dir,
+    );
+    assert!(on_mbid_only.fill_artist_images(ARTIST).await);
+    let sent = wire.sent();
+    assert_eq!(sent.len(), 1, "only AudioDB artist-mb lookup should fire");
+    assert!(
+        sent[0].url.path().ends_with("/artist-mb.php"),
+        "expected AudioDB artist-mb.php, got {}",
+        sent[0].url
+    );
+}
+
+#[tokio::test]
+async fn owned_top_songs_skip_mb_and_keep_owned_track_numbers() {
+    use droppedneedle_kernel::db::Lane;
+    use droppedneedle_kernel::runtime_config::sections::ListenSource;
+    use droppedneedle_providers::test_support::ScriptedWire;
+    use droppedneedle_providers::{ProviderEndpoints, listenbrainz};
+
+    const REC_OWNED: &str = "11111111-2222-4333-8444-555555555555";
+    const REC_UNOWNED: &str = "22222222-3333-4444-8555-666666666666";
+    const SHARED_REL: &str = "33333333-4444-4555-8666-777777777777";
+    const LOCAL_RG: &str = "44444444-5555-4666-8777-888888888888";
+
+    let mb = "http://127.0.0.1:9/ws/2";
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        &format!(
+            "{}/1/popularity/top-recordings-for-artist/{ARTIST}",
+            listenbrainz::DEFAULT_BASE_URL
+        ),
+        200,
+        &[],
+        json!([
+            {
+                "recording_mbid": REC_OWNED,
+                "recording_name": "Owned Song",
+                "artist_name": "Radiohead",
+                "release_mbid": SHARED_REL,
+                "total_listen_count": 500
+            },
+            {
+                "recording_mbid": REC_UNOWNED,
+                "recording_name": "Unowned Song",
+                "artist_name": "Radiohead",
+                "release_mbid": SHARED_REL,
+                "total_listen_count": 400
+            }
+        ])
+        .to_string(),
+    );
+    // Shared release returns disc 1 track 9 for REC_OWNED and disc 1 track 3 for REC_UNOWNED.
+    wire.answer(
+        &format!("{mb}/release/{SHARED_REL}"),
+        200,
+        &[],
+        json!({
+            "id": SHARED_REL,
+            "title": "Shared Release",
+            "media": [{
+                "position": 1,
+                "tracks": [
+                    {"id": "rt-1", "position": 9, "title": "Owned Song", "recording": {"id": REC_OWNED, "title": "Owned Song"}},
+                    {"id": "rt-2", "position": 3, "title": "Unowned Song", "recording": {"id": REC_UNOWNED, "title": "Unowned Song"}}
+                ]
+            }]
+        })
+        .to_string(),
+    );
+    // Unowned song recording lookup returns an official studio album (no search needed!).
+    wire.answer(
+        &format!("{mb}/recording/{REC_UNOWNED}"),
+        200,
+        &[],
+        json!({
+            "id": REC_UNOWNED,
+            "title": "Unowned Song",
+            "releases": [{
+                "id": SHARED_REL,
+                "title": "Shared Release",
+                "status": "Official",
+                "date": "2000-01-01",
+                "release-group": {"id": OK_COMPUTER, "primary-type": "Album", "secondary-types": []}
+            }]
+        })
+        .to_string(),
+    );
+
+    let providers = Arc::new(Providers::over_wire(
+        wire.clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ProviderEndpoints {
+            listenbrainz: listenbrainz::DEFAULT_BASE_URL.to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    ));
+    let dir = crate::common::ScratchDir::new("reads-catalog-owned-top-songs");
+    let db_path = dir.join("app.db");
+    crate::common::migrated_db(&db_path);
+    let db = droppedneedle_kernel::db::Db::open_for_tests(&db_path).unwrap();
+    db.write(Lane::Foreground, "seed owned track", move |tx| {
+        tx.execute_batch(&format!(
+            "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+             VALUES ('a1', 'Radiohead', 'radiohead', 'group', 1, 1); \
+             INSERT INTO local_artist_external_identities (local_artist_id, provider, provider_artist_id, decision_source, selected_at) \
+             VALUES ('a1', 'musicbrainz', '{ARTIST}', 'manual', 1); \
+             INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, album_artist_name, album_artist_name_folded, album_artist_id, grouping_source, created_at, updated_at, has_indexed_track) \
+             VALUES ('al1', 'r1', 'g1', 'My Edition', 'my edition', 'Radiohead', 'radiohead', 'a1', 'automatic', 1, 1, 1); \
+             INSERT INTO local_album_external_identities (local_album_id, provider, release_group_mbid, decision_source, selected_at) \
+             VALUES ('al1', 'musicbrainz', '{LOCAL_RG}', 'manual', 1); \
+             INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, album_title, album_title_folded, disc_number, track_number, file_format, availability, ingest_source, imported_at, membership_source) \
+             VALUES ('t1', 'al1', 'r1', '/music/owned.flac', 'owned.flac', 'h1', 1, 1, 's1', 'Owned Song', 'owned song', 'My Edition', 'my edition', 2, 5, 'flac', 'indexed', 'scan', 1, 'automatic'); \
+             INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role, credited_name) \
+             VALUES ('t1', 0, 'a1', 'main', 'Radiohead'); \
+             INSERT INTO local_track_external_identities (local_track_id, provider, recording_mbid, decision_source, selected_at) \
+             VALUES ('t1', 'musicbrainz', '{REC_OWNED}', 'manual', 1);"
+        ))?;
+        Ok::<_, droppedneedle_kernel::db::DbError>(())
+    })
+    .await
+    .unwrap();
+
+    let rig = AuthRig::new("reads-catalog-owned-top-songs").await;
+    rig.seed_user("ada", Role::User).await;
+    link_listenbrainz(&rig).await;
+    let catalog = catalog_on(
+        Upstream::new(
+            providers.clone(),
+            Arc::new(TestSettings {
+                mb_url: mb.to_owned(),
+            }),
+            rig.deps.clone(),
+            crate::common::listening_store(&rig.platform),
+        ),
+        &dir,
+    );
+
+    // First call triggers background warming for the unowned song only.
+    let first = catalog
+        .artist_page_top_songs(USER, ARTIST, 5, Some(ListenSource::Listenbrainz))
+        .await
+        .unwrap();
+    assert_eq!(first.songs[0].disc_number, Some(2));
+    assert_eq!(first.songs[0].track_number, Some(5));
+    assert_eq!(first.songs[0].release_group_mbid.as_deref(), Some(LOCAL_RG));
+
+    // Wait for background release & recording warming to commit to cache.
+    for _ in 0..200 {
+        providers.cache.forget(&[]).await;
+        let mb_rows = providers
+            .cache
+            .stats()
+            .await
+            .iter()
+            .find(|stats| stats.source == droppedneedle_providers::Source::MusicBrainz)
+            .map_or(0, |stats| stats.rows);
+        let sent = wire.sent();
+        if mb_rows >= 2
+            && sent.iter().any(|s| s.url.path().ends_with(SHARED_REL))
+            && sent.iter().any(|s| s.url.path().ends_with(REC_UNOWNED))
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    // Second call reads the now-cached shared release: owned song must keep disc 2 track 5!
+    let second = catalog
+        .artist_page_top_songs(USER, ARTIST, 5, Some(ListenSource::Listenbrainz))
+        .await
+        .unwrap();
+    assert_eq!(
+        second.songs[0].disc_number,
+        Some(2),
+        "owned song disc_number must not be clobbered by shared release"
+    );
+    assert_eq!(
+        second.songs[0].track_number,
+        Some(5),
+        "owned song track_number must not be clobbered by shared release"
+    );
+    assert_eq!(second.songs[1].disc_number, Some(1));
+    assert_eq!(second.songs[1].track_number, Some(3));
+    assert_eq!(
+        second.songs[1].release_group_mbid.as_deref(),
+        Some(OK_COMPUTER)
+    );
+
+    let sent = wire.sent();
+    assert!(
+        !sent.iter().any(|s| s.url.path().ends_with(REC_OWNED)),
+        "owned song must not trigger lookup_recording"
+    );
+    assert!(
+        !sent
+            .iter()
+            .any(|s| s.url.path().ends_with("/ws/2/recording")),
+        "unowned song with official album release must skip search_recordings_query: {sent:?}"
+    );
+}
+
+#[tokio::test]
+async fn warm_song_group_falls_back_to_search_for_compilation_only_recording() {
+    use droppedneedle_kernel::runtime_config::sections::ListenSource;
+    use droppedneedle_providers::test_support::ScriptedWire;
+    use droppedneedle_providers::{ProviderEndpoints, listenbrainz};
+
+    const REC_COMP: &str = "55555555-6666-4777-8888-999999999999";
+    const COMP_RG: &str = "66666666-7777-4888-8999-aaaaaaaaaaaa";
+    const COMP_REL: &str = "77777777-8888-4999-8aaa-bbbbbbbbbbbb";
+
+    let mb = "http://127.0.0.1:9/ws/2";
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        &format!(
+            "{}/1/popularity/top-recordings-for-artist/{ARTIST}",
+            listenbrainz::DEFAULT_BASE_URL
+        ),
+        200,
+        &[],
+        json!([{
+            "recording_mbid": REC_COMP,
+            "recording_name": "Karma Police",
+            "artist_name": "Radiohead",
+            "total_listen_count": 300
+        }])
+        .to_string(),
+    );
+    wire.answer(
+        &format!("{mb}/recording/{REC_COMP}"),
+        200,
+        &[],
+        json!({
+            "id": REC_COMP,
+            "title": "Karma Police",
+            "releases": [{
+                "id": COMP_REL,
+                "title": "Greatest Hits",
+                "status": "Official",
+                "date": "2008-01-01",
+                "release-group": {"id": COMP_RG, "primary-type": "Album", "secondary-types": ["Compilation"]}
+            }]
+        })
+        .to_string(),
+    );
+    wire.answer(
+        &format!("{mb}/recording"),
+        200,
+        &[],
+        json!({
+            "count": 1,
+            "offset": 0,
+            "recordings": [{
+                "id": REC_COMP,
+                "title": "Karma Police",
+                "releases": [{
+                    "id": RELEASE_CD,
+                    "title": "OK Computer",
+                    "status": "Official",
+                    "date": "1997-06-16",
+                    "release-group": {"id": OK_COMPUTER, "primary-type": "Album", "secondary-types": []}
+                }]
+            }]
+        })
+        .to_string(),
+    );
+    let providers = Arc::new(Providers::over_wire(
+        wire.clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ProviderEndpoints {
+            listenbrainz: listenbrainz::DEFAULT_BASE_URL.to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    ));
+    let dir = crate::common::ScratchDir::new("reads-catalog-comp-fallback");
+    crate::common::migrated_db(&dir.join("app.db"));
+    let rig = AuthRig::new("reads-catalog-comp-fallback").await;
+    rig.seed_user("ada", Role::User).await;
+    link_listenbrainz(&rig).await;
+    let catalog = catalog_on(
+        Upstream::new(
+            providers,
+            Arc::new(TestSettings {
+                mb_url: mb.to_owned(),
+            }),
+            rig.deps.clone(),
+            crate::common::listening_store(&rig.platform),
+        ),
+        &dir,
+    );
+
+    catalog
+        .artist_page_top_songs(USER, ARTIST, 5, Some(ListenSource::Listenbrainz))
+        .await
+        .unwrap();
+    for _ in 0..200 {
+        if wire
+            .sent()
+            .iter()
+            .any(|s| s.url.path().ends_with("/ws/2/recording"))
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let sent = wire.sent();
+    assert!(
+        sent.iter().any(|s| s.url.path().ends_with(REC_COMP)),
+        "lookup_recording must run first"
+    );
+    assert!(
+        sent.iter()
+            .any(|s| s.url.path().ends_with("/ws/2/recording")),
+        "compilation-only lookup_recording must fall back to search_recordings_query"
+    );
+}
+
 /// Now, by the system clock the cache under test runs on.
 fn unix_now() -> u64 {
     use droppedneedle_kernel::clock::Clock as _;

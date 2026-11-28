@@ -865,9 +865,11 @@ impl Catalog {
                 continue;
             };
             for song in songs.iter_mut().filter(|song| {
-                song.original_release_mbid
-                    .as_deref()
-                    .is_some_and(|id| id.eq_ignore_ascii_case(&release))
+                !(song.disc_number.is_some() && song.track_number.is_some())
+                    && song
+                        .original_release_mbid
+                        .as_deref()
+                        .is_some_and(|id| id.eq_ignore_ascii_case(&release))
             }) {
                 let Some(recording) = song.recording_mbid.as_deref() else {
                     continue;

@@ -685,6 +685,8 @@ async fn follow_poll_baselines_then_emits() {
             "INSERT INTO auth_users (id, display_name, role, created_at) VALUES \
                ('user-1', 'Admin', 'admin', 0), \
                ('user-2', 'Pending', 'user', 0); \
+             INSERT INTO auth_tokens (id, user_id, token_hash, issued_at, expires_at, last_seen_at) VALUES \
+               ('tok-1', 'user-1', 'hash-1', 1, 9999999999000, 9999999999000); \
              INSERT INTO acquire_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
                artist_name, auto_download, followed_at, updated_at) VALUES \
                ('user-2', 'Artist-1', 'artist-1', 'The Band', 1, 1, 1), \
@@ -735,6 +737,7 @@ async fn follow_poll_baselines_then_emits() {
         ),
         providers.cache.clone(),
         providers.cache.clock(),
+        None,
     );
     let library = Arc::new(LibraryPresence::over_catalog(db.db().clone()));
     library.add(&["rg-owned"]);
@@ -1004,6 +1007,8 @@ async fn seed_approved_follower(db: &AcquireDb) {
         tx.execute_batch(
             "INSERT INTO auth_users (id, display_name, role, created_at) VALUES \
                ('user-2', 'Listener', 'user', 0); \
+             INSERT INTO auth_tokens (id, user_id, token_hash, issued_at, expires_at, last_seen_at) VALUES \
+               ('tok-2', 'user-2', 'hash-2', 1, 9999999999000, 9999999999000); \
              INSERT INTO acquire_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
                artist_name, auto_download, followed_at, updated_at) VALUES \
                ('user-2', 'Artist-1', 'artist-1', 'The Band', 1, 1, 1); \
@@ -1063,6 +1068,7 @@ async fn follow_rig(
         ),
         providers.cache.clone(),
         providers.cache.clock(),
+        None,
     );
     let downloads = dispatch(db, settings);
     let requests = Arc::new(RequestsService::new(&RequestsState {
@@ -1095,6 +1101,8 @@ async fn follow_poll_names_a_placeholder_follow() {
             "INSERT INTO auth_users (id, display_name, role, created_at) VALUES \
                ('user-1', 'Admin', 'admin', 0), \
                ('user-2', 'Listener', 'user', 0); \
+             INSERT INTO auth_tokens (id, user_id, token_hash, issued_at, expires_at, last_seen_at) VALUES \
+               ('tok-ph', 'user-1', 'hash-ph', 1, 9999999999000, 9999999999000); \
              INSERT INTO acquire_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
                artist_name, auto_download, followed_at, updated_at) VALUES \
                ('user-1', 'Artist-1', 'artist-1', 'Unknown Artist', 1, 1, 1), \
@@ -1464,39 +1472,75 @@ async fn follow_poll_pauses_when_no_user_seen_in_30_days() {
         paused.artists_polled, 0,
         "follow poll must pause when no user has been seen in 30 days"
     );
+
+    // Even after expired tokens are swept from auth_tokens, an idle server stays paused.
+    db.write("sweep dead tokens", |tx| {
+        tx.execute("DELETE FROM auth_tokens", [])?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let still_paused = follow_tick(NOW + 86_400, &deps).await;
+    assert_eq!(
+        still_paused.artists_polled, 0,
+        "follow poll must remain paused once expired tokens are swept"
+    );
 }
 
 #[tokio::test]
 async fn follow_poll_reads_fresh_feed_without_musicbrainz_calls_and_caches_fallback() {
     use droppedneedle_catalog::discover::listening::fresh;
+    use std::sync::Mutex;
 
     const MB: &str = "http://musicbrainz.test/ws/2";
     const ARTIST_MBID: &str = "artist-1";
 
     let db = AcquireDb::scratch().unwrap();
     db.add_user("user-1", "Ada", "admin").await.unwrap();
+    db.write("seed active token and auto-download follow", |tx| {
+        tx.execute_batch(
+            "INSERT INTO auth_tokens (id, user_id, token_hash, issued_at, expires_at, last_seen_at) \
+               VALUES ('tok-active', 'user-1', 'hash-active', 1, 9999999999000, 9999999999000); \
+             INSERT INTO acquire_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
+               artist_name, auto_download, followed_at, updated_at) VALUES \
+               ('user-1', 'artist-1', 'artist-1', 'The Band', 1, 1, 1);",
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
     let follows = Follows::new(db.clone());
-    follows
-        .set_follow("user-1", ARTIST_MBID, true, Some("The Band".to_owned()))
-        .await
-        .unwrap();
 
     let wire = Arc::new(ScriptedWire::new());
     let json = [("content-type", "application/json")];
     let url = format!("{MB}/release-group");
+    // Poll 1 (Day 1): baseline with old album.
     wire.answer(
         &url,
         200,
         &json,
         browse_page(&[("rg-old", "2020-01-01", "Album", &[])]),
     );
+    // Poll 2 (Day 9, after 7d cache expires): announces upcoming album rg-future (2024-06-11).
     wire.answer(
         &url,
         200,
         &json,
         browse_page(&[
             ("rg-old", "2020-01-01", "Album", &[]),
-            ("rg-mb-new", "2024-06-01", "Album", &[]),
+            ("rg-future", "2024-06-11", "Album", &[]),
+        ]),
+    );
+    // Poll 3 (Day 17, after next 7d cache expires): reveals rg-mb-missed dated 2024-06-10
+    // (during the cached week, missed by fresh_feed).
+    wire.answer(
+        &url,
+        200,
+        &json,
+        browse_page(&[
+            ("rg-old", "2020-01-01", "Album", &[]),
+            ("rg-future", "2024-06-11", "Album", &[]),
+            ("rg-mb-missed", "2024-06-10", "Album", &[]),
         ]),
     );
     let clock = droppedneedle_kernel::test_support::ManualClock::at(NOW * 1_000);
@@ -1515,6 +1559,7 @@ async fn follow_poll_reads_fresh_feed_without_musicbrainz_calls_and_caches_fallb
         ),
         providers.cache.clone(),
         providers.cache.clock(),
+        None,
     );
     let settings = settings(&db);
     let downloads = dispatch(&db, &settings);
@@ -1523,6 +1568,8 @@ async fn follow_poll_reads_fresh_feed_without_musicbrainz_calls_and_caches_fallb
         dispatch: downloads.clone(),
         ..requests_over(&db).await
     }));
+    let today_val = Arc::new(Mutex::new("2024-06-01".to_owned()));
+    let today_reader = Arc::clone(&today_val);
     let deps = FollowDeps {
         follows,
         poll: Arc::new(poll),
@@ -1531,68 +1578,81 @@ async fn follow_poll_reads_fresh_feed_without_musicbrainz_calls_and_caches_fallb
         library: Arc::new(LibraryPresence::over_catalog(db.db().clone())),
         ticks: ticks(&db, &EventHub::new()).await,
         preferences: settings.live(),
-        today: Arc::new(|| "2024-06-01".to_owned()),
+        today: Arc::new(move || today_reader.lock().unwrap().clone()),
     };
 
+    // Day 1: baseline browses MusicBrainz once.
     let first = follow_tick(NOW, &deps).await;
     assert_eq!(first.baselined, 1);
-    assert_eq!(
-        wire.sent().len(),
-        1,
-        "initial baseline browses MusicBrainz once"
-    );
+    assert_eq!(wire.sent().len(), 1);
 
-    // Seed fresh_feed with a new release for the followed artist.
+    // Day 9: weekly MB refresh discovers upcoming rg-future (2024-06-11) -> pending, not queued yet.
+    *today_val.lock().unwrap() = "2024-06-09".to_owned();
+    clock.advance(8 * 86_400 * 1_000);
+    let announced = follow_tick(NOW + 8 * 86_400, &deps).await;
+    assert_eq!(announced.new_releases, 1);
+    assert_eq!(announced.enqueued, 0, "future album waits for release day");
+    assert_eq!(wire.sent().len(), 2);
+
+    // Day 10: fresh_feed has rg-fresh (NOT rg-future). Must make 0 MB calls,
+    // surface rg-fresh, AND keep rg-future in pending.
+    *today_val.lock().unwrap() = "2024-06-10".to_owned();
+    clock.advance(86_400 * 1_000);
     let feed = serde_json::json!({
-        "read_at": (NOW + 86_400) * 1_000,
+        "read_at": (NOW + 9 * 86_400) * 1_000,
         "rows": [{
             "release_group_mbid": "rg-fresh",
             "title": "Fresh Album",
             "artist_name": "The Band",
             "artist_mbids": [ARTIST_MBID],
-            "release_date": "2024-06-01",
+            "release_date": "2024-06-10",
             "primary_type": "Album",
             "secondary_type": null
         }]
     });
-    clock.advance(86_400 * 1_000);
     providers.cache.set_bytes(
         &fresh::key(),
         serde_json::to_vec(&feed).unwrap(),
         Duration::from_secs(24 * 3_600),
     );
-    let second = follow_tick(NOW + 86_400, &deps).await;
-    assert_eq!(
-        second.new_releases, 1,
-        "fresh_feed surfaces the new release"
-    );
+    let day10 = follow_tick(NOW + 9 * 86_400, &deps).await;
+    assert_eq!(day10.new_releases, 1, "fresh_feed surfaces rg-fresh");
+    assert_eq!(day10.enqueued, 1, "rg-fresh queues immediately");
     assert_eq!(
         wire.sent().len(),
-        1,
-        "fresh_feed path makes 0 MusicBrainz calls"
+        2,
+        "fresh_feed overlay uses cached MB browse with 0 MusicBrainz calls"
     );
 
-    // Without fresh_feed, inside the 7-day MB cache window, poll hits cache with 0 MB calls.
-    providers.cache.forget(&[fresh::key()]).await;
+    // Day 11: rg-future reaches release date (2024-06-11) inside the 7-day cache
+    // window without being in fresh_feed; must still enqueue with 0 MB calls!
+    *today_val.lock().unwrap() = "2024-06-11".to_owned();
     clock.advance(86_400 * 1_000);
-    let third = follow_tick(NOW + 2 * 86_400, &deps).await;
-    assert_eq!(third.artists_polled, 1);
+    let day11 = follow_tick(NOW + 10 * 86_400, &deps).await;
     assert_eq!(
-        wire.sent().len(),
-        1,
-        "7-day MB cache avoids re-browsing MusicBrainz"
-    );
-
-    // After 7 days, weekly reconciliation browses MusicBrainz again.
-    clock.advance(7 * 86_400 * 1_000);
-    let fourth = follow_tick(NOW + 9 * 86_400, &deps).await;
-    assert_eq!(
-        fourth.new_releases, 1,
-        "weekly MB fallback picks up rg-mb-new"
+        day11.enqueued, 1,
+        "pending rg-future must survive fresh_feed ticks and queue on release day"
     );
     assert_eq!(
         wire.sent().len(),
         2,
+        "7-day MB cache avoids re-browsing MusicBrainz"
+    );
+
+    // Day 17: 7-day MB cache expires; weekly reconciliation browses MB again
+    // and catches rg-mb-missed (dated 2024-06-10) because cursor_date stayed at
+    // 2024-06-09 during cached ticks.
+    *today_val.lock().unwrap() = "2024-06-17".to_owned();
+    providers.cache.forget(&[fresh::key()]).await;
+    clock.advance(6 * 86_400 * 1_000);
+    let day17 = follow_tick(NOW + 16 * 86_400, &deps).await;
+    assert_eq!(
+        day17.new_releases, 1,
+        "weekly MB fallback must catch releases dated during the 7-day cache window"
+    );
+    assert_eq!(
+        wire.sent().len(),
+        3,
         "weekly MB fallback runs once after 7 days"
     );
 }

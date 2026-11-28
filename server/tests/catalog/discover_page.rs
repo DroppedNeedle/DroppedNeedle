@@ -1892,3 +1892,28 @@ async fn what_a_person_hid_leaves_the_served_page_at_once() {
         "home's weekly playlist leaves out the hidden artist's song"
     );
 }
+
+#[tokio::test]
+async fn weekly_exploration_uses_caa_release_cover_without_mb_fanout() {
+    let dir = crate::common::ScratchDir::new("discover-weekly-caa");
+    let rig = AuthRig::new("discover-weekly-caa").await;
+    seed_user(&rig.platform.db).await;
+    let rel = mbid('c', 1);
+    let mut playlist = weekly_playlist("2023-12-31T23:00:00.054723+00:00");
+    playlist.tracks[0].caa_release_mbid = Some(rel.clone());
+    let script = Script {
+        weekly: Some(playlist),
+        ..page_script()
+    };
+    let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |network| {
+        *network = Arc::new(script);
+    }));
+    call(&app, "GET", "/api/v3/discover", None).await;
+    let page = settled_page(&rig, &app, "weekly page built with caa cover").await;
+    let track = &content(&page, "weekly_exploration")["weekly"]["tracks"][0];
+    assert_eq!(
+        track["cover_url"],
+        format!("/api/v3/covers/release/{rel}?size=250"),
+        "weekly exploration must fall back to the release cover directly without MB fan-out: {track}"
+    );
+}

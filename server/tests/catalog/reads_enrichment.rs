@@ -242,6 +242,28 @@ async fn a_singles_only_artist_still_has_a_count() {
         1,
         "two artists must be fetched in one batch call without requiring a user token"
     );
+    let (status, again) = app
+        .call(
+            "POST",
+            "/api/v3/search/enrich/batch",
+            &auth,
+            Some(serde_json::json!({
+                "artists": [
+                    {"musicbrainz_id": "artist-mbid-1", "name": "Portishead"},
+                    {"musicbrainz_id": "artist-mbid-3", "name": "Singles"},
+                ],
+                "albums": [],
+            })),
+        )
+        .await;
+    assert!(status.is_success(), "{status} {again}");
+    assert_eq!(again["artists"][0]["listen_count"], 4_000_000, "{again}");
+    assert_eq!(again["artists"][1]["listen_count"], 5_000, "{again}");
+    assert_eq!(
+        artist_calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "repeat artist search enrichment must hit provider cache with 0 new LB calls"
+    );
     app.stop().await;
     server.abort();
 }

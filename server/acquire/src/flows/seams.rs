@@ -32,6 +32,11 @@ pub struct PolledArtist {
     pub artist_name: Option<String>,
     /// Every release group of the artist, in any order.
     pub releases: Vec<ObservedRelease>,
+    /// True when the MusicBrainz browse came from the 7-day provider cache
+    /// rather than a live MusicBrainz read, so the follow loop preserves
+    /// `cursor_date` until the next live MusicBrainz reconciliation.
+    #[serde(skip)]
+    pub from_cache: bool,
 }
 
 /// Follow-poll provider seam: one artist's release-group page.
@@ -42,18 +47,6 @@ pub trait ReleasePoll: Send + Sync {
         &'a self,
         artist_mbid: &'a str,
     ) -> BoxFuture<'a, Result<PolledArtist, String>>;
-
-    /// Poll releases for an artist, knowing whether it is already baselined.
-    /// Production implementations may answer already-baselined artists from
-    /// Discover's daily `fresh_feed` within the weekly MusicBrainz fallback
-    /// window without hitting MusicBrainz.
-    fn poll_releases_for<'a>(
-        &'a self,
-        artist_mbid: &'a str,
-        _baselined: bool,
-    ) -> BoxFuture<'a, Result<PolledArtist, String>> {
-        self.poll_releases(artist_mbid)
-    }
 }
 
 /// Durable tick sink. Each tick is emitted at its durable state

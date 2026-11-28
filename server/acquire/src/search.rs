@@ -1,10 +1,11 @@
-//! Release polling for the flows loops: [`MusicBrainzReleasePoll`] reads a
-//! followed artist's release groups for the follow poll, reading Discover's
-//! shared `fresh_feed` first for already-baselined artists and caching
-//! MusicBrainz browse responses in `ProviderCacheStore` for 7 days.
+//! Release polling for the flows loops: [`MusicBrainzReleasePoll`] caches a
+//! followed artist's MusicBrainz release groups in `ProviderCacheStore` for 7
+//! days and overlays Discover's daily `fresh_feed` on top, so daily ticks make
+//! 0 MusicBrainz calls during the week while preserving every pending release.
 
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
@@ -22,39 +23,86 @@ const RELEASE_PAGE: u32 = 100;
 /// Pages read per artist at most: 1,000 release groups covers all but a
 /// handful of artists, and bounds one poll's provider work.
 const MAX_RELEASE_PAGES: u32 = 10;
-/// Weekly MusicBrainz fallback cache policy for followed artists.
+/// Weekly MusicBrainz reconciliation cache policy for followed artists.
 const FOLLOW_POLL_POLICY: Policy = Policy {
     fresh: Duration::from_secs(7 * 24 * 3_600),
     miss: Duration::from_secs(6 * 3_600),
 };
+/// How long a decoded `FreshFeed` stays in memory across artists in a tick.
+const FRESH_MEMO_MS: i64 = 10 * 60_000;
 
-/// The artist's release groups and name from Discover's `fresh_feed` (when
-/// fresh and the artist is already baselined inside the 7-day MB window),
-/// falling back to MusicBrainz browse cached for 7 days in `ProviderCacheStore`.
+/// The artist's release groups and name from a 7-day cached MusicBrainz browse
+/// overlaid with Discover's daily `fresh_feed`.
 pub struct MusicBrainzReleasePoll {
     client: MusicBrainzView,
     cache: ProviderCacheStore,
     clock: Arc<dyn Clock>,
+    source: Option<LiveSource>,
+    fresh_memo: Mutex<Option<(i64, Arc<FreshFeed>)>>,
 }
 
 impl MusicBrainzReleasePoll {
-    /// Poll over one client with shared provider cache and clock.
-    pub fn new(client: MusicBrainzView, cache: ProviderCacheStore, clock: Arc<dyn Clock>) -> Self {
+    /// Poll over one client with shared provider cache, clock, and optional
+    /// live source (used for the MusicBrainz cache namespace).
+    pub fn new(
+        client: MusicBrainzView,
+        cache: ProviderCacheStore,
+        clock: Arc<dyn Clock>,
+        source: Option<LiveSource>,
+    ) -> Self {
         Self {
             client,
             cache,
             clock,
+            source,
+            fresh_memo: Mutex::new(None),
         }
     }
 
-    async fn fresh_feed_releases(&self, followed: &str) -> Option<PolledArtist> {
-        let feed: FreshFeed = self.cache.peek(&fresh::key()).await.flatten()?;
+    fn cache_key(&self, followed: &str) -> Result<CacheKey, String> {
+        let namespace = match &self.source {
+            Some(source) => source
+                .cache_namespace()
+                .ok_or_else(|| "musicbrainz settings cannot be read".to_owned())?,
+            None => "fixed".to_owned(),
+        };
+        Ok(CacheKey::new(
+            Source::MusicBrainz,
+            &[&namespace, "follow_poll", followed],
+        ))
+    }
+
+    async fn fresh_feed(&self) -> Option<Arc<FreshFeed>> {
         let now_ms = self.clock.now_ms();
+        {
+            let guard = self
+                .fresh_memo
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some((loaded_at, feed)) = guard.as_ref()
+                && now_ms.saturating_sub(*loaded_at) < FRESH_MEMO_MS
+                && now_ms.saturating_sub(feed.read_at) <= STALE_AFTER_MS
+            {
+                return Some(Arc::clone(feed));
+            }
+        }
+        let feed: FreshFeed = self.cache.peek(&fresh::key()).await.flatten()?;
         if now_ms.saturating_sub(feed.read_at) > STALE_AFTER_MS {
             return None;
         }
+        let feed = Arc::new(feed);
+        let mut guard = self
+            .fresh_memo
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *guard = Some((now_ms, Arc::clone(&feed)));
+        Some(feed)
+    }
+
+    async fn fresh_feed_releases(&self, followed: &str) -> Option<PolledArtist> {
+        let feed = self.fresh_feed().await?;
         let mut out = PolledArtist::default();
-        for row in feed.rows {
+        for row in &feed.rows {
             if !row
                 .artist_mbids
                 .iter()
@@ -62,15 +110,18 @@ impl MusicBrainzReleasePoll {
             {
                 continue;
             }
-            if out.artist_name.is_none() && !row.artist_name.trim().is_empty() {
+            if out.artist_name.is_none()
+                && row.artist_mbids.len() == 1
+                && !row.artist_name.trim().is_empty()
+            {
                 out.artist_name = Some(row.artist_name.trim().to_owned());
             }
             out.releases.push(ObservedRelease {
-                rg_mbid: row.release_group_mbid,
-                title: row.title,
-                first_release_date: Some(row.release_date).filter(|d| !d.is_empty()),
-                primary_type: row.primary_type,
-                secondary_types: row.secondary_type.into_iter().collect(),
+                rg_mbid: row.release_group_mbid.clone(),
+                title: row.title.clone(),
+                first_release_date: Some(row.release_date.clone()).filter(|d| !d.is_empty()),
+                primary_type: row.primary_type.clone(),
+                secondary_types: row.secondary_type.clone().into_iter().collect(),
             });
         }
         Some(out)
@@ -78,9 +129,11 @@ impl MusicBrainzReleasePoll {
 
     async fn browse_musicbrainz(&self, artist_mbid: &str) -> Result<PolledArtist, String> {
         let followed = artist_mbid.to_lowercase();
-        let key = CacheKey::new(Source::MusicBrainz, &["follow_poll", &followed]);
+        let key = self.cache_key(&followed)?;
         let client = self.client.clone();
         let mbid = artist_mbid.to_owned();
+        let fetched_live = Arc::new(AtomicBool::new(false));
+        let fetched_flag = Arc::clone(&fetched_live);
         let cached = self
             .cache
             .get_or_fetch(
@@ -88,6 +141,7 @@ impl MusicBrainzReleasePoll {
                 FOLLOW_POLL_POLICY,
                 RequestPriority::BackgroundSync,
                 move |_| async move {
+                    fetched_flag.store(true, Ordering::Relaxed);
                     let mut out = PolledArtist::default();
                     for page in 0..MAX_RELEASE_PAGES {
                         let offset = page * RELEASE_PAGE;
@@ -129,7 +183,9 @@ impl MusicBrainzReleasePoll {
                 },
             )
             .await?;
-        Ok(cached.unwrap_or_default())
+        let mut polled = cached.unwrap_or_default();
+        polled.from_cache = !fetched_live.load(Ordering::Relaxed);
+        Ok(polled)
     }
 }
 
@@ -138,26 +194,13 @@ impl ReleasePoll for MusicBrainzReleasePoll {
         &'a self,
         artist_mbid: &'a str,
     ) -> BoxFuture<'a, Result<PolledArtist, String>> {
-        self.poll_releases_for(artist_mbid, false)
-    }
-
-    fn poll_releases_for<'a>(
-        &'a self,
-        artist_mbid: &'a str,
-        baselined: bool,
-    ) -> BoxFuture<'a, Result<PolledArtist, String>> {
         Box::pin(async move {
             let followed = artist_mbid.to_lowercase();
-            let key = CacheKey::new(Source::MusicBrainz, &["follow_poll", &followed]);
-            if baselined
-                && self.cache.fresh(&key).await
-                && let Some(fresh_polled) = self.fresh_feed_releases(&followed).await
-            {
-                return Ok(fresh_polled);
-            }
             let mut polled = self.browse_musicbrainz(artist_mbid).await?;
-            // Merge any fresh_feed rows on top so a cached MB browse never
-            // hides a brand-new release ListenBrainz already reported today.
+            // Overlay Discover's daily fresh_feed on top of the 7-day cached
+            // MusicBrainz browse so new releases surface immediately while
+            // keeping all cached MusicBrainz rows (including upcoming pending
+            // releases) intact.
             if let Some(fresh_polled) = self.fresh_feed_releases(&followed).await {
                 if polled.artist_name.is_none() {
                     polled.artist_name = fresh_polled.artist_name;
@@ -188,8 +231,9 @@ pub fn live_release_poll(
     MusicBrainzReleasePoll::new(
         providers
             .musicbrainz
-            .live(source, RequestPriority::BackgroundSync),
+            .live(source.clone(), RequestPriority::BackgroundSync),
         providers.cache.clone(),
         providers.cache.clock(),
+        Some(source),
     )
 }

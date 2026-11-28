@@ -173,7 +173,6 @@ impl Catalog {
         priority: droppedneedle_providers::RequestPriority,
     ) -> ArtistImageCandidates {
         let mut candidates = ArtistImageCandidates::default();
-        let mut detail = None;
         if priority.is_user_facing() {
             let cached = self.page_artist_images(mbid, mbid).await;
             if let Some(thumb) = cached.and_then(|images| images.thumb_url) {
@@ -185,23 +184,7 @@ impl Catalog {
         } else {
             let advanced = self.upstream().settings().advanced();
             if self.upstream().audiodb(&advanced).is_some() {
-                let (lookup_mbid, lookup_name) = if advanced.audiodb_name_search_fallback {
-                    match self.artist_detail(mbid, priority).await {
-                        Ok(Some(found)) => {
-                            let pair = (found.mbid.clone(), found.name.clone());
-                            detail = Some(found);
-                            pair
-                        }
-                        Ok(None) => return ArtistImageCandidates::default(),
-                        Err(error) => return musicbrainz_unavailable(mbid, &error),
-                    }
-                } else {
-                    (mbid.to_owned(), String::new())
-                };
-                match self
-                    .artist_images_lookup(&lookup_mbid, &lookup_name, priority)
-                    .await
-                {
+                match self.artist_images_lookup(mbid, "", priority).await {
                     Some(images) => {
                         if let Some(thumb) = images.and_then(|images| images.thumb_url) {
                             candidates
@@ -214,8 +197,7 @@ impl Catalog {
                 }
             }
         }
-        let canonical = detail.as_ref().map_or(mbid, |found| found.mbid.as_str());
-        match self.wikidata_artist_pictures(canonical, priority).await {
+        match self.wikidata_artist_pictures(mbid, priority).await {
             WikidataPictures::Matched { images, failed } => {
                 candidates.images = images;
                 candidates.incomplete |= failed;
@@ -223,28 +205,28 @@ impl Catalog {
             }
             WikidataPictures::NoMatch { failed } => candidates.incomplete |= failed,
         }
-        let detail = match detail {
-            Some(found) => found,
-            None => match self.artist_detail(mbid, priority).await {
-                Ok(Some(found)) => {
-                    // A merged MBID: TheAudioDB's answer is kept under the
-                    // artist's current one.
-                    if found.mbid != mbid
-                        && let Some(thumb) = self
-                            .cached_artist_images(&found.mbid)
-                            .await
-                            .and_then(|images| images.thumb_url)
-                    {
-                        candidates
-                            .images
-                            .push(ArtistImageCandidate::uncredited(thumb));
-                        return candidates;
-                    }
-                    found
+        if !priority.is_user_facing() && !self.has_background_mb_budget().await {
+            return candidates;
+        }
+        let detail = match self.artist_detail(mbid, priority).await {
+            Ok(Some(found)) => {
+                // A merged MBID: TheAudioDB's answer is kept under the
+                // artist's current one.
+                if found.mbid != mbid
+                    && let Some(thumb) = self
+                        .cached_artist_images(&found.mbid)
+                        .await
+                        .and_then(|images| images.thumb_url)
+                {
+                    candidates
+                        .images
+                        .push(ArtistImageCandidate::uncredited(thumb));
+                    return candidates;
                 }
-                Ok(None) => return candidates,
-                Err(error) => return musicbrainz_unavailable(mbid, &error),
-            },
+                found
+            }
+            Ok(None) => return candidates,
+            Err(error) => return musicbrainz_unavailable(mbid, &error),
         };
         let biography = self.biography(&detail, priority).await;
         // A failed portrait lookup keeps the short outage marker.
@@ -336,22 +318,7 @@ impl Catalog {
                 .await
                 .is_some_and(|images| images.thumb_url.is_some());
         }
-        if !advanced.audiodb_name_search_fallback {
-            return self
-                .artist_images_lookup(mbid, "", BACKGROUND)
-                .await
-                .flatten()
-                .is_some_and(|images| images.thumb_url.is_some());
-        }
-        let detail = match self.artist_detail(mbid, BACKGROUND).await {
-            Ok(Some(detail)) => detail,
-            Ok(None) => return false,
-            Err(error) => {
-                tracing::debug!(artist = mbid, %error, "AudioDB fill: MusicBrainz unavailable");
-                return false;
-            }
-        };
-        self.artist_images_lookup(&detail.mbid, &detail.name, BACKGROUND)
+        self.artist_images_lookup(mbid, "", BACKGROUND)
             .await
             .flatten()
             .is_some_and(|images| images.thumb_url.is_some())

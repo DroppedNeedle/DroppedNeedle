@@ -484,6 +484,24 @@ impl Catalog {
             .await
     }
 
+    /// Whether background MusicBrainz reads still have room under today's
+    /// ceiling. Only official MusicBrainz is metered; mirrors/BrainzMash
+    /// always have room.
+    pub(super) async fn has_background_mb_budget(&self) -> bool {
+        let official = self
+            .upstream()
+            .settings()
+            .musicbrainz()
+            .is_some_and(|settings| settings.source_mode == MbSourceMode::Official);
+        if !official {
+            return true;
+        }
+        crate::discover::facts::plan::room(self.facts())
+            .await
+            .unwrap_or(0)
+            > 0
+    }
+
     /// TheAudioDB images as a settled answer: `Some(None)` when AudioDB has
     /// none (or is off), `None` when it could not answer, so nothing was
     /// cached and the caller may ask again soon. AudioDB is asked at
@@ -499,6 +517,7 @@ impl Catalog {
             return Some(None);
         };
         let fallback = advanced.audiodb_name_search_fallback;
+        let catalog = self.clone();
         let (mbid, name) = (mbid.to_owned(), name.to_owned());
         let answer = self
             .upstream()
@@ -509,8 +528,22 @@ impl Catalog {
                 priority,
                 move |priority| async move {
                     let mut found = client.artist_by_mbid(&mbid, priority).await?;
-                    if found.is_none() && fallback && !name.is_empty() {
-                        found = client.search_artist(&name, priority).await?;
+                    if found.is_none() && fallback {
+                        let resolved_name = if !name.is_empty() {
+                            Some(name)
+                        } else if priority.is_user_facing()
+                            || catalog.has_background_mb_budget().await
+                        {
+                            match catalog.artist_detail(&mbid, priority).await {
+                                Ok(Some(detail)) if !detail.name.is_empty() => Some(detail.name),
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        };
+                        if let Some(resolved_name) = resolved_name {
+                            found = client.search_artist(&resolved_name, priority).await?;
+                        }
                     }
                     Ok::<_, ProviderError>(match found {
                         Some(artist) => Fetched::Found(ArtistImages {
