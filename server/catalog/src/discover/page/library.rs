@@ -20,23 +20,6 @@ pub struct LibraryAlbum {
     pub artist_mbid: Option<String>,
 }
 
-/// One library album shown on a shelf.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ShelfAlbum {
-    /// Native album id.
-    pub local_id: String,
-    /// Release-group MBID, when identified.
-    pub release_group_mbid: Option<String>,
-    /// Album title.
-    pub title: String,
-    /// Album artist name.
-    pub artist_name: Option<String>,
-    /// Album artist MBID, when identified.
-    pub artist_mbid: Option<String>,
-    /// Release year, when tagged.
-    pub year: Option<i64>,
-}
-
 /// Library reads over the reader pool.
 #[derive(Clone, Debug)]
 pub struct LibraryReads {
@@ -200,38 +183,5 @@ impl LibraryReads {
             names.extend(rows.into_iter().map(|row| (row.mbid, row.name)));
         }
         Ok(names)
-    }
-
-    /// Library albums tagged with one genre, recently changed first.
-    pub async fn albums_by_genre(
-        &self,
-        genre: &str,
-        limit: i64,
-    ) -> Result<Vec<ShelfAlbum>, String> {
-        let folded = fold(genre);
-        if folded.is_empty() {
-            return Ok(Vec::new());
-        }
-        let rows = read_all(
-            &self.db,
-            "discover.library.genre_albums",
-            sql::ALBUMS_BY_GENRE.text(),
-            (folded, limit.max(1)),
-            sql::ShelfAlbumColumns::read,
-        )
-        .await
-        .map_err(|error| format!("genre albums read: {error}"))?;
-        Ok(rows.into_iter().map(shelf_album).collect())
-    }
-}
-
-fn shelf_album(row: sql::ShelfAlbumColumns) -> ShelfAlbum {
-    ShelfAlbum {
-        local_id: row.id,
-        release_group_mbid: row.release_group_mbid,
-        title: row.title,
-        artist_name: row.album_artist_name,
-        artist_mbid: row.artist_mbid,
-        year: row.year,
     }
 }

@@ -15,9 +15,7 @@ use super::listening::band_links::{BandLinkKind, LinkDirection};
 use super::models::MixTrackKind;
 
 use crate::artwork::local::art_tracks_column;
-use crate::local::sql::{
-    OPEN_REQUEST, live_album, musicbrainz, owned_album, owned_artist, track_codec,
-};
+use crate::local::sql::{OPEN_REQUEST, musicbrainz, owned_album, owned_artist, track_codec};
 use droppedneedle_library::identity::asked_groups;
 use droppedneedle_library::{all_owners, not_yet_identified, owns_group, recording_mbid};
 
@@ -155,13 +153,7 @@ droppedneedle_kernel::sql! {
            ON aie.local_artist_id = a.album_artist_id AND ",
         musicbrainz!("aie")
     ));
-    /// Live albums tagged with one genre, recently changed first.
-    pub(super) ALBUMS_BY_GENRE = SHELF_SELECT + " WHERE " + (live_album!("a"))
-        + " AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id \
-           AND +t.availability = 'indexed' AND EXISTS (SELECT 1 FROM local_track_genres g \
-           WHERE g.local_track_id = t.id AND g.folded_name = ?1)) \
-         GROUP BY a.id ORDER BY a.updated_at DESC, a.title COLLATE NOCASE, a.id LIMIT ?2";
-    pub(super) row ShelfAlbumColumns for [ALBUMS_BY_GENRE] {
+    pub(super) row ShelfAlbumColumns for family [anniversary_albums] {
         id: String,
         release_group_mbid: Option<String>,
         title: String,
