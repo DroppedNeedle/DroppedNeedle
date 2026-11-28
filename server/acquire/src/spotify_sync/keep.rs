@@ -73,7 +73,11 @@ impl SpotifySync {
         // MusicBrainz down leaves the album for the walk's next look.
         let group = match self
             .resolver
-            .resolve(&album, RequestPriority::UserInitiated)
+            .resolve_for(
+                moved.album.source_id.as_deref(),
+                &album,
+                RequestPriority::UserInitiated,
+            )
             .await
         {
             Ok(group) => group,

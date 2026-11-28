@@ -461,7 +461,7 @@ impl SpotifyImportService {
         for (index, (album_id, album)) in albums.iter().enumerate() {
             match self
                 .resolver
-                .resolve(album, RequestPriority::BackgroundSync)
+                .resolve_for(Some(album_id), album, RequestPriority::BackgroundSync)
                 .await
             {
                 Ok(Some(group)) => {

@@ -151,6 +151,60 @@ struct IsrcReads {
     priority: RequestPriority,
 }
 
+/// Compact release proof kept in `ProviderCacheStore` for `by_search` so
+/// repeated searches across playlists do not re-fetch the same MusicBrainz
+/// release document.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ProofTrack {
+    title: Option<String>,
+    isrcs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ProofRelease {
+    title: Option<String>,
+    group_id: String,
+    primary_type: Option<String>,
+    secondary_types: Vec<String>,
+    tracks: Vec<ProofTrack>,
+}
+
+impl ProofRelease {
+    fn from_wire(release: MbRelease) -> Option<Self> {
+        let group = release.release_group?;
+        let group_id = normalize_mb_id(&group.id);
+        if !is_valid_mbid(&group_id) {
+            return None;
+        }
+        let tracks = release
+            .media
+            .iter()
+            .flat_map(|medium| &medium.tracks)
+            .map(|track: &Track| ProofTrack {
+                title: track.display_title().map(str::to_owned),
+                isrcs: track
+                    .recording
+                    .as_ref()
+                    .map(|recording| {
+                        recording
+                            .isrcs
+                            .iter()
+                            .map(|isrc| isrc.trim().to_ascii_uppercase())
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            })
+            .collect();
+        Some(Self {
+            title: release.title,
+            group_id,
+            primary_type: group.primary_type,
+            secondary_types: group.secondary_types,
+            tracks,
+        })
+    }
+}
+
 impl IsrcReads {
     /// The recordings a search for `isrc` finds, up to
     /// [`RECORDING_SEARCH_LIMIT`].
@@ -179,6 +233,35 @@ impl IsrcReads {
             })
             .await?;
         Ok(found.unwrap_or_default())
+    }
+
+    /// One release's proof fields, cached in `ProviderCacheStore` under the
+    /// MusicBrainz source namespace.
+    async fn proof_release(&self, release_id: &str) -> Result<Option<ProofRelease>, ProviderError> {
+        let id = normalize_mb_id(release_id);
+        let key = CacheKey::new(
+            Source::MusicBrainz,
+            &[&self.namespace, "spotify_proof_release", &id],
+        );
+        let view = self.view.clone();
+        self.cache
+            .get_or_fetch(
+                &key,
+                Policy::MUSICBRAINZ_ENTITY,
+                self.priority,
+                move |_| async move {
+                    let found = view
+                        .lookup_release(&id, &PROOF_INCLUDES, Criticality::IdentityCritical)
+                        .await?;
+                    Ok(
+                        match found.and_then(|r| ProofRelease::from_wire(r.entity)) {
+                            Some(proof) => Fetched::Found(proof),
+                            None => Fetched::Missing,
+                        },
+                    )
+                },
+            )
+            .await
     }
 }
 
@@ -213,12 +296,32 @@ impl AlbumResolver {
         album: &SpotifyAlbum,
         priority: RequestPriority,
     ) -> Result<Option<String>, ProviderError> {
+        self.resolve_for(None, album, priority).await
+    }
+
+    /// Resolve a Spotify album, keying first by Spotify's stable album ID
+    /// (`spotify_id`) when present so the same album appearing across multiple
+    /// playlists with different track subsets reuses the proven release group
+    /// with 0 MusicBrainz calls.
+    pub async fn resolve_for(
+        &self,
+        spotify_id: Option<&str>,
+        album: &SpotifyAlbum,
+        priority: RequestPriority,
+    ) -> Result<Option<String>, ProviderError> {
         let can_list = !album.songs.is_empty() && album.total_tracks.is_some_and(|n| n >= 2);
         if album.title.trim().is_empty() || (album.isrcs.is_empty() && !can_list) {
             return Ok(None);
         }
         let reads = self.isrc_reads(priority)?;
         let namespace = reads.namespace.clone();
+        let clean_spotify_id = spotify_id.map(str::trim).filter(|id| !id.is_empty());
+        if let Some(id) = clean_spotify_id {
+            let id_key = CacheKey::new(Source::MusicBrainz, &[&namespace, "spotify_album_id", id]);
+            if let Some(Some(group)) = self.cache.peek::<String>(&id_key).await {
+                return Ok(Some(group));
+            }
+        }
         let isrcs: Vec<&str> = album.isrcs.iter().map(String::as_str).collect();
         let joined = isrcs.join(",");
         let tracks = album
@@ -243,14 +346,38 @@ impl AlbumResolver {
             ],
         );
         let album = album.clone();
-        self.cache
+        let resolved = self
+            .cache
             .get_or_fetch(&key, RESOLVE_POLICY, priority, move |_| async move {
                 Ok(match prove(&reads, &album).await? {
                     Some(group) => Fetched::Found(group),
                     None => Fetched::Missing,
                 })
             })
-            .await
+            .await?;
+        if let (Some(id), Some(group)) = (clean_spotify_id, resolved.as_ref()) {
+            let id_key = CacheKey::new(Source::MusicBrainz, &[&namespace, "spotify_album_id", id]);
+            if let Ok(bytes) = serde_json::to_vec(group) {
+                self.cache.set_bytes(&id_key, bytes, RESOLVE_POLICY.fresh);
+            }
+        }
+        Ok(resolved)
+    }
+
+    /// Whether a previously resolved release group is cached as a plain studio
+    /// Album, EP, or Single with no secondary types (so the compilation rule
+    /// cannot move tracks off it). Never dials out.
+    pub async fn is_known_studio_group(&self, group_mbid: &str) -> bool {
+        let Some(settings) = self.settings.read() else {
+            return false;
+        };
+        let group = normalize_mb_id(group_mbid);
+        if !is_valid_mbid(&group) {
+            return false;
+        }
+        let namespace = format!("{}:g{}", settings.source_id, settings.generation);
+        let key = CacheKey::new(Source::MusicBrainz, &[&namespace, "rg_studio", &group]);
+        self.cache.peek::<bool>(&key).await == Some(Some(true))
     }
 
     /// The cached ISRC reads over the MusicBrainz source the settings name
@@ -640,16 +767,34 @@ impl Proven {
     fn fits(&self, kind: Option<&str>) -> bool {
         self.fits_known(kind).unwrap_or(true)
     }
+
+    /// Whether the group is a plain Album, EP, or Single with no secondary
+    /// types (so it is not a compilation, soundtrack, remix, or DJ-mix).
+    fn is_studio_own_album(&self) -> bool {
+        self.secondary_types.is_empty()
+            && matches!(
+                self.primary_type.as_deref(),
+                Some("Album" | "EP" | "Single")
+            )
+    }
 }
 
 /// The proven group, by the album's ISRCs first and its title and
-/// artist second.
+/// artist second. Also caches whether the proven group is a plain studio
+/// album/EP/single so `own_album` can skip redundant per-track ISRC lookups.
 async fn prove(reads: &IsrcReads, album: &SpotifyAlbum) -> Result<Option<String>, ProviderError> {
     let mut proven = by_isrc(reads, album).await?;
     if proven.is_empty() {
-        proven = by_search(&reads.view, album).await?;
+        proven = by_search_cached(reads, album).await?;
     }
-    Ok(pick(album, proven))
+    let picked = pick_with_studio(album, proven);
+    if let Some((ref group, is_studio)) = picked {
+        let key = CacheKey::new(Source::MusicBrainz, &[&reads.namespace, "rg_studio", group]);
+        if let Ok(bytes) = serde_json::to_vec(&is_studio) {
+            reads.cache.set_bytes(&key, bytes, RESOLVE_POLICY.fresh);
+        }
+    }
+    Ok(picked.map(|(group, _)| group))
 }
 
 /// The groups of the releases a recording search by the album's ISRCs
@@ -704,14 +849,15 @@ async fn isrc_search(
 
 /// The groups proven by a release search for each title form, until one
 /// form proves any by ISRC; if none does, the first form's listing
-/// matches are returned.
-async fn by_search(
-    view: &MusicBrainzView,
+/// matches are returned. Release lookups are cached in `ProviderCacheStore`.
+async fn by_search_cached(
+    reads: &IsrcReads,
     album: &SpotifyAlbum,
 ) -> Result<BTreeMap<String, Proven>, ProviderError> {
     let mut fallback: Option<BTreeMap<String, Proven>> = None;
     for title in title_forms(&album.title) {
-        let page = view
+        let page = reads
+            .view
             .search_releases(
                 &title,
                 &album.artist,
@@ -732,36 +878,23 @@ async fn by_search(
             }) {
                 continue;
             }
-            let Some(release) = view
-                .lookup_release(&hit.id, &PROOF_INCLUDES, Criticality::IdentityCritical)
-                .await?
-            else {
+            let Some(release) = reads.proof_release(&hit.id).await? else {
                 continue;
             };
-            let release = release.entity;
-            let Some(group) = release.release_group.as_ref() else {
-                continue;
-            };
-            let id = normalize_mb_id(&group.id);
-            if !is_valid_mbid(&id) {
-                continue;
-            }
+            let id = release.group_id.clone();
             let carries = release
-                .media
+                .tracks
                 .iter()
-                .flat_map(|medium| &medium.tracks)
-                .filter_map(|track| track.recording.as_ref())
-                .flat_map(|recording| &recording.isrcs)
-                .any(|isrc| album.isrcs.contains(&isrc.trim().to_ascii_uppercase()));
-            let tracks: Vec<&Track> = release
-                .media
-                .iter()
-                .flat_map(|medium| &medium.tracks)
-                .collect();
-            let candidate = Proven::new(group);
+                .flat_map(|track| &track.isrcs)
+                .any(|isrc| album.isrcs.contains(isrc));
+            let candidate = Proven {
+                primary_type: release.primary_type.clone(),
+                secondary_types: release.secondary_types.clone(),
+                track_counts: BTreeSet::new(),
+            };
             let found = if carries {
                 &mut proven
-            } else if lists_the_album(album, hit, &release, &tracks, &candidate) {
+            } else if lists_the_album(album, hit, &release, &candidate) {
                 &mut by_listing
             } else {
                 continue;
@@ -770,7 +903,7 @@ async fn by_search(
                 .entry(id)
                 .or_insert(candidate)
                 .track_counts
-                .extend(u32::try_from(tracks.len()).ok());
+                .extend(u32::try_from(release.tracks.len()).ok());
         }
         if !proven.is_empty() {
             return Ok(proven);
@@ -787,9 +920,33 @@ async fn by_search(
     Ok(fallback.unwrap_or_default())
 }
 
+#[cfg(test)]
+async fn by_search(
+    view: &MusicBrainzView,
+    album: &SpotifyAlbum,
+) -> Result<BTreeMap<String, Proven>, ProviderError> {
+    let reads = IsrcReads {
+        view: view.clone(),
+        cache: ProviderCacheStore::new(
+            droppedneedle_kernel::db::cache::CacheDb::scratch(),
+            std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ),
+        namespace: "test".to_owned(),
+        priority: RequestPriority::BackgroundSync,
+    };
+    by_search_cached(&reads, album).await
+}
+
 /// The one proven group, after a tie is narrowed by the album's type and
 /// then its track count; a rule that would rule out every group is skipped.
 fn pick(album: &SpotifyAlbum, proven: BTreeMap<String, Proven>) -> Option<String> {
+    pick_with_studio(album, proven).map(|(group, _)| group)
+}
+
+fn pick_with_studio(
+    album: &SpotifyAlbum,
+    proven: BTreeMap<String, Proven>,
+) -> Option<(String, bool)> {
     let mut left: Vec<(&String, &Proven)> = proven.iter().collect();
     let rules: [&dyn Fn(&Proven) -> bool; 2] =
         [&|group| group.fits(album.kind.as_deref()), &|group| {
@@ -811,7 +968,7 @@ fn pick(album: &SpotifyAlbum, proven: BTreeMap<String, Proven>) -> Option<String
         }
     }
     match left.as_slice() {
-        [(group, _)] => Some((*group).clone()),
+        [(group, info)] => Some(((*group).clone(), info.is_studio_own_album())),
         [] => None,
         _ => {
             tracing::debug!(
@@ -831,8 +988,7 @@ fn pick(album: &SpotifyAlbum, proven: BTreeMap<String, Proven>) -> Option<String
 fn lists_the_album(
     album: &SpotifyAlbum,
     hit: &ReleaseSearchHit,
-    release: &MbRelease,
-    tracks: &[&Track],
+    release: &ProofRelease,
     group: &Proven,
 ) -> bool {
     let artist = title_key(&album.artist);
@@ -840,9 +996,10 @@ fn lists_the_album(
     if artist.is_empty() || album_forms.is_empty() || album.songs.is_empty() {
         return false;
     }
-    let on_release: BTreeSet<String> = tracks
+    let on_release: BTreeSet<String> = release
+        .tracks
         .iter()
-        .filter_map(|track| track.display_title())
+        .filter_map(|track| track.title.as_deref())
         .flat_map(non_empty_forms)
         .collect();
     let release_title = release
@@ -852,13 +1009,8 @@ fn lists_the_album(
         .or(hit.title.as_deref());
     album
         .total_tracks
-        .is_some_and(|n| n >= 2 && Some(n) == u32::try_from(tracks.len()).ok())
-        && tracks.iter().all(|track| {
-            track
-                .recording
-                .as_ref()
-                .is_none_or(|recording| recording.isrcs.is_empty())
-        })
+        .is_some_and(|n| n >= 2 && Some(n) == u32::try_from(release.tracks.len()).ok())
+        && release.tracks.iter().all(|track| track.isrcs.is_empty())
         && release_title.is_some_and(|title| !non_empty_forms(title).is_disjoint(&album_forms))
         && hit.artist_credit.iter().any(|credit| {
             title_key(&credit.name) == artist || title_key(&credit.artist.name) == artist
@@ -1802,6 +1954,101 @@ mod tests {
                 .expect("mb answers"),
             None,
             "songs {{\"A B\", \"C\"}} and {{\"A\", \"B C\"}} must not share a cache key"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_for_shares_spotify_album_id_and_caches_studio_flag() {
+        use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, sections::MbSourceMode};
+        use droppedneedle_kernel::test_support::ScratchDir;
+
+        let dir = ScratchDir::new("spotify-albums-id-cache").expect("scratch dir");
+        let crypto = Crypto::from_key_bytes(&[9; 32]).expect("crypto");
+        let store = ConfigStore::scratch(dir.path(), crypto).expect("config store");
+        store
+            .save(MusicBrainzSettings {
+                source_mode: MbSourceMode::Official,
+                selected_source_mode: MbSourceMode::Official,
+                ..MusicBrainzSettings::default()
+            })
+            .await
+            .expect("mb settings save");
+
+        let wire = Arc::new(ScriptedWire::new());
+        wire.answer(
+            &format!("{MB_ROOT}/release"),
+            200,
+            JSON_HEADER,
+            format!(
+                r#"{{"releases":[{}]}}"#,
+                search_hit(REL_1, GROUP_A, "Shared Album", "Aurora Current", "Album")
+            ),
+        );
+        wire.answer(
+            &format!("{MB_ROOT}/release/{REL_1}"),
+            200,
+            JSON_HEADER,
+            release_doc(
+                REL_1,
+                GROUP_A,
+                "Shared Album",
+                "Album",
+                &[
+                    ("Track One", Some("Track One"), &[]),
+                    ("Track Two", Some("Track Two"), &[]),
+                ],
+            ),
+        );
+        let providers = Providers::unpaced(wire.clone());
+        let resolver = AlbumResolver::new(&providers, store.live());
+
+        let playlist_one = SpotifyAlbum {
+            title: "Shared Album".to_owned(),
+            artist: "Aurora Current".to_owned(),
+            kind: Some("album".to_owned()),
+            total_tracks: Some(2),
+            songs: BTreeSet::from(["Track One".to_owned(), "Track Two".to_owned()]),
+            isrcs: BTreeSet::new(),
+        };
+        assert_eq!(
+            resolver
+                .resolve_for(
+                    Some("sp-album-1"),
+                    &playlist_one,
+                    RequestPriority::BackgroundSync
+                )
+                .await
+                .expect("mb answers")
+                .as_deref(),
+            Some(GROUP_A)
+        );
+        let calls_after_first = wire.sent().len();
+        assert_eq!(calls_after_first, 2, "search + proof release lookup");
+        assert!(
+            resolver.is_known_studio_group(GROUP_A).await,
+            "studio album must be cached so own_album skips per-track ISRC lookups"
+        );
+
+        let playlist_two = SpotifyAlbum {
+            songs: BTreeSet::from(["Track One".to_owned()]),
+            ..playlist_one
+        };
+        assert_eq!(
+            resolver
+                .resolve_for(
+                    Some("sp-album-1"),
+                    &playlist_two,
+                    RequestPriority::BackgroundSync
+                )
+                .await
+                .expect("mb answers")
+                .as_deref(),
+            Some(GROUP_A)
+        );
+        assert_eq!(
+            wire.sent().len(),
+            calls_after_first,
+            "same Spotify album ID on a second playlist must hit cache with 0 MB calls"
         );
     }
 }

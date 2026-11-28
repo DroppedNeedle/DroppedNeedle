@@ -424,7 +424,11 @@ impl SpotifySync {
         let Some(isrc) = song.isrc.as_deref().filter(|_| song.pick.is_none()) else {
             return Ok(Owned::Group(group));
         };
-        let own = match self.resolver.own_group(&spotify_filing(song), isrc).await {
+        let filing = spotify_filing(song);
+        if !filed_as_compilation(&filing) && self.resolver.is_known_studio_group(&group).await {
+            return Ok(Owned::Group(group));
+        }
+        let own = match self.resolver.own_group(&filing, isrc).await {
             Ok(Some(own)) if own.group != group => own,
             Ok(_) => return Ok(Owned::Group(group)),
             Err(error)
@@ -502,7 +506,11 @@ impl SpotifySync {
         Ok(
             match self
                 .resolver
-                .resolve(&album, RequestPriority::BackgroundSync)
+                .resolve_for(
+                    song.album.source_id.as_deref(),
+                    &album,
+                    RequestPriority::BackgroundSync,
+                )
                 .await
             {
                 Ok(Some(group)) => Look::Found(group.to_ascii_lowercase()),

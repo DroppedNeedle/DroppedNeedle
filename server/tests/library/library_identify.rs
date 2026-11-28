@@ -6066,3 +6066,123 @@ async fn an_unmatched_album_is_looked_at_again_by_itself() {
     lp.clock.advance(3_600_000);
     assert_eq!(look(), 0, "a second pass the same day offers nothing more");
 }
+
+#[tokio::test]
+async fn cached_musicbrainz_reuses_provider_cache_across_methods() {
+    use droppedneedle_kernel::runtime_config::{
+        ConfigStore, Crypto,
+        sections::{MbSourceMode, MusicBrainzSettings},
+    };
+    use droppedneedle_library::identify::sources::{
+        AlbumQuery, ArtistAnswer, CachedMusicBrainz, ReleaseAnswer, ReleaseSource,
+    };
+    use droppedneedle_providers::musicbrainz::LiveSource;
+    use droppedneedle_providers::test_support::ScriptedWire;
+    use droppedneedle_providers::{Providers, RequestPriority};
+
+    const MB: &str = "https://musicbrainz.org/ws/2";
+    const ARTIST: &str = "11111111-1111-4111-8111-111111111111";
+    const RG: &str = "22222222-2222-4222-8222-222222222222";
+    const REL: &str = "33333333-3333-4333-8333-333333333333";
+    const REC: &str = "44444444-4444-4444-8444-444444444444";
+
+    let dir = ScratchDir::new("cached-mb-identify");
+    let crypto = Crypto::from_key_bytes(&[5; 32]).expect("crypto");
+    let store = ConfigStore::scratch(&dir.join("cfg"), crypto).expect("config store");
+    store
+        .save(MusicBrainzSettings {
+            source_mode: MbSourceMode::Official,
+            selected_source_mode: MbSourceMode::Official,
+            ..MusicBrainzSettings::default()
+        })
+        .await
+        .expect("mb settings save");
+
+    let wire = Arc::new(ScriptedWire::new());
+    let json = [("content-type", "application/json")];
+    wire.answer(
+        &format!("{MB}/artist/{ARTIST}"),
+        200,
+        &json,
+        format!(r#"{{"id":"{ARTIST}","name":"Radiohead","disambiguation":"UK rock band"}}"#),
+    );
+    wire.answer(
+        &format!("{MB}/release-group/{RG}"),
+        200,
+        &json,
+        format!(r#"{{"id":"{RG}","title":"OK Computer"}}"#),
+    );
+    wire.answer(
+        &format!("{MB}/release"),
+        200,
+        &json,
+        format!(
+            r#"{{"count":1,"offset":0,"releases":[{{"id":"{REL}","score":100,"title":"OK Computer","release-group":{{"id":"{RG}"}},"media":[{{"track-count":1}}]}}]}}"#
+        ),
+    );
+    wire.answer(
+        &format!("{MB}/release/{REL}"),
+        200,
+        &json,
+        format!(
+            r#"{{"id":"{REL}","title":"OK Computer","date":"1997-06-16","artist-credit":[{{"name":"Radiohead","joinphrase":"","artist":{{"id":"{ARTIST}","name":"Radiohead"}}}}],"release-group":{{"id":"{RG}","title":"OK Computer","primary-type":"Album","secondary-types":[]}},"media":[{{"position":1,"track-count":1,"tracks":[{{"id":"55555555-5555-4555-8555-555555555555","position":1,"title":"Airbag","recording":{{"id":"{REC}","title":"Airbag"}}}}]}}]}}"#
+        ),
+    );
+
+    let providers = Providers::unpaced(wire.clone());
+    let source = LiveSource::new(store.live(), MB, MB);
+    let mb = CachedMusicBrainz::new(
+        &providers.musicbrainz,
+        source,
+        providers.cache.clone(),
+        RequestPriority::BackgroundSync,
+    );
+
+    let a1 = mb.canonical_artist(ARTIST).await.unwrap();
+    let a2 = mb.canonical_artist(ARTIST).await.unwrap();
+    assert_eq!(a1, a2);
+    assert_eq!(
+        a1,
+        ArtistAnswer::Current {
+            disambiguation: Some("UK rock band".to_owned())
+        }
+    );
+
+    let g1 = mb.canonical_release_group(RG).await.unwrap();
+    let g2 = mb.canonical_release_group(RG).await.unwrap();
+    assert_eq!(g1.as_deref(), Some(RG));
+    assert_eq!(g1, g2);
+
+    let e1 = mb.named_group_editions(RG).await.unwrap().unwrap();
+    let e2 = mb.named_group_editions(RG).await.unwrap().unwrap();
+    assert_eq!(e1.len(), 1);
+    assert_eq!(e1, e2);
+
+    // release and release_answer share one cached entry!
+    let r1 = mb.release(REL).await.unwrap().unwrap();
+    let r2 = mb.release_answer(REL).await.unwrap();
+    assert_eq!(r2, ReleaseAnswer::Found(Box::new(r1)));
+
+    let q = AlbumQuery {
+        title: "OK Computer",
+        artist: "Radiohead",
+        track_count: 1,
+        various: false,
+        words: false,
+    };
+    let s1 = mb.search_album(q).await.unwrap();
+    let s2 = mb.search_album(q).await.unwrap();
+    assert_eq!(s1.len(), 1);
+    assert_eq!(s1, s2);
+
+    // 1 artist + 1 rg + 1 named_group_editions + 1 release + 1 search_album = 5 wire calls total
+    assert_eq!(
+        wire.sent().len(),
+        5,
+        "every repeated identify lookup must hit ProviderCacheStore: {:?}",
+        wire.sent()
+            .iter()
+            .map(|s| s.url.as_str())
+            .collect::<Vec<_>>()
+    );
+}

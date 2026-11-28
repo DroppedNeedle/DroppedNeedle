@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
+use serde::{Deserialize, Serialize};
 
 use super::models::LocalTrackFacts;
 use super::sqlite::SqliteIdentifyStore;
@@ -46,7 +47,7 @@ use droppedneedle_providers::{
 pub struct SourceError(pub String);
 
 /// What MusicBrainz says about one artist id.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ArtistAnswer {
     /// The id names an artist MusicBrainz still has, with its
     /// disambiguation ("US singer"), when MusicBrainz gives one.
@@ -80,7 +81,7 @@ impl Unanswered {
 }
 
 /// One release search hit, before its tracklist is fetched.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReleaseHit {
     pub id: String,
     pub release_group_id: String,
@@ -104,7 +105,7 @@ pub struct EditionQuery {
 }
 
 /// One MusicBrainz release as the edition finder lists it.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Edition {
     pub release_mbid: String,
     pub release_group_mbid: String,
@@ -125,7 +126,7 @@ pub struct Edition {
 }
 
 /// One page of editions plus the index's total.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditionPage {
     pub items: Vec<Edition>,
     pub total: u64,
@@ -233,7 +234,7 @@ pub trait ReleaseSource: Send + Sync {
 }
 
 /// What MusicBrainz says about one release id.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ReleaseAnswer {
     /// The release, under the id it now has.
     Found(Box<Release>),
@@ -723,14 +724,82 @@ impl ReleaseSource for CachedMusicBrainz {
         title: &'a str,
         artist: &'a str,
     ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
-        ReleaseSource::search(&self.view, title, artist)
+        Box::pin(async move {
+            let Some(namespace) = self.source.cache_namespace() else {
+                return ReleaseSource::search(&self.view, title, artist).await;
+            };
+            let key = CacheKey::hashed(
+                CacheSource::MusicBrainz,
+                "identify_search",
+                &[&namespace, title, artist],
+            );
+            let view = self.view.clone();
+            let (title, artist) = (title.to_owned(), artist.to_owned());
+            let cached = self
+                .cache
+                .get_or_fetch(&key, Policy::SEARCH, self.priority, move |_| async move {
+                    let hits = ReleaseSource::search(&view, &title, &artist).await?;
+                    Ok(if hits.is_empty() {
+                        Fetched::Missing
+                    } else {
+                        Fetched::Found(hits)
+                    })
+                })
+                .await?;
+            Ok(cached.unwrap_or_default())
+        })
     }
 
     fn search_album<'a>(
         &'a self,
         query: AlbumQuery<'a>,
     ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
-        self.view.search_album(query)
+        Box::pin(async move {
+            let Some(namespace) = self.source.cache_namespace() else {
+                return self.view.search_album(query).await;
+            };
+            let tracks = query.track_count.to_string();
+            let various = if query.various { "1" } else { "0" };
+            let words = if query.words { "1" } else { "0" };
+            let key = CacheKey::hashed(
+                CacheSource::MusicBrainz,
+                "identify_search_album",
+                &[
+                    &namespace,
+                    query.title,
+                    query.artist,
+                    &tracks,
+                    various,
+                    words,
+                ],
+            );
+            let view = self.view.clone();
+            let title = query.title.to_owned();
+            let artist = query.artist.to_owned();
+            let track_count = query.track_count;
+            let is_various = query.various;
+            let is_words = query.words;
+            let cached = self
+                .cache
+                .get_or_fetch(&key, Policy::SEARCH, self.priority, move |_| async move {
+                    let hits = view
+                        .search_album(AlbumQuery {
+                            title: &title,
+                            artist: &artist,
+                            track_count,
+                            various: is_various,
+                            words: is_words,
+                        })
+                        .await?;
+                    Ok(if hits.is_empty() {
+                        Fetched::Missing
+                    } else {
+                        Fetched::Found(hits)
+                    })
+                })
+                .await?;
+            Ok(cached.unwrap_or_default())
+        })
     }
 
     fn search_recording<'a>(
@@ -738,11 +807,41 @@ impl ReleaseSource for CachedMusicBrainz {
         title: &'a str,
         artist: &'a str,
     ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
-        self.view.search_recording(title, artist)
+        Box::pin(async move {
+            let Some(namespace) = self.source.cache_namespace() else {
+                return self.view.search_recording(title, artist).await;
+            };
+            let key = CacheKey::hashed(
+                CacheSource::MusicBrainz,
+                "identify_search_recording",
+                &[&namespace, title, artist],
+            );
+            let view = self.view.clone();
+            let (title, artist) = (title.to_owned(), artist.to_owned());
+            let cached = self
+                .cache
+                .get_or_fetch(&key, Policy::SEARCH, self.priority, move |_| async move {
+                    let hits = view.search_recording(&title, &artist).await?;
+                    Ok(if hits.is_empty() {
+                        Fetched::Missing
+                    } else {
+                        Fetched::Found(hits)
+                    })
+                })
+                .await?;
+            Ok(cached.unwrap_or_default())
+        })
     }
 
     fn release<'a>(&'a self, mbid: &'a str) -> BoxFuture<'a, Result<Option<Release>, SourceError>> {
-        ReleaseSource::release(&self.view, mbid)
+        Box::pin(async move {
+            match self.release_answer(mbid).await {
+                Ok(ReleaseAnswer::Found(release)) => Ok(Some(*release)),
+                Ok(ReleaseAnswer::Missing) => Ok(None),
+                Ok(ReleaseAnswer::Refused(reason)) => Err(SourceError(reason)),
+                Err(unanswered) => Err(unanswered.error),
+            }
+        })
     }
 
     /// The key carries the source, its generation and the asked id, so a
@@ -783,35 +882,183 @@ impl ReleaseSource for CachedMusicBrainz {
         &'a self,
         query: &'a EditionQuery,
     ) -> BoxFuture<'a, Result<EditionPage, SourceError>> {
-        ReleaseSource::search_editions(&self.view, query)
+        Box::pin(async move {
+            let Some(namespace) = self.source.cache_namespace() else {
+                return ReleaseSource::search_editions(&self.view, query).await;
+            };
+            let limit = query.limit.to_string();
+            let offset = query.offset.to_string();
+            let key = CacheKey::hashed(
+                CacheSource::MusicBrainz,
+                "identify_search_editions",
+                &[
+                    &namespace,
+                    query.release_group_mbid.as_deref().unwrap_or(""),
+                    &query.title,
+                    &query.artist,
+                    &limit,
+                    &offset,
+                ],
+            );
+            let view = self.view.clone();
+            let owned = query.clone();
+            let cached = self
+                .cache
+                .get_or_fetch(&key, Policy::SEARCH, self.priority, move |_| async move {
+                    let page = ReleaseSource::search_editions(&view, &owned).await?;
+                    Ok(if page.items.is_empty() {
+                        Fetched::Missing
+                    } else {
+                        Fetched::Found(page)
+                    })
+                })
+                .await?;
+            Ok(cached.unwrap_or_else(|| EditionPage {
+                items: Vec::new(),
+                total: 0,
+                offset: u64::from(query.offset),
+            }))
+        })
     }
 
     fn named_group_editions<'a>(
         &'a self,
         group: &'a str,
     ) -> BoxFuture<'a, Result<Option<Vec<Edition>>, SourceError>> {
-        self.view.named_group_editions(group)
+        Box::pin(async move {
+            let asked = group.trim().to_ascii_lowercase();
+            let Some(namespace) = self
+                .source
+                .cache_namespace()
+                .filter(|_| is_valid_mbid(&asked))
+            else {
+                return self.view.named_group_editions(&asked).await;
+            };
+            let key = CacheKey::new(
+                CacheSource::MusicBrainz,
+                &[&namespace, "identify_group_editions", &asked],
+            );
+            let view = self.view.clone();
+            self.cache
+                .get_or_fetch(
+                    &key,
+                    Policy::DISCOGRAPHY,
+                    self.priority,
+                    move |_| async move {
+                        Ok(match view.named_group_editions(&asked).await? {
+                            Some(editions) => Fetched::Found(editions),
+                            None => Fetched::Missing,
+                        })
+                    },
+                )
+                .await
+        })
     }
 
     fn canonical_release_group<'a>(
         &'a self,
         mbid: &'a str,
     ) -> BoxFuture<'a, Result<Option<String>, SourceError>> {
-        self.view.canonical_release_group(mbid)
+        Box::pin(async move {
+            let asked = mbid.trim().to_ascii_lowercase();
+            let Some(namespace) = self
+                .source
+                .cache_namespace()
+                .filter(|_| is_valid_mbid(&asked))
+            else {
+                return self.view.canonical_release_group(&asked).await;
+            };
+            let key = CacheKey::new(
+                CacheSource::MusicBrainz,
+                &[&namespace, "identify_rg_merge", &asked],
+            );
+            let view = self.view.clone();
+            self.cache
+                .get_or_fetch(
+                    &key,
+                    Policy::MERGED_ID,
+                    self.priority,
+                    move |_| async move {
+                        Ok(match view.canonical_release_group(&asked).await? {
+                            Some(canonical) => Fetched::Found(canonical),
+                            None => Fetched::Missing,
+                        })
+                    },
+                )
+                .await
+        })
     }
 
     fn canonical_artist<'a>(
         &'a self,
         mbid: &'a str,
     ) -> BoxFuture<'a, Result<ArtistAnswer, Unanswered>> {
-        self.view.canonical_artist(mbid)
+        Box::pin(async move {
+            let asked = mbid.trim().to_ascii_lowercase();
+            let Some(namespace) = self
+                .source
+                .cache_namespace()
+                .filter(|_| is_valid_mbid(&asked))
+            else {
+                return self.view.canonical_artist(&asked).await;
+            };
+            let key = CacheKey::new(
+                CacheSource::MusicBrainz,
+                &[&namespace, "identify_artist", &asked],
+            );
+            let view = self.view.clone();
+            let cached = self
+                .cache
+                .get_or_fetch(
+                    &key,
+                    Policy::MUSICBRAINZ_ENTITY,
+                    self.priority,
+                    move |_| async move {
+                        Ok(match view.canonical_artist(&asked).await? {
+                            ArtistAnswer::Missing => Fetched::Missing,
+                            answer => Fetched::Found(answer),
+                        })
+                    },
+                )
+                .await?;
+            Ok(cached.unwrap_or(ArtistAnswer::Missing))
+        })
     }
 
     fn release_answer<'a>(
         &'a self,
         mbid: &'a str,
     ) -> BoxFuture<'a, Result<ReleaseAnswer, Unanswered>> {
-        self.view.release_answer(mbid)
+        Box::pin(async move {
+            let asked = mbid.trim().to_ascii_lowercase();
+            let Some(namespace) = self
+                .source
+                .cache_namespace()
+                .filter(|_| is_valid_mbid(&asked))
+            else {
+                return self.view.release_answer(&asked).await;
+            };
+            let key = CacheKey::new(
+                CacheSource::MusicBrainz,
+                &[&namespace, "identify_release", &asked],
+            );
+            let view = self.view.clone();
+            let cached = self
+                .cache
+                .get_or_fetch(
+                    &key,
+                    Policy::MUSICBRAINZ_ENTITY,
+                    self.priority,
+                    move |_| async move {
+                        Ok(match view.release_answer(&asked).await? {
+                            ReleaseAnswer::Missing => Fetched::Missing,
+                            answer => Fetched::Found(answer),
+                        })
+                    },
+                )
+                .await?;
+            Ok(cached.unwrap_or(ReleaseAnswer::Missing))
+        })
     }
 }
 
