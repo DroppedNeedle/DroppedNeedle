@@ -1,7 +1,7 @@
 import type { components } from '$lib/api/v3/openapi';
 import type { Album } from '$lib/features/album/queries/types';
 import type { Artist } from '$lib/features/search/queries/types';
-import { SvelteMap } from 'svelte/reactivity';
+import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import type { EnrichmentBatchRequestV3, EnrichmentResponseV3 } from './SearchV3Queries.svelte';
 
 type ArtistEnrichItemV3 = components['schemas']['ArtistEnrichmentRequest'];
@@ -20,17 +20,23 @@ export function mergeEnrichment(
 	next: EnrichmentResponseV3
 ): EnrichmentResponseV3 {
 	if (!prev) return next;
-	const artists = new Map(prev.artists.map((item) => [item.musicbrainz_id, item]));
-	for (const item of next.artists) {
-		artists.set(item.musicbrainz_id, item);
+	const artists: Record<string, EnrichmentResponseV3['artists'][number]> = {};
+	for (const item of prev.artists) {
+		artists[item.musicbrainz_id] = item;
 	}
-	const albums = new Map(prev.albums.map((item) => [item.musicbrainz_id, item]));
+	for (const item of next.artists) {
+		artists[item.musicbrainz_id] = item;
+	}
+	const albums: Record<string, EnrichmentResponseV3['albums'][number]> = {};
+	for (const item of prev.albums) {
+		albums[item.musicbrainz_id] = item;
+	}
 	for (const item of next.albums) {
-		albums.set(item.musicbrainz_id, item);
+		albums[item.musicbrainz_id] = item;
 	}
 	return {
-		artists: [...artists.values()],
-		albums: [...albums.values()],
+		artists: Object.values(artists),
+		albums: Object.values(albums),
 		source: next.source ?? prev.source,
 		degradations: next.degradations
 	};
@@ -43,8 +49,8 @@ export class SearchEnrichCollector {
 	// The latest delta batch to fetch.
 	body = $state<EnrichmentBatchRequestV3>(emptyBody());
 
-	#sentArtists = new Set<string>();
-	#sentAlbums = new Set<string>();
+	#sentArtists = new SvelteSet<string>();
+	#sentAlbums = new SvelteSet<string>();
 	#pendingArtists = new SvelteMap<string, ArtistEnrichItemV3>();
 	#pendingAlbums = new SvelteMap<string, AlbumEnrichItemV3>();
 	#timer: ReturnType<typeof setTimeout> | null = null;

@@ -631,7 +631,10 @@ impl Catalog {
                             };
                             (description, image)
                         }
-                        Err(error) => (Err(error.clone()), Err(error)),
+                        Err(error) => {
+                            let image = wiki.get_artist_image(&qid, priority).await;
+                            (Err(error), image)
+                        }
                     }
                 } else {
                     let description = match &detail.wiki_url {

@@ -333,8 +333,16 @@ struct Landed {
 
 type Flight = Shared<BoxFuture<'static, Arc<Landed>>>;
 type Flights = HashMap<(String, Class), (u64, Flight)>;
-type BatchSlot = tokio::sync::watch::Receiver<Option<Option<Vec<u8>>>>;
+type BatchValue = Option<Option<Vec<u8>>>;
+type BatchSender = tokio::sync::watch::Sender<BatchValue>;
+type BatchSlot = tokio::sync::watch::Receiver<BatchValue>;
 type BatchFlights = HashMap<String, BatchSlot>;
+
+struct OwnedBatchKey {
+    id: String,
+    key: CacheKey,
+    tx: BatchSender,
+}
 
 /// The provider answers in the cache file. Cloning shares it.
 #[derive(Clone)]
@@ -710,11 +718,7 @@ impl ProviderCacheStore {
 
         // Wait on any keys already being fetched by another `fetch_each` before
         // registering our own keys, which prevents any wait cycle.
-        let mut owned_senders: Vec<(
-            String,
-            CacheKey,
-            tokio::sync::watch::Sender<Option<Option<Vec<u8>>>>,
-        )>;
+        let mut owned_senders: Vec<OwnedBatchKey>;
         let guard: BatchGuard;
         loop {
             let waiting: Vec<(String, BatchSlot)> = {
@@ -737,7 +741,11 @@ impl ProviderCacheStore {
                         let (tx, rx) = tokio::sync::watch::channel(None);
                         map.insert(key.as_str().to_owned(), rx);
                         keys.push(key.as_str().to_owned());
-                        owned_senders.push((id.clone(), key, tx));
+                        owned_senders.push(OwnedBatchKey {
+                            id: id.clone(),
+                            key,
+                            tx,
+                        });
                     }
                     guard = BatchGuard {
                         flights: Arc::clone(&self.batch_flights),
@@ -781,7 +789,7 @@ impl ProviderCacheStore {
             .into_iter()
             .map(|(id, value)| (id.to_lowercase(), value))
             .collect();
-        for (id, key, tx) in owned_senders {
+        for OwnedBatchKey { id, key, tx } in owned_senders {
             match answer.get(&id.to_lowercase()) {
                 Some(value) => {
                     if let Ok(bytes) = serde_json::to_vec(value) {

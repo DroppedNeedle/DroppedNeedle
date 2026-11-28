@@ -511,7 +511,7 @@ impl WikidataClient {
         priority: RequestPriority,
     ) -> Result<(Option<String>, Option<Option<String>>), ProviderError> {
         let Some(answer) = self.entity_data(wikidata_id, priority).await? else {
-            return Ok((None, Some(None)));
+            return Ok((None, None));
         };
         let entity = entity_for(&answer, wikidata_id)?;
         let title = entity
