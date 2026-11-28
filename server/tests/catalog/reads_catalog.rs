@@ -1114,6 +1114,32 @@ async fn album_lastfm_skips_release_group_mbid_lookup() {
 }
 
 #[tokio::test]
+async fn listenbrainz_top_albums_shares_cache_across_counts() {
+    let fixtures = Fixtures::start().await;
+    let (app, _rig) = app(&fixtures).await;
+
+    let first = get(
+        &app,
+        &format!("/api/v3/artists/{ARTIST}/top-albums?count=1"),
+    )
+    .await;
+    let second = get(
+        &app,
+        &format!("/api/v3/artists/{ARTIST}/top-albums?count=5"),
+    )
+    .await;
+    assert_eq!(titles(&first["albums"]), ["OK Computer"]);
+    assert_eq!(titles(&second["albums"]), ["OK Computer", "Kid A"]);
+    assert_eq!(
+        fixtures.hits(&format!(
+            "/lb/1/popularity/top-release-groups-for-artist/{ARTIST}"
+        )),
+        1,
+        "different count values must share one ListenBrainz top-release-groups cache entry"
+    );
+}
+
+#[tokio::test]
 async fn album_page_shows_the_owned_edition_and_where_to_buy() {
     let fixtures = Fixtures::start().await;
     let (app, _auth) = app(&fixtures).await;

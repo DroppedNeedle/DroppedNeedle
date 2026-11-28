@@ -402,10 +402,14 @@ pub(super) async fn artist_albums<R: AlbumReads>(
         (list, counted) = read().await;
     }
     if matches!(list.kept, Kept::Missing) && person {
-        if !fetch_list(facts, &*reads, &artist, priority).await? {
-            return Ok(None);
-        }
+        let _flight = facts.lock_fetch("albums_list", &artist).await;
         (list, counted) = read().await;
+        if matches!(list.kept, Kept::Missing) {
+            if !fetch_list(facts, &*reads, &artist, priority).await? {
+                return Ok(None);
+            }
+            (list, counted) = read().await;
+        }
     }
     let is_counted = |counted: &Looked<()>| matches!(counted.kept, Kept::Found(()));
     if ranked
@@ -414,10 +418,16 @@ pub(super) async fn artist_albums<R: AlbumReads>(
         && !is_counted(&counted)
         && !reads.counts_down()
     {
-        let artists = [artist.clone()];
-        match fetch_counts(facts, &*reads, &artists, priority).await {
-            Ok(()) => (list, counted) = read().await,
-            Err(error) => tracing::debug!(%error, "album counts unread; the list is in date order"),
+        let _flight = facts.lock_fetch("albums_counts", &artist).await;
+        (list, counted) = read().await;
+        if matches!(list.kept, Kept::Found(_)) && !is_counted(&counted) {
+            let artists = [artist.clone()];
+            match fetch_counts(facts, &*reads, &artists, priority).await {
+                Ok(()) => (list, counted) = read().await,
+                Err(error) => {
+                    tracing::debug!(%error, "album counts unread; the list is in date order")
+                }
+            }
         }
     }
     let now = facts.now();

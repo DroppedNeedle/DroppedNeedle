@@ -214,15 +214,19 @@ const HOUR: u64 = 3_600;
 const SPREAD_FROM: Duration = Duration::from_secs(14 * 24 * HOUR);
 const SPREAD: Duration = Duration::from_secs(3 * 24 * HOUR);
 const MB_MISS: Duration = Duration::from_secs(600);
+const MB_ENTITY_MISS: Duration = Duration::from_secs(6 * HOUR);
 
 impl Policy {
     /// A MusicBrainz artist, release group or release.
     pub const MUSICBRAINZ_ENTITY: Self = Self {
-        fresh: Duration::from_secs(24 * HOUR),
-        miss: MB_MISS,
+        fresh: Duration::from_secs(7 * 24 * HOUR),
+        miss: MB_ENTITY_MISS,
     };
     /// An artist's discography.
-    pub const DISCOGRAPHY: Self = Self::MUSICBRAINZ_ENTITY;
+    pub const DISCOGRAPHY: Self = Self {
+        fresh: Duration::from_secs(3 * 24 * HOUR),
+        miss: MB_ENTITY_MISS,
+    };
     /// The release group of a release: it barely changes.
     pub const RELEASE_TO_GROUP: Self = Self {
         fresh: Duration::from_secs(7 * 24 * HOUR),
@@ -329,6 +333,8 @@ struct Landed {
 
 type Flight = Shared<BoxFuture<'static, Arc<Landed>>>;
 type Flights = HashMap<(String, Class), (u64, Flight)>;
+type BatchSlot = tokio::sync::watch::Receiver<Option<Option<Vec<u8>>>>;
+type BatchFlights = HashMap<String, BatchSlot>;
 
 /// The provider answers in the cache file. Cloning shares it.
 #[derive(Clone)]
@@ -336,6 +342,7 @@ pub struct ProviderCacheStore {
     db: CacheDb,
     clock: Arc<dyn Clock>,
     flights: Arc<Mutex<Flights>>,
+    batch_flights: Arc<Mutex<BatchFlights>>,
     next: Arc<AtomicU64>,
     /// Differs per start, so installs that upgrade together do not spread
     /// their rows the same way.
@@ -402,6 +409,7 @@ impl ProviderCacheStore {
             salt: clock.now_ms(),
             clock,
             flights: Arc::new(Mutex::new(HashMap::new())),
+            batch_flights: Arc::new(Mutex::new(HashMap::new())),
             next: Arc::new(AtomicU64::new(0)),
         }
     }
@@ -632,15 +640,18 @@ impl ProviderCacheStore {
         ids: &[String],
         key_of: impl Fn(&str) -> CacheKey,
     ) -> (HashMap<String, T>, Vec<String>) {
+        if ids.is_empty() {
+            return (HashMap::new(), Vec::new());
+        }
         let now = self.clock.now_ms();
+        let keys: Vec<CacheKey> = ids.iter().map(|id| key_of(id)).collect();
+        let names: Vec<&str> = keys.iter().map(CacheKey::as_str).collect();
+        let rows = self.db.get_many(&names).await;
         let mut held = HashMap::new();
         let mut missing = Vec::new();
-        for id in ids {
-            let row = self
-                .kept(&key_of(id))
-                .await
-                .filter(|row| row.fresh_until > now);
-            match row.as_ref().and_then(decode::<T>) {
+        for (id, row) in ids.iter().zip(rows) {
+            let fresh = row.filter(|row| row.keep_until > now && row.fresh_until > now);
+            match fresh.as_ref().and_then(decode::<T>) {
                 Some(Some(value)) => {
                     held.insert(id.clone(), value);
                 }
@@ -653,10 +664,11 @@ impl ProviderCacheStore {
 
     /// One answer per id, for a read that takes many ids at once: fresh
     /// rows as they are, and the rest fetched in one call and kept row by
-    /// row under `key_of(id)`. An id the answer leaves out is kept as
-    /// "nothing there", unless a provider call behind the answer failed.
-    /// The map is keyed by the ids as given; an answer's ids match ignoring
-    /// case.
+    /// row under `key_of(id)`. Concurrent callers asking for overlapping
+    /// ids coalesce onto the in-flight batch instead of duplicating calls.
+    /// An id the answer leaves out is kept as "nothing there", unless a
+    /// provider call behind the answer failed. The map is keyed by the ids
+    /// as given; an answer's ids match ignoring case.
     ///
     /// # Errors
     ///
@@ -673,13 +685,93 @@ impl ProviderCacheStore {
         F: FnOnce(Vec<String>) -> Fut,
         Fut: Future<Output = Result<HashMap<String, T>, E>>,
     {
+        struct BatchGuard {
+            flights: Arc<Mutex<BatchFlights>>,
+            keys: Vec<String>,
+        }
+        impl Drop for BatchGuard {
+            fn drop(&mut self) {
+                let mut map = self
+                    .flights
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                for key in &self.keys {
+                    map.remove(key);
+                }
+            }
+        }
+
         let (mut found, mut missing) = self.held_each(ids, &key_of).await;
         missing.sort();
         missing.dedup();
         if missing.is_empty() {
             return Ok(found);
         }
-        let (answer, context) = degradation::scoped(fetch(missing.clone())).await;
+
+        // Wait on any keys already being fetched by another `fetch_each` before
+        // registering our own keys, which prevents any wait cycle.
+        let mut owned_senders: Vec<(
+            String,
+            CacheKey,
+            tokio::sync::watch::Sender<Option<Option<Vec<u8>>>>,
+        )>;
+        let guard: BatchGuard;
+        loop {
+            let waiting: Vec<(String, BatchSlot)> = {
+                let mut map = self
+                    .batch_flights
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let mut in_flight = Vec::new();
+                for id in &missing {
+                    let key = key_of(id);
+                    if let Some(rx) = map.get(key.as_str()) {
+                        in_flight.push((id.clone(), rx.clone()));
+                    }
+                }
+                if in_flight.is_empty() {
+                    let mut keys = Vec::with_capacity(missing.len());
+                    owned_senders = Vec::with_capacity(missing.len());
+                    for id in &missing {
+                        let key = key_of(id);
+                        let (tx, rx) = tokio::sync::watch::channel(None);
+                        map.insert(key.as_str().to_owned(), rx);
+                        keys.push(key.as_str().to_owned());
+                        owned_senders.push((id.clone(), key, tx));
+                    }
+                    guard = BatchGuard {
+                        flights: Arc::clone(&self.batch_flights),
+                        keys,
+                    };
+                    break;
+                }
+                in_flight
+            };
+
+            let mut resolved = std::collections::HashSet::new();
+            for (id, mut rx) in waiting {
+                if let Ok(value) = rx.wait_for(|slot| slot.is_some()).await {
+                    match value.as_ref() {
+                        Some(Some(bytes)) => {
+                            if let Ok(decoded) = serde_json::from_slice::<T>(bytes) {
+                                found.insert(id.clone(), decoded);
+                                resolved.insert(id);
+                            }
+                        }
+                        Some(None) => {
+                            resolved.insert(id);
+                        }
+                        None => {}
+                    }
+                }
+            }
+            missing.retain(|id| !resolved.contains(id));
+            if missing.is_empty() {
+                return Ok(found);
+            }
+        }
+
+        let (answer, context) = degradation::scoped(fetch(missing)).await;
         let notes = notes_of(&context);
         relay(&notes, false);
         let clean = notes
@@ -689,19 +781,23 @@ impl ProviderCacheStore {
             .into_iter()
             .map(|(id, value)| (id.to_lowercase(), value))
             .collect();
-        for id in missing {
-            let key = key_of(&id);
+        for (id, key, tx) in owned_senders {
             match answer.get(&id.to_lowercase()) {
                 Some(value) => {
                     if let Ok(bytes) = serde_json::to_vec(value) {
-                        self.store(&key, CacheKind::Found, Some(bytes), policy.fresh);
+                        self.store(&key, CacheKind::Found, Some(bytes.clone()), policy.fresh);
+                        let _ = tx.send(Some(Some(bytes)));
                     }
                     found.insert(id, value.clone());
                 }
-                None if clean => self.store(&key, CacheKind::Missing, None, policy.miss),
+                None if clean => {
+                    self.store(&key, CacheKind::Missing, None, policy.miss);
+                    let _ = tx.send(Some(None));
+                }
                 None => {}
             }
         }
+        drop(guard);
         Ok(found)
     }
 
@@ -960,5 +1056,85 @@ mod tests {
         );
         settle(&store).await;
         assert_eq!(store.peek::<String>(&key()).await, Some(kept));
+    }
+
+    /// Two concurrent `fetch_each` calls with overlapping ids coalesce on the
+    /// in-flight batch so each id is only asked from the upstream once.
+    #[tokio::test]
+    async fn fetch_each_coalesces_concurrent_overlapping_ids() {
+        use std::sync::atomic::AtomicUsize;
+
+        let (store, _) = store();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let asked_a = Arc::new(AtomicUsize::new(0));
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let entered = Arc::new(tokio::sync::Notify::new());
+
+        let s1 = store.clone();
+        let c1 = Arc::clone(&calls);
+        let a1 = Arc::clone(&asked_a);
+        let g1 = Arc::clone(&gate);
+        let e1 = Arc::clone(&entered);
+        let first = tokio::spawn(async move {
+            let ids = vec!["a".to_owned(), "b".to_owned()];
+            s1.fetch_each(
+                &ids,
+                |id| CacheKey::new(Source::ListenBrainz, &["batch_test", id]),
+                Policy::LISTENBRAINZ_ARTIST,
+                move |missing| async move {
+                    c1.fetch_add(1, Ordering::SeqCst);
+                    if missing.iter().any(|id| id == "a") {
+                        a1.fetch_add(1, Ordering::SeqCst);
+                    }
+                    e1.notify_one();
+                    g1.notified().await;
+                    let map: HashMap<String, u32> = missing
+                        .into_iter()
+                        .map(|id| (id.clone(), if id == "a" { 10 } else { 20 }))
+                        .collect();
+                    Ok::<_, String>(map)
+                },
+            )
+            .await
+        });
+
+        entered.notified().await;
+
+        let s2 = store.clone();
+        let c2 = Arc::clone(&calls);
+        let a2 = Arc::clone(&asked_a);
+        let second = tokio::spawn(async move {
+            let ids = vec!["a".to_owned(), "c".to_owned()];
+            s2.fetch_each(
+                &ids,
+                |id| CacheKey::new(Source::ListenBrainz, &["batch_test", id]),
+                Policy::LISTENBRAINZ_ARTIST,
+                move |missing| async move {
+                    c2.fetch_add(1, Ordering::SeqCst);
+                    if missing.iter().any(|id| id == "a") {
+                        a2.fetch_add(1, Ordering::SeqCst);
+                    }
+                    let map: HashMap<String, u32> =
+                        missing.into_iter().map(|id| (id.clone(), 30)).collect();
+                    Ok::<_, String>(map)
+                },
+            )
+            .await
+        });
+
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        gate.notify_one();
+
+        let r1 = first.await.unwrap().unwrap();
+        let r2 = second.await.unwrap().unwrap();
+        assert_eq!(r1.get("a"), Some(&10));
+        assert_eq!(r1.get("b"), Some(&20));
+        assert_eq!(r2.get("a"), Some(&10));
+        assert_eq!(r2.get("c"), Some(&30));
+        assert_eq!(
+            asked_a.load(Ordering::SeqCst),
+            1,
+            "overlapping id 'a' must only be fetched once"
+        );
     }
 }

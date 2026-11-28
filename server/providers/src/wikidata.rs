@@ -497,6 +497,44 @@ impl WikidataClient {
         }
     }
 
+    /// Resolve a Wikidata id to its Wikipedia title in one language and, when
+    /// the entity payload carries claims, its P18 image filename in the same
+    /// round-trip (`Some(p18)` when claims were present, `None` when absent).
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
+    pub async fn entity_sitelink_and_image(
+        &self,
+        wikidata_id: &str,
+        lang: &str,
+        priority: RequestPriority,
+    ) -> Result<(Option<String>, Option<Option<String>>), ProviderError> {
+        let Some(answer) = self.entity_data(wikidata_id, priority).await? else {
+            return Ok((None, Some(None)));
+        };
+        let entity = entity_for(&answer, wikidata_id)?;
+        let title = entity
+            .sitelinks
+            .get(&format!("{lang}wiki"))
+            .and_then(|link| link.title.clone());
+        let p18 = if entity.claims.is_empty() {
+            None
+        } else {
+            let filename = entity
+                .claims
+                .get(PROPERTY_IMAGE)
+                .and_then(|statements| statements.first())
+                .and_then(|claim| claim.mainsnak.as_ref())
+                .and_then(|snak| snak.datavalue.as_ref())
+                .and_then(|datavalue| datavalue.value.text())
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned);
+            Some(filename)
+        };
+        Ok((title, p18))
+    }
+
     /// Resolve a Wikidata id to its Wikipedia title in one language.
     /// An id that is not an item id
     /// is never sent and reads as absence.

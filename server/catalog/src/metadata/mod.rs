@@ -348,15 +348,15 @@ const PLUGIN_DETAILS: Policy = Policy {
     fresh: Duration::from_secs(3600),
     miss: Duration::from_secs(3600),
 };
-/// Last.fm artist and album details: an hour.
+/// Last.fm artist and album details: a day found, six hours missing.
 const LASTFM_DETAILS: Policy = Policy {
-    fresh: Duration::from_secs(3600),
-    miss: Duration::from_secs(3600),
-};
-/// Wikipedia and Wikidata biographies: six hours.
-const BIOGRAPHY: Policy = Policy {
-    fresh: Duration::from_secs(6 * 3600),
+    fresh: Duration::from_secs(24 * 3600),
     miss: Duration::from_secs(6 * 3600),
+};
+/// Wikipedia and Wikidata biographies: a week found, a day missing.
+const BIOGRAPHY: Policy = Policy {
+    fresh: Duration::from_secs(7 * 86400),
+    miss: Duration::from_secs(24 * 3600),
 };
 /// Purchase options: a week.
 const PURCHASE: Policy = Policy {

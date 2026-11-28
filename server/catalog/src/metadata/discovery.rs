@@ -243,9 +243,13 @@ impl Catalog {
     ) -> CacheKey {
         let count_part = count.to_string();
         match (source, section) {
+            (ListenSource::Listenbrainz, Section::TopAlbums) => CacheKey::new(
+                Source::ListenBrainz,
+                &[section.key_part(), &mbid.to_ascii_lowercase()],
+            ),
             (ListenSource::Listenbrainz, _) => CacheKey::new(
                 Source::ListenBrainz,
-                &[section.key_part(), mbid, &count_part],
+                &[section.key_part(), &mbid.to_ascii_lowercase(), &count_part],
             ),
             // Last.fm titles are matched against the MusicBrainz
             // discography, so the MusicBrainz source is in the key.
@@ -317,11 +321,22 @@ impl Catalog {
                     // Not sent without the person's account: what is held
                     // answers, and no fetch is started or joined.
                     refused.store(true, Ordering::Relaxed);
-                    return answer_from(source, cache.peek(&key).await.flatten(), &refused);
+                    let mut held: Option<SectionRows> = cache.peek(&key).await.flatten();
+                    if let Some(rows) = &mut held
+                        && matches!(section, Section::TopAlbums)
+                    {
+                        rows.albums.truncate(count as usize);
+                    }
+                    return answer_from(source, held, &refused);
                 }
                 let catalog = self.clone();
                 let mbid = mbid.to_owned();
                 let refused = Arc::clone(&refused);
+                let fetch_count = if matches!(section, Section::TopAlbums) {
+                    u32::MAX
+                } else {
+                    count
+                };
                 self.cached(
                     &key,
                     Policy::LISTENBRAINZ_ARTIST,
@@ -332,7 +347,7 @@ impl Catalog {
                             .listenbrainz_rows(
                                 &client,
                                 &lender,
-                                (&mbid, count, section, priority),
+                                (&mbid, fetch_count, section, priority),
                                 &mut hold,
                             )
                             .await;
@@ -397,7 +412,15 @@ impl Catalog {
             }
         };
         match rows {
-            Ok(rows) => answer_from(source, rows, &refused),
+            Ok(mut rows) => {
+                if let Some(rows) = &mut rows
+                    && source == ListenSource::Listenbrainz
+                    && matches!(section, Section::TopAlbums)
+                {
+                    rows.albums.truncate(count as usize);
+                }
+                answer_from(source, rows, &refused)
+            }
             Err(_) => Answer {
                 unavailable: vec![source],
                 ..answer_from(source, None, &refused)
@@ -544,15 +567,15 @@ impl Catalog {
         hold: &mut CacheHold,
         sent: Option<&AtomicU64>,
     ) -> Result<SectionRows, ProviderError> {
-        let recordings = client
-            .artist_top_recordings(mbid, count, creds, priority)
-            .await;
-        if let Some(sent) = sent
-            && !matches!(recordings, Err(ProviderError::NotConfigured { .. }))
-        {
-            sent.fetch_add(1, Ordering::Relaxed);
-        }
-        let recordings = recordings?;
+        let mut recordings = cached_top_recordings(
+            self.upstream().cache(),
+            client,
+            creds,
+            (mbid, priority),
+            sent,
+        )
+        .await?;
+        recordings.truncate(count);
         let ids: Vec<String> = recordings
             .iter()
             .filter_map(|recording| recording.recording_mbid.clone())
@@ -640,9 +663,15 @@ impl Catalog {
             }
             Section::TopAlbums => {
                 let creds = &lender.credentials().await;
-                let groups = match client
-                    .artist_top_release_groups(mbid, count, creds, priority)
-                    .await
+                let groups = match shared::artist_release_groups(
+                    self.upstream().cache(),
+                    client,
+                    mbid,
+                    count,
+                    lender,
+                    priority,
+                )
+                .await
                 {
                     Ok(groups) if !groups.is_empty() => groups,
                     // Without an account the recordings are refused too.
@@ -652,6 +681,12 @@ impl Catalog {
                     other => {
                         if let Err(error) = &other {
                             hold.provider(error);
+                        }
+                        if !shared::has_token(creds) {
+                            return Err(ProviderError::NotConfigured {
+                                provider: "listenbrainz",
+                                message: "ListenBrainz token required".to_owned(),
+                            });
                         }
                         return Ok(SectionRows {
                             albums: albums_from_recordings(
@@ -670,10 +705,10 @@ impl Catalog {
                     albums: groups
                         .into_iter()
                         .map(|group| AlbumRef {
-                            artist_name: Some(group.artist_name),
-                            musicbrainz_id: Some(group.release_group_mbid),
+                            artist_name: Some(group.album.artist_name),
+                            musicbrainz_id: Some(group.album.release_group_mbid),
                             listen_count: Some(group.listen_count),
-                            ..AlbumRef::titled(group.name)
+                            ..AlbumRef::titled(group.album.title)
                         })
                         .collect(),
                     ..SectionRows::default()
@@ -1551,6 +1586,54 @@ async fn lastfm_rows(
     }
 }
 
+/// Raw top recordings for one artist, cached without `count` so top-songs
+/// pages, daily mixes and `albums_from_recordings` all share one ListenBrainz
+/// call regardless of how many rows each caller keeps.
+async fn cached_top_recordings(
+    cache: &droppedneedle_providers::ProviderCacheStore,
+    client: &super::upstream::CatalogListenBrainz,
+    creds: &listenbrainz::ListenBrainzCredentials,
+    (mbid, priority): (&str, RequestPriority),
+    sent: Option<&AtomicU64>,
+) -> Result<Vec<listenbrainz::TopRecording>, ProviderError> {
+    let key = CacheKey::new(
+        Source::ListenBrainz,
+        &["artist_top_recordings", &mbid.to_ascii_lowercase()],
+    );
+    let client = client.clone();
+    let creds = creds.clone();
+    let mbid = mbid.to_owned();
+    let fetched = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&fetched);
+    let rows = cache
+        .get_or_fetch(
+            &key,
+            Policy::LISTENBRAINZ_ARTIST,
+            priority,
+            move |priority| async move {
+                let rows = client
+                    .artist_top_recordings(&mbid, usize::MAX, &creds, priority)
+                    .await;
+                if !matches!(rows, Err(ProviderError::NotConfigured { .. })) {
+                    flag.store(true, Ordering::Relaxed);
+                }
+                let rows = rows?;
+                Ok(if rows.is_empty() {
+                    Fetched::Missing
+                } else {
+                    Fetched::Found(rows)
+                })
+            },
+        )
+        .await?;
+    if let Some(sent) = sent
+        && fetched.load(Ordering::Relaxed)
+    {
+        sent.fetch_add(1, Ordering::Relaxed);
+    }
+    Ok(rows.unwrap_or_default())
+}
+
 /// Rebuild an artist's top albums from their most played recordings: listens
 /// add up per release group (or per release title when the group is
 /// unknown), most played first. The failure of the recordings read when
@@ -1562,9 +1645,9 @@ async fn albums_from_recordings(
     (mbid, count, priority): (&str, usize, RequestPriority),
     hold: &mut CacheHold,
 ) -> Result<Vec<AlbumRef>, ProviderError> {
-    let recordings = client
-        .artist_top_recordings(mbid, (count * 8).max(80), creds, priority)
-        .await?;
+    let mut recordings =
+        cached_top_recordings(cache, client, creds, (mbid, priority), None).await?;
+    recordings.truncate(count.saturating_mul(8).max(80));
     let ids: Vec<String> = recordings
         .iter()
         .filter_map(|recording| recording.recording_mbid.clone())

@@ -432,6 +432,7 @@ pub(super) async fn neighbours_each<R: SimilarReads>(
             continue;
         }
         let _turn = turn(&*reads).await;
+        let _flight = facts.lock_fetch("similar_list", artist).await;
         // Another read may have kept the list while this one waited.
         if let Ok(mut again) = facts.neighbours(std::slice::from_ref(artist)).await
             && let Some(again) = again.remove(artist)

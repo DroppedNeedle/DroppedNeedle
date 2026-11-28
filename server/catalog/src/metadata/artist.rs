@@ -602,13 +602,47 @@ impl Catalog {
         let fetched = self
             .cached(&key, BIOGRAPHY, priority, move |priority| async move {
                 let wiki = catalog.upstream().wikidata();
-                let description = match &detail.wiki_url {
-                    Some(url) => wiki.get_bio_extract(url, BIO_LANGUAGE, priority).await,
-                    None => Ok(None),
-                };
-                let image = match &detail.wikidata_id {
-                    Some(id) => wiki.get_artist_image(id, priority).await,
-                    None => Ok(None),
+                // When wiki_url points at the same Wikidata entity as wikidata_id,
+                // read sitelink and P18 claim in one EntityData round-trip instead
+                // of making a second wbgetclaims call.
+                let shared_qid = detail
+                    .wiki_url
+                    .as_deref()
+                    .and_then(droppedneedle_providers::wikidata::extract_wikidata_id)
+                    .filter(|qid| detail.wikidata_id.as_deref() == Some(qid.as_str()));
+                let (description, image) = if let Some(qid) = shared_qid {
+                    match wiki
+                        .entity_sitelink_and_image(&qid, BIO_LANGUAGE, priority)
+                        .await
+                    {
+                        Ok((title, maybe_p18)) => {
+                            let description = match title {
+                                Some(title) => {
+                                    wiki.wikipedia_extract(&title, BIO_LANGUAGE, priority).await
+                                }
+                                None => Ok(None),
+                            };
+                            let image = match maybe_p18 {
+                                Some(Some(filename)) => {
+                                    wiki.commons_image(&filename, priority).await
+                                }
+                                Some(None) => Ok(None),
+                                None => wiki.get_artist_image(&qid, priority).await,
+                            };
+                            (description, image)
+                        }
+                        Err(error) => (Err(error.clone()), Err(error)),
+                    }
+                } else {
+                    let description = match &detail.wiki_url {
+                        Some(url) => wiki.get_bio_extract(url, BIO_LANGUAGE, priority).await,
+                        None => Ok(None),
+                    };
+                    let image = match &detail.wikidata_id {
+                        Some(id) => wiki.get_artist_image(id, priority).await,
+                        None => Ok(None),
+                    };
+                    (description, image)
                 };
                 let failed = description.is_err() || image.is_err();
                 if let Some(error) = description.as_ref().err().or(image.as_ref().err()) {
@@ -743,11 +777,10 @@ impl Catalog {
             complete,
             walking: false,
         };
-        Ok(if complete {
-            Fetched::Found(list)
-        } else {
-            Fetched::Partial(list)
-        })
+        // Cache the first page even when the artist has >100 release-level
+        // credits (no walker runs for releases, so leaving it unstored would
+        // re-fetch MusicBrainz on every visit).
+        Ok(Fetched::Found(list))
     }
 
     /// Count one discography page read at `priority` against Discover's

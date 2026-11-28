@@ -82,6 +82,9 @@ const LASTFM_ALBUMS_FLOOR: u32 = 10;
 const LASTFM_SIMILAR_FLOOR: u32 = 25;
 /// A Last.fm user's top artists read at once.
 const LASTFM_USER_FLOOR: u32 = 25;
+/// Canonical floor for other Last.fm list reads so callers requesting smaller
+/// counts share one cached response.
+const LASTFM_LIST_FLOOR: u32 = 50;
 /// Rows of a MusicBrainz tag search page (the most it serves).
 pub(in crate::discover) const TAG_PAGE: u32 = 100;
 /// How long a Last.fm key that was refused leaves a user on ListenBrainz.
@@ -949,18 +952,21 @@ impl ListeningData {
         if !self.network.lastfm_ready(user_id).await {
             return Ok(Default::default());
         }
+        let read = limit.max(LASTFM_LIST_FLOOR);
         let key = CacheKey::new(
             Source::LastFm,
-            &["user_albums", &lower(username), period, &limit.to_string()],
+            &["user_albums", &lower(username), period, &read.to_string()],
         )
         .personal();
         let (user, name) = (user_id.to_owned(), username.to_owned());
-        self.list(key, STATS, ask, move |network, priority| async move {
-            network
-                .lastfm_user_albums(&user, &name, period, limit, priority)
-                .await
-        })
-        .await
+        let rows = self
+            .list(key, STATS, ask, move |network, priority| async move {
+                network
+                    .lastfm_user_albums(&user, &name, period, read, priority)
+                    .await
+            })
+            .await?;
+        Ok(cut(rows, limit as usize))
     }
 
     /// Artists Last.fm finds similar to one artist, by match.
@@ -1124,18 +1130,21 @@ impl ListeningData {
         if !self.network.lastfm_ready(user_id).await {
             return Ok(Default::default());
         }
+        let read = limit.max(LASTFM_LIST_FLOOR);
         let key = CacheKey::new(
             Source::LastFm,
-            &["recent", &lower(username), &limit.to_string()],
+            &["recent", &lower(username), &read.to_string()],
         )
         .personal();
         let (user, name) = (user_id.to_owned(), username.to_owned());
-        self.list(key, ACTIVITY, ask, move |network, priority| async move {
-            network
-                .lastfm_recent_albums(&user, &name, limit, priority)
-                .await
-        })
-        .await
+        let rows = self
+            .list(key, ACTIVITY, ask, move |network, priority| async move {
+                network
+                    .lastfm_recent_albums(&user, &name, read, priority)
+                    .await
+            })
+            .await?;
+        Ok(cut(rows, limit as usize))
     }
 
     /// The most played artists carrying one Last.fm tag.
@@ -1149,17 +1158,20 @@ impl ListeningData {
         if !self.network.lastfm_ready(user_id).await {
             return Ok(Default::default());
         }
+        let read = limit.max(LASTFM_LIST_FLOOR);
         let key = CacheKey::new(
             Source::LastFm,
-            &["tag_artists", &lower(tag), &limit.to_string()],
+            &["tag_artists", &lower(tag), &read.to_string()],
         );
         let (user, tag) = (user_id.to_owned(), tag.to_owned());
-        self.list(key, ARTIST, ask, move |network, priority| async move {
-            network
-                .lastfm_tag_artists(&user, &tag, limit, priority)
-                .await
-        })
-        .await
+        let rows = self
+            .list(key, ARTIST, ask, move |network, priority| async move {
+                network
+                    .lastfm_tag_artists(&user, &tag, read, priority)
+                    .await
+            })
+            .await?;
+        Ok(cut(rows, limit as usize))
     }
 
     /// A Last.fm user's loved tracks.
@@ -1173,16 +1185,19 @@ impl ListeningData {
         if !self.network.lastfm_ready(user_id).await {
             return Ok(Default::default());
         }
+        let read = limit.max(LASTFM_LIST_FLOOR);
         let key = CacheKey::new(
             Source::LastFm,
-            &["loved", &lower(username), &limit.to_string()],
+            &["loved", &lower(username), &read.to_string()],
         )
         .personal();
         let (user, name) = (user_id.to_owned(), username.to_owned());
-        self.list(key, ACTIVITY, ask, move |network, priority| async move {
-            network.lastfm_loved(&user, &name, limit, priority).await
-        })
-        .await
+        let rows = self
+            .list(key, ACTIVITY, ask, move |network, priority| async move {
+                network.lastfm_loved(&user, &name, read, priority).await
+            })
+            .await?;
+        Ok(cut(rows, limit as usize))
     }
 
     /// `limit` release groups carrying a MusicBrainz tag from `offset`,

@@ -149,6 +149,9 @@ pub(crate) struct FactRef {
 pub struct KeptFacts {
     db: Db,
     clock: Arc<dyn Clock>,
+    /// Per-(kind, artist) fetch locks so concurrent page reads coalesce on one
+    /// upstream fetch instead of racing.
+    flights: Arc<std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
 }
 
 impl std::fmt::Debug for KeptFacts {
@@ -240,7 +243,35 @@ fn album_row(artist: &str, row: sql::KeptAlbumColumns) -> RankedAlbum {
 impl KeptFacts {
     /// The kept facts in `db`, dated by `clock`.
     pub fn new(db: Db, clock: Arc<dyn Clock>) -> Self {
-        Self { db, clock }
+        Self {
+            db,
+            clock,
+            flights: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Acquire the per-(kind, artist) singleflight lock before an upstream
+    /// fetch, then re-read from the database to see whether a peer stored it.
+    pub(crate) async fn lock_fetch(
+        &self,
+        kind: &str,
+        artist: &str,
+    ) -> tokio::sync::OwnedMutexGuard<()> {
+        let key = format!("{kind}:{artist}");
+        let lock = {
+            let mut map = self
+                .flights
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if map.len() > 1024 {
+                map.retain(|_, mutex| Arc::strong_count(mutex) > 1);
+            }
+            Arc::clone(
+                map.entry(key)
+                    .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+            )
+        };
+        lock.lock_owned().await
     }
 
     /// Now, unix ms.

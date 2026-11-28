@@ -22,9 +22,6 @@ use super::{albums, similar};
 use crate::discover::facts::KeptFacts;
 use crate::metadata::Catalog;
 
-/// An artist's top release groups read per artist.
-const ARTIST_ALBUM_ROWS: usize = 25;
-
 /// Whose ListenBrainz link a read lends: a person's own, looked up only
 /// when no fresh answer is held, so a fresh one costs no store read; or
 /// no one's. A read never lends the server's account.
@@ -61,11 +58,12 @@ fn lower(text: &str) -> String {
     text.trim().to_lowercase()
 }
 
-/// The cache key of an artist's top albums, `read` rows long.
-fn artist_albums_key(artist_mbid: &str, read: usize) -> CacheKey {
+/// The cache key of an artist's top albums: ListenBrainz returns the full list
+/// regardless of requested count, so all counts share one key.
+fn artist_albums_key(artist_mbid: &str) -> CacheKey {
     CacheKey::new(
         Source::ListenBrainz,
-        &["artist_albums", &lower(artist_mbid), &read.to_string()],
+        &["artist_albums", &lower(artist_mbid)],
     )
 }
 
@@ -165,23 +163,20 @@ pub async fn artist_release_groups(
     lender: &Lender,
     priority: RequestPriority,
 ) -> Result<Vec<RankedAlbum>, ProviderError> {
-    let mut rows = release_group_rows(cache, client, artist_mbid, count, lender, priority).await?;
+    let mut rows = release_group_rows(cache, client, artist_mbid, lender, priority).await?;
     rows.truncate(count);
     Ok(rows)
 }
 
-/// Every kept row of one artist's top release groups, read at least
-/// [`ARTIST_ALBUM_ROWS`] long.
+/// Every kept row of one artist's top release groups.
 async fn release_group_rows(
     cache: &ProviderCacheStore,
     client: &ListenBrainzClient,
     artist_mbid: &str,
-    count: usize,
     lender: &Lender,
     priority: RequestPriority,
 ) -> Result<Vec<RankedAlbum>, ProviderError> {
-    let read = count.max(ARTIST_ALBUM_ROWS);
-    let key = artist_albums_key(artist_mbid, read);
+    let key = artist_albums_key(artist_mbid);
     if !cache.fresh(&key).await && !has_token(&lender.credentials().await) {
         let held: Option<Vec<RankedAlbum>> = cache.peek(&key).await.flatten();
         return Ok(held.unwrap_or_default());
@@ -195,7 +190,7 @@ async fn release_group_rows(
             move |priority| async move {
                 let creds = lender.credentials().await;
                 match client
-                    .artist_top_release_groups(&mbid, read, &creds, priority)
+                    .artist_top_release_groups(&mbid, usize::MAX, &creds, priority)
                     .await
                 {
                     Ok(rows) => Ok(found_or_missing(ranked_albums(rows, &mbid))),

@@ -40,10 +40,10 @@ use crate::local::stores::{BoxFuture, LyricsPort, StoreError};
 /// Source name for logs and the degradation registry.
 const LRCLIB: &str = "lrclib";
 
-/// How long LRCLIB's answer is kept: lyrics found a week, none six hours.
+/// How long LRCLIB's answer is kept: lyrics found 30 days, none a day.
 const LYRICS_POLICY: Policy = Policy {
-    fresh: Duration::from_secs(7 * 24 * 3_600),
-    miss: Duration::from_secs(6 * 3_600),
+    fresh: Duration::from_secs(30 * 24 * 3_600),
+    miss: Duration::from_secs(24 * 3_600),
 };
 
 /// Online lookups a player app may start for one person in an hour.

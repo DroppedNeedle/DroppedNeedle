@@ -25,7 +25,7 @@ pub struct EntityData {
     pub entities: HashMap<String, Entity>,
 }
 
-/// One entity. Only its id and sitelinks are read.
+/// One entity. Its id, sitelinks and (when included) claims are read.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Entity {
     /// The entity id. Required: an entity without it fails decoding. A
@@ -34,6 +34,9 @@ pub struct Entity {
     /// Sitelinks keyed by wiki id ("enwiki", ...).
     #[serde(default)]
     pub sitelinks: HashMap<String, Sitelink>,
+    /// Claims keyed by property id ("P18", ...), present in full Special:EntityData answers.
+    #[serde(default)]
+    pub claims: HashMap<String, Vec<Claim>>,
 }
 
 /// One sitelink.
