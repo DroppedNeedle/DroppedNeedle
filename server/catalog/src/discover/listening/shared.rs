@@ -67,6 +67,14 @@ fn artist_albums_key(artist_mbid: &str) -> CacheKey {
     )
 }
 
+/// The cache key of one artist's total ListenBrainz listen count.
+pub fn artist_listen_count_key(artist_mbid: &str) -> CacheKey {
+    CacheKey::new(
+        Source::ListenBrainz,
+        &["artist_popularity", &lower(artist_mbid)],
+    )
+}
+
 /// The cache key of one release group's listen count.
 pub fn listen_count_key(release_group_mbid: &str) -> CacheKey {
     CacheKey::new(
@@ -247,6 +255,35 @@ pub async fn similar_artists_each(
             })
         })
         .collect()
+}
+
+/// Listen counts per artist in one anonymous batch (`POST /1/popularity/artist`),
+/// each kept on its own in `ProviderCacheStore`.
+///
+/// # Errors
+///
+/// ListenBrainz's failure, for the ids not held.
+pub async fn artist_listen_counts(
+    cache: &ProviderCacheStore,
+    client: &ListenBrainzClient,
+    artist_mbids: &[String],
+    priority: RequestPriority,
+) -> Result<HashMap<String, i64>, ProviderError> {
+    cache
+        .fetch_each(
+            artist_mbids,
+            artist_listen_count_key,
+            Policy::LISTENBRAINZ_ARTIST,
+            |missing| async move {
+                let creds = ListenBrainzCredentials::default();
+                let found = client.artist_popularity(&missing, &creds, priority).await?;
+                Ok(found
+                    .into_iter()
+                    .filter_map(|(id, pop)| Some((id, pop.listen_count?)))
+                    .collect())
+            },
+        )
+        .await
 }
 
 /// Listen counts per release group, each kept on its own.

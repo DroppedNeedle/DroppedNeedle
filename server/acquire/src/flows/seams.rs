@@ -7,9 +7,10 @@
 //! start through the concrete [`crate::dispatch::DownloadDispatch`].
 
 use futures_util::future::BoxFuture;
+use serde::{Deserialize, Serialize};
 
 /// One release row observed on a provider page for a followed artist.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObservedRelease {
     /// Release-group MBID.
     pub rg_mbid: String,
@@ -24,7 +25,7 @@ pub struct ObservedRelease {
 }
 
 /// What one poll read of a followed artist.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PolledArtist {
     /// The artist's own name, from a credit on one of its release groups
     /// whose artist is the followed MBID; `None` when no credit names it.
@@ -41,6 +42,18 @@ pub trait ReleasePoll: Send + Sync {
         &'a self,
         artist_mbid: &'a str,
     ) -> BoxFuture<'a, Result<PolledArtist, String>>;
+
+    /// Poll releases for an artist, knowing whether it is already baselined.
+    /// Production implementations may answer already-baselined artists from
+    /// Discover's daily `fresh_feed` within the weekly MusicBrainz fallback
+    /// window without hitting MusicBrainz.
+    fn poll_releases_for<'a>(
+        &'a self,
+        artist_mbid: &'a str,
+        _baselined: bool,
+    ) -> BoxFuture<'a, Result<PolledArtist, String>> {
+        self.poll_releases(artist_mbid)
+    }
 }
 
 /// Durable tick sink. Each tick is emitted at its durable state

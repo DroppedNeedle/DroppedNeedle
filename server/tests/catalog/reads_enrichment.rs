@@ -5,11 +5,11 @@
 /// ListenBrainz on a loopback origin, taking any token and refusing the
 /// second artist, and Last.fm answering every read with the recorded
 /// `artist.getInfo`.
-fn counts_stub() -> axum::Router {
-    use axum::extract::Path;
+fn counts_stub(artist_calls: std::sync::Arc<std::sync::atomic::AtomicUsize>) -> axum::Router {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
     use axum::routing::{get, post};
+    use std::sync::atomic::Ordering;
     axum::Router::new()
         .route(
             "/lastfm/",
@@ -21,31 +21,38 @@ fn counts_stub() -> axum::Router {
             }),
         )
         .route(
-            "/listenbrainz/1/popularity/top-release-groups-for-artist/{mbid}",
-            get(|Path(mbid): Path<String>| async move {
-                if mbid == "artist-mbid-2" {
-                    return StatusCode::FORBIDDEN.into_response();
-                }
-                if mbid == "artist-mbid-3" {
-                    let single = |id: &str, listens: i64| {
-                        serde_json::json!({
-                            "release_group_mbid": id,
-                            "total_listen_count": listens,
-                            "release_group": {"name": id, "type": "Single"},
-                            "artist": {"name": "Singles", "artists": [{"artist_mbid": mbid}]},
+            "/listenbrainz/1/popularity/artist",
+            post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+                let artist_calls = std::sync::Arc::clone(&artist_calls);
+                async move {
+                    artist_calls.fetch_add(1, Ordering::SeqCst);
+                    let ids: Vec<String> = body["artist_mbids"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|v| v.as_str().map(str::to_owned))
+                        .collect();
+                    if ids.iter().any(|id| id == "artist-mbid-2") {
+                        return StatusCode::FORBIDDEN.into_response();
+                    }
+                    let rows: Vec<serde_json::Value> = ids
+                        .into_iter()
+                        .filter_map(|id| match id.as_str() {
+                            "artist-mbid-1" => Some(serde_json::json!({
+                                "artist_mbid": id,
+                                "total_listen_count": 4_000_000,
+                                "total_user_count": 200_000,
+                            })),
+                            "artist-mbid-3" => Some(serde_json::json!({
+                                "artist_mbid": id,
+                                "total_listen_count": 5_000,
+                                "total_user_count": 500,
+                            })),
+                            _ => None,
                         })
-                    };
-                    return axum::Json(serde_json::json!([
-                        single("rg-s1", 3_000),
-                        single("rg-s2", 2_000),
-                    ]))
-                    .into_response();
+                        .collect();
+                    axum::Json(serde_json::Value::Array(rows)).into_response()
                 }
-                axum::Json(serde_json::json!([
-                    {"release_group_mbid": "rg-a", "total_listen_count": 3_000_000},
-                    {"release_group_mbid": "rg-b", "total_listen_count": 1_000_000},
-                ]))
-                .into_response()
             }),
         )
         .route(
@@ -62,16 +69,23 @@ fn counts_stub() -> axum::Router {
         )
 }
 
-/// ListenBrainz counts sum an artist's top release groups, read with the
-/// person's linked account, and read album counts in one call; a refused
-/// artist call leaves that row without a count and notes ListenBrainz
-/// once, and the other rows still count.
+/// ListenBrainz counts read artist counts in one anonymous batch call and
+/// album counts in one batch call; a refused artist batch leaves those rows
+/// without counts and notes ListenBrainz once while album counts still land.
 /// With ListenBrainz off, an instance Last.fm key gives Last.fm counts.
 #[tokio::test]
 async fn a_failed_count_stays_on_its_row() {
+    let artist_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
-    let server = tokio::spawn(async move { axum::serve(listener, counts_stub()).await.unwrap() });
+    let server = tokio::spawn({
+        let artist_calls = std::sync::Arc::clone(&artist_calls);
+        async move {
+            axum::serve(listener, counts_stub(artist_calls))
+                .await
+                .unwrap()
+        }
+    });
     let app =
         crate::common::TestApp::start_with("search-counts", crate::common::outbound_at(&origin))
             .await;
@@ -171,23 +185,36 @@ async fn a_failed_count_stays_on_its_row() {
 
     assert!(status.is_success(), "{status} {body}");
     assert_eq!(body["source"], "listenbrainz", "{body}");
-    assert_eq!(body["artists"][0]["listen_count"], 4_000_000, "{body}");
+    assert!(body["artists"][0]["listen_count"].is_null(), "{body}");
     assert!(body["artists"][1]["listen_count"].is_null(), "{body}");
     assert_eq!(body["albums"][0]["listen_count"], 90_000, "{body}");
     let notes = body["degradations"].as_array().expect("degradations");
     assert_eq!(notes.len(), 1, "{body}");
     assert_eq!(notes[0]["source"], "listenbrainz", "{body}");
+    assert_eq!(
+        artist_calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "two search artists must go out in one batch POST /1/popularity/artist call"
+    );
     app.stop().await;
     server.abort();
 }
 
-/// An artist ListenBrainz knows only by singles still gets a listen count:
-/// search adds up every release group, not only the albums Discover offers.
+/// Multiple artists resolve in a single anonymous batch POST /1/popularity/artist
+/// call, including artists known only by singles.
 #[tokio::test]
 async fn a_singles_only_artist_still_has_a_count() {
+    let artist_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
-    let server = tokio::spawn(async move { axum::serve(listener, counts_stub()).await.unwrap() });
+    let server = tokio::spawn({
+        let artist_calls = std::sync::Arc::clone(&artist_calls);
+        async move {
+            axum::serve(listener, counts_stub(artist_calls))
+                .await
+                .unwrap()
+        }
+    });
     let app =
         crate::common::TestApp::start_with("search-singles", crate::common::outbound_at(&origin))
             .await;
@@ -195,27 +222,26 @@ async fn a_singles_only_artist_still_has_a_count() {
     let auth = [("authorization", admin.as_str())];
     let (status, body) = app
         .call(
-            "PUT",
-            "/api/v3/me/connections/listenbrainz",
-            &auth,
-            Some(serde_json::json!({"username": "owner", "user_token": "owner-token"})),
-        )
-        .await;
-    assert!(status.is_success(), "{status} {body}");
-
-    let (status, body) = app
-        .call(
             "POST",
             "/api/v3/search/enrich/batch",
             &auth,
             Some(serde_json::json!({
-                "artists": [{"musicbrainz_id": "artist-mbid-3", "name": "Singles"}],
+                "artists": [
+                    {"musicbrainz_id": "artist-mbid-1", "name": "Portishead"},
+                    {"musicbrainz_id": "artist-mbid-3", "name": "Singles"},
+                ],
                 "albums": [],
             })),
         )
         .await;
     assert!(status.is_success(), "{status} {body}");
-    assert_eq!(body["artists"][0]["listen_count"], 5_000, "{body}");
+    assert_eq!(body["artists"][0]["listen_count"], 4_000_000, "{body}");
+    assert_eq!(body["artists"][1]["listen_count"], 5_000, "{body}");
+    assert_eq!(
+        artist_calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "two artists must be fetched in one batch call without requiring a user token"
+    );
     app.stop().await;
     server.abort();
 }

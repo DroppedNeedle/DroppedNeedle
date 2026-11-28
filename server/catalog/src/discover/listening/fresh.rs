@@ -74,7 +74,7 @@ pub struct FreshFeed {
 }
 
 /// The shared key the feed is kept under: nobody's own.
-fn key() -> CacheKey {
+pub fn key() -> CacheKey {
     CacheKey::new(
         Source::ListenBrainz,
         &["fresh_releases", &FEED_DAYS.to_string()],

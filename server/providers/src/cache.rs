@@ -335,8 +335,8 @@ type Flight = Shared<BoxFuture<'static, Arc<Landed>>>;
 type Flights = HashMap<(String, Class), (u64, Flight)>;
 type BatchValue = Option<Option<Vec<u8>>>;
 type BatchSender = tokio::sync::watch::Sender<BatchValue>;
-type BatchSlot = tokio::sync::watch::Receiver<BatchValue>;
-type BatchFlights = HashMap<String, BatchSlot>;
+type BatchWaiter = tokio::sync::watch::Receiver<BatchValue>;
+type BatchFlights = HashMap<String, BatchWaiter>;
 
 struct OwnedBatchKey {
     id: String,
@@ -426,6 +426,12 @@ impl ProviderCacheStore {
     #[must_use]
     pub fn is_on(&self) -> bool {
         self.db.is_on()
+    }
+
+    /// The clock backing this cache store's expiry checks.
+    #[must_use]
+    pub fn clock(&self) -> Arc<dyn Clock> {
+        Arc::clone(&self.clock)
     }
 
     async fn kept(&self, key: &CacheKey) -> Option<StoredRow> {
@@ -721,7 +727,7 @@ impl ProviderCacheStore {
         let mut owned_senders: Vec<OwnedBatchKey>;
         let guard: BatchGuard;
         loop {
-            let waiting: Vec<(String, BatchSlot)> = {
+            let waiting: Vec<(String, BatchWaiter)> = {
                 let mut map = self
                     .batch_flights
                     .lock()

@@ -731,6 +731,20 @@ pub async fn follow_tick(now: i64, deps: &FollowDeps) -> FollowSummary {
     };
     let types = ReleaseTypes::from_preferences(&preferences);
     summary.enqueued += start_waiting(deps, now).await;
+    // Pause background follow polling when users have used the server before
+    // but nobody has visited in 30 days.
+    const FOLLOW_INACTIVE_MS: i64 = 30 * 86_400_000;
+    let now_ms = now.saturating_mul(1_000);
+    let auth_db = deps.follows.db().db();
+    if let Ok(recent) =
+        droppedneedle_auth::sqlite::seen_since(auth_db, now_ms.saturating_sub(FOLLOW_INACTIVE_MS))
+            .await
+        && recent.is_empty()
+        && let Ok(ever) = droppedneedle_auth::sqlite::seen_since(auth_db, 1).await
+        && !ever.is_empty()
+    {
+        return summary;
+    }
     let due = match deps
         .follows
         .list_due(now, FOLLOW_MAX_ARTISTS_PER_TICK)
@@ -747,7 +761,11 @@ pub async fn follow_tick(now: i64, deps: &FollowDeps) -> FollowSummary {
         summary.artists_polled += 1;
         let mut feed = Vec::new();
         let mut polled_name = None;
-        match deps.poll.poll_releases(&cursor.artist_mbid).await {
+        match deps
+            .poll
+            .poll_releases_for(&cursor.artist_mbid, cursor.baselined)
+            .await
+        {
             Ok(polled) => {
                 let releases = polled.releases;
                 polled_name = polled.artist_name;

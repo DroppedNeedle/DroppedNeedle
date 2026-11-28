@@ -719,15 +719,23 @@ async fn follow_poll_baselines_then_emits() {
             ("rg-owned", "2024-06-01", "Album", &[]),
         ]),
     );
-    let providers = droppedneedle_providers::Providers::unpaced(wire);
-    let poll =
-        droppedneedle_acquire::search::MusicBrainzReleasePoll::new(providers.musicbrainz.fixed(
+    let clock = droppedneedle_kernel::test_support::ManualClock::at(NOW * 1_000);
+    let providers = droppedneedle_providers::Providers::unpaced_on(
+        wire,
+        Arc::new(clock.clone()),
+        droppedneedle_providers::ProviderEndpoints::closed(),
+    );
+    let poll = droppedneedle_acquire::search::MusicBrainzReleasePoll::new(
+        providers.musicbrainz.fixed(
             MbSource::Mirror {
                 base_url: MB.to_owned(),
                 rate_per_sec: 0.0,
             },
             RequestPriority::BackgroundSync,
-        ));
+        ),
+        providers.cache.clone(),
+        providers.cache.clock(),
+    );
     let library = Arc::new(LibraryPresence::over_catalog(db.db().clone()));
     library.add(&["rg-owned"]);
     let settings = settings(&db);
@@ -753,6 +761,7 @@ async fn follow_poll_baselines_then_emits() {
     let again = follow_tick(NOW + 3_600, &deps).await;
     assert_eq!(again.artists_polled, 0, "a polled artist waits a day");
 
+    clock.advance(8 * 86_400 * 1_000);
     let second = follow_tick(NOW + 86_400, &deps).await;
     assert_eq!(
         second.new_releases, 2,
@@ -1011,7 +1020,14 @@ async fn seed_approved_follower(db: &AcquireDb) {
 /// A follow poll over `db` whose MusicBrainz page lists only `rg-old` on
 /// the first poll and adds `rg-new` (2024-06-01) from the second, with the
 /// request intake it files follow downloads through.
-async fn follow_rig(db: &AcquireDb, settings: &ConfigStore) -> (FollowDeps, Arc<RequestsService>) {
+async fn follow_rig(
+    db: &AcquireDb,
+    settings: &ConfigStore,
+) -> (
+    FollowDeps,
+    Arc<RequestsService>,
+    droppedneedle_kernel::test_support::ManualClock,
+) {
     const MB: &str = "http://musicbrainz.test/ws/2";
     let wire = Arc::new(ScriptedWire::new());
     let json = [("content-type", "application/json")];
@@ -1031,15 +1047,23 @@ async fn follow_rig(db: &AcquireDb, settings: &ConfigStore) -> (FollowDeps, Arc<
             ("rg-new", "2024-06-01", "Album", &[]),
         ]),
     );
-    let providers = droppedneedle_providers::Providers::unpaced(wire);
-    let poll =
-        droppedneedle_acquire::search::MusicBrainzReleasePoll::new(providers.musicbrainz.fixed(
+    let clock = droppedneedle_kernel::test_support::ManualClock::at(NOW * 1_000);
+    let providers = droppedneedle_providers::Providers::unpaced_on(
+        wire,
+        Arc::new(clock.clone()),
+        droppedneedle_providers::ProviderEndpoints::closed(),
+    );
+    let poll = droppedneedle_acquire::search::MusicBrainzReleasePoll::new(
+        providers.musicbrainz.fixed(
             MbSource::Mirror {
                 base_url: MB.to_owned(),
                 rate_per_sec: 0.0,
             },
             RequestPriority::BackgroundSync,
-        ));
+        ),
+        providers.cache.clone(),
+        providers.cache.clock(),
+    );
     let downloads = dispatch(db, settings);
     let requests = Arc::new(RequestsService::new(&RequestsState {
         quota: Arc::new(QuotaLedger::new(settings.live(), db.clone())),
@@ -1056,7 +1080,7 @@ async fn follow_rig(db: &AcquireDb, settings: &ConfigStore) -> (FollowDeps, Arc<
         preferences: settings.live(),
         today: Arc::new(|| "2024-06-01".to_owned()),
     };
-    (deps, requests)
+    (deps, requests, clock)
 }
 
 // A follow still named "Unknown Artist" takes the name MusicBrainz credits
@@ -1086,7 +1110,7 @@ async fn follow_poll_names_a_placeholder_follow() {
     .await
     .unwrap();
     let settings = settings(&db);
-    let (deps, _) = follow_rig(&db, &settings).await;
+    let (deps, _, _) = follow_rig(&db, &settings).await;
 
     let summary = follow_tick(NOW, &deps).await;
     assert_eq!((summary.new_releases, summary.enqueued), (1, 1));
@@ -1170,8 +1194,9 @@ async fn follow_downloads_wait_and_start_by_themselves() {
             .await
             .unwrap()
             .unwrap();
-        let (deps, requests) = follow_rig(&db, &settings).await;
+        let (deps, requests, clock) = follow_rig(&db, &settings).await;
         follow_tick(now, &deps).await;
+        clock.advance(8 * 86_400 * 1_000);
         let polled = follow_tick(now + 86_400, &deps).await;
         assert_eq!(polled.enqueued, 0);
         assert!(tasks(&db).await.is_empty(), "nothing is downloaded");
@@ -1273,8 +1298,9 @@ async fn follow_downloads_wait_and_start_by_themselves() {
             .unwrap()
             .unwrap();
         let settings = settings(&db);
-        let (deps, _requests) = follow_rig(&db, &settings).await;
+        let (deps, _requests, clock) = follow_rig(&db, &settings).await;
         follow_tick(NOW, &deps).await;
+        clock.advance(8 * 86_400 * 1_000);
         let met = follow_tick(NOW + 86_400, &deps).await;
         assert_eq!(met.enqueued, 0);
         assert!(tasks(&db).await.is_empty(), "the ask waits for an admin");
@@ -1401,5 +1427,172 @@ async fn a_rejected_re_ask_stops_its_watch() {
     assert!(
         watch.next_check_at > watch.created_at,
         "not while the new ask's own download starts"
+    );
+}
+
+#[tokio::test]
+async fn follow_poll_pauses_when_no_user_seen_in_30_days() {
+    let db = AcquireDb::scratch().unwrap();
+    let settings = settings(&db);
+    let (deps, _, _) = follow_rig(&db, &settings).await;
+    let artist_mbid = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
+    db.add_user("u-idle", "Idle", "user").await.unwrap();
+    let stale_ms = (NOW - 35 * 86_400) * 1_000;
+    db.write("stamp stale last_seen_at", move |tx| {
+        tx.execute(
+            "INSERT INTO auth_tokens (id, user_id, token_hash, issued_at, expires_at, last_seen_at) \
+             VALUES ('tok-idle', 'u-idle', 'hash-idle', ?1, ?2, ?1)",
+            rusqlite::params![stale_ms, stale_ms + 86_400_000],
+        )?;
+        tx.execute(
+            "INSERT INTO acquire_followed_artists (user_id, artist_mbid, artist_mbid_lower, artist_name, followed_at, updated_at) \
+             VALUES ('u-idle', ?1, ?1, 'Radiohead', 1, 1)",
+            [artist_mbid],
+        )?;
+        tx.execute(
+            "INSERT INTO acquire_follow_cursors (artist_mbid_lower, baselined, next_poll_at) \
+             VALUES (?1, 1, 0)",
+            [artist_mbid],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    let paused = follow_tick(NOW, &deps).await;
+    assert_eq!(
+        paused.artists_polled, 0,
+        "follow poll must pause when no user has been seen in 30 days"
+    );
+}
+
+#[tokio::test]
+async fn follow_poll_reads_fresh_feed_without_musicbrainz_calls_and_caches_fallback() {
+    use droppedneedle_catalog::discover::listening::fresh;
+
+    const MB: &str = "http://musicbrainz.test/ws/2";
+    const ARTIST_MBID: &str = "artist-1";
+
+    let db = AcquireDb::scratch().unwrap();
+    db.add_user("user-1", "Ada", "admin").await.unwrap();
+    let follows = Follows::new(db.clone());
+    follows
+        .set_follow("user-1", ARTIST_MBID, true, Some("The Band".to_owned()))
+        .await
+        .unwrap();
+
+    let wire = Arc::new(ScriptedWire::new());
+    let json = [("content-type", "application/json")];
+    let url = format!("{MB}/release-group");
+    wire.answer(
+        &url,
+        200,
+        &json,
+        browse_page(&[("rg-old", "2020-01-01", "Album", &[])]),
+    );
+    wire.answer(
+        &url,
+        200,
+        &json,
+        browse_page(&[
+            ("rg-old", "2020-01-01", "Album", &[]),
+            ("rg-mb-new", "2024-06-01", "Album", &[]),
+        ]),
+    );
+    let clock = droppedneedle_kernel::test_support::ManualClock::at(NOW * 1_000);
+    let providers = droppedneedle_providers::Providers::unpaced_on(
+        wire.clone(),
+        Arc::new(clock.clone()),
+        droppedneedle_providers::ProviderEndpoints::closed(),
+    );
+    let poll = droppedneedle_acquire::search::MusicBrainzReleasePoll::new(
+        providers.musicbrainz.fixed(
+            MbSource::Mirror {
+                base_url: MB.to_owned(),
+                rate_per_sec: 0.0,
+            },
+            RequestPriority::BackgroundSync,
+        ),
+        providers.cache.clone(),
+        providers.cache.clock(),
+    );
+    let settings = settings(&db);
+    let downloads = dispatch(&db, &settings);
+    let requests = Arc::new(RequestsService::new(&RequestsState {
+        quota: Arc::new(QuotaLedger::new(settings.live(), db.clone())),
+        dispatch: downloads.clone(),
+        ..requests_over(&db).await
+    }));
+    let deps = FollowDeps {
+        follows,
+        poll: Arc::new(poll),
+        downloads,
+        requests,
+        library: Arc::new(LibraryPresence::over_catalog(db.db().clone())),
+        ticks: ticks(&db, &EventHub::new()).await,
+        preferences: settings.live(),
+        today: Arc::new(|| "2024-06-01".to_owned()),
+    };
+
+    let first = follow_tick(NOW, &deps).await;
+    assert_eq!(first.baselined, 1);
+    assert_eq!(
+        wire.sent().len(),
+        1,
+        "initial baseline browses MusicBrainz once"
+    );
+
+    // Seed fresh_feed with a new release for the followed artist.
+    let feed = serde_json::json!({
+        "read_at": (NOW + 86_400) * 1_000,
+        "rows": [{
+            "release_group_mbid": "rg-fresh",
+            "title": "Fresh Album",
+            "artist_name": "The Band",
+            "artist_mbids": [ARTIST_MBID],
+            "release_date": "2024-06-01",
+            "primary_type": "Album",
+            "secondary_type": null
+        }]
+    });
+    clock.advance(86_400 * 1_000);
+    providers.cache.set_bytes(
+        &fresh::key(),
+        serde_json::to_vec(&feed).unwrap(),
+        Duration::from_secs(24 * 3_600),
+    );
+    let second = follow_tick(NOW + 86_400, &deps).await;
+    assert_eq!(
+        second.new_releases, 1,
+        "fresh_feed surfaces the new release"
+    );
+    assert_eq!(
+        wire.sent().len(),
+        1,
+        "fresh_feed path makes 0 MusicBrainz calls"
+    );
+
+    // Without fresh_feed, inside the 7-day MB cache window, poll hits cache with 0 MB calls.
+    providers.cache.forget(&[fresh::key()]).await;
+    clock.advance(86_400 * 1_000);
+    let third = follow_tick(NOW + 2 * 86_400, &deps).await;
+    assert_eq!(third.artists_polled, 1);
+    assert_eq!(
+        wire.sent().len(),
+        1,
+        "7-day MB cache avoids re-browsing MusicBrainz"
+    );
+
+    // After 7 days, weekly reconciliation browses MusicBrainz again.
+    clock.advance(7 * 86_400 * 1_000);
+    let fourth = follow_tick(NOW + 9 * 86_400, &deps).await;
+    assert_eq!(
+        fourth.new_releases, 1,
+        "weekly MB fallback picks up rg-mb-new"
+    );
+    assert_eq!(
+        wire.sent().len(),
+        2,
+        "weekly MB fallback runs once after 7 days"
     );
 }

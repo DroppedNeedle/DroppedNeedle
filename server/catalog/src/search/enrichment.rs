@@ -39,8 +39,6 @@ use droppedneedle_kernel::runtime_config::sections::ListenSource;
 /// Per-row lookups in flight at once: one small batch never presses a
 /// provider harder than this.
 const IN_FLIGHT: usize = 2;
-/// Top release groups summed into one artist's ListenBrainz count.
-const ARTIST_TOP_RELEASES: usize = 5;
 /// The fixed message of a degraded source.
 const DEGRADED_MESSAGE: &str = "Enrichment temporarily unavailable";
 /// Cached Last.fm search listener/play counts: 24h found, 6h missing.
@@ -184,48 +182,30 @@ impl SearchCounts {
         }
     }
 
-    /// Each artist's count is the sum of its top release groups, from the
-    /// artist's kept rows.
+    /// One anonymous batch call answers every artist count no kept row holds.
     async fn listenbrainz_artists(
         &self,
-        user_id: &str,
+        _user_id: &str,
         artists: Vec<ArtistEnrichmentRequest>,
         notes: &mut Notes,
     ) -> Vec<ArtistEnrichment> {
-        let lender = &self.lender(user_id);
-        let outcomes: Vec<_> = stream::iter(
-            artists
-                .iter()
-                .map(|item| async move {
-                    shared::artist_release_groups(
-                        &self.cache,
-                        &self.listenbrainz,
-                        &item.musicbrainz_id,
-                        ARTIST_TOP_RELEASES,
-                        lender,
-                        RequestPriority::UserInitiated,
-                    )
-                    .await
-                })
-                .collect::<Vec<_>>(),
+        let mbids: Vec<String> = artists
+            .iter()
+            .map(|item| item.musicbrainz_id.clone())
+            .collect();
+        let outcome = shared::artist_listen_counts(
+            &self.cache,
+            &self.listenbrainz,
+            &mbids,
+            RequestPriority::UserInitiated,
         )
-        .buffered(IN_FLIGHT)
-        .collect()
         .await;
+        let counts = notes.keep(outcome).unwrap_or_default();
         artists
             .into_iter()
-            .zip(outcomes)
-            .map(|(item, outcome)| {
-                let count = match notes.keep(outcome) {
-                    Some(top) if !top.is_empty() => {
-                        Some(top.iter().map(|row| row.listen_count).sum())
-                    }
-                    _ => None,
-                };
-                ArtistEnrichment {
-                    listen_count: count,
-                    ..bare_artist(item)
-                }
+            .map(|item| ArtistEnrichment {
+                listen_count: counts.get(&item.musicbrainz_id).copied(),
+                ..bare_artist(item)
             })
             .collect()
     }

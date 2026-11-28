@@ -171,6 +171,11 @@ impl Follows {
         Self { db, reads }
     }
 
+    /// Shared acquire database handle.
+    pub(crate) fn db(&self) -> &AcquireDb {
+        &self.db
+    }
+
     /// One artist's follow status for `user_id`.
     pub async fn status(
         &self,
