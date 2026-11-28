@@ -72,6 +72,9 @@ impl Closeness {
     }
 }
 
+/// The index loaded for search, with the mark it was loaded at.
+type Loaded = (SoundMark, Arc<SoundIndex>);
+
 /// What the sound bench is first tuned to.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BenchSeed {
@@ -332,7 +335,7 @@ impl SoundIndex {
         let seed_track = &self.tracks[seed_at];
         // Enough that the artist cap and the versions dropped still leave
         // `n` (S4-01: the cap dropped up to 28 of 41 for one seed).
-        let skipped: Vec<bool> = self.tracks.iter().map(|track| skip(track)).collect();
+        let skipped: Vec<bool> = self.tracks.iter().map(skip).collect();
         let ask = n + (3 * n).max(20) + 1 + skipped.iter().filter(|skip| **skip).count();
         let mut nearest: Vec<(f32, usize)> = (0..self.tracks.len())
             .filter(|at| *at != seed_at)
@@ -399,7 +402,7 @@ pub struct SoundSearch {
     /// Moved by the analysis loop after every write that kept or dropped
     /// rows.
     changes: Arc<AtomicU64>,
-    loaded: Arc<Mutex<Option<(SoundMark, Arc<SoundIndex>)>>>,
+    loaded: Arc<Mutex<Option<Loaded>>>,
     loads: Arc<AtomicU64>,
 }
 
