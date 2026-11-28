@@ -11,12 +11,11 @@ use super::super::session::store::NewSession;
 use super::super::session::tokens;
 use super::error::UsersError;
 use super::models::{
-    AdminAppPasswordView, AdminUserListResponse, AppPasswordAuth, AppPasswordCreate,
-    AppPasswordCreatedResponse, AppPasswordListResponse, AppPasswordRecord, AppPasswordView,
-    DeviceSessionMint, DeviceSessionResponse, LastFmConnection, LastFmSessionResponse,
-    LastFmTokenResponse, LocalCredential, PasswordReset, ProfileResponse, RecoveryCode,
-    RecoveryCodeResponse, SessionListResponse, SessionView, UserDirectoryResponse, UserRecord,
-    UserResponse,
+    AdminAppPasswordView, AdminUserListResponse, AppPasswordCreate, AppPasswordCreatedResponse,
+    AppPasswordListResponse, AppPasswordRecord, AppPasswordView, DeviceSessionMint,
+    DeviceSessionResponse, LastFmConnection, LastFmSessionResponse, LastFmTokenResponse,
+    LocalCredential, PasswordReset, ProfileResponse, RecoveryCode, RecoveryCodeResponse,
+    SessionListResponse, SessionView, UserDirectoryResponse, UserRecord, UserResponse,
 };
 use super::roles::{Admin, Principal, Role};
 use super::stores::{LastFmError, LastFmKeys, RoleChange, StoreError, UserDeletion};
@@ -1564,42 +1563,4 @@ pub async fn admin_revoke_app_password(
     } else {
         Err(UsersError::NotFound)
     }
-}
-
-/// Compat verification contract (the compat APIs call this; native paths never do).
-///
-/// SHA-256(secret) resolves the live row, the stored digest compares in
-/// constant time, and a successful verification stamps last use. Returns
-/// None on every miss and never raises: unknown secrets, revoked rows,
-/// missing owners, and store faults all verify as None (faults log).
-/// Key-rotation safe: verification never decrypts.
-pub async fn verify_app_password(
-    deps: &UsersDeps,
-    secret: &str,
-    last_client: Option<&str>,
-) -> Option<AppPasswordAuth> {
-    if secret.is_empty() || secret.len() > MAX_AUTH_VALUE_LEN {
-        return None;
-    }
-    let digest = tokens::hash_token(secret);
-    let row = deps
-        .app_passwords
-        .get_active_by_sha256(&digest)
-        .await
-        .ok()??;
-    if !tokens::secret_eq(&row.secret_sha256, &digest) {
-        return None;
-    }
-    let owner = deps.users.get_by_id(&row.user_id).await.ok()??;
-    if let Err(cause) = deps
-        .app_passwords
-        .touch(&digest, clock_now(deps), last_client)
-        .await
-    {
-        tracing::warn!(%cause, "app-password touch failed");
-    }
-    Some(AppPasswordAuth {
-        user_id: owner.id,
-        app_password_id: row.id,
-    })
 }

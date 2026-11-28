@@ -83,6 +83,9 @@ struct Inner {
     crypto: Crypto,
     clock: Arc<dyn Clock>,
     snapshot: RwLock<HashMap<String, Arc<Entry>>>,
+    /// Opened default sections for keys absent from `snapshot`, so `Live::get`
+    /// never rebuilds defaults on every call.
+    defaults: RwLock<HashMap<&'static str, Arc<dyn Any + Send + Sync>>>,
     /// One change notice per listed section, carrying its revision. Built
     /// when the store opens; never added to later.
     notices: HashMap<&'static str, watch::Sender<i64>>,
@@ -191,13 +194,34 @@ impl<S: Listed> Live<S> {
         {
             return Ok(opened);
         }
+        if entry.is_none()
+            && let Some(cached) = self
+                .store
+                .inner
+                .defaults
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get(S::KEY)
+                .cloned()
+            && let Ok(opened) = cached.downcast::<Plain<S>>()
+        {
+            return Ok(opened);
+        }
         let opened = Arc::new(S::open(
             &self.store,
             entry.as_ref().map(|entry| &entry.value),
         )?);
+        let shared: Arc<dyn Any + Send + Sync> = opened.clone();
         if let Some(entry) = entry {
-            let shared: Arc<dyn Any + Send + Sync> = opened.clone();
             let _ = entry.opened.set(shared);
+        } else {
+            self.store
+                .inner
+                .defaults
+                .write()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry(S::KEY)
+                .or_insert(shared);
         }
         Ok(opened)
     }
@@ -297,6 +321,7 @@ impl ConfigStore {
                 crypto,
                 clock,
                 snapshot: RwLock::new(snapshot),
+                defaults: RwLock::new(HashMap::new()),
                 notices,
             }),
         })
@@ -1181,5 +1206,35 @@ mod tests {
         assert!(notice.has_changed().unwrap());
         assert_eq!(*notice.borrow_and_update(), 1);
         assert_eq!(live.get().unwrap().api_key.expose(), "first");
+    }
+
+    #[test]
+    fn live_caches_default_even_when_key_absent_from_snapshot() {
+        let dir = TestDir::new("store-default-cache");
+        let store =
+            ConfigStore::scratch(dir.path(), Crypto::from_key_bytes(&[4u8; 32]).unwrap()).unwrap();
+        store
+            .inner
+            .snapshot
+            .write()
+            .unwrap()
+            .remove(SlskdConnection::KEY);
+        assert!(store.entry(SlskdConnection::KEY).is_none());
+
+        let live = store.live::<SlskdConnection>();
+        let first = live.get().unwrap();
+        let second = live.get().unwrap();
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "unwritten default sections must reuse the cached Arc"
+        );
+
+        store
+            .save_secret_blocking(SlskdConnection {
+                api_key: "saved".into(),
+                ..SlskdConnection::default()
+            })
+            .unwrap();
+        assert_eq!(live.get().unwrap().api_key.expose(), "saved");
     }
 }

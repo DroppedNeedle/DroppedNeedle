@@ -313,15 +313,19 @@ pub async fn content_security(
     }
     let api_path = request.uri().path().starts_with("/api/v3/");
     let settings = security.settings();
-    let mark = policy_mark(&settings);
+    // Only compute the policy ETag mark when the request carries If-None-Match
+    // or the response is the HTML app shell, skipping SHA-256 on API/media hits.
+    let mut cached_mark: Option<String> = None;
     if request.headers().contains_key(header::IF_NONE_MATCH) {
-        unmark_if_none_match(&mut request, &mark);
+        let mark = cached_mark.get_or_insert_with(|| policy_mark(&settings));
+        unmark_if_none_match(&mut request, mark);
     }
     let mut response = next.run(request).await;
     let shell = response.extensions().get::<AppShell>().cloned();
     let headers = response.headers_mut();
     if shell.is_some() {
-        mark_etag(headers, &mark);
+        let mark = cached_mark.get_or_insert_with(|| policy_mark(&settings));
+        mark_etag(headers, mark);
     }
     let json = headers
         .get(header::CONTENT_TYPE)

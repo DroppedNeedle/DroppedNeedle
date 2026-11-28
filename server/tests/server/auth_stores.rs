@@ -24,7 +24,7 @@ use droppedneedle_auth::users::models::{
     AppPasswordRecord, LocalCredential, PasswordReset, UserRecord,
 };
 use droppedneedle_auth::users::roles::{Role, SessionKind as UserSessionKind};
-use droppedneedle_auth::users::services::{self, verify_app_password};
+use droppedneedle_auth::users::services;
 use droppedneedle_auth::users::stores::{BoxFuture, RoleChange, UserDeletion};
 use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::db::{DbError, Lane};
@@ -652,32 +652,6 @@ async fn app_password_cap_holds_under_parallel_creates() {
         }
     }
     assert_eq!(inserted, services::MAX_ACTIVE_APP_PASSWORDS);
-}
-
-#[tokio::test]
-async fn app_password_verify_is_decrypt_free_and_stamps_use() {
-    let fx = fixture("ap-verify").await;
-    let deps = fx.deps.clone();
-    deps.users
-        .insert(user_row("user-1", "ada", Role::User))
-        .await
-        .unwrap();
-    let secret = tokens::mint_token().unwrap();
-    let mut row = app_password("ap-1", "user-1", &secret, &fx.deps.crypto);
-    // Verification must never decrypt: a ciphertext from another key still
-    // verifies, which is what keeps key rotation safe.
-    row.secret_encrypted = "v3:not-decryptable".to_owned();
-    deps.app_passwords.insert_capped(row, 25).await.unwrap();
-
-    let authed = verify_app_password(&deps, &secret, Some("Symfonium"))
-        .await
-        .unwrap();
-    assert_eq!(authed.user_id, "user-1");
-    let row = deps.app_passwords.get_by_id("ap-1").await.unwrap().unwrap();
-    assert_eq!(row.last_used_at, Some(TEST_NOW));
-    assert_eq!(row.last_client.as_deref(), Some("Symfonium"));
-    assert!(deps.app_passwords.revoke("ap-1").await.unwrap());
-    assert!(verify_app_password(&deps, &secret, None).await.is_none());
 }
 
 #[tokio::test]
