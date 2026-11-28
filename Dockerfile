@@ -41,7 +41,7 @@ RUN pnpm run build --sourcemap hidden \
 # The binaries are built on AlmaLinux 8, so they need glibc 2.28 at most and
 # run on RHEL 8, Debian 10, Ubuntu 20.04 and later. The image, the release
 # files and the packages all ship this one build; glibc-floor.sh holds it.
-FROM almalinux:8.10@sha256:768bedc30fe0a536adb0a65d2eddb7caad364e514fbddd0ae9e026975f590342 AS chef
+FROM almalinux:10.3@sha256:ccf217024b3d5e268cc208d1edb384a1edee6359370cf6ea1ecbc42254e57375 AS chef
 
 # Audio decode: opusic-sys (via symphonia-adapter-libopus) builds a
 # bundled C library through the `cmake` crate, which shells out to the cmake
